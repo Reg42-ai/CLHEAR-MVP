@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Review Console</title>
+<style>
+  /* Reg42 UI language: indigo / pearl / mint tokens (Solon reference) */
+  :root {
+    --indigo-900: #1e1b4b; --indigo-700: #4338ca; --indigo-500: #6366f1; --indigo-100: #e0e7ff;
+    --pearl: #f8f7f4; --pearl-dark: #edeae3;
+    --mint-600: #059669; --mint-100: #d1fae5;
+    --rose-600: #e11d48; --rose-100: #ffe4e6;
+    --ink: #17163a; --muted: #6b6a8a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--pearl); color: var(--ink);
+         font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { background: var(--indigo-900); color: var(--indigo-100); padding: 14px 28px;
+           display: flex; align-items: baseline; gap: 14px; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: 0.04em; }
+  header .sub { font-size: 13px; opacity: 0.75; }
+  main { max-width: 980px; margin: 28px auto; padding: 0 20px; }
+  .identity { display: flex; gap: 10px; align-items: center; margin-bottom: 22px; }
+  .identity input { border: 1px solid var(--pearl-dark); border-radius: 8px; padding: 8px 12px;
+                    font-size: 14px; width: 280px; background: white; }
+  .identity label { font-size: 13px; color: var(--muted); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+  .tabs button { border: 1px solid var(--pearl-dark); background: white; border-radius: 999px;
+                 padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.active { background: var(--indigo-700); border-color: var(--indigo-700); color: white; }
+  .card { background: white; border: 1px solid var(--pearl-dark); border-radius: 12px;
+          padding: 18px 20px; margin-bottom: 14px; }
+  .card .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  .kind { font-weight: 600; color: var(--indigo-700); }
+  .subject { font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: var(--muted); }
+  .rationale { margin: 8px 0 4px; }
+  pre.draft { background: var(--pearl); border-radius: 8px; padding: 10px 12px; font-size: 12px;
+              overflow-x: auto; max-height: 180px; }
+  .badge { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+  .badge.proposed { background: var(--indigo-100); color: var(--indigo-700); }
+  .badge.approved { background: var(--mint-100); color: var(--mint-600); }
+  .badge.rejected { background: var(--rose-100); color: var(--rose-600); }
+  .actions { display: flex; gap: 8px; }
+  .actions button { border: none; border-radius: 8px; padding: 8px 18px; font-size: 14px;
+                    cursor: pointer; font-weight: 600; }
+  .approve { background: var(--mint-600); color: white; }
+  .reject { background: white; color: var(--rose-600); border: 1px solid var(--rose-600) !important; }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .error { background: var(--rose-100); color: var(--rose-600); border-radius: 8px;
+           padding: 10px 14px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<header><h1>CLHEAR</h1><span class="sub">Review console — agents propose, humans ratify</span></header>
+<main id="root"></main>
+
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const STATUSES = ["proposed", "approved", "rejected"];
+
+function App() {
+  const [user, setUser] = useState(localStorage.getItem("reg42_user") || "");
+  const [status, setStatus] = useState("proposed");
+  const [items, setItems] = useState([]);
+  const [error, setError] = useState(null);
+
+  const load = () =>
+    fetch(`/api/clhear/proposals?status=${status}`)
+      .then((r) => r.json()).then(setItems).catch((e) => setError(String(e)));
+
+  useEffect(() => { load(); }, [status]);
+  useEffect(() => { localStorage.setItem("reg42_user", user); }, [user]);
+
+  const decide = async (id, action) => {
+    setError(null);
+    const r = await fetch(`/api/clhear/proposals/${id}/${action}`, {
+      method: "POST",
+      headers: { "X-Reg42-User": user },
+    });
+    if (!r.ok) { setError((await r.json()).detail || r.statusText); return; }
+    load();
+  };
+
+  return html`
+    <div>
+      ${error && html`<div class="error">${error}</div>`}
+      <div class="identity">
+        <label>Acting as</label>
+        <input placeholder="maintainer identity (e.g. avner@reg42.ai)"
+               value=${user} onInput=${(e) => setUser(e.target.value)} />
+      </div>
+      <div class="tabs">
+        ${STATUSES.map((s) => html`
+          <button class=${s === status ? "active" : ""} onClick=${() => setStatus(s)}>${s}</button>`)}
+      </div>
+      ${items.length === 0 && html`<div class="empty">No ${status} proposals.</div>`}
+      ${items.map((p) => html`
+        <div class="card" key=${p.id}>
+          <div class="row">
+            <div>
+              <span class="kind">${p.layer} · ${p.kind}</span>
+              <span class="badge ${p.status}">${p.status}</span>
+              <div class="subject">${p.subject_ref}</div>
+              ${p.rationale && html`<div class="rationale">${p.rationale}</div>`}
+              <pre class="draft">${JSON.stringify(p.draft, null, 2)}</pre>
+              <div class="meta">
+                confidence ${p.confidence ?? "—"} · created ${p.created_at}
+                ${p.approver && html` · decided by <b>${p.approver}</b> at ${p.decided_at}`}
+              </div>
+            </div>
+            ${p.status === "proposed" && html`
+              <div class="actions">
+                <button class="approve" disabled=${!user} onClick=${() => decide(p.id, "approve")}>Approve</button>
+                <button class="reject" disabled=${!user} onClick=${() => decide(p.id, "reject")}>Reject</button>
+              </div>`}
+          </div>
+        </div>`)}
+    </div>`;
+}
+
+createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
