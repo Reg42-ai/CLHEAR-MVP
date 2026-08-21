@@ -6,7 +6,7 @@ __pycache__/
 artifacts/
 clhear-public/
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.backup
+tfplan
 .env
