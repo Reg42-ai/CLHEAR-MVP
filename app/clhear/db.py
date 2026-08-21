@@ -21,10 +21,12 @@ _engine: Engine | None = None
 
 
 def make_engine(database_url: str) -> Engine:
+    from app.clhear.l1.models import L1_SCHEMA
+
     kwargs: dict = {"future": True}
     if not database_url.startswith("postgresql"):
         # SQLite has no schemas: translate `l0_platform.events` -> `events`.
-        kwargs["execution_options"] = {"schema_translate_map": {L0_SCHEMA: None}}
+        kwargs["execution_options"] = {"schema_translate_map": {L0_SCHEMA: None, L1_SCHEMA: None}}
     return sa.create_engine(database_url, **kwargs)
 
 
@@ -43,9 +45,12 @@ def set_engine(engine: Engine) -> None:
 
 def run_migrations(engine: Engine) -> list[int]:
     """Apply pending numbered migrations from the top-level `migrations` package."""
+    from app.clhear.l1.models import L1_SCHEMA
+
     with engine.begin() as conn:
         if engine.dialect.name == "postgresql":
             conn.execute(sa.text(f"CREATE SCHEMA IF NOT EXISTS {L0_SCHEMA}"))
+            conn.execute(sa.text(f"CREATE SCHEMA IF NOT EXISTS {L1_SCHEMA}"))
         schema_migrations.create(conn, checkfirst=True)
         applied = {row.version for row in conn.execute(sa.select(schema_migrations.c.version))}
 

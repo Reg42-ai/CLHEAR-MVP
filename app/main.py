@@ -23,9 +23,11 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="CLHEAR", lifespan=lifespan)
     if get_settings().reg42_clhear_enabled:
+        from app.clhear.l1.routes import router as l1_router
         from app.clhear.routes import router
 
         app.include_router(router)
+        app.include_router(l1_router)
     return app
 
 

@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Sources Explorer</title>
+<style>
+  /* Reg42 UI language: indigo / pearl / mint tokens (Solon reference) */
+  :root {
+    --indigo-900: #1e1b4b; --indigo-700: #4338ca; --indigo-500: #6366f1; --indigo-100: #e0e7ff;
+    --pearl: #f8f7f4; --pearl-dark: #edeae3;
+    --mint-600: #059669; --mint-100: #d1fae5;
+    --rose-600: #e11d48; --rose-100: #ffe4e6;
+    --amber-600: #d97706; --amber-100: #fef3c7;
+    --ink: #17163a; --muted: #6b6a8a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--pearl); color: var(--ink);
+         font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { background: var(--indigo-900); color: var(--indigo-100); padding: 14px 28px;
+           display: flex; align-items: baseline; gap: 14px; position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: 0.04em; cursor: pointer; }
+  header .sub { font-size: 13px; opacity: 0.75; flex: 1; }
+  header input { border: none; border-radius: 8px; padding: 7px 12px; font-size: 13px; width: 340px;
+                 background: rgba(255,255,255,0.12); color: white; }
+  header input::placeholder { color: rgba(255,255,255,0.5); }
+  main { max-width: 1180px; margin: 24px auto; padding: 0 20px; }
+  a { color: var(--indigo-700); text-decoration: none; }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+  .crumbs a { cursor: pointer; }
+  .family { background: white; border: 1px solid var(--pearl-dark); border-radius: 12px;
+            padding: 18px 20px; margin-bottom: 16px; }
+  .family h2 { margin: 0 0 4px; font-size: 16px; }
+  .charter { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  table.members { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.members th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
+                     padding: 6px 8px; border-bottom: 1px solid var(--pearl-dark); }
+  table.members td { padding: 8px; border-bottom: 1px solid var(--pearl); vertical-align: top; }
+  .srcname { cursor: pointer; color: var(--indigo-700); font-weight: 600; }
+  .srcname.stub { color: var(--ink); font-weight: 500; cursor: default; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; }
+  .badge.open { background: var(--mint-100); color: var(--mint-600); }
+  .badge.restricted { background: var(--rose-100); color: var(--rose-600); }
+  .badge.binding { background: var(--indigo-100); color: var(--indigo-700); }
+  .badge.guidance { background: var(--amber-100); color: var(--amber-600); }
+  .badge.citator { background: var(--amber-100); color: var(--amber-600); }
+  .badge.root { background: var(--indigo-900); color: white; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); }
+  .meta-grid { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--muted);
+               margin: 8px 0 16px; }
+  .meta-grid b { color: var(--ink); font-weight: 600; }
+  .clausegroup { margin: 18px 0 8px; font-size: 13px; font-weight: 700; color: var(--indigo-700);
+                 text-transform: none; border-bottom: 2px solid var(--indigo-100); padding-bottom: 4px; }
+  .clause { background: white; border: 1px solid var(--pearl-dark); border-radius: 10px;
+            padding: 12px 16px; margin-bottom: 10px; }
+  .clause .ref { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--indigo-500);
+                 margin-bottom: 4px; display: flex; justify-content: space-between; gap: 10px; }
+  .clause .hash { color: var(--muted); font-size: 11px; }
+  .clause pre { margin: 0; white-space: pre-wrap; font: 14px/1.55 Georgia, "Times New Roman", serif; }
+  .locked { background: var(--rose-100); border-radius: 10px; padding: 14px 18px; color: var(--rose-600);
+            margin-bottom: 12px; font-size: 14px; }
+  .loadmore { display: block; margin: 14px auto; border: 1px solid var(--indigo-700); color: var(--indigo-700);
+              background: white; border-radius: 999px; padding: 8px 22px; cursor: pointer; font-size: 13px; }
+  .empty { color: var(--muted); text-align: center; padding: 46px 0; }
+  .result { background: white; border: 1px solid var(--pearl-dark); border-radius: 10px;
+            padding: 12px 16px; margin-bottom: 10px; cursor: pointer; }
+  .result .where { font-size: 12.5px; color: var(--muted); margin-bottom: 3px; }
+  .result mark { background: var(--indigo-100); color: var(--indigo-900); border-radius: 3px; padding: 0 2px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+  .tabs button { border: 1px solid var(--pearl-dark); background: white; border-radius: 999px;
+                 padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.active { background: var(--indigo-700); border-color: var(--indigo-700); color: white; }
+  .change { background: white; border: 1px solid var(--pearl-dark); border-left: 4px solid var(--mint-600);
+            border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; font-size: 13.5px; }
+  .change .kind-amended { color: var(--amber-600); font-weight: 700; }
+  .change .kind-added { color: var(--mint-600); font-weight: 700; }
+  .change .refs { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted);
+                  margin-top: 4px; word-break: break-all; }
+  .versions { font-size: 13px; margin-bottom: 14px; }
+  .versions .v { display: inline-block; margin-right: 8px; border: 1px solid var(--pearl-dark);
+                 border-radius: 999px; padding: 3px 12px; cursor: pointer; background: white; }
+  .versions .v.current { border-color: var(--mint-600); color: var(--mint-600); font-weight: 600; }
+  .spin { text-align: center; color: var(--muted); padding: 30px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="home">CLHEAR</h1>
+  <span class="sub">Sources Explorer — verbatim regulatory ground truth</span>
+  <input id="q" placeholder="Search verbatim clause text (e.g. customer due diligence)…" />
+</header>
+<main id="root"></main>
+
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect, useRef } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = (p) => fetch(p).then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
+const PAGE = 400;
+
+function App() {
+  const [view, setView] = useState({ page: "library" });
+  const [families, setFamilies] = useState(null);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => { api("/api/clhear/sources").then(setFamilies).catch(() => setFamilies([])); }, []);
+  useEffect(() => {
+    const input = document.getElementById("q");
+    const handler = (e) => {
+      if (e.key === "Enter" && input.value.trim().length >= 2) {
+        setQuery(input.value.trim());
+        setView({ page: "search" });
+      }
+    };
+    input.addEventListener("keydown", handler);
+    const home = document.getElementById("home");
+    const goHome = () => setView({ page: "library" });
+    home.addEventListener("click", goHome);
+    return () => { input.removeEventListener("keydown", handler); home.removeEventListener("click", goHome); };
+  }, []);
+
+  if (families === null) return html`<div class="spin">Loading corpus…</div>`;
+  if (view.page === "source") return html`<${SourceView} sourceKey=${view.key} back=${() => setView({ page: "library" })} openRef=${view.ref} />`;
+  if (view.page === "search") return html`<${SearchView} q=${query} open=${(key, ref) => setView({ page: "source", key, ref })} back=${() => setView({ page: "library" })} />`;
+  if (view.page === "changes") return html`<${ChangesView} back=${() => setView({ page: "library" })} open=${(key) => setView({ page: "source", key })} />`;
+  return html`<${Library} families=${families} open=${(key) => setView({ page: "source", key })} changes=${() => setView({ page: "changes" })} />`;
+}
+
+function Library({ families, open, changes }) {
+  const ingested = families.flatMap((f) => f.members).filter((m) => m.latest_version);
+  return html`
+    <div>
+      <div class="tabs">
+        <button class="active">Library</button>
+        <button onClick=${changes}>Change events</button>
+      </div>
+      ${families.length === 0 && html`<div class="empty">No sources ingested yet.</div>`}
+      ${families.map((f) => html`
+        <div class="family" key=${f.key}>
+          <h2>${f.name}</h2>
+          ${f.scope_charter && f.scope_charter.binding && html`
+            <div class="charter">charter — binding: ${f.scope_charter.binding}${f.scope_charter.out ? ` · out of scope: ${[].concat(f.scope_charter.out).join(", ")}` : ""}</div>`}
+          <table class="members">
+            <thead><tr><th>source</th><th>relation</th><th>tier</th><th>license</th><th>version</th><th>clauses</th><th>added via</th></tr></thead>
+            <tbody>
+            ${f.members.map((m) => html`
+              <tr key=${m.key}>
+                <td>
+                  <span class=${"srcname" + (m.latest_version ? "" : " stub")}
+                        onClick=${() => m.latest_version && open(m.key)}>${m.name}</span>
+                  <div class="mono">${m.key}</div>
+                </td>
+                <td><span class="badge ${m.relation === "root" ? "root" : "binding"}">${m.relation}</span></td>
+                <td><span class="badge ${m.tier}">${m.tier}</span></td>
+                <td><span class="badge ${m.license}">${m.license}</span></td>
+                <td class="mono">${m.latest_version || "reference-level"}</td>
+                <td class="mono">${m.clauses || ""}</td>
+                <td>${m.added_via === "citator" ? html`<span class="badge citator">citator</span>` : m.added_via}</td>
+              </tr>`)}
+            </tbody>
+          </table>
+        </div>`)}
+      <div class="charter" style=${{ textAlign: "center" }}>
+        ${ingested.length} ingested source${ingested.length === 1 ? "" : "s"} ·
+        every clause traceable to a hashed immutable original (S3 Object Lock)
+      </div>
+    </div>`;
+}
+
+function SourceView({ sourceKey, back, openRef }) {
+  const [detail, setDetail] = useState(null);
+  const [data, setData] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [version, setVersion] = useState(null);
+  const scrolled = useRef(false);
+
+  const loadClauses = (label, offset) =>
+    api(`/api/clhear/sources/${sourceKey}/clauses?limit=${PAGE}&offset=${offset}${label ? `&version_label=${encodeURIComponent(label)}` : ""}`);
+
+  useEffect(() => {
+    setDetail(null); setData(null); setRows([]); scrolled.current = false;
+    api(`/api/clhear/sources/${sourceKey}`).then(setDetail);
+    loadClauses(version, 0).then((d) => { setData(d); setRows(d.clauses); });
+  }, [sourceKey, version]);
+
+  useEffect(() => {
+    if (openRef && rows.length && !scrolled.current) {
+      const el = document.getElementById(`clause-${openRef}`);
+      if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); scrolled.current = true;
+                el.style.outline = "2px solid var(--indigo-500)"; setTimeout(() => (el.style.outline = ""), 2500); }
+    }
+  }, [rows]);
+
+  if (!detail || !data) return html`<div class="spin">Loading ${sourceKey}…</div>`;
+
+  const groups = [];
+  let current = null;
+  for (const c of rows) {
+    if (!current || current.path !== c.path) { current = { path: c.path, clauses: [] }; groups.push(current); }
+    current.clauses.push(c);
+  }
+
+  return html`
+    <div>
+      <div class="crumbs"><a onClick=${back}>Library</a> / ${detail.name}</div>
+      <h2 style=${{ margin: "0 0 2px" }}>${detail.name}</h2>
+      <div class="meta-grid">
+        <span>issuer <b>${detail.issuer}</b></span>
+        <span>jurisdiction <b>${detail.jurisdiction}</b></span>
+        <span>license <span class="badge ${detail.license}">${detail.license}</span> ${detail.license_ref}</span>
+        <span>adapter <b>${detail.adapter}</b></span>
+        <span><a href=${detail.canonical_url} target="_blank" rel="noreferrer">official source ↗</a></span>
+      </div>
+      <div class="versions">
+        ${detail.versions.map((v) => html`
+          <span key=${v.version_label}
+                class=${"v" + (v.version_label === data.version ? " current" : "")}
+                onClick=${() => setVersion(v.version_label)}>
+            ${v.version_label} ${v.status === "in_force" ? "· in force" : `· ${v.status}`}
+          </span>`)}
+      </div>
+      <div class="meta-grid">
+        <span>retrieved <b>${data.retrieved_at}</b></span>
+        <span>sha256 <span class="mono">${(data.content_hash || "").slice(0, 16)}…</span></span>
+        <span>original <span class="mono">${data.s3_uri}</span></span>
+        <span><b>${data.total}</b> clauses</span>
+      </div>
+      ${detail.changes.length > 0 && html`
+        <div class="change">
+          latest change: <span class=${"kind-" + detail.changes[0].kind}>${detail.changes[0].kind}</span>
+          ${detail.changes[0].old_version ? ` ${detail.changes[0].old_version} → ` : " → "}${detail.changes[0].new_version}
+          ${detail.changes[0].clause_refs.length > 0 && html`
+            <div class="refs">${detail.changes[0].clause_refs.length} clause(s): ${detail.changes[0].clause_refs.slice(0, 25).join(", ")}${detail.changes[0].clause_refs.length > 25 ? " …" : ""}</div>`}
+        </div>`}
+      ${data.locked && html`
+        <div class="locked">This source is license-restricted: clause references and integrity hashes are
+        public, verbatim text is not. BYOL unlock arrives in P3.</div>`}
+      ${groups.map((g) => html`
+        <div key=${g.path || "root"}>
+          ${g.path && html`<div class="clausegroup">${g.path}</div>`}
+          ${g.clauses.map((c) => html`
+            <div class="clause" id=${"clause-" + c.ref} key=${c.ref}>
+              <div class="ref"><span>${c.ref}</span><span class="hash">${c.text_hash.slice(0, 12)}</span></div>
+              ${c.text !== null && c.text !== undefined
+                ? html`<pre>${c.text}</pre>`
+                : html`<i style=${{ color: "var(--muted)" }}>text withheld (restricted)</i>`}
+            </div>`)}
+        </div>`)}
+      ${rows.length < data.total && html`
+        <button class="loadmore" onClick=${() =>
+          loadClauses(version, rows.length).then((d) => setRows(rows.concat(d.clauses)))}>
+          Load more (${rows.length} / ${data.total})
+        </button>`}
+    </div>`;
+}
+
+function SearchView({ q, open, back }) {
+  const [results, setResults] = useState(null);
+  useEffect(() => { setResults(null); api(`/api/clhear/search?q=${encodeURIComponent(q)}`).then(setResults); }, [q]);
+  if (results === null) return html`<div class="spin">Searching “${q}”…</div>`;
+  return html`
+    <div>
+      <div class="crumbs"><a onClick=${back}>Library</a> / search</div>
+      <h2>“${q}” — ${results.length} hit${results.length === 1 ? "" : "s"} in public clause text</h2>
+      ${results.length === 0 && html`<div class="empty">No public clause contains “${q}”.</div>`}
+      ${results.map((r, i) => html`
+        <div class="result" key=${i} onClick=${() => open(r.source_key, r.ref)}>
+          <div class="where">${r.source_name} · <span class="mono">${r.ref}</span>${r.path ? ` · ${r.path}` : ""}</div>
+          <div dangerouslySetInnerHTML=${{ __html: highlight(r.snippet, q) }} />
+        </div>`)}
+    </div>`;
+}
+
+function ChangesView({ back, open }) {
+  const [changes, setChanges] = useState(null);
+  useEffect(() => { api("/api/clhear/changes").then(setChanges); }, []);
+  if (changes === null) return html`<div class="spin">Loading changes…</div>`;
+  return html`
+    <div>
+      <div class="crumbs"><a onClick=${back}>Library</a> / change events</div>
+      <h2>Change events</h2>
+      ${changes.length === 0 && html`<div class="empty">No changes detected yet.</div>`}
+      ${changes.map((c) => html`
+        <div class="change" key=${c.id}>
+          <a onClick=${() => open(c.source_key)}>${c.source_name}</a> —
+          <span class=${"kind-" + c.kind}>${c.kind}</span>
+          ${c.old_version ? ` ${c.old_version} → ` : " → "}${c.new_version}
+          <span style=${{ color: "var(--muted)" }}> · detected ${c.detected_at}</span>
+          ${c.clause_refs.length > 0 && html`
+            <div class="refs">${c.clause_refs.length} clause(s): ${c.clause_refs.slice(0, 30).join(", ")}${c.clause_refs.length > 30 ? " …" : ""}</div>`}
+        </div>`)}
+    </div>`;
+}
+
+const esc = (s) => s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+function highlight(snippet, q) {
+  const safe = esc(snippet);
+  return safe.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), (m) => `<mark>${m}</mark>`);
+}
+
+createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
