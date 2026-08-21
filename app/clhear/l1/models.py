@@ -119,6 +119,65 @@ source_versions = sa.Table(
     sa.UniqueConstraint("source_id", "version_label", name="source_versions_source_version_key"),
 )
 
+# Typed raw document-node tree (P1 redesign). One record per structural
+# element in its rawest form; the Explorer reconstructs the original document
+# from these rows. `clauses` is the provision-level projection used by the
+# diff engine, search, and future L2 obligation anchors.
+NODE_TYPES = (
+    "part",
+    "chapter",
+    "group",
+    "provision",
+    "paragraph",
+    "subparagraph",
+    "point",
+    "article",
+    "section",
+    "subsection",
+    "schedule",
+    "control",
+    "enhancement",
+    "statement",
+    "heading",
+    "preamble",
+    "signature",
+)
+
+# Provision-grain types projected into `clauses` (stable refs for diffs / L2).
+CLAUSE_TYPES = frozenset(
+    {"provision", "article", "section", "subsection", "control", "enhancement", "schedule"}
+)
+
+doc_nodes = sa.Table(
+    "doc_nodes",
+    metadata,
+    sa.Column("id", BigId, sa.Identity(), primary_key=True),
+    sa.Column("source_version_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.source_versions.id"), nullable=False),
+    sa.Column("parent_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.doc_nodes.id"), nullable=True),
+    sa.Column("seq", sa.Integer, nullable=False),
+    sa.Column("depth", sa.Integer, nullable=False, default=0),
+    sa.Column(
+        "node_type",
+        sa.Text,
+        sa.CheckConstraint(
+            "node_type in ('" + "','".join(NODE_TYPES) + "')",
+            name="doc_nodes_type_check",
+        ),
+        nullable=False,
+    ),
+    sa.Column("ref", sa.Text, nullable=False, default=""),
+    sa.Column("label", sa.Text, nullable=False, default=""),
+    sa.Column("heading", sa.Text, nullable=False, default=""),
+    sa.Column("raw_text", sa.Text, nullable=False, default=""),
+    sa.Column("source_fragment", sa.Text, nullable=False, default=""),
+    sa.Column("text_hash", sa.Text, nullable=False),
+    sa.Column("public_ok", sa.Boolean, nullable=False, default=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Index("doc_nodes_version_seq_idx", "source_version_id", "seq"),
+    sa.Index("doc_nodes_parent_idx", "parent_id"),
+    sa.Index("doc_nodes_ref_idx", "source_version_id", "ref"),
+)
+
 # ARCH: HLD 6.2 specifies embedding vector(1024) (pgvector on Aurora). Embeddings
 # land with the P2 batch job; until Aurora is wired the column is JSON so the
 # SQLite fallback keeps dev/tests offline. Swap to Vector(1024) with m000N.
@@ -127,6 +186,7 @@ clauses = sa.Table(
     metadata,
     sa.Column("id", BigId, sa.Identity(), primary_key=True),
     sa.Column("source_version_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.source_versions.id"), nullable=False),
+    sa.Column("doc_node_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.doc_nodes.id"), nullable=True),
     sa.Column("ref", sa.Text, nullable=False),
     sa.Column("path", sa.Text, nullable=False, default=""),
     sa.Column("ordering", sa.Integer, nullable=False),
@@ -227,6 +287,7 @@ ALL_TABLES = (
     sources,
     family_members,
     source_versions,
+    doc_nodes,
     clauses,
     citations,
     discovery_candidates,

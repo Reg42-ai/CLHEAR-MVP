@@ -1,13 +1,15 @@
 """NIST spine adapter (HLD §7.3): SP 800-53 rev 5 (OSCAL catalog) and CSF 2.0
 (CPRT export). Public domain — the open canonical infosec text.
 
-Two adapter instances share this module: registry keys `nist_sp800_53` and
-`nist_csf` (sources.adapter is `nist` for both).
+Emits a typed DocNode tree:
+  800-53: group / control / enhancement / statement (raw OSCAL prose, params
+          left as `{{ insert: param, … }}` — no substitution)
+  CSF:    part (function) / group (category) / provision (subcategory)
 """
 import json
 
 from app.clhear.l1 import http
-from app.clhear.l1.adapters.base import Artifact, ClauseNode, FetchResult, SourceMeta
+from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
 
 OSCAL_URL = (
     "https://raw.githubusercontent.com/usnistgov/oscal-content/main/"
@@ -49,48 +51,67 @@ class NistSp80053Adapter:
         if since_version == version_label:
             return None
 
-        tree: list[ClauseNode] = []
-        ordering = 0
+        tree: list[DocNode] = []
         for group in catalog.get("groups", []):
-            group_label = f"{group['id'].upper()} — {group['title']}"
+            controls = []
             for control in group.get("controls", []):
-                ordering += 1
-                tree.append(self._control_node(control, group_label, ordering))
-                for enhancement in control.get("controls", []):
-                    ordering += 1
-                    tree.append(
-                        self._control_node(enhancement, f"{group_label} > {control['id'].upper()}", ordering)
-                    )
+                node = self._control_node(control, "control")
+                node.children.extend(
+                    self._control_node(enh, "enhancement") for enh in control.get("controls", [])
+                )
+                controls.append(node)
+            tree.append(
+                DocNode(
+                    node_type="group",
+                    ref=group["id"],
+                    label=group["id"].upper(),
+                    heading=group.get("title", ""),
+                    source_fragment=json.dumps({"id": group["id"], "title": group.get("title")}, ensure_ascii=False),
+                    children=controls,
+                )
+            )
         return FetchResult(
             version_label=version_label,
             artifacts=[Artifact(name="catalog.json", content=content, content_type="application/json")],
-            clause_tree=tree,
+            tree=tree,
         )
 
-    def _control_node(self, control: dict, path: str, ordering: int) -> ClauseNode:
-        lines = [f"{control['id'].upper()} {control['title']}"]
-        params = {}
-        for p in control.get("params", []):
-            choices = p.get("select", {}).get("choice", [])
-            params[p["id"]] = p.get("label") or "; ".join(
-                c if isinstance(c, str) else c.get("value", "") for c in choices
-            )
+    def _control_node(self, control: dict, node_type: str) -> DocNode:
+        statements = []
         for part in control.get("parts", []):
             if part.get("name") == "statement":
-                lines.extend(self._prose(part, params))
-        return ClauseNode(ref=control["id"], path=path, ordering=ordering, text="\n".join(lines))
+                statements.extend(self._statement_nodes(part, control["id"]))
+        return DocNode(
+            node_type=node_type,
+            ref=control["id"],
+            label=control["id"].upper(),
+            heading=control.get("title", ""),
+            source_fragment=json.dumps(
+                {"id": control["id"], "title": control.get("title"), "parts": control.get("parts", [])},
+                ensure_ascii=False,
+            ),
+            children=statements,
+        )
 
-    def _prose(self, part: dict, params: dict) -> list[str]:
-        lines = []
+    def _statement_nodes(self, part: dict, parent_ref: str) -> list[DocNode]:
         label = next((p["value"] for p in part.get("props", []) if p.get("name") == "label"), "")
-        prose = part.get("prose", "")
-        if prose:
-            for pid, replacement in params.items():
-                prose = prose.replace("{{ insert: param, " + pid + " }}", f"[{replacement}]")
-            lines.append(f"{label} {prose}".strip())
+        prose = part.get("prose") or ""
+        # Nested statement parts (a. / a.1. / …) become child statements.
+        children = []
         for sub in part.get("parts", []):
-            lines.extend(self._prose(sub, params))
-        return lines
+            children.extend(self._statement_nodes(sub, parent_ref))
+        if not prose and not children:
+            return []
+        return [
+            DocNode(
+                node_type="statement",
+                ref=f"{parent_ref}:{label}" if label else "",
+                label=label,
+                raw_text=prose,
+                source_fragment=json.dumps(part, ensure_ascii=False),
+                children=children,
+            )
+        ]
 
 
 class NistCsfAdapter:
@@ -120,44 +141,48 @@ class NistCsfAdapter:
         categories = [e for e in elements if e["element_type"] == "category"]
         subcategories = [e for e in elements if e["element_type"] == "subcategory"]
 
-        tree: list[ClauseNode] = []
-        ordering = 0
+        tree: list[DocNode] = []
         for fn in functions:
             fn_id = fn["element_identifier"]
-            fn_label = f"{fn_id} — {fn.get('title', '')}".strip(" —")
-            ordering += 1
-            tree.append(
-                ClauseNode(
-                    ref=fn_id,
-                    path=fn_label,
-                    ordering=ordering,
-                    text=_text_of(fn),
-                )
-            )
+            cat_nodes = []
             for cat in [c for c in categories if c["element_identifier"].startswith(f"{fn_id}.")]:
                 cat_id = cat["element_identifier"]
-                ordering += 1
-                tree.append(ClauseNode(ref=cat_id, path=fn_label, ordering=ordering, text=_text_of(cat)))
-                for sub in [s for s in subcategories if s["element_identifier"].startswith(f"{cat_id}-")]:
-                    ordering += 1
-                    tree.append(
-                        ClauseNode(
-                            ref=sub["element_identifier"],
-                            path=f"{fn_label} > {cat_id}",
-                            ordering=ordering,
-                            text=_text_of(sub),
-                        )
+                subs = [
+                    DocNode(
+                        node_type="provision",
+                        ref=sub["element_identifier"],
+                        label=sub["element_identifier"],
+                        heading=sub.get("title", "").strip(),
+                        raw_text=sub.get("text", "").strip(),
+                        source_fragment=json.dumps(sub, ensure_ascii=False),
                     )
+                    for sub in subcategories
+                    if sub["element_identifier"].startswith(f"{cat_id}-")
+                ]
+                cat_nodes.append(
+                    DocNode(
+                        node_type="group",
+                        ref=cat_id,
+                        label=cat_id,
+                        heading=cat.get("title", "").strip(),
+                        raw_text=cat.get("text", "").strip(),
+                        source_fragment=json.dumps(cat, ensure_ascii=False),
+                        children=subs,
+                    )
+                )
+            tree.append(
+                DocNode(
+                    node_type="part",
+                    ref=fn_id,
+                    label=fn_id,
+                    heading=fn.get("title", "").strip(),
+                    raw_text=fn.get("text", "").strip(),
+                    source_fragment=json.dumps(fn, ensure_ascii=False),
+                    children=cat_nodes,
+                )
+            )
         return FetchResult(
             version_label=version_label,
             artifacts=[Artifact(name="csf-export.json", content=content, content_type="application/json")],
-            clause_tree=tree,
+            tree=tree,
         )
-
-
-def _text_of(element: dict) -> str:
-    ident = element["element_identifier"]
-    title = element.get("title", "").strip()
-    text = element.get("text", "").strip()
-    head = f"{ident}: {title}" if title else ident
-    return f"{head}\n{text}" if text else head

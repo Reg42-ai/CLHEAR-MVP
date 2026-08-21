@@ -1,13 +1,28 @@
 """Adapter contract (HLD §7.2).
 
-Adapters do retrieval + normalization ONLY. They return the verbatim artifacts
-plus a ClauseTree; the pipeline owns hashing, storage, diffing, and events.
-Never re-generate or "clean up" source text (HLD principle 1) — clause text is
-extracted verbatim from the official artifact.
+Adapters do retrieval + structural parse ONLY. They return the verbatim
+artifacts plus a typed DocNode tree (raw text + source fragments). The
+pipeline owns hashing, storage, clause projection, diffing, and events.
+Never re-generate or "clean up" source text (HLD principle 1).
 """
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Iterator, Protocol, runtime_checkable
+
+from app.clhear.l1.models import CLAUSE_TYPES, NODE_TYPES
+
+__all__ = [
+    "Adapter",
+    "Artifact",
+    "CLAUSE_TYPES",
+    "CitatorAdapter",
+    "DocNode",
+    "EffectRecord",
+    "FetchResult",
+    "NODE_TYPES",
+    "SourceMeta",
+    "flatten",
+]
 
 
 @dataclass(frozen=True)
@@ -27,19 +42,42 @@ class SourceMeta:
 
 
 @dataclass
-class ClauseNode:
-    """One node of the ClauseTree: {ref, path, ordering, text, children[]}."""
+class DocNode:
+    """One typed record of the official document tree.
 
-    ref: str
-    path: str
-    ordering: int
-    text: str
-    children: list["ClauseNode"] = field(default_factory=list)
+    Containers have empty raw_text; leaf text blocks carry the verbatim
+    string (no renderer normalization). source_fragment is the exact
+    XML/HTML/JSON snippet of this node from the official artifact.
+    """
 
-    def walk(self) -> Iterator["ClauseNode"]:
+    node_type: str
+    ref: str = ""
+    label: str = ""
+    heading: str = ""
+    raw_text: str = ""
+    source_fragment: str = ""
+    children: list["DocNode"] = field(default_factory=list)
+
+    def walk(self) -> Iterator["DocNode"]:
         yield self
         for child in self.children:
             yield from child.walk()
+
+    def subtree_text(self) -> str:
+        """Deterministic concatenation of heading + raw_text over the subtree.
+
+        This is the clause-projection text (diff / search / L2 grain).
+        """
+        parts: list[str] = []
+        if self.heading:
+            parts.append(self.heading)
+        if self.raw_text:
+            parts.append(self.raw_text)
+        for child in self.children:
+            child_text = child.subtree_text()
+            if child_text:
+                parts.append(child_text)
+        return "\n".join(parts)
 
 
 @dataclass(frozen=True)
@@ -55,7 +93,7 @@ class Artifact:
 class FetchResult:
     version_label: str
     artifacts: list[Artifact]
-    clause_tree: list[ClauseNode]
+    tree: list[DocNode]
     effective_date: date | None = None
 
 
@@ -87,8 +125,8 @@ class CitatorAdapter(Adapter, Protocol):
     def family_effects(self) -> list[EffectRecord]: ...
 
 
-def flatten(tree: list[ClauseNode]) -> list[ClauseNode]:
-    out: list[ClauseNode] = []
+def flatten(tree: list[DocNode]) -> list[DocNode]:
+    out: list[DocNode] = []
     for node in tree:
         out.extend(node.walk())
     return out

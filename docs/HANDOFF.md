@@ -51,10 +51,13 @@ Still pending from this phase (not blockers for P1):
 
 ## P1 — DONE (2026-08-21), branch `cursor/clhear-p1-l1-verbatim-9acd`
 
-- `l1_sources` migration (m0002) + models; adapter contract
-  (`app/clhear/l1/adapters/base.py`); `pipeline.py` (hash → S3 originals →
-  version+clauses upsert → clause diff by ref → `change_events` +
-  `SourceChanged` in one transaction); `families.py` citator sync.
+- `l1_sources` migration (m0002) + models including **`doc_nodes`** (typed raw
+  document tree: type/ref/label/heading/raw_text/source_fragment/parent/seq)
+  and `clauses` as the provision-level projection (`doc_node_id` FK);
+  adapter contract is now `DocNode` (`app/clhear/l1/adapters/base.py`);
+  `pipeline.py` persists the tree then derives clauses (subtree-text
+  concatenation) → clause diff by ref → `change_events` + `SourceChanged`;
+  `families.py` citator sync.
 - **Adapters shipped ahead of plan** (P2 breadth pulled forward for the live
   UI): `uk_legislation` (CLML + effects-feed citator), `eur_lex` (Cellar
   consolidated XHTML + corrigenda probe), `govinfo_us` (USC HTML + eCFR API,
@@ -67,13 +70,20 @@ Still pending from this phase (not blockers for P1):
   auto-contains the 38 amending instruments incl. `uksi/2019/1511` via citator.
   Plus restricted-discipline tests (text never leaves for `public_ok=false`).
 - **Live UI deployed**: https://wpje8c1y3a.execute-api.us-east-1.amazonaws.com
-  (`/sources` Explorer — library, verbatim clause browsing, search, change
-  events, version pills). Corpus: 4 families, 6 ingested sources, 1938 public
-  clauses; originals in `s3://reg42-clhear-datalake/public-ok/…` (Object Lock).
+  (`/sources` Explorer reconstructs the original document from `doc_nodes` —
+  serif layout, hover badge with ref/hash/amended, click-pinned inspector
+  with record id / sha256 / version / S3 original / change history /
+  permalink; document/inspect toggle). `GET /api/clhear/sources/{key}/document`
+  and `GET /api/clhear/nodes/{id}`. Search and change-event refs deep-link
+  to `#node-<id>`.
   Stack: Lambda (`app/clhear/lambda_web.py`, Mangum) + API Gateway HTTP API
   (`infra/webui.tf`) — a plain Function URL is SCP-blocked in this account.
   # ARCH: swaps to the reg42-os web service + ALB host rule when wired.
   Rebuild/redeploy: `scripts/build_corpus.py` then `scripts/deploy_webui.sh`.
+- Mini-E3 round-trip test: concatenated public `raw_text` of the MLR document
+  matches the official CLML Body+Schedules Text nodes (whitespace-normalized
+  length within 15%; distinctive CDD span present). Restricted discipline
+  covers `raw_text` and `source_fragment` on both `/document` and `/nodes/{id}`.
 - Not in P1: embeddings/semantic search (P2), citation mining + reconciliation
   (P2), E1–E7 evals (P4), restricted importers + BYOL (P3). Search is LIKE-based
   for now (pg_trgm/BGE-M3 when Aurora + P2 land).
@@ -93,8 +103,9 @@ Still pending from this phase (not blockers for P1):
 ## Working rules that bite (HLD §8)
 
 - No LLM call outside `platform/gateway.py`; only watcher triage may call it.
-- Any path that could emit clause text goes through `clauses_public` or a BYOL
-  check — write the tests.
+- Any path that could emit clause text, `raw_text`, or a `source_fragment`
+  goes through `app.clhear.l1.public` (`clauses_public` / `nodes_public`) or
+  a BYOL check — write the tests.
 - Adapters must run green offline against recorded fixtures; never hammer
   official endpoints.
 - Anything ambiguous: smaller change + `# ARCH:` comment. Never invent scope.

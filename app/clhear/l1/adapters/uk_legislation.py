@@ -1,6 +1,9 @@
 """legislation.gov.uk adapter (HLD §7.2 adapter 1): CLML XML for MLRs 2017 +
 the official effects feed as the family citator.
 
+Emits a typed DocNode tree (Part/Chapter/group/provision/paragraph/schedule)
+with raw text and the exact CLML fragment per node — no renderer.
+
 Point-in-time support: legislation.gov.uk serves the consolidated text as of a
 date (/uksi/2017/692/{date}/data.xml), which is how historical amendments are
 replayed through the diff engine (P1 done-test).
@@ -8,17 +11,15 @@ replayed through the diff engine (P1 done-test).
 License: Open Government Licence v3.0 — verbatim reproduction permitted.
 """
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
 
 from app.clhear.l1 import http
-from app.clhear.l1.adapters.base import Artifact, ClauseNode, EffectRecord, FetchResult, SourceMeta
+from app.clhear.l1.adapters.base import Artifact, DocNode, EffectRecord, FetchResult, SourceMeta
 
 BASE = "https://www.legislation.gov.uk"
 CLML = "{http://www.legislation.gov.uk/namespaces/legislation}"
 UKM = "{http://www.legislation.gov.uk/namespaces/metadata}"
 DCT = "{http://purl.org/dc/terms/}"
 DC = "{http://purl.org/dc/elements/1.1/}"
-ATOM = "{http://www.w3.org/2005/Atom}"
 
 MLR_DOC = "uksi/2017/692"
 MLR_NAME = (
@@ -26,63 +27,40 @@ MLR_NAME = (
     "(Information on the Payer) Regulations 2017"
 )
 
-
-def _norm(text: str) -> str:
-    return " ".join(text.split())
-
-
-def _txt(el: ET.Element) -> str:
-    return _norm("".join(el.itertext()))
+# Structural children we recurse into; Number/Title/Pnumber become label/heading.
+_SKIP = frozenset(
+    {"Number", "Title", "TitleBlock", "Pnumber", "Reference", "Metadata", "Commentaries", "ExplanatoryNotes"}
+)
 
 
 def _tag(el: ET.Element) -> str:
     return el.tag.split("}")[-1]
 
 
-@dataclass
-class _Renderer:
-    """CLML block elements -> display lines. Verbatim text; only whitespace and
-    provision-number presentation (`3.`, `(1)`, `(a)`) are normalized."""
-
-    lines: list[str] = field(default_factory=list)
-    pending: str = ""
-
-    def visit(self, el: ET.Element, parent_tag: str = "") -> None:
-        t = _tag(el)
-        if t in ("Title", "TitleBlock"):
-            self._flush()
-            title = _txt(el)
-            if title:
-                self.lines.append(title)
-            return
-        if t == "Pnumber":
-            num = _txt(el)
-            fmt = f"{num}." if parent_tag == "P1" else f"({num})"
-            self.pending = f"{self.pending}\u2014{fmt}" if self.pending else fmt
-            return
-        if t == "Text":
-            text = _txt(el)
-            self.lines.append(f"{self.pending} {text}".strip() if self.pending else text)
-            self.pending = ""
-            return
-        for child in el:
-            self.visit(child, t)
-
-    def _flush(self) -> None:
-        if self.pending:
-            self.lines.append(self.pending)
-            self.pending = ""
-
-    def render(self, el: ET.Element) -> str:
-        self.lines, self.pending = [], ""
-        for child in el:
-            self.visit(child, _tag(el))
-        self._flush()
-        return "\n".join(self.lines)
+def _txt(el: ET.Element | None) -> str:
+    if el is None:
+        return ""
+    return "".join(el.itertext())
 
 
-def _render(el: ET.Element) -> str:
-    return _Renderer().render(el)
+def _child_txt(el: ET.Element, tag: str) -> str:
+    return _txt(el.find(f"{CLML}{tag}"))
+
+
+def _fragment(el: ET.Element) -> str:
+    return ET.tostring(el, encoding="unicode")
+
+
+def _label_for(tag: str, number: str) -> str:
+    """Printed marker. P1 provisions print as '3.'; nested as '(1)'."""
+    number = number.strip()
+    if not number:
+        return ""
+    if tag == "P1":
+        return number if number.endswith(".") else f"{number}."
+    if tag in {"P2", "P3", "P4", "P5"}:
+        return number if number.startswith("(") else f"({number})"
+    return number
 
 
 class UkLegislationAdapter:
@@ -129,68 +107,135 @@ class UkLegislationAdapter:
             doc_el = root.find(f"{CLML}Primary")
         if doc_el is None:
             raise ValueError(f"no Secondary/Primary element in CLML for {self.doc}")
-        tree: list[ClauseNode] = []
-        ordering = 0
 
+        tree: list[DocNode] = []
         body = doc_el.find(f"{CLML}Body")
-        for part in body.findall(f"{CLML}Part") if body is not None else []:
-            part_label = _heading(part)
-            for group in part.findall(f"{CLML}P1group"):
-                for node in self._p1group_nodes(group, part_label):
-                    node.ordering = ordering = ordering + 1
-                    tree.append(node)
-            for chapter in part.findall(f"{CLML}Chapter"):
-                chapter_label = _join_path(part_label, _heading(chapter))
-                for group in chapter.iter(f"{CLML}P1group"):
-                    for node in self._p1group_nodes(group, chapter_label):
-                        node.ordering = ordering = ordering + 1
-                        tree.append(node)
-        # P1groups directly in the body (no Part wrapper), e.g. small SIs.
-        for group in body.findall(f"{CLML}P1group") if body is not None else []:
-            for node in self._p1group_nodes(group, ""):
-                node.ordering = ordering = ordering + 1
-                tree.append(node)
-
+        if body is not None:
+            tree.extend(self._children(body))
         schedules = doc_el.find(f"{CLML}Schedules")
-        for schedule in schedules.findall(f"{CLML}Schedule") if schedules is not None else []:
-            ref = schedule.get("id") or f"schedule-{ordering}"
-            title_block = schedule.find(f"{CLML}TitleBlock")
-            number = schedule.find(f"{CLML}Number")
-            label = _norm(
-                " — ".join(
-                    x
-                    for x in (
-                        _txt(number) if number is not None else "",
-                        _txt(title_block) if title_block is not None else "",
-                    )
-                    if x
-                )
-            )
-            node = ClauseNode(ref=ref, path=label or ref, ordering=(ordering := ordering + 1), text=_render(schedule))
-            tree.append(node)
+        if schedules is not None:
+            tree.extend(self._children(schedules))
+        signed = doc_el.find(f"{CLML}SignedSection")
+        if signed is not None:
+            tree.append(self._node(signed, "signature", ref=signed.get("id") or "signed"))
 
         return FetchResult(
             version_label=version_label,
             artifacts=[Artifact(name="data.xml", content=content, content_type="application/xml")],
-            clause_tree=tree,
+            tree=tree,
         )
 
-    def _p1group_nodes(self, group: ET.Element, part_label: str) -> list[ClauseNode]:
-        title_el = group.find(f"{CLML}Title")
-        title = _txt(title_el) if title_el is not None else ""
-        p1s = group.findall(f"{CLML}P1")
-        if not p1s:
-            # Group without numbered provisions: emit the group itself.
-            ref = group.get("id") or f"group-{title}"
-            return [ClauseNode(ref=ref, path=_join_path(part_label, title), ordering=0, text=_render(group))]
-        nodes = []
-        for p1 in p1s:
-            ref = p1.get("id") or f"{title}-{len(nodes)}"
-            text = _render(p1)
-            if title:
-                text = f"{title}\n{text}"
-            nodes.append(ClauseNode(ref=ref, path=_join_path(part_label, title), ordering=0, text=text))
-        return nodes
+    def _children(self, el: ET.Element) -> list[DocNode]:
+        out: list[DocNode] = []
+        for child in el:
+            tag = _tag(child)
+            if tag in _SKIP:
+                continue
+            node = self._from_element(child)
+            if node is not None:
+                out.append(node)
+        return out
+
+    def _from_element(self, el: ET.Element) -> DocNode | None:
+        tag = _tag(el)
+        if tag == "Part":
+            return self._node(el, "part", ref=el.get("id") or "", label=_child_txt(el, "Number"), heading=_child_txt(el, "Title"))
+        if tag == "Chapter":
+            return self._node(el, "chapter", ref=el.get("id") or "", label=_child_txt(el, "Number"), heading=_child_txt(el, "Title"))
+        if tag == "P1group":
+            return self._node(
+                el, "group", ref=el.get("id") or "", heading=_child_txt(el, "Title")
+            )
+        if tag == "P1":
+            # Body P1s are numbered regulations (clause grain). P1s inside a
+            # Schedule are numbered paragraphs of that schedule — the schedule
+            # container is the clause, so these stay in the tree as paragraphs.
+            el_id = el.get("id") or ""
+            if el_id.startswith("schedule-") or el_id.startswith("sch-"):
+                return self._node(
+                    el,
+                    "paragraph",
+                    ref=el_id,
+                    label=_label_for("P1", _child_txt(el, "Pnumber")),
+                )
+            return self._node(
+                el,
+                "provision",
+                ref=el_id,
+                label=_label_for("P1", _child_txt(el, "Pnumber")),
+            )
+        if tag == "P2":
+            return self._node(
+                el,
+                "paragraph",
+                ref=el.get("id") or "",
+                label=_label_for("P2", _child_txt(el, "Pnumber")),
+            )
+        if tag in {"P3", "P4", "P5"}:
+            kind = "subparagraph" if tag == "P3" else "point"
+            return self._node(
+                el, kind, ref=el.get("id") or "", label=_label_for(tag, _child_txt(el, "Pnumber"))
+            )
+        if tag == "P":
+            return self._node(el, "paragraph", ref=el.get("id") or "")
+        if tag in {"P1para", "P2para", "P3para", "P4para", "P5para", "ScheduleBody"}:
+            # Transparent wrappers: lift children to the parent.
+            kids = self._children(el)
+            if len(kids) == 1 and not kids[0].children and kids[0].node_type == "paragraph":
+                return kids[0]
+            return None  # caller uses _children; we handle wrappers there
+        if tag == "Text":
+            return DocNode(
+                node_type="paragraph",
+                raw_text=_txt(el),
+                source_fragment=_fragment(el),
+            )
+        if tag == "Schedule":
+            number = _child_txt(el, "Number")
+            title = _child_txt(el, "TitleBlock") or _child_txt(el, "Title")
+            return self._node(
+                el,
+                "schedule",
+                ref=el.get("id") or "",
+                label=number,
+                heading=title,
+            )
+        if tag == "Schedules":
+            return None
+        if tag == "SignedSection":
+            return self._node(el, "signature", ref=el.get("id") or "signed")
+        # Unknown block: if it has Text descendants, keep as a paragraph of raw text.
+        text = _txt(el).strip()
+        if text:
+            return DocNode(node_type="paragraph", raw_text=_txt(el), source_fragment=_fragment(el))
+        return None
+
+    def _node(self, el: ET.Element, node_type: str, *, ref: str = "", label: str = "", heading: str = "") -> DocNode:
+        children: list[DocNode] = []
+        raw_parts: list[str] = []
+        for child in el:
+            tag = _tag(child)
+            if tag in _SKIP:
+                continue
+            if tag in {"P1para", "P2para", "P3para", "P4para", "P5para", "ScheduleBody"}:
+                for lifted in self._children(child):
+                    children.append(lifted)
+                continue
+            parsed = self._from_element(child)
+            if parsed is not None:
+                children.append(parsed)
+        # Leaf-ish blocks with no structured children keep their own text.
+        if not children and node_type in {"paragraph", "subparagraph", "point", "signature"}:
+            raw_parts.append(_txt(el))
+        return DocNode(
+            node_type=node_type,
+            ref=ref,
+            label=label,
+            heading=heading,
+            raw_text="".join(raw_parts),
+            source_fragment=_fragment(el),
+            children=children,
+        )
 
     # --- citator (official effects feed) -------------------------------------
     def family_effects(self) -> list[EffectRecord]:
@@ -221,14 +266,3 @@ class UkLegislationAdapter:
                 break
             page += 1
         return sorted(seen.values(), key=lambda e: e.affecting_key)
-
-
-def _join_path(*parts: str) -> str:
-    return " > ".join(p for p in parts if p)
-
-
-def _heading(el: ET.Element) -> str:
-    number = el.find(f"{CLML}Number")
-    title = el.find(f"{CLML}Title")
-    parts = [_txt(x) for x in (number, title) if x is not None]
-    return _norm(" — ".join(p for p in parts if p))

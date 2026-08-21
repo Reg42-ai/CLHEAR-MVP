@@ -11,8 +11,16 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from app.clhear.db import get_engine
-from app.clhear.l1.models import change_events, clauses, family_members, source_families, source_versions, sources
-from app.clhear.l1.public import clause_refs_select, clauses_public_select
+from app.clhear.l1.models import (
+    change_events,
+    clauses,
+    doc_nodes,
+    family_members,
+    source_families,
+    source_versions,
+    sources,
+)
+from app.clhear.l1.public import clause_refs_select, clauses_public_select, nodes_public_select, nodes_refs_select
 
 router = APIRouter()
 
@@ -96,6 +104,128 @@ def list_sources() -> list[dict]:
     return out
 
 
+def _resolve_version(conn, source, version_label: str | None):
+    version_q = sa.select(source_versions).where(source_versions.c.source_id == source.id)
+    if version_label:
+        version_q = version_q.where(source_versions.c.version_label == version_label)
+    else:
+        version_q = version_q.where(source_versions.c.status == "in_force")
+    return conn.execute(version_q.order_by(source_versions.c.id.desc()).limit(1)).first()
+
+
+@router.get("/api/clhear/sources/{key:path}/document")
+def source_document(key: str, version_label: str | None = None) -> dict:
+    """Ordered node list for reconstructing the original document view."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        source = conn.execute(sa.select(sources).where(sources.c.key == key)).first()
+        if source is None:
+            raise HTTPException(status_code=404, detail="source not found")
+        version = _resolve_version(conn, source, version_label)
+        if version is None:
+            return {"source": key, "version": None, "nodes": [], "amended_refs": [], "total": 0}
+
+        locked = source.license != "open"
+        base = nodes_refs_select() if locked else nodes_public_select()
+        rows = conn.execute(
+            base.where(doc_nodes.c.source_version_id == version.id).order_by(doc_nodes.c.seq)
+        ).all()
+        latest_change = conn.execute(
+            sa.select(change_events)
+            .where(change_events.c.source_id == source.id)
+            .order_by(change_events.c.id.desc())
+            .limit(1)
+        ).first()
+        amended = []
+        if latest_change is not None and latest_change.kind == "amended":
+            amended = latest_change.clause_refs if isinstance(latest_change.clause_refs, list) else []
+
+    return {
+        "source": key,
+        "version": version.version_label,
+        "retrieved_at": str(version.retrieved_at),
+        "s3_uri": version.s3_uri,
+        "content_hash": version.content_hash,
+        "locked": locked,
+        "amended_refs": amended,
+        "total": len(rows),
+        "nodes": [
+            {
+                "id": row.id,
+                "parent_id": row.parent_id,
+                "seq": row.seq,
+                "depth": row.depth,
+                "node_type": row.node_type,
+                "ref": row.ref,
+                "label": row.label,
+                "heading": row.heading,
+                "raw_text": getattr(row, "raw_text", None),
+                "text_hash": row.text_hash,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/api/clhear/nodes/{node_id}")
+def node_inspector(node_id: int) -> dict:
+    """Intelligence payload for the hover/click inspector."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        node = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.id == node_id)).first()
+        if node is None:
+            raise HTTPException(status_code=404, detail="node not found")
+        version = conn.execute(
+            sa.select(source_versions).where(source_versions.c.id == node.source_version_id)
+        ).one()
+        source = conn.execute(sa.select(sources).where(sources.c.id == version.source_id)).one()
+        public = bool(node.public_ok)
+        ancestors = []
+        parent_id = node.parent_id
+        while parent_id is not None:
+            parent = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.id == parent_id)).first()
+            if parent is None:
+                break
+            ancestors.append(
+                {"id": parent.id, "node_type": parent.node_type, "ref": parent.ref, "label": parent.label, "heading": parent.heading}
+            )
+            parent_id = parent.parent_id
+        ancestors.reverse()
+        changes = []
+        if node.ref:
+            for change in conn.execute(
+                sa.select(change_events)
+                .where(change_events.c.source_id == source.id)
+                .order_by(change_events.c.id.desc())
+            ):
+                refs = change.clause_refs if isinstance(change.clause_refs, list) else []
+                if node.ref in refs:
+                    changes.append(_change_dict(change))
+    return {
+        "id": node.id,
+        "node_type": node.node_type,
+        "ref": node.ref,
+        "label": node.label,
+        "heading": node.heading,
+        "raw_text": node.raw_text if public else None,
+        "source_fragment": node.source_fragment if public else None,
+        "text_hash": node.text_hash,
+        "public_ok": public,
+        "seq": node.seq,
+        "depth": node.depth,
+        "source_key": source.key,
+        "source_name": source.name,
+        "license": source.license,
+        "version_label": version.version_label,
+        "retrieved_at": str(version.retrieved_at),
+        "s3_uri": version.s3_uri,
+        "content_hash": version.content_hash,
+        "permalink": f"/sources?source={source.key}&node={node.id}",
+        "ancestors": ancestors,
+        "changes": changes,
+    }
+
+
 @router.get("/api/clhear/sources/{key:path}/clauses")
 def source_clauses(
     key: str,
@@ -108,12 +238,7 @@ def source_clauses(
         source = conn.execute(sa.select(sources).where(sources.c.key == key)).first()
         if source is None:
             raise HTTPException(status_code=404, detail="source not found")
-        version_q = sa.select(source_versions).where(source_versions.c.source_id == source.id)
-        if version_label:
-            version_q = version_q.where(source_versions.c.version_label == version_label)
-        else:
-            version_q = version_q.where(source_versions.c.status == "in_force")
-        version = conn.execute(version_q.order_by(source_versions.c.id.desc()).limit(1)).first()
+        version = _resolve_version(conn, source, version_label)
         if version is None:
             return {"source": key, "version": None, "clauses": [], "total": 0}
 
@@ -138,6 +263,8 @@ def source_clauses(
         "total": total,
         "clauses": [
             {
+                "id": row.id,
+                "doc_node_id": row.doc_node_id,
                 "ref": row.ref,
                 "path": row.path,
                 "ordering": row.ordering,
@@ -216,6 +343,7 @@ def search_clauses(q: str = Query(min_length=2), limit: int = Query(default=50, 
                 public.c.ref,
                 public.c.path,
                 public.c.text,
+                public.c.doc_node_id,
                 sources.c.key.label("source_key"),
                 sources.c.name.label("source_name"),
                 source_versions.c.version_label,
@@ -237,6 +365,7 @@ def search_clauses(q: str = Query(min_length=2), limit: int = Query(default=50, 
             {
                 "ref": row.ref,
                 "path": row.path,
+                "doc_node_id": row.doc_node_id,
                 "source_key": row.source_key,
                 "source_name": row.source_name,
                 "version": row.version_label,

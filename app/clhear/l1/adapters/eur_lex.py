@@ -1,20 +1,19 @@
 """EUR-Lex / Cellar adapter (HLD §7.2 adapter 2): GDPR (CELEX 32016R0679).
 
-Fetches the consolidated English text from the Publications Office Cellar
-(application/xhtml+xml) and parses the article tree. Family relations:
-corrigenda discovered by probing CELEX corrigendum identifiers against Cellar
-(the full RDF relations notice is ~60MB — deliberately avoided; # ARCH: switch
-to the Cellar work-tree notice when EUR-Lex relations are needed at scale).
+Emits a typed DocNode tree (chapter / article / paragraph / preamble) with
+raw text and the exact XHTML fragment per node. Family relations: corrigenda
+probed as CELEX identifiers (the full RDF relations notice is ~60MB —
+# ARCH: switch to the Cellar work-tree notice when relations are needed at scale).
 
 License: EUR-Lex legal notice permits reuse of legal texts (Commission
 Decision 2011/833/EU) — verbatim reproduction with source acknowledgement.
 """
 import re
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from app.clhear.l1 import http
-from app.clhear.l1.adapters.base import Artifact, ClauseNode, EffectRecord, FetchResult, SourceMeta
+from app.clhear.l1.adapters.base import Artifact, DocNode, EffectRecord, FetchResult, SourceMeta
 
 CELLAR = "http://publications.europa.eu/resource/celex"
 GDPR_CELEX = "32016R0679"
@@ -44,7 +43,7 @@ class EurLexAdapter:
             jurisdiction="EU",
             license="open",
             license_ref="Commission Decision 2011/833/EU",
-            canonical_url=f"https://eur-lex.europa.eu/eli/reg/2016/679/oj",
+            canonical_url="https://eur-lex.europa.eu/eli/reg/2016/679/oj",
             adapter=self.key,
             scope_charter={
                 "binding": "regulation + corrigenda (CELEX relations)",
@@ -60,47 +59,65 @@ class EurLexAdapter:
         content = http.get(f"{CELLAR}/{self.consolidated}", headers=_HEADERS)
         soup = BeautifulSoup(content, "html.parser")
 
-        tree: list[ClauseNode] = []
-        ordering = 0
-        chapter_label = ""
-        # CONVEX output: chapter divs (id=cpt_*) contain article divs (id=art_N).
-        # Article number: p.title-article-norm; subtitle: p.stitle-article-norm;
-        # paragraph blocks: DIRECT-child div.norm (nested .norm.inline-element
-        # duplicates the text, hence recursive=False).
+        tree: list[DocNode] = []
+        current_chapter: DocNode | None = None
+
+        # CONVEX output: chapter divs (id=cpt_*) contain article divs (id=art_N)
+        # as descendants. Articles also appear in document-order find_all.
         for div in soup.find_all("div", id=True):
-            div_id = div["id"]
+            if not isinstance(div, Tag):
+                continue
+            div_id = str(div.get("id", ""))
             if re.fullmatch(r"cpt_[IVXLC]+", div_id):
                 num = div.find("p", class_="title-division-1")
                 heading = div.find("p", class_="title-division-2")
-                parts = [t.get_text(" ", strip=True) for t in (num, heading) if t is not None]
-                chapter_label = _norm(" — ".join(parts)) or div_id
+                current_chapter = DocNode(
+                    node_type="chapter",
+                    ref=div_id,
+                    label=_raw(num) if num else "",
+                    heading=_raw(heading) if heading else "",
+                    source_fragment=str(div),
+                )
+                tree.append(current_chapter)
                 continue
             if not re.fullmatch(r"art_\d+", div_id):
                 continue
             number_el = div.find("p", class_="title-article-norm")
             subtitle_el = div.find("p", class_="stitle-article-norm")
-            number = _norm(number_el.get_text(" ", strip=True)) if number_el else f"Article {div_id.split('_')[1]}"
-            lines = [number]
-            if subtitle_el is not None:
-                lines.append(_norm(subtitle_el.get_text(" ", strip=True)))
+            paragraphs = []
             for block in div.find_all("div", class_="norm", recursive=False):
-                text = _norm(block.get_text(" ", strip=True))
-                if text:
-                    lines.append(text)
-            ordering += 1
-            tree.append(
-                ClauseNode(
-                    ref=div_id,
-                    path=_join(chapter_label, number),
-                    ordering=ordering,
-                    text="\n".join(lines),
+                if not isinstance(block, Tag):
+                    continue
+                text = _raw(block)
+                if not text:
+                    continue
+                match = re.match(r"^(\d+)\.\s*", text)
+                paragraphs.append(
+                    DocNode(
+                        node_type="paragraph",
+                        ref=f"{div_id}.{match.group(1)}" if match else "",
+                        label=f"{match.group(1)}." if match else "",
+                        raw_text=text,
+                        source_fragment=str(block),
+                    )
                 )
+            article = DocNode(
+                node_type="article",
+                ref=div_id,
+                label=_raw(number_el) if number_el else f"Article {div_id.split('_')[1]}",
+                heading=_raw(subtitle_el) if subtitle_el else "",
+                source_fragment=str(div),
+                children=paragraphs,
             )
+            if current_chapter is not None:
+                current_chapter.children.append(article)
+            else:
+                tree.append(article)
 
         return FetchResult(
             version_label=version_label,
             artifacts=[Artifact(name="consolidated.xhtml", content=content, content_type="application/xhtml+xml")],
-            clause_tree=tree,
+            tree=tree,
         )
 
     def family_effects(self) -> list[EffectRecord]:
@@ -129,9 +146,6 @@ class EurLexAdapter:
         return records
 
 
-def _norm(text: str) -> str:
-    return " ".join(text.split())
-
-
-def _join(*parts: str) -> str:
-    return " > ".join(p for p in parts if p)
+def _raw(el) -> str:
+    """Element text with source whitespace preserved (only ends stripped)."""
+    return "".join(el.strings).strip() if el is not None else ""

@@ -1,10 +1,11 @@
 """L1 ingestion pipeline (HLD §7.2).
 
 For each adapter run: store verbatim artifacts (datalake, public-ok/ or
-restricted/ by license) -> upsert version + clauses -> clause-level diff vs the
-previous version (aligned by ref) -> change_events row + outbox SourceChanged
-in the SAME transaction -> run ledger entry. Deterministic end to end: no LLM
-anywhere in this module (HLD principle 2).
+restricted/ by license) -> persist the typed DocNode tree -> derive the
+provision-level `clauses` projection (subtree-text concatenation, aligned
+by ref) -> clause-level diff vs the previous version -> change_events row +
+outbox SourceChanged in the SAME transaction -> run ledger entry.
+Deterministic end to end: no LLM anywhere in this module (HLD principle 2).
 """
 import hashlib
 import json
@@ -16,8 +17,16 @@ from typing import Protocol
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection, Engine
 
-from app.clhear.l1.adapters.base import Adapter, ClauseNode, SourceMeta, flatten
-from app.clhear.l1.models import change_events, clauses, family_members, source_families, source_versions, sources
+from app.clhear.l1.adapters.base import CLAUSE_TYPES, Adapter, DocNode, SourceMeta
+from app.clhear.l1.models import (
+    change_events,
+    clauses,
+    doc_nodes,
+    family_members,
+    source_families,
+    source_versions,
+    sources,
+)
 from app.clhear.models import runs
 from app.clhear.platform import events as l0_events
 
@@ -125,6 +134,64 @@ def diff_clauses(old: dict[str, str], new: dict[str, str]) -> dict[str, list[str
     return {"added": added, "removed": removed, "amended": amended}
 
 
+def persist_tree(
+    conn: Connection,
+    version_id: int,
+    tree: list[DocNode],
+    public_ok: bool,
+) -> list[dict]:
+    """Insert the DocNode tree; return clause-projection rows (not yet inserted)."""
+    seq = 0
+    clause_rows: list[dict] = []
+
+    def visit(node: DocNode, parent_id: int | None, depth: int, path_parts: list[str]) -> None:
+        nonlocal seq
+        seq += 1
+        payload = "\n".join([node.node_type, node.ref, node.label, node.heading, node.raw_text]).encode()
+        node_id = conn.execute(
+            doc_nodes.insert()
+            .values(
+                source_version_id=version_id,
+                parent_id=parent_id,
+                seq=seq,
+                depth=depth,
+                node_type=node.node_type,
+                ref=node.ref,
+                label=node.label,
+                heading=node.heading,
+                raw_text=node.raw_text,
+                source_fragment=node.source_fragment,
+                text_hash=sha256(payload),
+                public_ok=public_ok,
+            )
+            .returning(doc_nodes.c.id)
+        ).scalar_one()
+
+        crumb = node.heading or node.label or node.ref
+        child_path = path_parts + ([crumb] if crumb and node.node_type in {"part", "chapter", "group", "schedule"} else [])
+        for child in node.children:
+            visit(child, node_id, depth + 1, child_path)
+
+        if node.node_type in CLAUSE_TYPES and node.ref:
+            clause_text = node.subtree_text()
+            clause_rows.append(
+                {
+                    "source_version_id": version_id,
+                    "doc_node_id": node_id,
+                    "ref": node.ref,
+                    "path": " > ".join(p for p in path_parts if p),
+                    "ordering": seq,
+                    "text": clause_text,
+                    "text_hash": sha256(clause_text.encode()),
+                    "public_ok": public_ok,
+                }
+            )
+
+    for root in tree:
+        visit(root, None, 0, [])
+    return clause_rows
+
+
 def ingest(engine: Engine, adapter: Adapter, store: ArtifactStore, *, trigger: str = "manual") -> dict:
     """Run one adapter through the full pipeline. Returns a run summary."""
     started = time.monotonic()
@@ -152,7 +219,6 @@ def ingest(engine: Engine, adapter: Adapter, store: ArtifactStore, *, trigger: s
         key = f"{prefix}/{meta.source_key}/{result.version_label}/{artifact.name}"
         artifact_uris.append(store.put(key, artifact.content, artifact.content_type))
 
-    nodes = flatten(result.clause_tree)
     public_ok = meta.license == "open"
 
     with engine.begin() as conn:
@@ -174,25 +240,12 @@ def ingest(engine: Engine, adapter: Adapter, store: ArtifactStore, *, trigger: s
             )
             .returning(source_versions.c.id)
         ).scalar_one()
-        new_map: dict[str, str] = {}
-        clause_rows = []
-        for node in nodes:
-            text_hash = sha256(node.text.encode())
-            new_map[node.ref] = text_hash
-            clause_rows.append(
-                {
-                    "source_version_id": version_id,
-                    "ref": node.ref,
-                    "path": node.path,
-                    "ordering": node.ordering,
-                    "text": node.text,
-                    "text_hash": text_hash,
-                    "public_ok": public_ok,
-                }
-            )
+
+        clause_rows = persist_tree(conn, version_id, result.tree, public_ok)
         if clause_rows:
             conn.execute(clauses.insert(), clause_rows)
 
+        new_map = {row["ref"]: row["text_hash"] for row in clause_rows}
         old_map = _clause_map(conn, previous.id) if previous is not None else {}
         diff = diff_clauses(old_map, new_map)
         changed_refs = diff["added"] + diff["removed"] + diff["amended"]
@@ -239,17 +292,26 @@ def ingest(engine: Engine, adapter: Adapter, store: ArtifactStore, *, trigger: s
             producer=f"l1.pipeline.{meta.adapter}",
         )
 
+    node_count = sum(1 for n in result.tree for _ in n.walk())
     summary = {
         "source": meta.source_key,
         "status": change_kind,
         "version": result.version_label,
-        "clauses": len(nodes),
+        "nodes": node_count,
+        "clauses": len(clause_rows),
         "diff": diff,
         "artifacts": artifact_uris,
         "content_hash": content_hash,
     }
     _record_run(engine, meta, trigger, summary, started)
-    log.info("ingested %s %s: %d clauses (%s)", meta.source_key, result.version_label, len(nodes), change_kind)
+    log.info(
+        "ingested %s %s: %d nodes / %d clauses (%s)",
+        meta.source_key,
+        result.version_label,
+        node_count,
+        len(clause_rows),
+        change_kind,
+    )
     return summary
 
 
@@ -264,19 +326,3 @@ def _record_run(engine: Engine, meta: SourceMeta, trigger: str, summary: dict, s
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
         )
-
-
-def build_tree(items: list[dict]) -> list[ClauseNode]:
-    """Helper for adapters: nested dicts -> ClauseNode tree (used by fixtures)."""
-
-    def node(item: dict, ordering: int) -> ClauseNode:
-        children = [node(c, i) for i, c in enumerate(item.get("children", []))]
-        return ClauseNode(
-            ref=item["ref"],
-            path=item.get("path", ""),
-            ordering=item.get("ordering", ordering),
-            text=item.get("text", ""),
-            children=children,
-        )
-
-    return [node(item, i) for i, item in enumerate(items)]
