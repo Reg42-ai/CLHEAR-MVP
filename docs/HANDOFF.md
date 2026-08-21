@@ -49,17 +49,41 @@ Still pending from this phase (not blockers for P1):
   `existing_vpc_id`, `existing_private_subnet_ids`,
   `existing_alb_listener_arn` are set (reg42-infra values).
 
-## Next: P1–P4 (one PR per phase, HLD §9)
+## P1 — DONE (2026-08-21), branch `cursor/clhear-p1-l1-verbatim-9acd`
 
-- **P1** — `l1_sources` migration (m0002), adapter contract
-  (`app/clhear/l1/adapters/base.py`), fixture adapter, `uk_legislation` (CLML API
-  + effects-feed citator sync), `pipeline.py` (hash/version/diff/upsert →
-  `change_events` + `SourceChanged`). Done-test: MLRs 2017 fully ingested;
-  replayed historical amendment yields correct clause-diff; family auto-contains
-  amending SIs.
-- **P2** — `eur_lex`, `govinfo_us`, NIST spine; `families.py` citation mining +
-  reconciliation; `embeddings.py` (BGE-M3, CPU). Done-test: E2 100% on GDPR;
-  semantic search returns MLR reg 27–28 for "customer due diligence".
+- `l1_sources` migration (m0002) + models; adapter contract
+  (`app/clhear/l1/adapters/base.py`); `pipeline.py` (hash → S3 originals →
+  version+clauses upsert → clause diff by ref → `change_events` +
+  `SourceChanged` in one transaction); `families.py` citator sync.
+- **Adapters shipped ahead of plan** (P2 breadth pulled forward for the live
+  UI): `uk_legislation` (CLML + effects-feed citator), `eur_lex` (Cellar
+  consolidated XHTML + corrigenda probe), `govinfo_us` (USC HTML + eCFR API,
+  FATCA statute+regs), `nist` (OSCAL 800-53 r5.2, CSF 2.0 CPRT export).
+  All run green OFFLINE against recorded fixtures (`tests/fixtures/http`,
+  `CLHEAR_HTTP_MODE=replay|record|live` in `l1/http.py`).
+- **Done-test passed** (`tests/test_l1_pipeline.py`): MLRs fully ingested
+  (159 clauses); historical replay (point-in-time 2020-01-09 → current) yields
+  correct clause-diff (`regulation-3` et al amended) + `SourceChanged`; family
+  auto-contains the 38 amending instruments incl. `uksi/2019/1511` via citator.
+  Plus restricted-discipline tests (text never leaves for `public_ok=false`).
+- **Live UI deployed**: https://wpje8c1y3a.execute-api.us-east-1.amazonaws.com
+  (`/sources` Explorer — library, verbatim clause browsing, search, change
+  events, version pills). Corpus: 4 families, 6 ingested sources, 1938 public
+  clauses; originals in `s3://reg42-clhear-datalake/public-ok/…` (Object Lock).
+  Stack: Lambda (`app/clhear/lambda_web.py`, Mangum) + API Gateway HTTP API
+  (`infra/webui.tf`) — a plain Function URL is SCP-blocked in this account.
+  # ARCH: swaps to the reg42-os web service + ALB host rule when wired.
+  Rebuild/redeploy: `scripts/build_corpus.py` then `scripts/deploy_webui.sh`.
+- Not in P1: embeddings/semantic search (P2), citation mining + reconciliation
+  (P2), E1–E7 evals (P4), restricted importers + BYOL (P3). Search is LIKE-based
+  for now (pg_trgm/BGE-M3 when Aurora + P2 land).
+
+## Next: P2–P4 (one PR per phase, HLD §9)
+
+- **P2** — `families.py` citation mining + reconciliation; `embeddings.py`
+  (BGE-M3, CPU). Adapters for eur_lex/govinfo/NIST already landed in P1.
+  Done-test: E2 100% on GDPR; semantic search returns MLR reg 27–28 for
+  "customer due diligence"; citations table populated with 0 unexplained on MLRs.
 - **P3** — `restricted_file` importer + BYOL flow; `irs_gov` watcher/fetcher with
   Docling; `guard.py`. Done-test: restricted discipline + BYOL unlock + guard
   blocks paraphrased ISO text.

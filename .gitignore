@@ -9,4 +9,5 @@ clhear-public/
 *.tfstate
 *.tfstate.backup
 tfplan
+deploy/
 .env
