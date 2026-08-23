@@ -104,6 +104,7 @@ class UkLegislationAdapter:
                 "guidance": "JMLSG (later)",
                 "out": ["FCA speeches", "consultations"],
             },
+            short_name="UK AML Regulations (MLRs 2017)",
             about=(
                 "The UK's principal anti-money-laundering and counter-terrorist-financing "
                 "regulation (SI 2017/692), implementing the EU's Fourth and Fifth Money "

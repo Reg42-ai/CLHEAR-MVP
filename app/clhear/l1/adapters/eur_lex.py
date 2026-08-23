@@ -99,6 +99,7 @@ class EurLexAdapter:
                 "guidance": "EDPB guidelines (watcher, later)",
                 "out": ["national DPA guidance"],
             },
+            short_name="GDPR",
             about=(
                 "The EU General Data Protection Regulation, the union-wide framework for "
                 "processing personal data. It binds controllers and processors established in "

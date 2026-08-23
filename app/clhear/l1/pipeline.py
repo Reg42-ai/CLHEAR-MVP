@@ -155,6 +155,7 @@ def ensure_source(conn: Connection, meta: SourceMeta) -> tuple[int, int]:
                 license_ref=meta.license_ref,
                 adapter=meta.adapter,
                 canonical_url=meta.canonical_url,
+                short_name=meta.short_name,
                 about=meta.about,
                 topics=meta.topics,
             )
@@ -173,7 +174,9 @@ def ensure_source(conn: Connection, meta: SourceMeta) -> tuple[int, int]:
     else:
         # Curated context is authored in code; keep the row in sync.
         conn.execute(
-            sources.update().where(sources.c.id == source_id).values(about=meta.about, topics=meta.topics)
+            sources.update()
+            .where(sources.c.id == source_id)
+            .values(short_name=meta.short_name, about=meta.about, topics=meta.topics)
         )
     return family_id, source_id
 
@@ -473,6 +476,9 @@ def _persist(
         clause_rows = persist_tree(conn, version_id, tree, public_ok)
         if clause_rows:
             conn.execute(clauses.insert(), clause_rows)
+        from app.clhear.l1 import annotate as l1_annotate
+
+        annotation_count = l1_annotate.heuristics_for_version(conn, version_id, list(meta.topics))
 
         new_map = {row["ref"]: row["text_hash"] for row in clause_rows}
         old_map = _clause_map(conn, previous.id) if previous is not None else {}
@@ -558,6 +564,7 @@ def _persist(
 
     node_count = sum(1 for n in tree for _ in n.walk())
     recorder.stage("persist", version=result.version_label, nodes=node_count, clauses=len(clause_rows))
+    recorder.stage("annotate", annotations=annotation_count)
     recorder.stage(
         "diff",
         old_version=previous.version_label if previous else None,

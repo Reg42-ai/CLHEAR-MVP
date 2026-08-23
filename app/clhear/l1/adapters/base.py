@@ -40,6 +40,7 @@ class SourceMeta:
     license_ref: str = ""
     scope_charter: dict = field(default_factory=dict)
     # Curated semantic context (deterministic; reviewed with the code).
+    short_name: str = ""  # everyday handle: "GDPR", "UK AML Regulations"
     about: str = ""
     topics: list[str] = field(default_factory=list)
     # Declared version-ingestion policy, e.g. "as_published+consolidated",

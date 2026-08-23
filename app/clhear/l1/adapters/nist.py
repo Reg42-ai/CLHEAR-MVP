@@ -41,6 +41,7 @@ class NistSp80053Adapter:
             canonical_url="https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final",
             adapter="nist",
             scope_charter={"binding": "full text (public domain)"},
+            short_name="NIST 800-53",
             about=(
                 "NIST's catalog of security and privacy controls for information systems and "
                 "organizations — the canonical public-domain control set (AC, AU, IR, SC …) "
@@ -168,6 +169,7 @@ class NistCsfAdapter:
             canonical_url="https://www.nist.gov/cyberframework",
             adapter="nist",
             scope_charter={"binding": "full text (public domain)"},
+            short_name="NIST CSF 2.0",
             about=(
                 "The NIST Cybersecurity Framework 2.0: a voluntary, outcome-based taxonomy of "
                 "cybersecurity risk management organized into six functions (Govern, Identify, "

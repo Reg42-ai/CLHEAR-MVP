@@ -15,6 +15,7 @@ import json
 from app.clhear.db import get_engine
 from app.clhear.l1.models import (
     change_events,
+    clause_annotations,
     clauses,
     doc_nodes,
     family_members,
@@ -50,6 +51,7 @@ def list_sources() -> list[dict]:
                 sources.c.license,
                 sources.c.canonical_url,
                 sources.c.adapter,
+                sources.c.short_name,
                 sources.c.about,
                 sources.c.topics,
             ).join(sources, sources.c.id == family_members.c.source_id)
@@ -87,6 +89,7 @@ def list_sources() -> list[dict]:
                 {
                     "key": m.key,
                     "name": m.name,
+                    "short_name": m.short_name,
                     "kind": m.kind,
                     "license": m.license,
                     "relation": m.relation,
@@ -141,6 +144,30 @@ def source_document(key: str, version_label: str | None = None) -> dict:
         rows = conn.execute(
             base.where(doc_nodes.c.source_version_id == version.id).order_by(doc_nodes.c.seq)
         ).all()
+        # Clause understanding layer: annotations keyed by doc_node_id
+        # (llm explainer preferred, heuristic classification as fallback).
+        annotations: dict[int, dict] = {}
+        for row in conn.execute(
+            sa.select(
+                clauses.c.doc_node_id,
+                clause_annotations.c.origin,
+                clause_annotations.c.summary,
+                clause_annotations.c.category,
+                clause_annotations.c.topics,
+            )
+            .join(clause_annotations, clause_annotations.c.clause_id == clauses.c.id)
+            .where(clauses.c.source_version_id == version.id)
+            .order_by(clause_annotations.c.origin)  # 'heuristic' < 'llm': llm overwrites
+        ):
+            if row.doc_node_id is None:
+                continue
+            existing = annotations.get(row.doc_node_id, {})
+            annotations[row.doc_node_id] = {
+                "origin": row.origin,
+                "summary": row.summary or existing.get("summary", ""),
+                "category": row.category or existing.get("category", ""),
+                "topics": row.topics if isinstance(row.topics, list) else json.loads(row.topics or "[]"),
+            }
         latest_change = conn.execute(
             sa.select(change_events)
             .where(change_events.c.source_id == source.id)
@@ -170,6 +197,7 @@ def source_document(key: str, version_label: str | None = None) -> dict:
         "locked": locked,
         "amended_refs": amended,
         "total": len(rows),
+        "short_name": source.short_name,
         "nodes": [
             {
                 "id": row.id,
@@ -182,6 +210,7 @@ def source_document(key: str, version_label: str | None = None) -> dict:
                 "heading": row.heading,
                 "raw_text": getattr(row, "raw_text", None),
                 "text_hash": row.text_hash,
+                "annotation": annotations.get(row.id),
             }
             for row in rows
         ],
@@ -346,6 +375,7 @@ def source_detail(key: str) -> dict:
     return {
         "key": source.key,
         "name": source.name,
+        "short_name": source.short_name,
         "kind": source.kind,
         "issuer": source.issuer,
         "jurisdiction": source.jurisdiction,
@@ -377,13 +407,15 @@ def source_detail(key: str) -> dict:
 
 @router.get("/api/clhear/meta")
 def meta() -> dict:
-    """UI-facing constants: the version-kind dictionary + gate thresholds."""
-    from app.clhear.l1.models import VERSION_KINDS
+    """UI-facing constants: version-kind + pipeline-stage dictionaries + gates."""
+    from app.clhear.l1.models import ANNOTATION_CATEGORIES, STAGE_INFO, VERSION_KINDS
     from app.clhear.settings import get_settings
 
     settings = get_settings()
     return {
         "version_kinds": VERSION_KINDS,
+        "stages": STAGE_INFO,
+        "annotation_categories": list(ANNOTATION_CATEGORIES),
         "fidelity_threshold": settings.clhear_fidelity_threshold,
         "salvage_cap": settings.clhear_salvage_cap,
     }
@@ -403,30 +435,47 @@ def recent_changes(limit: int = Query(default=50, le=200)) -> list[dict]:
 
 
 @router.get("/api/clhear/search")
-def search_clauses(q: str = Query(min_length=2), limit: int = Query(default=50, le=100)) -> list[dict]:
+def search_clauses(
+    q: str = Query(min_length=2),
+    category: str | None = None,
+    topic: str | None = None,
+    limit: int = Query(default=50, le=100),
+) -> list[dict]:
     """Full-text search over PUBLIC clause text (pg_trgm on Aurora; LIKE on
-    SQLite — # ARCH). Restricted text is excluded by construction."""
+    SQLite — # ARCH), optionally filtered by annotation category/topic.
+    Restricted text is excluded by construction."""
     engine = get_engine()
     pattern = f"%{q.lower()}%"
     public = clauses_public_select().subquery()
-    with engine.connect() as conn:
-        rows = conn.execute(
-            sa.select(
-                public.c.ref,
-                public.c.path,
-                public.c.text,
-                public.c.doc_node_id,
-                sources.c.key.label("source_key"),
-                sources.c.name.label("source_name"),
-                source_versions.c.version_label,
+    query = (
+        sa.select(
+            public.c.ref,
+            public.c.path,
+            public.c.text,
+            public.c.doc_node_id,
+            sources.c.key.label("source_key"),
+            sources.c.name.label("source_name"),
+            sources.c.short_name,
+            source_versions.c.version_label,
+        )
+        .join(source_versions, source_versions.c.id == public.c.source_version_id)
+        .join(sources, sources.c.id == source_versions.c.source_id)
+        .where(source_versions.c.status == "in_force")
+        .where(sa.func.lower(public.c.text).like(pattern))
+    )
+    if category or topic:
+        annotation_filter = sa.select(clause_annotations.c.id).where(
+            clause_annotations.c.clause_id == public.c.id
+        )
+        if category:
+            annotation_filter = annotation_filter.where(clause_annotations.c.category == category)
+        if topic:
+            annotation_filter = annotation_filter.where(
+                clause_annotations.c.topics.cast(sa.Text).like(f'%"{topic}"%')
             )
-            .join(source_versions, source_versions.c.id == public.c.source_version_id)
-            .join(sources, sources.c.id == source_versions.c.source_id)
-            .where(source_versions.c.status == "in_force")
-            .where(sa.func.lower(public.c.text).like(pattern))
-            .order_by(sources.c.key, public.c.ordering)
-            .limit(limit)
-        ).all()
+        query = query.where(annotation_filter.exists())
+    with engine.connect() as conn:
+        rows = conn.execute(query.order_by(sources.c.key, public.c.ordering).limit(limit)).all()
     out = []
     for row in rows:
         text = row.text
@@ -440,6 +489,7 @@ def search_clauses(q: str = Query(min_length=2), limit: int = Query(default=50, 
                 "doc_node_id": row.doc_node_id,
                 "source_key": row.source_key,
                 "source_name": row.source_name,
+                "short_name": row.short_name,
                 "version": row.version_label,
                 "snippet": snippet,
             }
@@ -516,8 +566,11 @@ def activity(
     engine = get_engine()
     items: list[dict] = []
     with engine.connect() as conn:
+        short_names = dict(conn.execute(sa.select(sources.c.key, sources.c.short_name)).all())
         for row in conn.execute(sa.select(runs).order_by(runs.c.id.desc()).limit(limit)):
-            items.append(_run_item(row))
+            item = _run_item(row)
+            item["short_name"] = short_names.get(item.get("source_key"), "")
+            items.append(item)
         for row in conn.execute(
             sa.select(change_events, sources.c.key.label("source_key"), sources.c.name.label("source_name"))
             .join(sources, sources.c.id == change_events.c.source_id)
@@ -633,6 +686,7 @@ def fleet_board() -> list[dict]:
             {
                 "source_key": source.key,
                 "source_name": source.name,
+                "short_name": source.short_name,
                 "adapter": source.adapter,
                 "license": source.license,
                 "current_version": current.version_label if current else None,
@@ -652,6 +706,7 @@ def fleet_board() -> list[dict]:
 
 def _job_tasks(conn, job_id: str) -> list[dict]:
     rows = conn.execute(sa.select(runs).order_by(runs.c.id)).all()
+    short_names = dict(conn.execute(sa.select(sources.c.key, sources.c.short_name)).all())
     tasks = []
     for row in rows:
         inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
@@ -673,6 +728,7 @@ def _job_tasks(conn, job_id: str) -> list[dict]:
                 "run_id": row.id,
                 "fleet": row.fleet,
                 "source": source,
+                "short_name": short_names.get(source, ""),
                 "step": step,
                 "status": status,
                 "ts": str(row.created_at),
@@ -680,6 +736,7 @@ def _job_tasks(conn, job_id: str) -> list[dict]:
                 "coverage": outputs.get("coverage"),
                 "version": outputs.get("version"),
                 "version_kind": outputs.get("version_kind"),
+                "nodes": outputs.get("nodes"),
                 "llm_assisted": bool(outputs.get("llm_assisted")),
                 "recovered_spans": outputs.get("recovered_spans", 0),
             }

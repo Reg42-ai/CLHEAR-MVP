@@ -69,6 +69,7 @@ class GovInfoUscAdapter:
                 "binding": "statute + 26 CFR ch.4 + current FFI-agreement Rev. Proc. + form instructions",
                 "out": ["IGAs (reference-level stubs in v1)"],
             },
+            short_name="FATCA statute",
             about=(
                 "The FATCA statute (Internal Revenue Code chapter 4): US federal law requiring "
                 "foreign financial institutions to identify and report US account holders, "
@@ -174,6 +175,7 @@ class GovInfoEcfrAdapter:
             canonical_url="https://www.ecfr.gov/current/title-26/chapter-I/subchapter-A/part-1",
             adapter="govinfo_us",
             scope_charter={"binding": "26 CFR ch.4 regulation series (T.D. 9610 et seq.)"},
+            short_name="FATCA regulations (26 CFR)",
             about=(
                 "The Treasury/IRS implementing regulations for FATCA (26 CFR §§1.1471–1.1474): "
                 "the operational rulebook for withholding agents and foreign financial "

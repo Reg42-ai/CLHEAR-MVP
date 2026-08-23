@@ -101,6 +101,31 @@
             padding: 10px 16px; margin-bottom: 12px; font-size: 13.5px; }
   .notice a { font-weight: 700; cursor: pointer; }
 
+  /* ------------------------- TOC + reader tools --------------------------- */
+  .toc { position: sticky; top: 72px; width: 250px; flex-shrink: 0; max-height: calc(100vh - 100px);
+         overflow-y: auto; background: white; border: 1px solid var(--pearl-dark); border-radius: 12px;
+         padding: 12px 10px; font-size: 12.5px; }
+  .toc h3 { margin: 0 0 8px 6px; font-size: 11.5px; color: var(--muted); text-transform: uppercase;
+            letter-spacing: 0.06em; }
+  .toc a { display: block; padding: 3px 8px; border-radius: 6px; color: var(--ink); cursor: pointer;
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .toc a:hover { background: var(--indigo-100); color: var(--indigo-700); }
+  .toc a.lvl1 { font-weight: 700; }
+  .toc a.lvl2 { padding-left: 20px; color: var(--muted); }
+  .readerbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .readerbar input { border: 1px solid var(--pearl-dark); border-radius: 8px; padding: 6px 12px;
+                     font-size: 13px; width: 300px; background: white; }
+  .readerbar .count { font-size: 12px; color: var(--muted); }
+  .catchip { border: 1px solid var(--pearl-dark); background: white; border-radius: 999px;
+             padding: 3px 11px; font-size: 11.5px; cursor: pointer; color: var(--muted); }
+  .catchip.on { border-color: var(--indigo-700); color: var(--indigo-700); font-weight: 700; }
+  .annot { margin: 4px 0 10px; padding: 8px 12px; background: var(--pearl); border-left: 3px solid var(--indigo-500);
+           border-radius: 6px; font: 13px/1.5 -apple-system, "Segoe UI", sans-serif; color: var(--ink); }
+  .annot .tag { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;
+                margin-right: 8px; }
+  .annot .cat { display: inline-block; background: var(--indigo-100); color: var(--indigo-700);
+                border-radius: 999px; padding: 1px 9px; font-size: 11px; margin-right: 5px; }
+
   /* ------------------------------ document view ------------------------------ */
   .layout { display: flex; gap: 22px; align-items: flex-start; }
   .doc {
@@ -306,8 +331,9 @@ function Library({ families, open }) {
             ${f.members.map((m) => html`
               <tr key=${m.key}>
                 <td>
-                  <span class=${"srcname" + (m.latest_version ? "" : " stub")}
-                        onClick=${() => m.latest_version && open(m.key)}>${m.name}</span>
+                  <span class=${"srcname" + (m.latest_version ? "" : " stub")} title=${m.name}
+                        onClick=${() => m.latest_version && open(m.key)}>${m.short_name || m.name}</span>
+                  ${m.short_name && html`<div class="charter" style=${{ margin: 0 }}>${m.name}</div>`}
                   <div class="mono">${m.key}</div>
                   ${m.about && html`<div class="about" style=${{ margin: "4px 0 0" }}>${m.about.slice(0, 220)}${m.about.length > 220 ? "…" : ""}
                     ${(m.topics || []).map((t) => html`<span class="topic" key=${t}>${t}</span>`)}</div>`}
@@ -340,11 +366,14 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
   const [info, setInfo] = useState(null);
   const [meta, setMeta] = useState(_meta);
   const [legend, setLegend] = useState(false);
+  const [explain, setExplain] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [category, setCategory] = useState(null);
   const scrolled = useRef(false);
 
   useEffect(() => { getMeta().then(setMeta); }, []);
   useEffect(() => {
-    setDetail(null); setDoc(null); scrolled.current = false;
+    setDetail(null); setDoc(null); scrolled.current = false; setFilter(""); setCategory(null);
     api(`/api/clhear/sources/${sourceKey}`).then(setDetail);
     const q = version ? `?version_label=${encodeURIComponent(version)}` : "";
     api(`/api/clhear/sources/${sourceKey}/document${q}`).then(setDoc);
@@ -371,11 +400,17 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
 
   if (!detail || !doc) return html`<div class="spin">Loading ${sourceKey}…</div>`;
   const amended = new Set(doc.amended_refs || []);
+  const toc = buildToc(doc.nodes);
+  const visible = computeVisible(doc.nodes, filter, category);
+  const visibleCount = visible ? doc.nodes.filter((n) => visible.has(n.id)).length : doc.nodes.length;
+  const selectedNode = selectedId && doc.nodes.find((n) => n.id === selectedId);
+  const selectedAnnotation = selectedNode ? selectedNode.annotation : null;
 
   return html`
     <div>
-      <div class="crumbs"><a onClick=${back}>Library</a> / ${detail.name}</div>
-      <h2 style=${{ margin: "0 0 2px" }}>${detail.name}</h2>
+      <div class="crumbs"><a onClick=${back}>Library</a> / ${detail.short_name || detail.name}</div>
+      <h2 style=${{ margin: "0 0 2px" }}>${detail.short_name || detail.name}</h2>
+      ${detail.short_name && html`<div class="charter" style=${{ marginBottom: "8px" }}>${detail.name}</div>`}
       <div class="meta-grid">
         <span>issuer <b>${detail.issuer}</b></span>
         <span>jurisdiction <b>${detail.jurisdiction}</b></span>
@@ -406,6 +441,17 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
       <div class="tabs mode">
         <button class=${!inspect ? "active" : ""} onClick=${() => setInspect(false)}>document</button>
         <button class=${inspect ? "active" : ""} onClick=${() => setInspect(true)}>inspect</button>
+        <button class=${explain ? "active" : ""} onClick=${() => setExplain(!explain)}>explain</button>
+      </div>
+      <div class="readerbar">
+        <input placeholder="Filter this document… (text, e.g. risk assessment)"
+               value=${filter} onInput=${(e) => setFilter(e.target.value)} />
+        ${(meta ? meta.annotation_categories : []).map((c) => html`
+          <button key=${c} class=${"catchip" + (category === c ? " on" : "")}
+                  onClick=${() => setCategory(category === c ? null : c)}>${c}</button>`)}
+        ${(filter.trim().length >= 2 || category) && html`
+          <span class="count">${visibleCount} matching element${visibleCount === 1 ? "" : "s"}</span>
+          <button class="catchip" onClick=${() => { setFilter(""); setCategory(null); }}>clear</button>`}
       </div>
       ${detail.changes.length > 0 && html`
         <div class="change">
@@ -418,17 +464,63 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
         <div class="locked">This source is license-restricted: structure, references and integrity hashes are
         public, verbatim text is not. BYOL unlock arrives in P3.</div>`}
       <div class="layout">
+        ${toc.length > 1 && html`
+          <nav class="toc">
+            <h3>Contents</h3>
+            ${toc.map((t) => html`
+              <a key=${t.id} class=${t.level === 1 ? "lvl1" : "lvl2"} title=${t.text}
+                 onClick=${() => { const el = document.getElementById("node-" + t.id); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }}>
+                ${t.text}
+              </a>`)}
+          </nav>`}
         <div class="doc">
-          ${doc.nodes.map((n, i) => html`
+          ${doc.nodes.map((n, i) => (visible === null || visible.has(n.id)) && html`
             <${DocLine} key=${n.id} n=${n} first=${i === 0} amended=${amended.has(n.ref)}
-              inspect=${inspect} hover=${hoverId === n.id} selected=${selectedId === n.id}
+              inspect=${inspect} explain=${explain} hover=${hoverId === n.id} selected=${selectedId === n.id}
               onEnter=${() => inspect && setHoverId(n.id)}
               onLeave=${() => hoverId === n.id && setHoverId(null)}
               onClick=${() => { setInspect(true); setSelectedId(n.id); }} />`)}
         </div>
-        ${inspect && html`<${Inspector} info=${info} />`}
+        ${inspect && html`<${Inspector} info=${info} annotation=${selectedAnnotation} />`}
       </div>
     </div>`;
+}
+
+const TOC_L1 = new Set(["part", "chapter", "schedule"]);
+const TOC_L2 = new Set(["group", "section", "article", "provision", "control"]);
+
+function buildToc(nodes) {
+  const level1 = nodes.filter((n) => TOC_L1.has(n.node_type) && (n.heading || n.label));
+  let level2 = nodes.filter((n) => TOC_L2.has(n.node_type) && (n.heading || (n.label && n.node_type !== "provision")));
+  if (level2.length > 140) level2 = level2.filter((n) => ["group", "section"].includes(n.node_type));
+  if (level2.length > 140) level2 = [];
+  const picked = new Set([...level1, ...level2].map((n) => n.id));
+  return nodes
+    .filter((n) => picked.has(n.id))
+    .map((n) => ({
+      id: n.id,
+      level: TOC_L1.has(n.node_type) ? 1 : 2,
+      text: ws(`${n.label || ""} ${n.heading || (n.raw_text || "").slice(0, 60)}`).slice(0, 70),
+    }));
+}
+
+function computeVisible(nodes, filter, category) {
+  const term = filter.trim().toLowerCase();
+  const active = term.length >= 2 || category;
+  if (!active) return null;
+  const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  const visible = new Set();
+  for (const n of nodes) {
+    const text = `${n.label || ""} ${n.heading || ""} ${n.raw_text || ""}`.toLowerCase();
+    const textHit = term.length < 2 || text.includes(term);
+    const catHit = !category || (n.annotation && n.annotation.category === category);
+    if (textHit && catHit && (term.length >= 2 || n.annotation)) {
+      visible.add(n.id);
+      let parent = n.parent_id;
+      while (parent && !visible.has(parent)) { visible.add(parent); parent = byId[parent] && byId[parent].parent_id; }
+    }
+  }
+  return visible;
 }
 
 function CurrentTextBadge({ detail, doc, meta, viewing, reset, toggleLegend }) {
@@ -499,7 +591,7 @@ function ProvenancePanel({ detail, meta, viewing, openVersion }) {
     </details>`;
 }
 
-function DocLine({ n, first, amended, inspect, hover, selected, onEnter, onLeave, onClick }) {
+function DocLine({ n, first, amended, inspect, explain, hover, selected, onEnter, onLeave, onClick }) {
   const centered = ["title", "part", "chapter", "group", "schedule", "article"].includes(n.node_type);
   const indent = centered ? 0 : Math.max(0, n.depth - 1) * 18;
   const classes = ["n", n.node_type, first && n.node_type === "title" && "docfirst",
@@ -509,6 +601,7 @@ function DocLine({ n, first, amended, inspect, hover, selected, onEnter, onLeave
   // begins with it (the data-level invariant forbids it too; this is defense).
   const dupIn = (text) => text && ws(text).startsWith(ws(n.label)) && !/^[A-Za-z0-9]/.test(ws(text).slice(ws(n.label).length, ws(n.label).length + 1));
   const showLabel = n.label && !dupIn(n.heading) && !dupIn(body);
+  const a = explain ? n.annotation : null;
   return html`
     <div id=${"node-" + n.id} class=${classes} style=${{ paddingLeft: indent + "px" }}
          onMouseEnter=${onEnter} onMouseLeave=${onLeave} onClick=${onClick}>
@@ -520,15 +613,29 @@ function DocLine({ n, first, amended, inspect, hover, selected, onEnter, onLeave
           ${n.ref || n.node_type} · ${n.text_hash.slice(0, 8)}
           ${amended ? " · amended" : ""}
         </span>`}
+      ${a && (a.summary || a.category) && html`
+        <div class="annot">
+          <span class="tag">${a.origin === "llm" ? "AI-generated explainer — not legal text" : "classification"}</span>
+          ${a.category && html`<span class="cat">${a.category}</span>`}
+          ${(a.topics || []).slice(0, 5).map((t) => html`<span class="cat" key=${t}>${t}</span>`)}
+          ${a.summary && html`<div style=${{ marginTop: "4px" }}>${a.summary}</div>`}
+        </div>`}
     </div>`;
 }
 
-function Inspector({ info }) {
+function Inspector({ info, annotation }) {
   if (!info) return html`<aside class="inspector"><h3>Inspector</h3><div class="charter">Hover and click any element in the document to see its corpus record — id, hash, version, change history, permalink. This is the L2-ready layer.</div></aside>`;
   const copy = () => navigator.clipboard.writeText(location.origin + info.permalink);
   return html`
     <aside class="inspector">
       <h3>${info.node_type}${info.ref ? ` · ${info.ref}` : ""}</h3>
+      ${annotation && (annotation.summary || annotation.category) && html`
+        <div class="annot">
+          <span class="tag">${annotation.origin === "llm" ? "AI-generated explainer — not legal text" : "heuristic classification"}</span>
+          ${annotation.category && html`<span class="cat">${annotation.category}</span>`}
+          ${(annotation.topics || []).map((t) => html`<span class="cat" key=${t}>${t}</span>`)}
+          ${annotation.summary && html`<div style=${{ marginTop: "4px" }}>${annotation.summary}</div>`}
+        </div>`}
       <dl>
         <dt>record id</dt><dd class="mono">${info.id}</dd>
         <dt>label</dt><dd>${info.label || "—"}</dd>
@@ -580,6 +687,7 @@ function ActivityView({ open }) {
               <span class=${"dot " + i.status} title=${i.status}></span>
               <div class="body">
                 <span class="fleetbadge">${i.actor}</span>
+                ${i.short_name && html` <b>${i.short_name}</b> —`}
                 ${" "}${i.summary}
                 <div class="links">
                   ${i.source_key && html`<a onClick=${() => open(i.source_key)}>open document</a>`}
@@ -598,12 +706,31 @@ function ActivityView({ open }) {
 /* -------------------------------- fleet view -------------------------------- */
 const STAGE_ORDER = ["fetch", "parse", "gate", "hints", "llm_repair", "salvage", "persist", "diff"];
 
+function StageLegend({ meta }) {
+  if (!meta || !meta.stages) return null;
+  return html`
+    <div class="legend">
+      <b>What each pipeline stage does</b>
+      <dl>
+        ${Object.entries(meta.stages).map(([stage, definition]) => html`
+          <div key=${stage}>
+            <dt><span class="stagechip success">${stage}</span></dt>
+            <dd>${definition}</dd>
+          </div>`)}
+      </dl>
+    </div>`;
+}
+
 function FleetView({ open }) {
   const [board, setBoard] = useState(null);
   const [job, setJob] = useState(null);
   const [mode, setMode] = useState("canvas");
   const [runId, setRunId] = useState(null);
   const [run, setRun] = useState(null);
+  const [meta, setMeta] = useState(_meta);
+  const [stageLegend, setStageLegend] = useState(false);
+
+  useEffect(() => { getMeta().then(setMeta); }, []);
 
   const load = () => {
     api("/api/clhear/fleet").then(setBoard).catch(() => setBoard([]));
@@ -632,16 +759,18 @@ function FleetView({ open }) {
       <div class="tabs mode">
         <button class=${mode === "canvas" ? "active" : ""} onClick=${() => setMode("canvas")}>workflow</button>
         <button class=${mode === "table" ? "active" : ""} onClick=${() => setMode("table")}>table</button>
+        <button class=${stageLegend ? "active" : ""} onClick=${() => setStageLegend(!stageLegend)}>stages ⓘ</button>
       </div>
+      ${stageLegend && html`<${StageLegend} meta=${meta} />`}
       ${mode === "canvas" && (job
         ? html`<${JobCanvas} job=${job} selectRun=${setRunId} selectedRun=${runId} />`
         : html`<div class="empty">No fleet job recorded yet — run scripts/build_corpus.py.</div>`)}
-      ${run && html`<${RunDag} run=${run} close=${() => setRunId(null)} />`}
-      ${mode === "table" && html`<${FleetTable} board=${board} open=${open} setRunId=${setRunId} />`}
+      ${run && html`<${RunDag} run=${run} close=${() => setRunId(null)} meta=${meta} />`}
+      ${mode === "table" && html`<${FleetTable} board=${board} open=${open} setRunId=${setRunId} meta=${meta} />`}
     </div>`;
 }
 
-function FleetTable({ board, open, setRunId }) {
+function FleetTable({ board, open, setRunId, meta }) {
   return html`
       <table class="fleet">
         <thead><tr>
@@ -650,7 +779,7 @@ function FleetTable({ board, open, setRunId }) {
         <tbody>
         ${board.map((r) => html`
           <tr key=${r.source_key}>
-            <td><a onClick=${() => open(r.source_key)}>${r.source_name}</a><div class="mono">${r.source_key}</div></td>
+            <td><a onClick=${() => open(r.source_key)} title=${r.source_name}>${r.short_name || r.source_name}</a><div class="mono">${r.source_key}</div></td>
             <td class="mono">${r.adapter}</td>
             <td>
               ${r.current_version_kind && html`<span class="kindbadge ${r.current_version_kind}">${r.current_version_kind.replace("_", " ")}</span>`}
@@ -666,7 +795,8 @@ function FleetTable({ board, open, setRunId }) {
             </td>
             <td class="mono">${r.last_run && r.last_run.coverage != null ? (r.last_run.coverage * 100).toFixed(2) + "%" : "—"}</td>
             <td>${r.last_run ? r.last_run.stages.map((s, i) => html`
-                <span key=${i} class=${"stagechip " + chipStatus(s, r.last_run.status)}>${s.stage}${s.attempt > 1 ? `#${s.attempt}` : ""}</span>`) : "—"}</td>
+                <span key=${i} class=${"stagechip " + chipStatus(s, r.last_run.status)}
+                      title=${meta && meta.stages ? meta.stages[s.stage] : ""}>${s.stage}${s.attempt > 1 ? `#${s.attempt}` : ""}</span>`) : "—"}</td>
             <td class="mono">${r.schedule}</td>
           </tr>`)}
         </tbody>
@@ -730,6 +860,8 @@ function JobCanvas({ job, selectRun, selectedRun }) {
         ${allTasks.length} tasks —
         ${["success", "warning", "failure", "running", "info"].filter((s) => counts[s])
           .map((s) => `${counts[s]} ${s}`).join(" · ")}
+        · ${allTasks.reduce((a, t) => a + (t.nodes || 0), 0).toLocaleString()} document nodes processed
+        in ${(job.total_duration_ms / 1000).toFixed(1)}s — real measured throughput, per stage below
         · click a task for its stage pipeline
       </div>
       <div style=${{ overflowX: "auto" }}>
@@ -754,7 +886,7 @@ function JobCanvas({ job, selectRun, selectedRun }) {
                       font-family="ui-monospace, Menlo, monospace" font-size="11" fill="var(--muted)">
                   ${task.fleet} · #${task.run_id}</text>
                 <text x=${p.x + 12} y=${p.y + 6} font-size="12" font-weight="700" fill="var(--ink)">
-                  ${(task.source || "").slice(0, 26)}</text>
+                  ${(task.short_name || task.source || "").slice(0, 26)}</text>
                 <text x=${p.x + 12} y=${p.y + 22} font-size="10.5" fill="var(--muted)">
                   ${task.step.slice(0, 30)}${task.coverage != null ? ` · ${(task.coverage * 100).toFixed(1)}%` : ""}${task.duration_ms != null ? ` · ${(task.duration_ms / 1000).toFixed(1)}s` : ""}</text>
               </g>`;
@@ -771,7 +903,7 @@ function chipStatus(stage, runStatus) {
   return runStatus === "failure" ? "failure" : "success";
 }
 
-function RunDag({ run, close }) {
+function RunDag({ run, close, meta }) {
   const [lit, setLit] = useState(run.stages.length); // all lit by default
   const stages = run.stages;
   const W = 148, H = 92, GAP = 26;
@@ -810,6 +942,7 @@ function RunDag({ run, close }) {
             const attemptLoop = i > 0 && STAGE_ORDER.indexOf(s.stage) <= STAGE_ORDER.indexOf(stages[i - 1].stage);
             return html`
               <g key=${i}>
+                <title>${meta && meta.stages ? meta.stages[s.stage] || s.stage : s.stage}</title>
                 ${i > 0 && html`
                   <line x1=${x - GAP} y1=${H / 2} x2=${x} y2=${H / 2}
                         stroke=${i < lit ? "var(--indigo-500)" : "var(--pearl-dark)"} stroke-width="2" />
@@ -847,17 +980,39 @@ function RunDag({ run, close }) {
 /* --------------------------------- search ----------------------------------- */
 function SearchView({ q, open, back }) {
   const [results, setResults] = useState(null);
-  useEffect(() => { setResults(null); api(`/api/clhear/search?q=${encodeURIComponent(q)}`).then(setResults); }, [q]);
+  const [category, setCategory] = useState(null);
+  const [meta, setMeta] = useState(_meta);
+  useEffect(() => { getMeta().then(setMeta); }, []);
+  useEffect(() => {
+    setResults(null);
+    const cat = category ? `&category=${encodeURIComponent(category)}` : "";
+    api(`/api/clhear/search?q=${encodeURIComponent(q)}${cat}`).then(setResults);
+  }, [q, category]);
   if (results === null) return html`<div class="spin">Searching “${q}”…</div>`;
+  const groups = [];
+  for (const r of results) {
+    if (!groups.length || groups[groups.length - 1].key !== r.source_key)
+      groups.push({ key: r.source_key, name: r.short_name || r.source_name, items: [] });
+    groups[groups.length - 1].items.push(r);
+  }
   return html`
     <div>
       <div class="crumbs"><a onClick=${back}>Library</a> / search</div>
       <h2>“${q}” — ${results.length} hit${results.length === 1 ? "" : "s"} in public clause text</h2>
-      ${results.length === 0 && html`<div class="empty">No public clause contains “${q}”.</div>`}
-      ${results.map((r, i) => html`
-        <div class="result" key=${i} onClick=${() => open(r.source_key, r.ref, r.doc_node_id)}>
-          <div class="where">${r.source_name} · <span class="mono">${r.ref}</span>${r.path ? ` · ${r.path}` : ""}</div>
-          <div dangerouslySetInnerHTML=${{ __html: highlight(r.snippet, q) }} />
+      <div class="readerbar">
+        ${(meta ? meta.annotation_categories : []).map((c) => html`
+          <button key=${c} class=${"catchip" + (category === c ? " on" : "")}
+                  onClick=${() => setCategory(category === c ? null : c)}>${c}</button>`)}
+      </div>
+      ${results.length === 0 && html`<div class="empty">No public clause matches.</div>`}
+      ${groups.map((g) => html`
+        <div key=${g.key}>
+          <div class="dayhead">${g.name} · ${g.items.length} hit${g.items.length === 1 ? "" : "s"}</div>
+          ${g.items.map((r, i) => html`
+            <div class="result" key=${i} onClick=${() => open(r.source_key, r.ref, r.doc_node_id)}>
+              <div class="where"><span class="mono">${r.ref}</span>${r.path ? ` · ${r.path}` : ""}</div>
+              <div dangerouslySetInnerHTML=${{ __html: highlight(r.snippet, q) }} />
+            </div>`)}
         </div>`)}
     </div>`;
 }

@@ -59,8 +59,9 @@ sources = sa.Table(
     sa.Column("adapter", sa.Text, nullable=False, default=""),
     sa.Column("canonical_url", sa.Text, nullable=False, default=""),
     # Curated semantic context (authored in the adapter's SourceMeta, code-
-    # reviewed — deterministic, zero LLM). Generated semantics belong to a
-    # separate annotations table in L2, never here.
+    # reviewed — deterministic, zero LLM). Generated semantics belong to the
+    # clause_annotations table, never here.
+    sa.Column("short_name", sa.Text, nullable=False, default=""),
     sa.Column("about", sa.Text, nullable=False, default=""),
     sa.Column("topics", Json, nullable=False, default=list),
 )
@@ -171,6 +172,22 @@ VERSION_KINDS = {
             "SP 800-53 rev 5.2.0). Each edition wholly supersedes the previous one."
         ),
     },
+}
+
+# Plain-language definitions of every pipeline stage (Fleet view education;
+# served via /api/clhear/meta). Every stage the pipeline can emit is here.
+STAGE_INFO = {
+    "fetch": "Download the official artifact from the publisher (polite client: identifying user-agent, backoff, caching — never hammering official endpoints).",
+    "parse": "Structural parse of the artifact into typed document nodes (parts, chapters, articles, paragraphs …) with the text kept verbatim.",
+    "gate": "The fidelity gate: measures how much of the artifact's own visible text the parse captured (must be ≥ 99.5%) and lints contract invariants. Below threshold, nothing is stored.",
+    "hints": "Apply parse fixes the fleet learned on earlier runs (deterministic — no AI involved). Each hint was gate-validated when first learned.",
+    "llm_repair": "AI escalation for novel gaps: the model proposes how to classify missed spans; recovered text still comes only from the artifact, and the gate re-validates everything.",
+    "salvage": "Recover small residual gaps (≤ 2% of the text) as clearly flagged notes so nothing is silently lost while the parser gets fixed.",
+    "persist": "Write the new version, its document nodes and the clause projection to the corpus in one transaction.",
+    "annotate": "Deterministically classify every clause (definitions, obligation, scope …) and inherit topic tags from the curated source metadata — the orientation layer for readers.",
+    "diff": "Clause-level comparison against the previous version (aligned by stable references) producing the change event.",
+    "relay": "Ship the recorded change events from the transactional outbox to the SQS event queue.",
+    "drain": "Consume the queued events worker-style (idempotent on event id), leaving the queue clean.",
 }
 
 NODE_TYPES = (
@@ -310,6 +327,43 @@ change_events = sa.Table(
     sa.Column("diff_s3_uri", sa.Text, nullable=False, default=""),
 )
 
+# Clause understanding layer: enrichment about the verbatim text, NEVER the
+# text itself (verbatim principle). origin 'heuristic' = deterministic
+# classification from stable signals; origin 'llm' = gateway-generated
+# plain-language explainer with full model provenance, clearly marked
+# non-authoritative in the UI.
+ANNOTATION_CATEGORIES = (
+    "definitions",
+    "obligation",
+    "prohibition",
+    "scope",
+    "enforcement",
+    "procedure",
+    "exemption",
+    "administrative",
+)
+
+clause_annotations = sa.Table(
+    "clause_annotations",
+    metadata,
+    sa.Column("id", BigId, sa.Identity(), primary_key=True),
+    sa.Column("clause_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.clauses.id"), nullable=False),
+    sa.Column(
+        "origin",
+        sa.Text,
+        sa.CheckConstraint("origin in ('heuristic','llm')", name="clause_annotations_origin_check"),
+        nullable=False,
+    ),
+    sa.Column("summary", sa.Text, nullable=False, default=""),
+    sa.Column("category", sa.Text, nullable=False, default=""),
+    sa.Column("topics", Json, nullable=False, default=list),
+    sa.Column("model", sa.Text, nullable=False, default=""),
+    sa.Column("prompt_hash", sa.Text, nullable=False, default=""),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.UniqueConstraint("clause_id", "origin", name="clause_annotations_clause_origin_key"),
+    sa.Index("clause_annotations_clause_idx", "clause_id"),
+)
+
 # Learned parse hints (fidelity repair loop): discovered once (LLM tier or
 # manually), applied deterministically on every future run BEFORE any LLM
 # call, ratified/retired by maintainers via the L0 proposals rail.
@@ -373,6 +427,7 @@ ALL_TABLES = (
     source_versions,
     doc_nodes,
     clauses,
+    clause_annotations,
     citations,
     discovery_candidates,
     change_events,
