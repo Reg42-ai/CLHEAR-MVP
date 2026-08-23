@@ -72,29 +72,47 @@
   .versions .v.current { border-color: var(--mint-600); color: var(--mint-600); font-weight: 600; }
   .spin { text-align: center; color: var(--muted); padding: 30px; }
 
+  /* ------------------------------ document view ------------------------------ */
   .layout { display: flex; gap: 22px; align-items: flex-start; }
   .doc {
     flex: 1; min-width: 0; background: white; border: 1px solid var(--pearl-dark);
-    border-radius: 12px; padding: 40px 52px 72px; max-width: 860px;
+    border-radius: 12px; padding: 44px 56px 72px; max-width: 860px;
     font: 16.5px/1.7 Georgia, "Times New Roman", serif; color: var(--ink);
   }
   .n { position: relative; border-radius: 3px; }
   .n:hover { background: rgba(99, 102, 241, 0.06); box-shadow: 0 1px 0 var(--indigo-500); cursor: pointer; }
   .n.amended { background: var(--amber-100); }
   .n.selected { outline: 2px solid var(--indigo-500); outline-offset: 2px; }
-  .n.part { margin: 32px 0 10px; font-family: -apple-system, "Segoe UI", sans-serif;
-            font-size: 20px; font-weight: 700; letter-spacing: 0.02em; color: var(--indigo-900); }
-  .n.chapter { margin: 24px 0 8px; font-family: -apple-system, "Segoe UI", sans-serif;
-               font-size: 17px; font-weight: 700; color: var(--indigo-700); }
-  .n.group, .n.heading { margin: 18px 0 6px; font-size: 15.5px; font-style: italic; }
-  .n.schedule { margin: 36px 0 10px; font-family: -apple-system, "Segoe UI", sans-serif;
-                font-size: 18px; font-weight: 700; }
-  .n.provision, .n.article, .n.section, .n.control, .n.enhancement {
-    margin: 14px 0 4px;
-  }
+  .n.title { text-align: center; font-weight: 700; margin: 6px 0; }
+  .n.title.docfirst { font-size: 17px; letter-spacing: 0.01em; }
+  .n.part { margin: 34px 0 10px; text-align: center; font-family: -apple-system, "Segoe UI", sans-serif;
+            font-size: 19px; font-weight: 700; letter-spacing: 0.02em; color: var(--indigo-900); }
+  .n.chapter { margin: 30px 0 8px; text-align: center; }
+  .n.chapter .lab { display: block; font-family: -apple-system, "Segoe UI", sans-serif;
+                    font-size: 15px; letter-spacing: 0.14em; font-weight: 600; color: var(--indigo-700); }
+  .n.chapter .hd { display: block; font-size: 17px; font-weight: 700; font-style: italic; }
+  .n.group { margin: 22px 0 6px; text-align: center; }
+  .n.group .lab { display: block; font-size: 13.5px; letter-spacing: 0.12em; font-weight: 600; color: var(--muted); }
+  .n.group .hd { display: block; font-size: 15.5px; font-weight: 700; font-style: italic; }
+  .n.heading { margin: 18px 0 6px; font-size: 15.5px; font-weight: 700;
+               font-family: -apple-system, "Segoe UI", sans-serif; }
+  .n.schedule { margin: 36px 0 10px; text-align: center; }
+  .n.schedule .lab { display: block; font-size: 14px; letter-spacing: 0.1em; font-weight: 700; }
+  .n.schedule .hd { display: block; font-size: 16px; font-weight: 700; }
+  .n.article { margin: 22px 0 6px; text-align: center; }
+  .n.article .lab { display: block; font-weight: 700; }
+  .n.article .hd { display: block; font-style: italic; font-weight: 600; }
+  .n.provision, .n.section, .n.control, .n.enhancement { margin: 14px 0 4px; }
+  .n.provision .hd, .n.section .hd, .n.control .hd, .n.enhancement .hd { font-weight: 700; }
   .n.subsection { margin: 8px 0 2px; }
-  .n.paragraph, .n.subparagraph, .n.point, .n.statement { margin: 3px 0; }
-  .n.preamble, .n.signature { margin: 16px 0; font-style: italic; color: var(--muted); }
+  .n.subsection .hd { font-weight: 700; font-size: 15px; }
+  .n.paragraph, .n.subparagraph, .n.statement { margin: 4px 0; }
+  .n.point { margin: 3px 0; }
+  .n.recital { margin: 5px 0; }
+  .n.recital .lab, .n.point .lab { display: inline-block; min-width: 2.4em; font-weight: 400; }
+  .n.preamble { margin: 6px 0; }
+  .n.signature { margin: 14px 0 2px; font-style: italic; }
+  .n.note { margin: 4px 0; font-size: 13.5px; color: var(--muted); }
   .lab { font-weight: 700; margin-right: 0.55em; font-variant-numeric: lining-nums; }
   .hd { font-weight: 600; }
   .float {
@@ -111,10 +129,56 @@
   .inspector dt { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
   .inspector dd { margin: 0; word-break: break-all; }
   .inspector pre { background: var(--pearl); border-radius: 8px; padding: 8px 10px;
-                   font-size: 11.5px; overflow: auto; max-height: 200px; }
+                   font-size: 11.5px; overflow: auto; max-height: 200px; white-space: pre-wrap; }
   .inspector button { border: 1px solid var(--indigo-700); color: var(--indigo-700); background: white;
                       border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 12px; margin-top: 10px; }
   .mode { margin-bottom: 12px; }
+
+  /* ------------------------------ activity feed ------------------------------ */
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; }
+  .dot.success { background: var(--mint-600); }
+  .dot.warning { background: var(--amber-600); }
+  .dot.failure { background: var(--rose-600); }
+  .dot.info { background: var(--indigo-100); border: 1px solid var(--indigo-500); }
+  .dot.running { background: var(--indigo-500); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  .dayhead { margin: 20px 0 8px; font-size: 12.5px; font-weight: 700; color: var(--muted);
+             text-transform: uppercase; letter-spacing: 0.06em; }
+  .act { background: white; border: 1px solid var(--pearl-dark); border-radius: 10px;
+         padding: 10px 14px; margin-bottom: 8px; font-size: 13.5px; display: flex;
+         align-items: flex-start; gap: 8px; }
+  .act .fleetbadge { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+                     background: var(--pearl); border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+  .act .when { color: var(--muted); font-size: 12px; white-space: nowrap; margin-left: auto; }
+  .act .body { flex: 1; min-width: 0; }
+  .act .links a { margin-right: 10px; cursor: pointer; font-size: 12.5px; }
+  .act details { margin-top: 4px; }
+  .act details pre { background: var(--pearl); border-radius: 8px; padding: 8px 10px; font-size: 11.5px;
+                     overflow: auto; max-height: 220px; }
+  .filters { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .filters button { border: 1px solid var(--pearl-dark); background: white; border-radius: 999px;
+                    padding: 4px 12px; font-size: 12px; cursor: pointer; color: var(--muted); }
+  .filters button.on { border-color: var(--indigo-700); color: var(--indigo-700); font-weight: 600; }
+
+  /* ------------------------------ fleet view -------------------------------- */
+  table.fleet { width: 100%; border-collapse: collapse; font-size: 13px; background: white;
+                border: 1px solid var(--pearl-dark); border-radius: 12px; overflow: hidden; }
+  table.fleet th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11.5px;
+                   text-transform: uppercase; letter-spacing: 0.05em; padding: 10px 12px;
+                   border-bottom: 1px solid var(--pearl-dark); background: var(--pearl); }
+  table.fleet td { padding: 10px 12px; border-bottom: 1px solid var(--pearl); vertical-align: middle; }
+  .stagechip { display: inline-block; border-radius: 6px; padding: 2px 8px; font-size: 11px;
+               font-family: ui-monospace, Menlo, monospace; margin-right: 4px; margin-bottom: 3px;
+               background: var(--pearl); color: var(--muted); }
+  .stagechip.success { background: var(--mint-100); color: var(--mint-600); }
+  .stagechip.warning { background: var(--amber-100); color: var(--amber-600); }
+  .stagechip.failure { background: var(--rose-100); color: var(--rose-600); }
+  .runlink { cursor: pointer; color: var(--indigo-700); font-weight: 600; }
+  .dagwrap { background: white; border: 1px solid var(--pearl-dark); border-radius: 12px;
+             padding: 18px 20px; margin-bottom: 16px; }
+  .dagwrap h3 { margin: 0 0 4px; font-size: 15px; }
+  .playbtn { border: 1px solid var(--indigo-700); color: var(--indigo-700); background: white;
+             border-radius: 999px; padding: 5px 16px; cursor: pointer; font-size: 12.5px; }
 </style>
 </head>
 <body>
@@ -133,12 +197,14 @@ import htm from "https://esm.sh/htm@3.1.1";
 
 const html = htm.bind(React.createElement);
 const api = (p) => fetch(p).then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
+const ws = (s) => (s || "").split(/\s+/).join(" ").trim();
 
 function initialView() {
   const p = new URLSearchParams(location.search);
   if (p.get("source")) {
     return { page: "source", key: p.get("source"), nodeId: p.get("node") ? Number(p.get("node")) : null, ref: null };
   }
+  if (p.get("view")) return { page: p.get("view") };
   return { page: "library" };
 }
 
@@ -169,22 +235,31 @@ function App() {
     history.replaceState({}, "", `/sources?${q}`);
     setView({ page: "source", key, ref, nodeId: nodeId || null });
   };
+  const go = (page) => {
+    history.replaceState({}, "", page === "library" ? "/sources" : `/sources?view=${page}`);
+    setView({ page });
+  };
 
   if (families === null) return html`<div class="spin">Loading corpus…</div>`;
-  if (view.page === "source") return html`<${SourceView} sourceKey=${view.key} back=${() => { history.replaceState({}, "", "/sources"); setView({ page: "library" }); }} openRef=${view.ref} openNodeId=${view.nodeId} />`;
-  if (view.page === "search") return html`<${SearchView} q=${query} open=${openSource} back=${() => setView({ page: "library" })} />`;
-  if (view.page === "changes") return html`<${ChangesView} back=${() => setView({ page: "library" })} open=${(key) => openSource(key)} />`;
-  return html`<${Library} families=${families} open=${(key) => openSource(key)} changes=${() => setView({ page: "changes" })} />`;
+  const tabs = html`
+    <div class="tabs">
+      <button class=${view.page === "library" ? "active" : ""} onClick=${() => go("library")}>Library</button>
+      <button class=${view.page === "activity" ? "active" : ""} onClick=${() => go("activity")}>Activity</button>
+      <button class=${view.page === "fleet" ? "active" : ""} onClick=${() => go("fleet")}>Fleet</button>
+      <button class=${view.page === "changes" ? "active" : ""} onClick=${() => go("changes")}>Change events</button>
+    </div>`;
+  if (view.page === "source") return html`<${SourceView} sourceKey=${view.key} back=${() => go("library")} openRef=${view.ref} openNodeId=${view.nodeId} />`;
+  if (view.page === "search") return html`<${SearchView} q=${query} open=${openSource} back=${() => go("library")} />`;
+  if (view.page === "changes") return html`<div>${tabs}<${ChangesView} open=${(key) => openSource(key)} /></div>`;
+  if (view.page === "activity") return html`<div>${tabs}<${ActivityView} open=${openSource} /></div>`;
+  if (view.page === "fleet") return html`<div>${tabs}<${FleetView} open=${openSource} /></div>`;
+  return html`<div>${tabs}<${Library} families=${families} open=${(key) => openSource(key)} /></div>`;
 }
 
-function Library({ families, open, changes }) {
+function Library({ families, open }) {
   const ingested = families.flatMap((f) => f.members).filter((m) => m.latest_version);
   return html`
     <div>
-      <div class="tabs">
-        <button class="active">Library</button>
-        <button onClick=${changes}>Change events</button>
-      </div>
       ${families.length === 0 && html`<div class="empty">No sources ingested yet.</div>`}
       ${families.map((f) => html`
         <div class="family" key=${f.key}>
@@ -213,16 +288,17 @@ function Library({ families, open, changes }) {
         </div>`)}
       <div class="charter" style=${{ textAlign: "center" }}>
         ${ingested.length} ingested source${ingested.length === 1 ? "" : "s"} ·
-        every record is a typed node in the corpus, reconstructible as the original document
+        every ingest passes a 99.5% fidelity gate against the official artifact
       </div>
     </div>`;
 }
 
+/* ------------------------------- document view ------------------------------ */
 function SourceView({ sourceKey, back, openRef, openNodeId }) {
   const [detail, setDetail] = useState(null);
   const [doc, setDoc] = useState(null);
   const [version, setVersion] = useState(null);
-  const [inspect, setInspect] = useState(true);
+  const [inspect, setInspect] = useState(false);
   const [hoverId, setHoverId] = useState(null);
   const [selectedId, setSelectedId] = useState(openNodeId || null);
   const [info, setInfo] = useState(null);
@@ -250,7 +326,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
     if (target) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
       scrolled.current = true;
-      if (!selectedId) setSelectedId(Number(target.id.replace("node-", "")));
+      if (!selectedId) { setInspect(true); setSelectedId(Number(target.id.replace("node-", ""))); }
     }
   }, [doc]);
 
@@ -298,8 +374,8 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
         public, verbatim text is not. BYOL unlock arrives in P3.</div>`}
       <div class="layout">
         <div class="doc">
-          ${doc.nodes.map((n) => html`
-            <${DocLine} key=${n.id} n=${n} amended=${amended.has(n.ref)}
+          ${doc.nodes.map((n, i) => html`
+            <${DocLine} key=${n.id} n=${n} first=${i === 0} amended=${amended.has(n.ref)}
               inspect=${inspect} hover=${hoverId === n.id} selected=${selectedId === n.id}
               onEnter=${() => inspect && setHoverId(n.id)}
               onLeave=${() => hoverId === n.id && setHoverId(null)}
@@ -310,16 +386,22 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
     </div>`;
 }
 
-function DocLine({ n, amended, inspect, hover, selected, onEnter, onLeave, onClick }) {
-  const indent = Math.max(0, n.depth - 1) * 18;
-  const classes = ["n", n.node_type, amended && "amended", selected && "selected"].filter(Boolean).join(" ");
+function DocLine({ n, first, amended, inspect, hover, selected, onEnter, onLeave, onClick }) {
+  const centered = ["title", "part", "chapter", "group", "schedule", "article"].includes(n.node_type);
+  const indent = centered ? 0 : Math.max(0, n.depth - 1) * 18;
+  const classes = ["n", n.node_type, first && n.node_type === "title" && "docfirst",
+                   amended && "amended", selected && "selected"].filter(Boolean).join(" ");
   const body = n.raw_text || "";
+  // Official-layout dedup: never print the label when the visible text already
+  // begins with it (the data-level invariant forbids it too; this is defense).
+  const dupIn = (text) => text && ws(text).startsWith(ws(n.label)) && !/^[A-Za-z0-9]/.test(ws(text).slice(ws(n.label).length, ws(n.label).length + 1));
+  const showLabel = n.label && !dupIn(n.heading) && !dupIn(body);
   return html`
     <div id=${"node-" + n.id} class=${classes} style=${{ paddingLeft: indent + "px" }}
          onMouseEnter=${onEnter} onMouseLeave=${onLeave} onClick=${onClick}>
-      ${n.label && html`<span class="lab">${n.label}</span>`}
+      ${showLabel && html`<span class="lab">${n.label}</span>`}
       ${n.heading && html`<span class="hd">${n.heading}</span>`}
-      ${body && html`${n.label || n.heading ? " " : ""}${body}`}
+      ${body && html`${showLabel || n.heading ? " " : ""}${body}`}
       ${inspect && hover && html`
         <span class="float">
           ${n.ref || n.node_type} · ${n.text_hash.slice(0, 8)}
@@ -352,6 +434,193 @@ function Inspector({ info }) {
     </aside>`;
 }
 
+/* ------------------------------- activity feed ------------------------------ */
+const STATUS_FILTERS = ["all", "success", "warning", "failure", "info"];
+
+function ActivityView({ open }) {
+  const [items, setItems] = useState(null);
+  const [filter, setFilter] = useState("all");
+  useEffect(() => { api("/api/clhear/activity?limit=200").then(setItems).catch(() => setItems([])); }, []);
+  if (items === null) return html`<div class="spin">Loading the audit trail…</div>`;
+  const visible = items.filter((i) => filter === "all" || i.status === filter);
+  const days = [];
+  for (const item of visible) {
+    const day = (item.ts || "").slice(0, 10);
+    if (!days.length || days[days.length - 1].day !== day) days.push({ day, items: [] });
+    days[days.length - 1].items.push(item);
+  }
+  return html`
+    <div>
+      <h2 style=${{ margin: "0 0 4px" }}>Activity — production audit trail</h2>
+      <div class="charter">Every automated action the system takes (ingests, version updates, repairs,
+        eval gates, human decisions) — a read-only projection of the append-only run ledger and event log.</div>
+      <div class="filters">
+        ${STATUS_FILTERS.map((s) => html`
+          <button key=${s} class=${filter === s ? "on" : ""} onClick=${() => setFilter(s)}>${s}</button>`)}
+      </div>
+      ${visible.length === 0 && html`<div class="empty">No activity recorded${filter !== "all" ? ` with status “${filter}”` : ""}.</div>`}
+      ${days.map((d) => html`
+        <div key=${d.day}>
+          <div class="dayhead">${d.day}</div>
+          ${d.items.map((i, idx) => html`
+            <div class="act" key=${idx}>
+              <span class=${"dot " + i.status} title=${i.status}></span>
+              <div class="body">
+                <span class="fleetbadge">${i.actor}</span>
+                ${" "}${i.summary}
+                <div class="links">
+                  ${i.source_key && html`<a onClick=${() => open(i.source_key)}>open document</a>`}
+                  ${i.links && i.links.review && html`<a href=${i.links.review}>review console</a>`}
+                  ${i.run_id && html`<a href=${`/sources?view=fleet`}>fleet view</a>`}
+                </div>
+                ${i.details && Object.keys(i.details).length > 0 && html`
+                  <details><summary class="mono">details</summary><pre>${JSON.stringify(i.details, null, 2)}</pre></details>`}
+              </div>
+              <span class="when">${(i.ts || "").slice(11, 19)}${i.duration_ms ? ` · ${(i.duration_ms / 1000).toFixed(1)}s` : ""}</span>
+            </div>`)}
+        </div>`)}
+    </div>`;
+}
+
+/* -------------------------------- fleet view -------------------------------- */
+const STAGE_ORDER = ["fetch", "parse", "gate", "hints", "llm_repair", "salvage", "persist", "diff"];
+
+function FleetView({ open }) {
+  const [board, setBoard] = useState(null);
+  const [runId, setRunId] = useState(null);
+  const [run, setRun] = useState(null);
+
+  const load = () => api("/api/clhear/fleet").then(setBoard).catch(() => setBoard([]));
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    // real-time: poll while any run is executing
+    if (!board || !board.some((r) => r.last_run && r.last_run.status === "running")) return;
+    const t = setInterval(load, 2500);
+    return () => clearInterval(t);
+  }, [board]);
+  useEffect(() => {
+    if (runId) api(`/api/clhear/runs/${runId}`).then(setRun).catch(() => setRun(null));
+    else setRun(null);
+  }, [runId]);
+
+  if (board === null) return html`<div class="spin">Loading fleet…</div>`;
+  return html`
+    <div>
+      <h2 style=${{ margin: "0 0 4px" }}>Fleet — the ingestion pipeline, live</h2>
+      <div class="charter">Every source runs fetch → parse → fidelity gate (99.5% + invariants) →
+        repair tiers (learned hints → LLM proposals → bounded salvage) → persist → diff.
+        Click a run to see its pipeline; press play to replay it from the ledger.</div>
+      ${run && html`<${RunDag} run=${run} close=${() => setRunId(null)} />`}
+      <table class="fleet">
+        <thead><tr>
+          <th>source</th><th>adapter</th><th>version</th><th>last run</th><th>coverage</th><th>stages</th><th>schedule</th>
+        </tr></thead>
+        <tbody>
+        ${board.map((r) => html`
+          <tr key=${r.source_key}>
+            <td><a onClick=${() => open(r.source_key)}>${r.source_name}</a><div class="mono">${r.source_key}</div></td>
+            <td class="mono">${r.adapter}</td>
+            <td>
+              <div class="mono">${r.current_version || "—"}</div>
+              ${r.previous_version && html`<div class="mono" style=${{ opacity: 0.6 }}>prev: ${r.previous_version}</div>`}
+              <div class="mono" style=${{ opacity: 0.6 }}>${r.versions} version${r.versions === 1 ? "" : "s"}</div>
+            </td>
+            <td>
+              ${r.last_run ? html`
+                <span class=${"dot " + r.last_run.status}></span>
+                <span class="runlink" onClick=${() => setRunId(r.last_run.run_id)}>run #${r.last_run.run_id}</span>
+                <div class="mono">${r.last_run.ts}</div>` : html`<span class="mono">no runs</span>`}
+            </td>
+            <td class="mono">${r.last_run && r.last_run.coverage != null ? (r.last_run.coverage * 100).toFixed(2) + "%" : "—"}</td>
+            <td>${r.last_run ? r.last_run.stages.map((s, i) => html`
+                <span key=${i} class=${"stagechip " + chipStatus(s, r.last_run.status)}>${s.stage}${s.attempt > 1 ? `#${s.attempt}` : ""}</span>`) : "—"}</td>
+            <td class="mono">${r.schedule}</td>
+          </tr>`)}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function chipStatus(stage, runStatus) {
+  if (stage.stage === "salvage" || stage.stage === "llm_repair" || stage.stage === "hints") return "warning";
+  if (stage.stage === "gate" && stage.coverage != null && stage.coverage < 0.995) return runStatus === "failure" ? "failure" : "warning";
+  return runStatus === "failure" ? "failure" : "success";
+}
+
+function RunDag({ run, close }) {
+  const [lit, setLit] = useState(run.stages.length); // all lit by default
+  const stages = run.stages;
+  const W = 148, H = 92, GAP = 26;
+  const width = Math.max(600, stages.length * (W + GAP));
+  const replay = () => {
+    setLit(0);
+    const total = Math.max(1, stages.reduce((a, s) => a + (s.ms || 1), 0));
+    const scale = Math.min(1, 4000 / total); // compress to <= 4s
+    let t = 0;
+    stages.forEach((s, i) => {
+      t += Math.max(120, (s.ms || 1) * scale);
+      setTimeout(() => setLit(i + 1), t);
+    });
+  };
+  const color = (s, i) => {
+    if (i >= lit) return "var(--pearl-dark)";
+    if (["salvage", "llm_repair", "hints"].includes(s.stage)) return "var(--amber-600)";
+    if (s.stage === "gate" && s.coverage != null && s.coverage < 0.995) return "var(--amber-600)";
+    return run.status === "failed" && i === stages.length - 1 ? "var(--rose-600)" : "var(--mint-600)";
+  };
+  return html`
+    <div class="dagwrap">
+      <h3>run #${run.id} · <span class="mono">${run.fleet}</span> · ${run.status}
+        ${run.outputs.coverage != null && html` · coverage ${(run.outputs.coverage * 100).toFixed(2)}%`}
+        ${run.outputs.version && html` · <span class="mono">${run.outputs.version}</span>`}
+      </h3>
+      <div class="charter">
+        trigger ${run.trigger} · ${run.created_at} · ${(run.duration_ms / 1000).toFixed(1)}s total
+        ${run.outputs.llm_assisted ? " · LLM-assisted repair (ratification pending)" : ""}
+        ${run.outputs.hints_used ? ` · ${run.outputs.hints_used.length} learned hint(s) applied` : ""}
+      </div>
+      <div style=${{ overflowX: "auto" }}>
+        <svg width=${width} height=${H + 40} style=${{ display: "block" }}>
+          ${stages.map((s, i) => {
+            const x = i * (W + GAP);
+            const attemptLoop = i > 0 && STAGE_ORDER.indexOf(s.stage) <= STAGE_ORDER.indexOf(stages[i - 1].stage);
+            return html`
+              <g key=${i}>
+                ${i > 0 && html`
+                  <line x1=${x - GAP} y1=${H / 2} x2=${x} y2=${H / 2}
+                        stroke=${i < lit ? "var(--indigo-500)" : "var(--pearl-dark)"} stroke-width="2" />
+                  <polygon points=${`${x},${H / 2} ${x - 7},${H / 2 - 4} ${x - 7},${H / 2 + 4}`}
+                           fill=${i < lit ? "var(--indigo-500)" : "var(--pearl-dark)"} />`}
+                ${attemptLoop && html`
+                  <path d=${`M ${x + W / 2} ${H - 6} C ${x + W / 2 - 40} ${H + 28}, ${x - GAP - W / 2 + 40} ${H + 28}, ${x - GAP - W / 2} ${H - 6}`}
+                        fill="none" stroke="var(--amber-600)" stroke-width="1.5" stroke-dasharray="4 3" />`}
+                <rect x=${x} y=${H / 2 - 32} width=${W} height="64" rx="10"
+                      fill="white" stroke=${color(s, i)} stroke-width="2.5" />
+                <text x=${x + W / 2} y=${H / 2 - 8} text-anchor="middle"
+                      font-family="ui-monospace, Menlo, monospace" font-size="13" font-weight="700"
+                      fill="var(--ink)">${s.stage}${s.attempt > 1 ? ` #${s.attempt}` : ""}</text>
+                <text x=${x + W / 2} y=${H / 2 + 12} text-anchor="middle" font-size="11" fill="var(--muted)">
+                  ${s.coverage != null ? `${(s.coverage * 100).toFixed(2)}% · ` : ""}${s.nodes ? `${s.nodes} nodes · ` : ""}${s.ms}ms
+                </text>
+                ${s.stage === "diff" && html`
+                  <text x=${x + W / 2} y=${H / 2 + 26} text-anchor="middle" font-size="10.5" fill="var(--muted)">
+                    +${s.added || 0} ~${s.amended || 0} −${s.removed || 0}
+                  </text>`}
+                ${s.stage === "persist" && s.version && html`
+                  <text x=${x + W / 2} y=${H / 2 + 26} text-anchor="middle" font-size="10.5" fill="var(--muted)">
+                    ${String(s.version).slice(0, 22)}
+                  </text>`}
+              </g>`;
+          })}
+        </svg>
+      </div>
+      <button class="playbtn" onClick=${replay}>▶ replay run</button>
+      ${" "}
+      <button class="playbtn" onClick=${close}>close</button>
+    </div>`;
+}
+
+/* --------------------------------- search ----------------------------------- */
 function SearchView({ q, open, back }) {
   const [results, setResults] = useState(null);
   useEffect(() => { setResults(null); api(`/api/clhear/search?q=${encodeURIComponent(q)}`).then(setResults); }, [q]);
@@ -369,13 +638,12 @@ function SearchView({ q, open, back }) {
     </div>`;
 }
 
-function ChangesView({ back, open }) {
+function ChangesView({ open }) {
   const [changes, setChanges] = useState(null);
   useEffect(() => { api("/api/clhear/changes").then(setChanges); }, []);
   if (changes === null) return html`<div class="spin">Loading changes…</div>`;
   return html`
     <div>
-      <div class="crumbs"><a onClick=${back}>Library</a> / change events</div>
       <h2>Change events</h2>
       ${changes.length === 0 && html`<div class="empty">No changes detected yet.</div>`}
       ${changes.map((c) => html`

@@ -596,8 +596,12 @@ def run_detail(run_id: int) -> dict:
 
 
 @router.get("/sources", response_class=HTMLResponse)
-def sources_explorer() -> str:
-    return (WEB_DIR / "sources.html").read_text()
+def sources_explorer() -> HTMLResponse:
+    # no-cache: the app shell must always match the deployed API/corpus.
+    return HTMLResponse(
+        (WEB_DIR / "sources.html").read_text(),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
 
 
 def _change_dict(row) -> dict:

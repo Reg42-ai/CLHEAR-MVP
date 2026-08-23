@@ -84,6 +84,47 @@ Still pending from this phase (not blockers for P1):
   matches the official CLML Body+Schedules Text nodes (whitespace-normalized
   length within 15%; distinctive CDD span present). Restricted discipline
   covers `raw_text` and `source_fragment` on both `/document` and `/nodes/{id}`.
+
+## Fidelity gates + repair loop + audit trail — DONE (2026-08-23)
+
+Root-cause fix after the GDPR fidelity gap: adapters are now MEASURED against
+their artifacts on every ingest, and the fleet learns from failures.
+
+- **Fidelity gate** (`app/clhear/l1/fidelity.py`): every adapter implements a
+  deliberately-dumb `expected_text()` oracle (all visible artifact text minus
+  declared exclusions); the pipeline requires token coverage >=
+  `CLHEAR_FIDELITY_THRESHOLD` (0.995) AND zero contract-invariant violations
+  (label never duplicated in text, unique refs, clause-grain nodes have refs)
+  before ANYTHING persists. All 6 adapters + the GDPR OJ original are at
+  100.00% coverage.
+- **Repair loop** (`pipeline.ingest`): parse → learned `parse_hints` (tier 1b,
+  zero LLM) → LLM-proposed hints via the L0 gateway (fleet `l1.repair`,
+  spend-capped, structured output; the LLM only CLASSIFIES artifact spans —
+  it never writes text) → bounded salvage (`CLHEAR_SALVAGE_CAP` 2%) →
+  re-fetch; up to `CLHEAR_INGEST_MAX_ATTEMPTS`. On exhaustion: nothing
+  persisted, "ingest NOT fully successful" logged, `IngestFidelityFailed`
+  event + `ingest_rectification` proposal (pending manual rectification in
+  /review). Gate-passing LLM hints persist to `parse_hints` and apply
+  deterministically on all future runs; ratify/retire via the proposal
+  (approval hook in `platform/proposals.py`).
+- **`l1_fidelity` eval suite** registered in the P0 harness — runs per source
+  offline in CI and blocks releases via the existing gate (E2/E3 skeleton).
+- **Document fidelity**: GDPR now has TWO versions — the ORIGINAL OJ act
+  (`oj-32016R0679`: title block, preamble citations, 173 recitals, points,
+  signatures, footnotes) and the consolidated text; the corrigendum lands as
+  a real change event (11 articles amended). UK prelims (banner, dates,
+  enacting text) ingested. USC parses only the statute field (deep heads
+  included); eCFR captures outline/example/CITA elements.
+- **Activity + Fleet UI** (`/sources` tabs): Activity = day-grouped audit
+  timeline over runs/change_events/events/eval_runs (status dots, fleet
+  badges, version-update entries, /review links; metadata only — never
+  clause text). Fleet = per-source health board (version, coverage, stage
+  chips, freshness) + per-run SVG pipeline DAG with stage timings and replay
+  animation; polls while a run is `running`. APIs: `/api/clhear/activity`,
+  `/fleet`, `/runs/{id}`. Run rows are written at START with appended stage
+  transitions (fetch/parse/gate/hints/llm_repair/salvage/persist/diff).
+- 30 tests green, incl. fleet-wide parametrized gate tests, loop convergence/
+  exhaustion, hint memory (zero repeat LLM calls), retirement, activity feed.
 - Not in P1: embeddings/semantic search (P2), citation mining + reconciliation
   (P2), E1–E7 evals (P4), restricted importers + BYOL (P3). Search is LIKE-based
   for now (pg_trgm/BGE-M3 when Aurora + P2 land).
