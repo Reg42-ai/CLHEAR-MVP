@@ -129,6 +129,35 @@ their artifacts on every ingest, and the fleet learns from failures.
   (P2), E1–E7 evals (P4), restricted importers + BYOL (P3). Search is LIKE-based
   for now (pg_trgm/BGE-M3 when Aurora + P2 land).
 
+## Standardized version model + provenance + job canvas — DONE (2026-08-23)
+
+- **Version model**: `source_versions.version_kind`
+  (`as_published|consolidated|edition`) + `as_of_date`; standardized labels
+  `{kind}:{as_of|id}`. Currency is a STATUS (`in_force`/`superseded`), kind is
+  a DESCRIPTOR — never conflated. Per-adapter `version_policy` declared in
+  SourceMeta. Two-tier ingestion policy: as-published baseline once where the
+  publisher provides one (UK as-made 2017, GDPR OJ), current text tracked
+  daily. MLR now has 3 text states; GDPR 2. `VERSION_KINDS` dictionary (plain-
+  language definitions) served via `GET /api/clhear/meta` and rendered as
+  tooltips + a "version kinds ⓘ" legend in the UI.
+- **User-facing model**: one "Current text" badge per source; a Provenance
+  panel unifying text states (oldest-first) + the family instruments that
+  caused the changes (`/sources/{key}` `provenance` block). The as-published
+  preamble notice links consolidated views to the original act. Informative-
+  tier drafts/consultations slot into the same panel in P2+ (watchers).
+- **Curated context**: `sources.about` + `topics` authored in SourceMeta
+  (deterministic, code-reviewed; zero LLM). Generated semantics stay OUT of
+  L1 — they get an annotations table with provenance in L2.
+- **Fleet job canvas**: every fleet execution carries a `job_id` (RunRecorder
+  inputs; relay recorded as its own `l0.relay` run). `GET
+  /api/clhear/jobs/latest` derives the task graph from the runs ledger; the
+  Fleet tab leads with a Databricks-style SVG workflow (lanes per source,
+  status-colored task cards, edges converging on relay, live polling while
+  running, job replay), with the per-run stage DAG as click-through and the
+  table behind a toggle.
+- 41 tests green; corpus rebuilt (25,116 nodes, 9 versions across 6 sources);
+  deployed + browser-verified end to end.
+
 ## Next: P2–P4 (one PR per phase, HLD §9)
 
 - **P2** — `families.py` citation mining + reconciliation; `embeddings.py`
