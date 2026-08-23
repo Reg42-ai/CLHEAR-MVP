@@ -158,6 +158,31 @@ their artifacts on every ingest, and the fleet learns from failures.
 - 41 tests green; corpus rebuilt (25,116 nodes, 9 versions across 6 sources);
   deployed + browser-verified end to end.
 
+## Reader efficiency + clause understanding layer — DONE (2026-08-23)
+
+- **Pipeline education**: `STAGE_INFO` dictionary (models.py) explains every
+  stage in plain language; served via `/api/clhear/meta`; tooltips on stage
+  chips/DAG nodes + "stages ⓘ" legend on the Fleet tab; job header shows
+  nodes-processed throughput (timings are real — the corpus is just fast).
+- **Short names**: `sources.short_name` ("GDPR", "UK AML Regulations
+  (MLRs 2017)", "FATCA statute", …) used across library, document headers,
+  Fleet canvas/table, activity and search; official titles stay as subtitles.
+- **Reader tools**: TOC sidebar (client-side from nodes), in-document filter
+  (text + annotation-category chips), grouped search results with category
+  filters (`/api/clhear/search?category=&topic=`).
+- **Clause understanding layer** (`clause_annotations` — enrichment ABOUT the
+  verbatim text, never the text): Tier 1 heuristic classifier runs in-pipeline
+  (`annotate` stage; categories definitions/obligation/prohibition/scope/
+  enforcement/procedure/exemption/administrative + topics inherited from
+  curated source metadata) — 2,112 clauses classified in the live corpus.
+  Tier 2 LLM explainer (`scripts/annotate_corpus.py`, gateway fleet
+  `l1.annotate`, ~$2 for the corpus, FakeProvider-tested, idempotent) is
+  built and WAITING ON `ANTHROPIC_API_KEY` — add it as a Cloud Agent secret
+  or SSM `/clhear/ANTHROPIC_API_KEY`, then run:
+  `DATABASE_URL=sqlite:///deploy/clhear.db python scripts/annotate_corpus.py`
+  and redeploy. UI marks AI output "AI-generated explainer — not legal text".
+- 51 tests green; corpus rebuilt + deployed + browser-verified (6/6).
+
 ## Next: P2–P4 (one PR per phase, HLD §9)
 
 - **P2** — `families.py` citation mining + reconciliation; `embeddings.py`
