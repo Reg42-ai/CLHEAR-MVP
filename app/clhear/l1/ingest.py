@@ -18,6 +18,7 @@ from app.clhear.db import get_engine, run_migrations
 from app.clhear.l1 import families, pipeline
 from app.clhear.l1.adapters import ADAPTER_KEYS, CITATOR_KEYS, get_adapter
 from app.clhear.platform.events import InMemoryTransport, SqsTransport, relay_once
+from app.clhear.platform.gateway import AnthropicProvider, Gateway
 from app.clhear.settings import get_settings
 
 
@@ -34,10 +35,12 @@ def main() -> int:
     else:
         store = pipeline.LocalStore(settings.clhear_artifacts_dir)
 
+    gateway = Gateway(engine, AnthropicProvider()) if settings.anthropic_api_key else None
+
     summaries = []
     for key in keys:
         adapter = get_adapter(key)
-        summaries.append(pipeline.ingest(engine, adapter, store, trigger="cli"))
+        summaries.append(pipeline.ingest(engine, adapter, store, trigger="cli", gateway=gateway))
         if key in CITATOR_KEYS:
             summaries.append(families.sync_citator(engine, adapter, trigger="cli"))
 
@@ -46,8 +49,9 @@ def main() -> int:
     else:
         transport = InMemoryTransport()
     relayed = relay_once(engine, transport, batch_size=1000)
-    print(json.dumps({"summaries": summaries, "relayed_events": relayed}, indent=2, default=str))
-    return 0
+    failed = [s.get("source") for s in summaries if s.get("status") == "not-fully-successful"]
+    print(json.dumps({"summaries": summaries, "relayed_events": relayed, "failed": failed}, indent=2, default=str))
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

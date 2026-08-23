@@ -1,9 +1,16 @@
 """EUR-Lex / Cellar adapter (HLD §7.2 adapter 2): GDPR (CELEX 32016R0679).
 
-Emits a typed DocNode tree (chapter / article / paragraph / preamble) with
-raw text and the exact XHTML fragment per node. Family relations: corrigenda
-probed as CELEX identifiers (the full RDF relations notice is ~60MB —
-# ARCH: switch to the Cellar work-tree notice when relations are needed at scale).
+Two artifact formats, one adapter:
+- ORIGINAL OJ act (celex `32016R0679`): title block, full preamble (citations
+  "Having regard…" + recitals (1)–(173)), chapters/sections, articles with
+  numbered paragraphs and point tables, final provisions, signatures, notes.
+- CONSOLIDATED text (celex `02016R0679-YYYYMMDD`, CONVEX output): title block,
+  chapters/sections, articles with `no-parag` markers and grid-list points,
+  final provisions, footnotes. Consolidations legitimately carry no preamble.
+
+The fidelity oracle (`expected_text`) is a dumb visible-text extraction with
+declared exclusions (consolidation banners/markers, separators) — independent
+of the structural parse by construction.
 
 License: EUR-Lex legal notice permits reuse of legal texts (Commission
 Decision 2011/833/EU) — verbatim reproduction with source acknowledgement.
@@ -13,7 +20,7 @@ import re
 from bs4 import BeautifulSoup, Tag
 
 from app.clhear.l1 import http
-from app.clhear.l1.adapters.base import Artifact, DocNode, EffectRecord, FetchResult, SourceMeta
+from app.clhear.l1.adapters.base import Artifact, DocNode, EffectRecord, FetchResult, SourceMeta, flatten
 
 CELLAR = "http://publications.europa.eu/resource/celex"
 GDPR_CELEX = "32016R0679"
@@ -24,13 +31,51 @@ GDPR_CONSOLIDATED = "02016R0679-20160504"
 
 _HEADERS = {"Accept": "application/xhtml+xml", "Accept-Language": "eng"}
 
+# Presentation/consolidation artifacts, not legal text (declared oracle
+# exclusions — the parser skips them for the same reason).
+_EXCLUDED_CLASSES = {
+    "disclaimer",
+    "modref",
+    "hd-modifiers",
+    "arrow",
+    "separator",
+    "separator-short",
+    "reference",  # CONVEX consolidation banner line ("02016R0679 — EN — …")
+    "title-doc-oj-reference",
+    "title-fam-member",
+    "oj-separator",
+}
+
+
+def _ws(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _txt(el) -> str:
+    return _ws(el.get_text(" ", strip=True)) if el is not None else ""
+
+
+def _strip_excluded(soup: BeautifulSoup) -> BeautifulSoup:
+    for el in list(soup.find_all(["script", "style"])):
+        el.decompose()
+    doomed = [
+        el
+        for el in soup.find_all(True)
+        if isinstance(el, Tag) and set(el.get("class") or []) & _EXCLUDED_CLASSES
+    ]
+    for el in doomed:
+        el.decompose()
+    return soup
+
 
 class EurLexAdapter:
     key = "eur_lex"
 
-    def __init__(self, celex: str = GDPR_CELEX, consolidated: str = GDPR_CONSOLIDATED):
+    def __init__(self, celex: str = GDPR_CELEX, celex_version: str = GDPR_CONSOLIDATED):
         self.celex = celex
-        self.consolidated = consolidated
+        # The Cellar id actually fetched: an original act ("3…") or a
+        # consolidated text ("0…-YYYYMMDD").
+        self.celex_version = celex_version
 
     def meta(self) -> SourceMeta:
         return SourceMeta(
@@ -46,80 +91,336 @@ class EurLexAdapter:
             canonical_url="https://eur-lex.europa.eu/eli/reg/2016/679/oj",
             adapter=self.key,
             scope_charter={
-                "binding": "regulation + corrigenda (CELEX relations)",
+                "binding": "regulation (OJ original + consolidations) + corrigenda (CELEX relations)",
                 "guidance": "EDPB guidelines (watcher, later)",
                 "out": ["national DPA guidance"],
             },
         )
 
+    @property
+    def version_label(self) -> str:
+        if self.celex_version.startswith("0"):
+            return f"consolidated-{self.celex_version}"
+        return f"oj-{self.celex_version}"
+
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
-        version_label = f"consolidated-{self.consolidated}"
-        if since_version == version_label:
+        if since_version == self.version_label:
             return None
-        content = http.get(f"{CELLAR}/{self.consolidated}", headers=_HEADERS)
-        soup = BeautifulSoup(content, "html.parser")
-
-        tree: list[DocNode] = []
-        current_chapter: DocNode | None = None
-
-        # CONVEX output: chapter divs (id=cpt_*) contain article divs (id=art_N)
-        # as descendants. Articles also appear in document-order find_all.
-        for div in soup.find_all("div", id=True):
-            if not isinstance(div, Tag):
+        content = http.get(f"{CELLAR}/{self.celex_version}", headers=_HEADERS)
+        soup = _strip_excluded(BeautifulSoup(content, "html.parser"))
+        if soup.find("p", class_="oj-doc-ti") is not None:
+            tree = self._parse_oj(soup)
+        else:
+            tree = self._parse_convex(soup)
+        # Non-clause markers like "(a)" repeat across definition lists; keep the
+        # first occurrence addressable, blank the rest (refs must be unique).
+        seen_refs: set[str] = set()
+        for node in flatten(tree):
+            if not node.ref:
                 continue
-            div_id = str(div.get("id", ""))
-            if re.fullmatch(r"cpt_[IVXLC]+", div_id):
-                num = div.find("p", class_="title-division-1")
-                heading = div.find("p", class_="title-division-2")
-                current_chapter = DocNode(
-                    node_type="chapter",
-                    ref=div_id,
-                    label=_raw(num) if num else "",
-                    heading=_raw(heading) if heading else "",
-                    source_fragment=str(div),
-                )
-                tree.append(current_chapter)
-                continue
-            if not re.fullmatch(r"art_\d+", div_id):
-                continue
-            number_el = div.find("p", class_="title-article-norm")
-            subtitle_el = div.find("p", class_="stitle-article-norm")
-            paragraphs = []
-            for block in div.find_all("div", class_="norm", recursive=False):
-                if not isinstance(block, Tag):
-                    continue
-                text = _raw(block)
-                if not text:
-                    continue
-                match = re.match(r"^(\d+)\.\s*", text)
-                paragraphs.append(
-                    DocNode(
-                        node_type="paragraph",
-                        ref=f"{div_id}.{match.group(1)}" if match else "",
-                        label=f"{match.group(1)}." if match else "",
-                        raw_text=text,
-                        source_fragment=str(block),
-                    )
-                )
-            article = DocNode(
-                node_type="article",
-                ref=div_id,
-                label=_raw(number_el) if number_el else f"Article {div_id.split('_')[1]}",
-                heading=_raw(subtitle_el) if subtitle_el else "",
-                source_fragment=str(div),
-                children=paragraphs,
-            )
-            if current_chapter is not None:
-                current_chapter.children.append(article)
+            if node.ref in seen_refs and node.node_type in {"point", "paragraph", "statement"}:
+                node.ref = ""
             else:
-                tree.append(article)
-
+                seen_refs.add(node.ref)
         return FetchResult(
-            version_label=version_label,
-            artifacts=[Artifact(name="consolidated.xhtml", content=content, content_type="application/xhtml+xml")],
+            version_label=self.version_label,
+            artifacts=[Artifact(name=f"{self.celex_version}.xhtml", content=content, content_type="application/xhtml+xml")],
             tree=tree,
         )
 
+    def expected_text(self, artifacts: list[Artifact]) -> list[str]:
+        spans: list[str] = []
+        for artifact in artifacts:
+            soup = _strip_excluded(BeautifulSoup(artifact.content, "html.parser"))
+            body = soup.body or soup
+            spans.extend(str(s) for s in body.strings if str(s).strip())
+        return spans
+
+    # ------------------------------------------------------------------ CONVEX
+    def _parse_convex(self, soup: BeautifulSoup) -> list[DocNode]:
+        tree: list[DocNode] = []
+        current_chapter: DocNode | None = None
+        current_section: DocNode | None = None
+
+        title_div = soup.find("div", id="tit_1")
+        if title_div is not None:
+            tree.append(self._title_container(title_div, ["title-doc-first", "title-doc-last"]))
+
+        for div in soup.find_all("div", id=True):
+            div_id = str(div.get("id", ""))
+            if re.fullmatch(r"cpt_[IVXLC]+", div_id):
+                current_chapter = DocNode(
+                    node_type="chapter",
+                    ref=div_id,
+                    label=_txt(div.find("p", class_="title-division-1")),
+                    heading=_txt(div.find("p", class_="title-division-2")),
+                )
+                current_section = None
+                tree.append(current_chapter)
+                continue
+            if re.fullmatch(r"cpt_[IVXLC]+\.sct_\d+", div_id):
+                current_section = DocNode(
+                    node_type="group",
+                    ref=div_id,
+                    label=_txt(div.find("p", class_="title-division-1")),
+                    heading=_txt(div.find("p", class_="title-division-2")),
+                )
+                (current_chapter.children if current_chapter else tree).append(current_section)
+                continue
+            if re.fullmatch(r"art_\d+", div_id):
+                article = self._convex_article(div, div_id)
+                target = current_section or current_chapter
+                (target.children if target else tree).append(article)
+                continue
+            if div_id == "fnp_1":
+                tree.append(DocNode(node_type="signature", ref="fnp_1", raw_text=_txt(div)))
+
+        notes = [p for p in soup.find_all("p", class_="footnote")]
+        if notes:
+            container = DocNode(node_type="note", ref="footnotes", heading="Footnotes")
+            for p in notes:
+                container.children.append(DocNode(node_type="note", raw_text=_txt(p)))
+            tree.append(container)
+        return tree
+
+    def _convex_article(self, div: Tag, div_id: str) -> DocNode:
+        number_el = div.find("p", class_="title-article-norm")
+        subtitle_el = div.find("p", class_="stitle-article-norm")
+        article = DocNode(
+            node_type="article",
+            ref=div_id,
+            label=_txt(number_el) or f"Article {div_id.split('_')[1]}",
+            heading=_txt(subtitle_el),
+        )
+        for child in list(div.children):
+            if not isinstance(child, Tag):
+                continue
+            classes = set(child.get("class") or [])
+            if "grid-container" in classes:
+                # article-level point list (e.g. Art. 4 definitions): attach to
+                # the introductory paragraph when one precedes it.
+                points = self._extract_points(child, div_id, include_self=True)
+                last = article.children[-1] if article.children else None
+                target = last.children if last is not None and last.node_type == "paragraph" else article.children
+                target.extend(points)
+                continue
+            if "norm" not in classes:
+                continue
+            marker_el = child.find("span", class_="no-parag")
+            label = ""
+            if marker_el is not None:
+                label = _ws(marker_el.get_text())
+                marker_el.extract()
+            points = self._extract_points(child, f"{div_id}.{label.rstrip('.')}" if label else div_id)
+            text = _txt(child)
+            article.children.append(
+                DocNode(
+                    node_type="paragraph",
+                    ref=f"{div_id}.{label.rstrip('.')}" if label else "",
+                    label=label,
+                    raw_text=text,
+                    children=points,
+                )
+            )
+        return article
+
+    def _extract_points(self, block: Tag, ref_prefix: str, include_self: bool = False) -> list[DocNode]:
+        """Grid lists -> point nodes; processed innermost-first to avoid text
+        duplication, returned flat in document order."""
+        if not isinstance(block, Tag):
+            return []
+        grids = list(block.find_all("div", class_="grid-container"))
+        if include_self and "grid-container" in (block.get("class") or []):
+            grids.insert(0, block)
+        parsed: list[DocNode] = []
+        for grid in reversed(grids):
+            marker = _txt(grid.find(class_=re.compile("grid-list-column-1")))
+            content = _txt(grid.find(class_=re.compile("grid-list-column-2")))
+            if not marker and not content:
+                continue
+            ref = f"{ref_prefix}{marker}" if re.fullmatch(r"\([a-z0-9ivx]+\)", marker) else ""
+            parsed.append(DocNode(node_type="point", ref=ref, label=marker, raw_text=content))
+            if grid is not block:
+                grid.extract()
+            else:
+                for el in list(grid.children):
+                    if isinstance(el, Tag):
+                        el.extract()
+        parsed.reverse()
+        return parsed
+
+    def _title_container(self, div: Tag, classes: list[str]) -> DocNode:
+        container = DocNode(node_type="title", ref="tit_1")
+        for p in div.find_all("p"):
+            p_classes = set(p.get("class") or [])
+            if not classes or p_classes & set(classes):
+                text = _txt(p)
+                if text:
+                    container.children.append(DocNode(node_type="title", raw_text=text))
+        return container
+
+    # ---------------------------------------------------------------------- OJ
+    def _parse_oj(self, soup: BeautifulSoup) -> list[DocNode]:
+        tree: list[DocNode] = []
+
+        # OJ page header (date / OJ reference) + document title block.
+        header = DocNode(node_type="title", ref="oj-header")
+        for p in soup.find_all("p", class_=re.compile(r"^oj-hd-")):
+            text = _txt(p)
+            if text:
+                header.children.append(DocNode(node_type="title", raw_text=text))
+        if header.children:
+            tree.append(header)
+        title_div = soup.find("div", id="tit_1")
+        if title_div is not None:
+            container = DocNode(node_type="title", ref="tit_1")
+            for p in title_div.find_all("p"):
+                text = _txt(p)
+                if text:
+                    container.children.append(DocNode(node_type="title", raw_text=text))
+            tree.append(container)
+
+        # Preamble: institution line, citations (cit_N), "Whereas:", recitals (rct_N).
+        preamble_div = soup.find("div", id="pbl_1")
+        if preamble_div is not None:
+            preamble = DocNode(node_type="preamble", ref="pbl_1", heading="")
+            for child in preamble_div.children:
+                if not isinstance(child, Tag):
+                    continue
+                child_id = str(child.get("id", ""))
+                if child_id.startswith("cit_"):
+                    preamble.children.append(
+                        DocNode(node_type="preamble", ref=child_id, raw_text=_txt(child))
+                    )
+                elif child_id.startswith("rct_"):
+                    preamble.children.append(self._oj_recital(child, child_id))
+                elif child.name == "p":
+                    text = _txt(child)
+                    if text:
+                        preamble.children.append(DocNode(node_type="preamble", raw_text=text))
+                elif child.name == "div":
+                    # container of citations/recitals (some layouts nest them)
+                    for sub in child.find_all("div", id=re.compile(r"^(cit|rct)_\d+$")):
+                        sub_id = str(sub.get("id"))
+                        if sub_id.startswith("rct_"):
+                            preamble.children.append(self._oj_recital(sub, sub_id))
+                        else:
+                            preamble.children.append(
+                                DocNode(node_type="preamble", ref=sub_id, raw_text=_txt(sub))
+                            )
+            tree.append(preamble)
+
+        current_chapter: DocNode | None = None
+        current_section: DocNode | None = None
+        enacting = soup.find("div", id="enc_1") or soup
+        for div in enacting.find_all("div", id=True):
+            div_id = str(div.get("id", ""))
+            if re.fullmatch(r"cpt_[IVXLC]+", div_id):
+                headings = div.find_all("p", class_=re.compile(r"^oj-ti-section"), limit=2)
+                current_chapter = DocNode(
+                    node_type="chapter",
+                    ref=div_id,
+                    label=_txt(headings[0]) if headings else "",
+                    heading=_txt(headings[1]) if len(headings) > 1 else "",
+                )
+                current_section = None
+                tree.append(current_chapter)
+            elif re.fullmatch(r"cpt_[IVXLC]+\.sct_\d+", div_id):
+                headings = div.find_all("p", class_=re.compile(r"^oj-ti-section"), limit=2)
+                current_section = DocNode(
+                    node_type="group",
+                    ref=div_id,
+                    label=_txt(headings[0]) if headings else "",
+                    heading=_txt(headings[1]) if len(headings) > 1 else "",
+                )
+                (current_chapter.children if current_chapter else tree).append(current_section)
+            elif re.fullmatch(r"art_\d+", div_id):
+                article = self._oj_article(div, div_id)
+                target = current_section or current_chapter
+                (target.children if target else tree).append(article)
+        # Final provisions block (sits AFTER enc_1): enacting formula,
+        # "Done at …", signatories.
+        fnp = soup.find("div", id="fnp_1")
+        if fnp is not None:
+            signature = DocNode(node_type="signature", ref="fnp_1")
+            for p in fnp.find_all("p"):
+                text = _txt(p)
+                if text:
+                    signature.children.append(DocNode(node_type="signature", raw_text=text))
+            tree.append(signature)
+
+        notes = soup.find_all("p", class_="oj-note")
+        if notes:
+            container = DocNode(node_type="note", ref="footnotes", heading="Footnotes")
+            for p in notes:
+                text = _txt(p)
+                if text:
+                    container.children.append(DocNode(node_type="note", raw_text=text))
+            tree.append(container)
+        return tree
+
+    def _oj_recital(self, div: Tag, div_id: str) -> DocNode:
+        cells = div.find_all("td")
+        label = _txt(cells[0]) if cells else ""
+        body = " ".join(_txt(c) for c in cells[1:]) if len(cells) > 1 else _txt(div)
+        return DocNode(node_type="recital", ref=div_id, label=label, raw_text=body)
+
+    def _oj_article(self, div: Tag, div_id: str) -> DocNode:
+        number_el = div.find("p", class_="oj-ti-art")
+        subtitle_el = div.find("p", class_="oj-sti-art")
+        article = DocNode(
+            node_type="article",
+            ref=div_id,
+            label=_txt(number_el) or f"Article {div_id.split('_')[1]}",
+            heading=_txt(subtitle_el),
+        )
+        # OJ wraps each numbered paragraph in its own div (id="001.001") and
+        # point lists in marker tables — walk descendants in document order.
+        for el in div.find_all(["p", "table"]):
+            if not isinstance(el, Tag):
+                continue
+            if el.find_parent("table") is not None:
+                continue  # cell paragraphs are captured via their table
+            classes = set(el.get("class") or [])
+            if el.name == "p":
+                if not classes & {"oj-normal"}:
+                    continue
+                text = _txt(el)
+                if not text:
+                    continue
+                match = re.match(r"^(\d+)\.\s+", text)
+                label = f"{match.group(1)}." if match else ""
+                if match:
+                    text = text[match.end() :]
+                article.children.append(
+                    DocNode(
+                        node_type="paragraph",
+                        ref=f"{div_id}.{match.group(1)}" if match else "",
+                        label=label,
+                        raw_text=text,
+                    )
+                )
+            else:  # table -> point rows
+                marker, content = self._oj_table_row(el)
+                if not marker and not content:
+                    continue
+                node = DocNode(node_type="point", ref="", label=marker, raw_text=content)
+                last = article.children[-1] if article.children else None
+                if last is not None and last.node_type == "paragraph":
+                    last.children.append(node)
+                else:
+                    article.children.append(node)
+        return article
+
+    def _oj_table_row(self, table: Tag) -> tuple[str, str]:
+        cells = table.find_all("td")
+        if not cells:
+            return "", _txt(table)
+        marker = _txt(cells[0])
+        content = " ".join(t for t in (_txt(c) for c in cells[1:]) if t)
+        return marker, content
+
+    # --- citator (corrigenda probe) -------------------------------------------
     def family_effects(self) -> list[EffectRecord]:
         """Corrigenda: probe CELEX 3…R(01)… identifiers against Cellar."""
         from urllib.parse import quote
@@ -144,8 +445,3 @@ class EurLexAdapter:
                 )
             )
         return records
-
-
-def _raw(el) -> str:
-    """Element text with source whitespace preserved (only ends stripped)."""
-    return "".join(el.strings).strip() if el is not None else ""

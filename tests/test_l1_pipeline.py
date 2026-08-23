@@ -46,12 +46,33 @@ class _StubAdapter:
         return FetchResult(
             version_label=self.version,
             artifacts=[Artifact(name="doc.txt", content=self.version.encode(), content_type="text/plain")],
-            tree=self.tree,
+            tree=[
+                DocNode(
+                    node_type=n.node_type,
+                    ref=n.ref,
+                    label=n.label,
+                    heading=n.heading,
+                    raw_text=n.raw_text,
+                    source_fragment=n.source_fragment,
+                    children=list(n.children),
+                )
+                for n in self.tree
+            ],
         )
+
+    def expected_text(self, artifacts):
+        # Trivial oracle: the stub's own node text (always consistent).
+        out = []
+        for node in self.tree:
+            for n in node.walk():
+                for piece in (n.label, n.heading, n.raw_text):
+                    if piece.strip():
+                        out.append(piece)
+        return out
 
 
 def _tree(*items: tuple[str, str]) -> list[DocNode]:
-    return [DocNode(node_type="provision", ref=ref, label=ref, raw_text=text) for ref, text in items]
+    return [DocNode(node_type="provision", ref=ref, raw_text=text) for ref, text in items]
 
 
 def test_pipeline_diff_and_events(engine, tmp_path):

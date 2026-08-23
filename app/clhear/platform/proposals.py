@@ -74,6 +74,16 @@ def _decide(engine: Engine, proposal_id: str, decision: str, approver: str) -> d
             .where(proposals.c.id == proposal_id)
             .values(status=decision, approver=approver, decided_at=datetime.now(timezone.utc))
         )
+        if row.kind == "parse_hint":
+            # ARCH: layer hook — ratifying a parse_hint proposal promotes or
+            # retires the learned hints it created (l1 hint memory lifecycle).
+            from app.clhear.l1.models import parse_hints
+
+            conn.execute(
+                parse_hints.update()
+                .where(parse_hints.c.proposal_id == proposal_id)
+                .values(status="approved" if decision == "approved" else "retired")
+            )
         l0_events.emit(
             conn,
             layer=row.layer,

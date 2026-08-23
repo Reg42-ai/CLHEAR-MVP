@@ -118,6 +118,14 @@ class Adapter(Protocol):
         """Return the current version, or None if since_version is still current."""
         ...
 
+    def expected_text(self, artifacts: list[Artifact]) -> list[str]:
+        """The fidelity ORACLE: complete ordered visible text of the artifacts
+        as a list of spans, extracted trivially (all text nodes in document
+        order minus declared exclusions). Deliberately dumb — it must not
+        share logic (or bugs) with the structural parse in fetch().
+        """
+        ...
+
 
 class CitatorAdapter(Adapter, Protocol):
     """Adapters for sources with an official effects/relations feed."""

@@ -29,12 +29,18 @@ MLR_NAME = (
 
 # Structural children we recurse into; Number/Title/Pnumber become label/heading.
 _SKIP = frozenset(
-    {"Number", "Title", "TitleBlock", "Pnumber", "Reference", "Metadata", "Commentaries", "ExplanatoryNotes"}
+    {"Number", "Title", "TitleBlock", "Pnumber", "Metadata", "Commentaries", "ExplanatoryNotes"}
 )
 
 
 def _tag(el: ET.Element) -> str:
     return el.tag.split("}")[-1]
+
+
+def _join_pieces(el: ET.Element) -> str:
+    """Join text pieces of a composite element with single spaces (e.g.
+    MadeDate's <Text>Made</Text><DateText>…</DateText>)."""
+    return " ".join(piece.strip() for piece in el.itertext() if piece.strip())
 
 
 def _txt(el: ET.Element | None) -> str:
@@ -109,11 +115,19 @@ class UkLegislationAdapter:
             raise ValueError(f"no Secondary/Primary element in CLML for {self.doc}")
 
         tree: list[DocNode] = []
+        prelims = doc_el.find(f"{CLML}SecondaryPrelims")
+        if prelims is None:
+            prelims = doc_el.find(f"{CLML}PrimaryPrelims")
+        if prelims is not None:
+            tree.extend(self._prelims_nodes(prelims))
         body = doc_el.find(f"{CLML}Body")
         if body is not None:
             tree.extend(self._children(body))
         schedules = doc_el.find(f"{CLML}Schedules")
         if schedules is not None:
+            schedules_title = schedules.find(f"{CLML}Title")
+            if schedules_title is not None and _txt(schedules_title).strip():
+                tree.append(DocNode(node_type="heading", ref="schedules", raw_text=_txt(schedules_title)))
             tree.extend(self._children(schedules))
         signed = doc_el.find(f"{CLML}SignedSection")
         if signed is not None:
@@ -124,6 +138,59 @@ class UkLegislationAdapter:
             artifacts=[Artifact(name="data.xml", content=content, content_type="application/xml")],
             tree=tree,
         )
+
+    def expected_text(self, artifacts: list[Artifact]) -> list[str]:
+        """Fidelity oracle: every text piece of the legal document sections
+        (prelims, body, schedules, signature) in order. Declared exclusions:
+        Metadata, Commentaries, ExplanatoryNotes (annotation apparatus, not
+        the enacted text)."""
+        spans: list[str] = []
+        for artifact in artifacts:
+            root = ET.fromstring(artifact.content)
+            doc_el = root.find(f"{CLML}Secondary")
+            if doc_el is None:
+                doc_el = root.find(f"{CLML}Primary")
+            if doc_el is None:
+                continue
+            for tag in ("SecondaryPrelims", "PrimaryPrelims", "Body", "Schedules", "SignedSection"):
+                section = doc_el.find(f"{CLML}{tag}")
+                if section is None:
+                    continue
+                spans.extend(piece for piece in section.itertext() if piece.strip())
+        return spans
+
+    def _prelims_nodes(self, prelims: ET.Element) -> list[DocNode]:
+        """SecondaryPrelims -> title banner + dates + enacting preamble."""
+        container = DocNode(node_type="title", ref="prelims", source_fragment=_fragment(prelims))
+        number = prelims.find(f"{CLML}Number")
+        if number is not None:
+            container.children.append(DocNode(node_type="title", raw_text=_txt(number)))
+        subject = prelims.find(f"{CLML}SubjectInformation")
+        if subject is not None:
+            container.children.append(DocNode(node_type="title", raw_text=_join_pieces(subject)))
+        title = prelims.find(f"{CLML}Title")
+        if title is not None:
+            container.children.append(DocNode(node_type="title", raw_text=_txt(title)))
+
+        preamble = DocNode(node_type="preamble", ref="preamble")
+        for tag in ("MadeDate", "LaidDate", "LaidDraft", "ComingIntoForce"):
+            el = prelims.find(f"{CLML}{tag}")
+            if el is not None:
+                preamble.children.append(DocNode(node_type="preamble", raw_text=_join_pieces(el)))
+        enacting = prelims.find(f"{CLML}SecondaryPreamble")
+        if enacting is None:
+            enacting = prelims.find(f"{CLML}PrimaryPreamble")
+        if enacting is not None:
+            for text_el in enacting.iter(f"{CLML}Text"):
+                text = _txt(text_el)
+                if text:
+                    preamble.children.append(DocNode(node_type="preamble", raw_text=text))
+        out: list[DocNode] = []
+        if container.children:
+            out.append(container)
+        if preamble.children:
+            out.append(preamble)
+        return out
 
     def _children(self, el: ET.Element) -> list[DocNode]:
         out: list[DocNode] = []
@@ -190,6 +257,9 @@ class UkLegislationAdapter:
                 raw_text=_txt(el),
                 source_fragment=_fragment(el),
             )
+        if tag == "Reference":
+            # e.g. a schedule's "Regulation 18(1)" cross-reference line
+            return DocNode(node_type="note", raw_text=_txt(el), source_fragment=_fragment(el))
         if tag == "Schedule":
             number = _child_txt(el, "Number")
             title = _child_txt(el, "TitleBlock") or _child_txt(el, "Title")

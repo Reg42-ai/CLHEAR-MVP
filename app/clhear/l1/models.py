@@ -124,6 +124,7 @@ source_versions = sa.Table(
 # from these rows. `clauses` is the provision-level projection used by the
 # diff engine, search, and future L2 obligation anchors.
 NODE_TYPES = (
+    "title",
     "part",
     "chapter",
     "group",
@@ -140,6 +141,8 @@ NODE_TYPES = (
     "statement",
     "heading",
     "preamble",
+    "recital",
+    "note",
     "signature",
 )
 
@@ -257,6 +260,37 @@ change_events = sa.Table(
     sa.Column("diff_s3_uri", sa.Text, nullable=False, default=""),
 )
 
+# Learned parse hints (fidelity repair loop): discovered once (LLM tier or
+# manually), applied deterministically on every future run BEFORE any LLM
+# call, ratified/retired by maintainers via the L0 proposals rail.
+parse_hints = sa.Table(
+    "parse_hints",
+    metadata,
+    sa.Column("id", BigId, sa.Identity(), primary_key=True),
+    sa.Column("source_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.sources.id"), nullable=False),
+    sa.Column("hint", Json, nullable=False),
+    sa.Column(
+        "origin",
+        sa.Text,
+        sa.CheckConstraint("origin in ('llm','manual')", name="parse_hints_origin_check"),
+        nullable=False,
+        default="llm",
+    ),
+    sa.Column(
+        "status",
+        sa.Text,
+        sa.CheckConstraint("status in ('candidate','approved','retired')", name="parse_hints_status_check"),
+        nullable=False,
+        default="candidate",
+    ),
+    sa.Column("proposal_id", sa.Uuid(as_uuid=False), nullable=True),
+    sa.Column("times_used", sa.Integer, nullable=False, default=0),
+    sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("last_needed_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Index("parse_hints_source_idx", "source_id"),
+)
+
 licenses_held = sa.Table(
     "licenses_held",
     metadata,
@@ -292,6 +326,7 @@ ALL_TABLES = (
     citations,
     discovery_candidates,
     change_events,
+    parse_hints,
     licenses_held,
     byol_uploads,
 )

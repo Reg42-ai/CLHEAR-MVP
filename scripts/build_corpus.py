@@ -23,13 +23,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.clhear.db import get_engine, run_migrations  # noqa: E402
 from app.clhear.l1 import families, pipeline  # noqa: E402
 from app.clhear.l1.adapters import ADAPTER_KEYS, CITATOR_KEYS, get_adapter  # noqa: E402
+from app.clhear.l1.adapters.eur_lex import EurLexAdapter  # noqa: E402
 from app.clhear.l1.adapters.uk_legislation import UkLegislationAdapter  # noqa: E402
 from app.clhear.platform.events import SqsTransport, relay_once  # noqa: E402
-from app.clhear.platform.gateway import FakeProvider, Gateway  # noqa: E402
+from app.clhear.platform.gateway import AnthropicProvider, FakeProvider, Gateway  # noqa: E402
 from app.clhear.settings import get_settings  # noqa: E402
 from app.clhear.workers import handle_envelope  # noqa: E402
 
 MLR_HISTORICAL_SNAPSHOT = "2020-01-09"  # day before SI 2019/1511 came into force
+GDPR_OJ_ORIGINAL = "32016R0679"  # OJ act as published (preamble + recitals)
 
 
 def main() -> int:
@@ -44,12 +46,22 @@ def main() -> int:
     else:
         store = pipeline.LocalStore(settings.clhear_artifacts_dir)
 
+    # LLM repair tier is available only when a key is configured; daily runs
+    # stay LLM-free whenever the deterministic tiers pass.
+    gateway = Gateway(engine, AnthropicProvider()) if settings.anthropic_api_key else None
+
     summaries = []
-    # Historical MLR snapshot first so the current text replays as an amendment.
-    summaries.append(pipeline.ingest(engine, UkLegislationAdapter(snapshot=MLR_HISTORICAL_SNAPSHOT), store))
+    # Historical versions first so current texts replay as amendments:
+    # MLR point-in-time snapshot, then the GDPR OJ original act.
+    summaries.append(
+        pipeline.ingest(engine, UkLegislationAdapter(snapshot=MLR_HISTORICAL_SNAPSHOT), store, gateway=gateway)
+    )
+    summaries.append(
+        pipeline.ingest(engine, EurLexAdapter(celex_version=GDPR_OJ_ORIGINAL), store, gateway=gateway)
+    )
     for key in ADAPTER_KEYS:
         adapter = get_adapter(key)
-        summaries.append(pipeline.ingest(engine, adapter, store, trigger="build_corpus"))
+        summaries.append(pipeline.ingest(engine, adapter, store, trigger="build_corpus", gateway=gateway))
         if key in CITATOR_KEYS:
             summaries.append(families.sync_citator(engine, adapter, trigger="build_corpus"))
 
@@ -76,7 +88,11 @@ def main() -> int:
                 )
                 drained += 1
 
-    print(json.dumps({"summaries": summaries, "relayed": relayed, "drained": drained}, indent=2, default=str))
+    failed = [s.get("source") for s in summaries if s.get("status") == "not-fully-successful"]
+    print(json.dumps({"summaries": summaries, "relayed": relayed, "drained": drained, "failed": failed}, indent=2, default=str))
+    if failed:
+        logging.error("corpus build NOT fully successful for: %s", failed)
+        return 1
     return 0
 
 

@@ -93,19 +93,53 @@ class NistSp80053Adapter:
             children=statements,
         )
 
+    def expected_text(self, artifacts: list[Artifact]) -> list[str]:
+        """Fidelity oracle: group/control titles + statement prose (flat walk).
+        Declared exclusions: guidance/assessment parts (SP 800-53A companion
+        material, outside the v1 charter grain)."""
+        import json as _json
+
+        spans: list[str] = []
+
+        def prose_of(part: dict) -> None:
+            if part.get("name") == "statement" or part.get("name") is None:
+                if part.get("prose"):
+                    spans.append(part["prose"])
+                for sub in part.get("parts", []):
+                    prose_of({**sub, "name": None})
+
+        def walk_control(control: dict) -> None:
+            spans.append(control.get("id", "").upper())
+            spans.append(control.get("title", ""))
+            for part in control.get("parts", []):
+                if part.get("name") == "statement":
+                    prose_of(part)
+            for sub in control.get("controls", []):
+                walk_control(sub)
+
+        for artifact in artifacts:
+            catalog = _json.loads(artifact.content)["catalog"]
+            for group in catalog.get("groups", []):
+                spans.append(group.get("id", "").upper())
+                spans.append(group.get("title", ""))
+                for control in group.get("controls", []):
+                    walk_control(control)
+        return [s for s in spans if s.strip()]
+
     def _statement_nodes(self, part: dict, parent_ref: str) -> list[DocNode]:
         label = next((p["value"] for p in part.get("props", []) if p.get("name") == "label"), "")
         prose = part.get("prose") or ""
-        # Nested statement parts (a. / a.1. / …) become child statements.
+        # Chain refs through nesting so a./a.1./b.1. stay unique per control.
+        ref = f"{parent_ref}:{label.rstrip('.')}" if label else parent_ref
         children = []
         for sub in part.get("parts", []):
-            children.extend(self._statement_nodes(sub, parent_ref))
+            children.extend(self._statement_nodes(sub, ref))
         if not prose and not children:
             return []
         return [
             DocNode(
                 node_type="statement",
-                ref=f"{parent_ref}:{label}" if label else "",
+                ref=ref if label else "",
                 label=label,
                 raw_text=prose,
                 source_fragment=json.dumps(part, ensure_ascii=False),
@@ -186,3 +220,18 @@ class NistCsfAdapter:
             artifacts=[Artifact(name="csf-export.json", content=content, content_type="application/json")],
             tree=tree,
         )
+
+    def expected_text(self, artifacts: list[Artifact]) -> list[str]:
+        """Fidelity oracle: identifier/title/text of every function, category
+        and subcategory. Declared exclusions: implementation examples, sort
+        keys, withdraw reasons, party records (CPRT tooling metadata)."""
+        spans: list[str] = []
+        for artifact in artifacts:
+            payload = json.loads(artifact.content)["response"]["elements"]
+            for element in payload["elements"]:
+                if element.get("element_type") not in ("function", "category", "subcategory"):
+                    continue
+                spans.append(element.get("element_identifier", ""))
+                spans.append(element.get("title", ""))
+                spans.append(element.get("text", ""))
+        return [s for s in spans if s.strip()]

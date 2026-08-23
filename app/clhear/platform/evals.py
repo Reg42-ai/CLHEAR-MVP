@@ -32,11 +32,7 @@ def register_suite(name: str):
 
 @register_suite("l0_smoke")
 def l0_smoke(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
-    """P0 skeleton suite: the l0_platform tables exist and are queryable.
-
-    E1–E7 (per-source fidelity/completeness/…) register here from
-    app/clhear/l1/evals/ starting in P1.
-    """
+    """P0 skeleton suite: the l0_platform tables exist and are queryable."""
     from app.clhear.models import events, llm_calls, proposals, runs
 
     counts = {}
@@ -44,6 +40,39 @@ def l0_smoke(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
         for table in (events, proposals, llm_calls, runs):
             counts[table.name] = conn.execute(sa.select(sa.func.count()).select_from(table)).scalar_one()
     return {"tables_queryable": len(counts), "row_counts": counts}, True
+
+
+@register_suite("l1_fidelity")
+def l1_fidelity(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """E2/E3 skeleton (pulled forward from P4): every registry adapter's parse
+    must cover its own oracle text at >= the gate threshold with zero contract
+    violations. Runs offline against recorded fixtures in CI; blocks releases
+    via the existing release gate."""
+    from app.clhear.l1 import fidelity
+    from app.clhear.l1.adapters import ADAPTER_KEYS, get_adapter
+
+    settings = get_settings()
+    threshold = settings.clhear_fidelity_threshold
+    scores: dict = {}
+    passed = True
+    for key in ADAPTER_KEYS:
+        if source_key and key != source_key:
+            continue
+        adapter = get_adapter(key)
+        try:
+            result = adapter.fetch()
+            report = fidelity.check(result.tree, adapter.expected_text(result.artifacts))
+            ok = report.ok(threshold)
+            scores[key] = {
+                "coverage": round(report.coverage, 5),
+                "violations": len(report.violations),
+                "passed": ok,
+            }
+            passed = passed and ok
+        except Exception as exc:
+            scores[key] = {"error": str(exc)[:200], "passed": False}
+            passed = False
+    return {"threshold": threshold, "adapters": scores}, passed
 
 
 def run_suite(engine: Engine, suite: str, source_key: str | None = None, release: str | None = None) -> dict:

@@ -45,6 +45,15 @@ FAMILY = dict(
 )
 
 
+def _field(html: str, name: str) -> str:
+    """Slice one GPO field (the page's own section delimiters)."""
+    start = html.find(f"<!-- field-start:{name} -->")
+    end = html.find(f"<!-- field-end:{name} -->")
+    if start == -1 or end == -1:
+        return ""
+    return html[start + len(f"<!-- field-start:{name} -->") : end]
+
+
 class GovInfoUscAdapter:
     key = "govinfo_us_usc"
 
@@ -71,57 +80,67 @@ class GovInfoUscAdapter:
         for sec in USC_SECTIONS:
             content = http.get(USC_URL.format(ed=USC_EDITION, sec=sec))
             artifacts.append(Artifact(name=f"sec{sec}.htm", content=content, content_type="text/html"))
-            soup = BeautifulSoup(content, "html.parser")
-            head = soup.find("h3", class_="section-head")
+            html = content.decode("utf-8", errors="replace")
+            # The GPO page delimits its own sections with field comments; the
+            # statute field is the law, the notes fields are annotations.
+            statute = _field(html, "statute")
+            head_html = _field(html, "head")
+            head = BeautifulSoup(head_html, "html.parser").get_text(" ", strip=True) if head_html else f"§{sec}"
             children: list[DocNode] = []
             current: DocNode | None = None
-            # statute field: subsection heads + statutory body paragraphs; the
-            # notes fields (note-head etc.) are deliberately excluded.
-            for el in soup.find_all(["h4", "p"]):
+            for el in BeautifulSoup(statute, "html.parser").find_all(["h4", "p"]):
                 if not isinstance(el, Tag):
                     continue
-                classes = el.get("class") or []
-                if el.name == "h4" and "subsection-head" in classes:
+                classes = [str(c) for c in (el.get("class") or [])]
+                heading_class = next((c for c in classes if c.endswith("-head")), None)
+                if el.name == "h4" and heading_class == "subsection-head":
                     heading = "".join(el.strings).strip()
                     match = re.match(r"\(([a-z0-9]+)\)", heading)
                     sub_ref = f"sec{sec}({match.group(1)})" if match else f"sec{sec}-{len(children)}"
                     current = DocNode(
                         node_type="subsection",
                         ref=sub_ref,
-                        label=f"({match.group(1)})" if match else heading,
-                        heading=heading,
+                        heading=heading,  # heading carries the printed "(a)" marker
                         source_fragment=str(el),
                     )
                     children.append(current)
-                elif el.name == "p" and any(str(c).startswith("statutory-body") for c in classes):
-                    text = "".join(el.strings)
-                    para = DocNode(
-                        node_type="paragraph",
-                        raw_text=text,
-                        source_fragment=str(el),
-                    )
-                    if current is None:
-                        current = DocNode(
-                            node_type="subsection",
-                            ref=f"sec{sec}(pre)",
-                            label="",
-                            source_fragment=str(el),
-                            children=[para],
-                        )
-                        children.append(current)
-                    else:
-                        current.children.append(para)
+                    continue
+                if el.name == "h4" and heading_class:
+                    # deeper heads inside a subsection: (1) In general, (A) …
+                    node = DocNode(node_type="heading", raw_text="".join(el.strings).strip(), source_fragment=str(el))
+                elif el.name == "p" and any(c.startswith("statutory-body") for c in classes):
+                    node = DocNode(node_type="paragraph", raw_text="".join(el.strings), source_fragment=str(el))
+                else:
+                    continue
+                if current is None:
+                    current = DocNode(node_type="subsection", ref=f"sec{sec}(pre)", children=[node])
+                    children.append(current)
+                else:
+                    current.children.append(node)
             tree.append(
                 DocNode(
                     node_type="section",
                     ref=f"sec{sec}",
-                    label=f"§{sec}",
-                    heading="".join(head.strings).strip() if head else f"§{sec}",
-                    source_fragment=str(head) if head else "",
+                    heading=head,  # heading carries the printed "§1471." marker
+                    source_fragment=head_html,
                     children=children,
                 )
             )
         return FetchResult(version_label=version_label, artifacts=artifacts, tree=tree)
+
+    def expected_text(self, artifacts: list[Artifact]) -> list[str]:
+        """Fidelity oracle: the statute field of each page (between GPO's
+        field-start/end comment markers) + the section heading. Declared
+        exclusions: notes/source-credit/amendment fields (annotation, not law)."""
+        spans: list[str] = []
+        for artifact in artifacts:
+            html = artifact.content.decode("utf-8", errors="replace")
+            for field_name in ("head", "statute"):
+                fragment = _field(html, field_name)
+                if fragment:
+                    parsed = BeautifulSoup(fragment, "html.parser")
+                    spans.extend(str(s) for s in parsed.strings if str(s).strip())
+        return spans
 
 
 class GovInfoEcfrAdapter:
@@ -160,39 +179,63 @@ class GovInfoEcfrAdapter:
             children: list[DocNode] = []
             current: DocNode | None = None
             expected = "a"
-            for p in root.iter("P"):
-                text = "".join(p.itertext())
+
+            def emit(node: DocNode) -> None:
+                nonlocal current
+                if current is None:
+                    current = DocNode(node_type="subsection", ref=f"{section}(pre)", children=[node])
+                    children.append(current)
+                else:
+                    current.children.append(node)
+
+            # Document order over the section's block elements: P paragraphs,
+            # HD*/HED headings (outline + examples), PSPACE example bodies.
+            nested_skip = set()
+            for wrapper in root.iter("PSPACE"):
+                for descendant in wrapper.iter():
+                    if descendant is not wrapper:
+                        nested_skip.add(id(descendant))
+            for el in root.iter():
+                if id(el) in nested_skip:
+                    continue
+                tag = el.tag
+                text = "".join(el.itertext())
                 if not text.strip():
                     continue
-                fragment = ET.tostring(p, encoding="unicode")
-                if expected is not None and text.lstrip().startswith(f"({expected})"):
-                    current = DocNode(
-                        node_type="subsection",
-                        ref=f"{section}({expected})",
-                        label=f"({expected})",
-                        source_fragment=fragment,
-                        children=[DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment)],
-                    )
-                    children.append(current)
-                    expected = chr(ord(expected) + 1) if expected != "z" else None
-                elif current is not None:
-                    current.children.append(DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment))
-                else:
-                    current = DocNode(
-                        node_type="subsection",
-                        ref=f"{section}(pre)",
-                        source_fragment=fragment,
-                        children=[DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment)],
-                    )
-                    children.append(current)
+                fragment = ET.tostring(el, encoding="unicode")
+                if tag == "P":
+                    if expected is not None and text.lstrip().startswith(f"({expected})"):
+                        current = DocNode(
+                            node_type="subsection",
+                            ref=f"{section}({expected})",
+                            source_fragment=fragment,
+                            children=[DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment)],
+                        )
+                        children.append(current)
+                        expected = chr(ord(expected) + 1) if expected != "z" else None
+                    else:
+                        emit(DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment))
+                elif tag in ("HD1", "HD2", "HD3", "HED"):
+                    emit(DocNode(node_type="heading", raw_text=text, source_fragment=fragment))
+                elif tag in ("PSPACE", "FP"):
+                    emit(DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment))
+                elif tag == "CITA":
+                    children.append(DocNode(node_type="note", raw_text=text, source_fragment=fragment))
             tree.append(
                 DocNode(
                     node_type="section",
                     ref=section,
-                    label=f"§ {section}",
-                    heading=head,
+                    heading=head,  # heading carries the printed "§ 1.1471-0" marker
                     source_fragment=ET.tostring(root, encoding="unicode"),
                     children=children,
                 )
             )
         return FetchResult(version_label=version_label, artifacts=artifacts, tree=tree)
+
+    def expected_text(self, artifacts: list[Artifact]) -> list[str]:
+        """Fidelity oracle: every text piece of each eCFR section XML."""
+        spans: list[str] = []
+        for artifact in artifacts:
+            root = ET.fromstring(artifact.content)
+            spans.extend(piece for piece in root.itertext() if piece.strip())
+        return spans

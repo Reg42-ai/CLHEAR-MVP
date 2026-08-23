@@ -10,6 +10,8 @@ import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
+import json
+
 from app.clhear.db import get_engine
 from app.clhear.l1.models import (
     change_events,
@@ -21,6 +23,7 @@ from app.clhear.l1.models import (
     sources,
 )
 from app.clhear.l1.public import clause_refs_select, clauses_public_select, nodes_public_select, nodes_refs_select
+from app.clhear.models import eval_runs, events, runs
 
 router = APIRouter()
 
@@ -373,6 +376,223 @@ def search_clauses(q: str = Query(min_length=2), limit: int = Query(default=50, 
             }
         )
     return out
+
+
+# ---------------------------------------------------------------- audit trail
+
+_RUN_STATUS = {
+    "succeeded": "success",
+    "warning": "warning",
+    "failed": "failure",
+    "running": "running",
+    "up-to-date": "info",
+    "unchanged": "info",
+}
+
+
+def _outputs_of(row) -> dict:
+    return row.outputs if isinstance(row.outputs, dict) else json.loads(row.outputs or "{}")
+
+
+def _run_item(row) -> dict:
+    outputs = _outputs_of(row)
+    inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
+    status = _RUN_STATUS.get(outputs.get("status", ""), "info")
+    source = inputs.get("source") or inputs.get("family") or ""
+    bits = []
+    if outputs.get("change"):
+        bits.append(outputs["change"])
+    if outputs.get("nodes"):
+        bits.append(f"{outputs['nodes']} nodes / {outputs.get('clauses', 0)} clauses")
+    if outputs.get("coverage") is not None:
+        bits.append(f"coverage {outputs['coverage']:.1%}" if isinstance(outputs["coverage"], float) else f"coverage {outputs['coverage']}")
+    if outputs.get("hints_used"):
+        bits.append(f"{len(outputs['hints_used'])} learned hint(s)")
+    if outputs.get("recovered_spans"):
+        bits.append(f"{outputs['recovered_spans']} salvaged span(s)")
+    if outputs.get("llm_assisted"):
+        bits.append("LLM-assisted repair")
+    if outputs.get("new_members") is not None:
+        bits.append(f"{len(outputs['new_members'])} new family member(s)")
+    if outputs.get("status") == "failed":
+        bits.append("pending manual rectification")
+    summary = " · ".join(bits) if bits else outputs.get("status", "run")
+    return {
+        "ts": str(row.created_at),
+        "type": "run",
+        "run_id": row.id,
+        "actor": row.fleet,
+        "status": status,
+        "source_key": source,
+        "summary": summary,
+        "duration_ms": row.duration_ms,
+        "links": {"review": "/review"} if status == "failure" else {},
+        "details": outputs,
+    }
+
+
+@router.get("/api/clhear/activity")
+def activity(
+    status: str | None = None,
+    fleet: str | None = None,
+    source: str | None = None,
+    limit: int = Query(default=100, le=400),
+) -> list[dict]:
+    """The system audit trail: a read-only chronological projection of the
+    append-only runs ledger, change events, outbox events, and eval runs.
+    Metadata only — refs, hashes, counts — never clause text."""
+    engine = get_engine()
+    items: list[dict] = []
+    with engine.connect() as conn:
+        for row in conn.execute(sa.select(runs).order_by(runs.c.id.desc()).limit(limit)):
+            items.append(_run_item(row))
+        for row in conn.execute(
+            sa.select(change_events, sources.c.key.label("source_key"), sources.c.name.label("source_name"))
+            .join(sources, sources.c.id == change_events.c.source_id)
+            .order_by(change_events.c.id.desc())
+            .limit(limit)
+        ):
+            refs = row.clause_refs if isinstance(row.clause_refs, list) else []
+            transition = (
+                f"new version {row.new_version} supersedes {row.old_version} · {len(refs)} clause(s) changed"
+                if row.old_version
+                else f"first version {row.new_version} ingested"
+            )
+            items.append(
+                {
+                    "ts": str(row.detected_at),
+                    "type": "version_update",
+                    "actor": "l1.pipeline",
+                    "status": "success",
+                    "source_key": row.source_key,
+                    "summary": f"{row.source_name} — {transition}",
+                    "refs": refs[:30],
+                    "links": {"document": f"/sources?source={row.source_key}", "diff": row.diff_s3_uri},
+                    "details": {"kind": row.kind, "old_version": row.old_version, "new_version": row.new_version},
+                }
+            )
+        for row in conn.execute(
+            sa.select(events)
+            .where(events.c.kind.in_(("ProposalApproved", "ProposalRejected", "FamilyMembersAdded", "IngestFidelityFailed")))
+            .order_by(events.c.id.desc())
+            .limit(limit)
+        ):
+            payload = row.payload if isinstance(row.payload, dict) else json.loads(row.payload or "{}")
+            failure = row.kind == "IngestFidelityFailed"
+            items.append(
+                {
+                    "ts": str(row.created_at),
+                    "type": "event",
+                    "actor": payload.get("approver") or row.producer,
+                    "status": "failure" if failure else "success",
+                    "source_key": row.subject_ref,
+                    "summary": (
+                        f"{row.subject_ref} ingest NOT fully successful — pending manual rectification"
+                        if failure
+                        else f"{row.kind} — {row.subject_ref}"
+                    ),
+                    "links": {"review": "/review"} if failure or row.kind.startswith("Proposal") else {},
+                    "details": {k: v for k, v in payload.items() if k != "clause_refs"},
+                }
+            )
+        for row in conn.execute(sa.select(eval_runs).order_by(eval_runs.c.id.desc()).limit(limit)):
+            items.append(
+                {
+                    "ts": str(row.ran_at),
+                    "type": "eval",
+                    "actor": f"evals.{row.suite}",
+                    "status": "success" if row.passed else "failure",
+                    "source_key": row.source_key or "",
+                    "summary": f"eval suite {row.suite} {'passed' if row.passed else 'FAILED'}"
+                    + (f" (release {row.release})" if row.release else ""),
+                    "links": {},
+                    "details": row.scores if isinstance(row.scores, dict) else json.loads(row.scores or "{}"),
+                }
+            )
+    if status:
+        items = [i for i in items if i["status"] == status]
+    if fleet:
+        items = [i for i in items if fleet in str(i.get("actor", ""))]
+    if source:
+        items = [i for i in items if i.get("source_key") == source]
+    items.sort(key=lambda i: i["ts"], reverse=True)
+    return items[:limit]
+
+
+@router.get("/api/clhear/fleet")
+def fleet_board() -> list[dict]:
+    """Per-source pipeline health: last run + stages, coverage, versions,
+    freshness — the OpenSanctions-style board the Fleet view renders."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        source_rows = conn.execute(sa.select(sources).where(sources.c.adapter != "")).all()
+        versions = conn.execute(sa.select(source_versions).order_by(source_versions.c.id)).all()
+        run_rows = conn.execute(
+            sa.select(runs).where(runs.c.fleet.like("l1.%")).order_by(runs.c.id.desc()).limit(400)
+        ).all()
+    by_source_versions: dict[int, list] = {}
+    for v in versions:
+        by_source_versions.setdefault(v.source_id, []).append(v)
+    latest_run: dict[str, dict] = {}
+    for row in run_rows:
+        inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
+        key = inputs.get("source") or inputs.get("family") or ""
+        if key and key not in latest_run:
+            outputs = _outputs_of(row)
+            latest_run[key] = {
+                "run_id": row.id,
+                "fleet": row.fleet,
+                "ts": str(row.created_at),
+                "status": _RUN_STATUS.get(outputs.get("status", ""), "info"),
+                "coverage": outputs.get("coverage"),
+                "duration_ms": row.duration_ms,
+                "stages": outputs.get("stages", []),
+            }
+    board = []
+    for source in source_rows:
+        source_version_list = by_source_versions.get(source.id, [])
+        if not source_version_list and source.key not in latest_run:
+            continue  # reference-level family member, not a fleet job
+        current = next((v for v in reversed(source_version_list) if v.status == "in_force"), None)
+        previous = next(
+            (v for v in reversed(source_version_list) if current is None or v.id != current.id), None
+        )
+        board.append(
+            {
+                "source_key": source.key,
+                "source_name": source.name,
+                "adapter": source.adapter,
+                "license": source.license,
+                "current_version": current.version_label if current else None,
+                "current_retrieved_at": str(current.retrieved_at) if current else None,
+                "previous_version": previous.version_label if previous else None,
+                "versions": len(source_version_list),
+                "schedule": "manual (EventBridge schedules ship disabled in P0)",
+                "last_run": latest_run.get(source.key),
+            }
+        )
+    return board
+
+
+@router.get("/api/clhear/runs/{run_id}")
+def run_detail(run_id: int) -> dict:
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(sa.select(runs).where(runs.c.id == run_id)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    outputs = _outputs_of(row)
+    return {
+        "id": row.id,
+        "fleet": row.fleet,
+        "trigger": row.trigger,
+        "inputs": row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}"),
+        "status": outputs.get("status"),
+        "stages": outputs.get("stages", []),
+        "outputs": {k: v for k, v in outputs.items() if k != "stages"},
+        "duration_ms": row.duration_ms,
+        "created_at": str(row.created_at),
+    }
 
 
 @router.get("/sources", response_class=HTMLResponse)
