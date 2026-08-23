@@ -58,6 +58,11 @@ sources = sa.Table(
     sa.Column("license_ref", sa.Text, nullable=False, default=""),
     sa.Column("adapter", sa.Text, nullable=False, default=""),
     sa.Column("canonical_url", sa.Text, nullable=False, default=""),
+    # Curated semantic context (authored in the adapter's SourceMeta, code-
+    # reviewed — deterministic, zero LLM). Generated semantics belong to a
+    # separate annotations table in L2, never here.
+    sa.Column("about", sa.Text, nullable=False, default=""),
+    sa.Column("topics", Json, nullable=False, default=list),
 )
 
 family_members = sa.Table(
@@ -105,6 +110,19 @@ source_versions = sa.Table(
     sa.Column("id", BigId, sa.Identity(), primary_key=True),
     sa.Column("source_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.sources.id"), nullable=False),
     sa.Column("version_label", sa.Text, nullable=False),
+    sa.Column(
+        "version_kind",
+        sa.Text,
+        sa.CheckConstraint(
+            "version_kind in ('as_published','consolidated','edition')",
+            name="source_versions_kind_check",
+        ),
+        nullable=False,
+        default="consolidated",
+    ),
+    # The date the text STATE represents (consolidation date, OJ publication
+    # date, made date) — distinct from retrieved_at (when we fetched it).
+    sa.Column("as_of_date", sa.Date, nullable=True),
     sa.Column("effective_date", sa.Date, nullable=True),
     sa.Column("retrieved_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.Column("s3_uri", sa.Text, nullable=False, default=""),
@@ -123,6 +141,38 @@ source_versions = sa.Table(
 # element in its rawest form; the Explorer reconstructs the original document
 # from these rows. `clauses` is the provision-level projection used by the
 # diff engine, search, and future L2 obligation anchors.
+# The standardized version model: every publisher's versioning reduces to
+# three kinds; a source carries whichever subset exists (declared per adapter
+# in SourceMeta.version_policy). Currency is a STATUS (source_versions.status
+# in_force/superseded), kind is a DESCRIPTOR of the text state — never
+# conflate them. Definitions are served to the UI via /api/clhear/meta.
+VERSION_KINDS = {
+    "as_published": {
+        "label": "as published",
+        "definition": (
+            "The text exactly as first published by the official publisher — an EU act in the "
+            "Official Journal, a UK Statutory Instrument as made. Includes parts later versions "
+            "drop, such as the preamble and recitals. Never changes; amendments create new "
+            "consolidated versions instead."
+        ),
+    },
+    "consolidated": {
+        "label": "consolidated",
+        "definition": (
+            "The current working text with all amendments and corrections merged in by the "
+            "publisher, correct as of the shown date. Publishers omit the preamble/recitals "
+            "here; this is the legally current wording."
+        ),
+    },
+    "edition": {
+        "label": "edition",
+        "definition": (
+            "A numbered or dated release of the entire text (U.S. Code 2023 edition, NIST "
+            "SP 800-53 rev 5.2.0). Each edition wholly supersedes the previous one."
+        ),
+    },
+}
+
 NODE_TYPES = (
     "title",
     "part",

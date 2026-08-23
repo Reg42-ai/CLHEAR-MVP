@@ -85,7 +85,9 @@ def sha256(data: bytes) -> str:
 class RunRecorder:
     """Run-ledger row written at START; stage transitions appended as the run
     progresses (append-only within the row — the audit trail the Fleet view
-    renders). finish() stamps the final status + summary."""
+    renders). finish() stamps the final status + summary. When the caller is
+    part of a fleet execution, inputs carry its job_id (the Fleet job canvas
+    groups tasks by it)."""
 
     def __init__(self, engine: Engine, fleet: str, trigger: str, inputs: dict):
         self._engine = engine
@@ -153,6 +155,8 @@ def ensure_source(conn: Connection, meta: SourceMeta) -> tuple[int, int]:
                 license_ref=meta.license_ref,
                 adapter=meta.adapter,
                 canonical_url=meta.canonical_url,
+                about=meta.about,
+                topics=meta.topics,
             )
             .returning(sources.c.id)
         ).scalar_one()
@@ -165,6 +169,11 @@ def ensure_source(conn: Connection, meta: SourceMeta) -> tuple[int, int]:
                 status="active",
                 added_via="manual",
             )
+        )
+    else:
+        # Curated context is authored in code; keep the row in sync.
+        conn.execute(
+            sources.update().where(sources.c.id == source_id).values(about=meta.about, topics=meta.topics)
         )
     return family_id, source_id
 
@@ -268,6 +277,7 @@ def ingest(
     *,
     trigger: str = "manual",
     gateway=None,
+    job_id: str | None = None,
 ) -> dict:
     """Run one adapter through fetch -> fidelity gate/repair loop -> persist.
 
@@ -277,7 +287,10 @@ def ingest(
     """
     settings = get_settings()
     meta = adapter.meta()
-    recorder = RunRecorder(engine, f"l1.{meta.adapter}", trigger, {"source": meta.source_key})
+    inputs = {"source": meta.source_key}
+    if job_id:
+        inputs["job_id"] = job_id
+    recorder = RunRecorder(engine, f"l1.{meta.adapter}", trigger, inputs)
 
     with engine.begin() as conn:
         family_id, source_id = ensure_source(conn, meta)
@@ -447,6 +460,8 @@ def _persist(
             .values(
                 source_id=source_id,
                 version_label=result.version_label,
+                version_kind=result.version_kind,
+                as_of_date=result.as_of_date,
                 effective_date=result.effective_date,
                 s3_uri=artifact_uris[0] if artifact_uris else "",
                 content_hash=content_hash,
@@ -554,6 +569,7 @@ def _persist(
     summary = {
         "source": meta.source_key,
         "version": result.version_label,
+        "version_kind": result.version_kind,
         "nodes": node_count,
         "clauses": len(clause_rows),
         "coverage": round(report.coverage, 5),

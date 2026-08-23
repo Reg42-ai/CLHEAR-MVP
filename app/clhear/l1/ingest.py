@@ -37,18 +37,24 @@ def main() -> int:
 
     gateway = Gateway(engine, AnthropicProvider()) if settings.anthropic_api_key else None
 
+    from datetime import datetime, timezone
+
+    job_id = f"job-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     summaries = []
     for key in keys:
         adapter = get_adapter(key)
-        summaries.append(pipeline.ingest(engine, adapter, store, trigger="cli", gateway=gateway))
+        summaries.append(pipeline.ingest(engine, adapter, store, trigger="cli", gateway=gateway, job_id=job_id))
         if key in CITATOR_KEYS:
-            summaries.append(families.sync_citator(engine, adapter, trigger="cli"))
+            summaries.append(families.sync_citator(engine, adapter, trigger="cli", job_id=job_id))
 
+    relay_recorder = pipeline.RunRecorder(engine, "l0.relay", "cli", {"source": "events", "job_id": job_id})
     if settings.clhear_events_queue_url:
         transport = SqsTransport(settings.clhear_events_queue_url, settings.aws_region)
     else:
         transport = InMemoryTransport()
     relayed = relay_once(engine, transport, batch_size=1000)
+    relay_recorder.stage("relay", events=relayed)
+    relay_recorder.finish("succeeded", {"relayed": relayed})
     failed = [s.get("source") for s in summaries if s.get("status") == "not-fully-successful"]
     print(json.dumps({"summaries": summaries, "relayed_events": relayed, "failed": failed}, indent=2, default=str))
     return 1 if failed else 0

@@ -41,13 +41,21 @@ class NistSp80053Adapter:
             canonical_url="https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final",
             adapter="nist",
             scope_charter={"binding": "full text (public domain)"},
+            about=(
+                "NIST's catalog of security and privacy controls for information systems and "
+                "organizations — the canonical public-domain control set (AC, AU, IR, SC …) "
+                "referenced by FedRAMP, FISMA and most security frameworks. Each control has "
+                "a structured statement with parameters and optional enhancements."
+            ),
+            topics=["infosec", "controls", "nist", "us"],
+            version_policy="edition",
             **FAMILY,
         )
 
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
         content = http.get(OSCAL_URL)
         catalog = json.loads(content)["catalog"]
-        version_label = f"oscal-{catalog['metadata']['version']}"
+        version_label = f"edition:{catalog['metadata']['version']}"
         if since_version == version_label:
             return None
 
@@ -74,6 +82,7 @@ class NistSp80053Adapter:
             version_label=version_label,
             artifacts=[Artifact(name="catalog.json", content=content, content_type="application/json")],
             tree=tree,
+            version_kind="edition",
         )
 
     def _control_node(self, control: dict, node_type: str) -> DocNode:
@@ -159,6 +168,14 @@ class NistCsfAdapter:
             canonical_url="https://www.nist.gov/cyberframework",
             adapter="nist",
             scope_charter={"binding": "full text (public domain)"},
+            about=(
+                "The NIST Cybersecurity Framework 2.0: a voluntary, outcome-based taxonomy of "
+                "cybersecurity risk management organized into six functions (Govern, Identify, "
+                "Protect, Detect, Respond, Recover) with categories and subcategories, used "
+                "globally to structure security programs and communicate risk posture."
+            ),
+            topics=["infosec", "risk-management", "nist", "us"],
+            version_policy="edition",
             **FAMILY,
         )
 
@@ -166,7 +183,8 @@ class NistCsfAdapter:
         content = http.get(CSF_URL)
         payload = json.loads(content)["response"]["elements"]
         doc = payload["documents"][0]
-        version_label = "-".join(doc["version"].split())  # "Version  2.0" -> "Version-2.0"
+        number = doc["version"].split()[-1]  # "Version  2.0" -> "2.0"
+        version_label = f"edition:{number}"
         if since_version == version_label:
             return None
 
@@ -219,6 +237,7 @@ class NistCsfAdapter:
             version_label=version_label,
             artifacts=[Artifact(name="csf-export.json", content=content, content_type="application/json")],
             tree=tree,
+            version_kind="edition",
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:

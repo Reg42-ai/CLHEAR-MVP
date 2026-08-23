@@ -19,7 +19,9 @@ from app.clhear.platform import events as l0_events
 log = logging.getLogger("clhear.l1.families")
 
 
-def sync_citator(engine: Engine, adapter: CitatorAdapter, *, trigger: str = "manual") -> dict:
+def sync_citator(
+    engine: Engine, adapter: CitatorAdapter, *, trigger: str = "manual", job_id: str | None = None
+) -> dict:
     """Upsert one family-member row per official effect record."""
     started = time.monotonic()
     meta = adapter.meta()
@@ -79,13 +81,16 @@ def sync_citator(engine: Engine, adapter: CitatorAdapter, *, trigger: str = "man
                 producer=f"l1.families.{meta.adapter}",
             )
 
-    summary = {"family": meta.family_key, "effects": len(effects), "new_members": added}
+    summary = {"family": meta.family_key, "effects": len(effects), "new_members": added, "status": "succeeded"}
+    inputs = {"family": meta.family_key, "source": meta.source_key}
+    if job_id:
+        inputs["job_id"] = job_id
     with engine.begin() as conn:
         conn.execute(
             runs.insert().values(
                 fleet="l1.citator",
                 trigger=trigger,
-                inputs={"family": meta.family_key},
+                inputs=inputs,
                 outputs=summary,
                 duration_ms=int((time.monotonic() - started) * 1000),
             )

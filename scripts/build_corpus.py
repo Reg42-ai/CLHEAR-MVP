@@ -50,30 +50,40 @@ def main() -> int:
     # stay LLM-free whenever the deterministic tiers pass.
     gateway = Gateway(engine, AnthropicProvider()) if settings.anthropic_api_key else None
 
+    # One job id groups every run of this fleet execution (Fleet job canvas).
+    from datetime import datetime, timezone
+
+    job_id = f"job-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    run = lambda adapter: pipeline.ingest(  # noqa: E731
+        engine, adapter, store, trigger="build_corpus", gateway=gateway, job_id=job_id
+    )
+
     summaries = []
-    # Historical versions first so current texts replay as amendments:
-    # MLR point-in-time snapshot, then the GDPR OJ original act.
-    summaries.append(
-        pipeline.ingest(engine, UkLegislationAdapter(snapshot=MLR_HISTORICAL_SNAPSHOT), store, gateway=gateway)
-    )
-    summaries.append(
-        pipeline.ingest(engine, EurLexAdapter(celex_version=GDPR_OJ_ORIGINAL), store, gateway=gateway)
-    )
+    # Baselines first (as-published texts + historical snapshot), so the
+    # current texts replay as amendments with full provenance:
+    summaries.append(run(UkLegislationAdapter(as_made=True)))
+    summaries.append(run(UkLegislationAdapter(snapshot=MLR_HISTORICAL_SNAPSHOT)))
+    summaries.append(run(EurLexAdapter(celex_version=GDPR_OJ_ORIGINAL)))
     for key in ADAPTER_KEYS:
         adapter = get_adapter(key)
-        summaries.append(pipeline.ingest(engine, adapter, store, trigger="build_corpus", gateway=gateway))
+        summaries.append(run(adapter))
         if key in CITATOR_KEYS:
-            summaries.append(families.sync_citator(engine, adapter, trigger="build_corpus"))
+            summaries.append(families.sync_citator(engine, adapter, trigger="build_corpus", job_id=job_id))
 
+    # Relay + drain, recorded as the job's convergence task (Fleet canvas).
+    relay_recorder = pipeline.RunRecorder(
+        engine, "l0.relay", "build_corpus", {"source": "events", "job_id": job_id}
+    )
     relayed = drained = 0
     if settings.clhear_events_queue_url:
         import boto3
 
         transport = SqsTransport(settings.clhear_events_queue_url, settings.aws_region)
         relayed = relay_once(engine, transport, batch_size=1000)
+        relay_recorder.stage("relay", events=relayed)
         # Drain worker-style (no P1 consumer reacts to SourceChanged yet).
         sqs = boto3.client("sqs", region_name=settings.aws_region)
-        gateway = Gateway(engine, FakeProvider())
+        gateway_drain = Gateway(engine, FakeProvider())
         while True:
             resp = sqs.receive_message(
                 QueueUrl=settings.clhear_events_queue_url, MaxNumberOfMessages=10, WaitTimeSeconds=2
@@ -82,11 +92,13 @@ def main() -> int:
             if not messages:
                 break
             for message in messages:
-                handle_envelope(engine, gateway, message["Body"])
+                handle_envelope(engine, gateway_drain, message["Body"])
                 sqs.delete_message(
                     QueueUrl=settings.clhear_events_queue_url, ReceiptHandle=message["ReceiptHandle"]
                 )
                 drained += 1
+        relay_recorder.stage("drain", messages=drained)
+    relay_recorder.finish("succeeded", {"relayed": relayed, "drained": drained})
 
     failed = [s.get("source") for s in summaries if s.get("status") == "not-fully-successful"]
     print(json.dumps({"summaries": summaries, "relayed": relayed, "drained": drained, "failed": failed}, indent=2, default=str))

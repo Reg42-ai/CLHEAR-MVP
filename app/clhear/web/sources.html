@@ -66,11 +66,40 @@
   .change .kind-added { color: var(--mint-600); font-weight: 700; }
   .change .refs { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted);
                   margin-top: 4px; word-break: break-all; }
-  .versions { font-size: 13px; margin-bottom: 14px; }
-  .versions .v { display: inline-block; margin-right: 8px; border: 1px solid var(--pearl-dark);
-                 border-radius: 999px; padding: 3px 12px; cursor: pointer; background: white; }
-  .versions .v.current { border-color: var(--mint-600); color: var(--mint-600); font-weight: 600; }
   .spin { text-align: center; color: var(--muted); padding: 30px; }
+
+  /* ---------------------- current text + provenance ------------------------ */
+  .about { font-size: 13px; color: var(--muted); max-width: 860px; margin: -6px 0 12px; }
+  .topic { display: inline-block; background: var(--indigo-100); color: var(--indigo-700);
+           border-radius: 999px; padding: 1px 9px; font-size: 11px; margin-left: 6px; }
+  .kindbadge { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 12px;
+               font-weight: 600; cursor: help; }
+  .kindbadge.as_published { background: var(--indigo-100); color: var(--indigo-700); }
+  .kindbadge.consolidated { background: var(--mint-100); color: var(--mint-600); }
+  .kindbadge.edition { background: var(--amber-100); color: var(--amber-600); }
+  .curbadge { display: flex; align-items: center; gap: 10px; background: white;
+              border: 1px solid var(--pearl-dark); border-left: 4px solid var(--mint-600);
+              border-radius: 10px; padding: 10px 16px; margin-bottom: 12px; font-size: 14px; }
+  .curbadge b { font-size: 15px; }
+  .curbadge .info { border: 1px solid var(--pearl-dark); background: white; color: var(--muted);
+                    border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; margin-left: auto; }
+  .legend { background: white; border: 1px solid var(--pearl-dark); border-radius: 10px;
+            padding: 14px 18px; margin-bottom: 12px; font-size: 13px; }
+  .legend dt { margin-top: 8px; }
+  .legend dd { margin: 2px 0 0; color: var(--muted); }
+  details.prov { background: white; border: 1px solid var(--pearl-dark); border-radius: 10px;
+                 padding: 10px 16px; margin-bottom: 12px; font-size: 13.5px; }
+  details.prov summary { cursor: pointer; font-weight: 600; color: var(--indigo-700); }
+  .prov h4 { margin: 12px 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase;
+             letter-spacing: 0.05em; }
+  .provrow { display: flex; align-items: center; gap: 10px; padding: 6px 0;
+             border-bottom: 1px solid var(--pearl); }
+  .provrow:last-child { border-bottom: none; }
+  .provrow .open { cursor: pointer; color: var(--indigo-700); font-weight: 600; }
+  .provrow.viewing { background: rgba(99,102,241,0.06); border-radius: 6px; }
+  .notice { background: var(--indigo-100); color: var(--indigo-900); border-radius: 10px;
+            padding: 10px 16px; margin-bottom: 12px; font-size: 13.5px; }
+  .notice a { font-weight: 700; cursor: pointer; }
 
   /* ------------------------------ document view ------------------------------ */
   .layout { display: flex; gap: 22px; align-items: flex-start; }
@@ -199,6 +228,11 @@ const html = htm.bind(React.createElement);
 const api = (p) => fetch(p).then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
 const ws = (s) => (s || "").split(/\s+/).join(" ").trim();
 
+let _meta = null;
+const getMeta = () => (_meta ? Promise.resolve(_meta) : api("/api/clhear/meta").then((m) => (_meta = m)));
+const kindLabel = (meta, kind) => (meta && meta.version_kinds[kind] ? meta.version_kinds[kind].label : kind);
+const kindDef = (meta, kind) => (meta && meta.version_kinds[kind] ? meta.version_kinds[kind].definition : "");
+
 function initialView() {
   const p = new URLSearchParams(location.search);
   if (p.get("source")) {
@@ -275,6 +309,8 @@ function Library({ families, open }) {
                   <span class=${"srcname" + (m.latest_version ? "" : " stub")}
                         onClick=${() => m.latest_version && open(m.key)}>${m.name}</span>
                   <div class="mono">${m.key}</div>
+                  ${m.about && html`<div class="about" style=${{ margin: "4px 0 0" }}>${m.about.slice(0, 220)}${m.about.length > 220 ? "…" : ""}
+                    ${(m.topics || []).map((t) => html`<span class="topic" key=${t}>${t}</span>`)}</div>`}
                 </td>
                 <td><span class="badge ${m.relation === "root" ? "root" : "binding"}">${m.relation}</span></td>
                 <td><span class="badge ${m.tier}">${m.tier}</span></td>
@@ -302,8 +338,11 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
   const [hoverId, setHoverId] = useState(null);
   const [selectedId, setSelectedId] = useState(openNodeId || null);
   const [info, setInfo] = useState(null);
+  const [meta, setMeta] = useState(_meta);
+  const [legend, setLegend] = useState(false);
   const scrolled = useRef(false);
 
+  useEffect(() => { getMeta().then(setMeta); }, []);
   useEffect(() => {
     setDetail(null); setDoc(null); scrolled.current = false;
     api(`/api/clhear/sources/${sourceKey}`).then(setDetail);
@@ -344,14 +383,20 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
         <span>adapter <b>${detail.adapter}</b></span>
         <span><a href=${detail.canonical_url} target="_blank" rel="noreferrer">official source ↗</a></span>
       </div>
-      <div class="versions">
-        ${detail.versions.map((v) => html`
-          <span key=${v.version_label}
-                class=${"v" + (v.version_label === doc.version ? " current" : "")}
-                onClick=${() => setVersion(v.version_label)}>
-            ${v.version_label} ${v.status === "in_force" ? "· in force" : `· ${v.status}`}
-          </span>`)}
-      </div>
+      ${detail.about && html`
+        <div class="about">${detail.about}
+          ${(detail.topics || []).map((t) => html`<span class="topic" key=${t}>${t}</span>`)}
+        </div>`}
+      <${CurrentTextBadge} detail=${detail} doc=${doc} meta=${meta}
+        viewing=${doc.version} reset=${() => setVersion(null)} toggleLegend=${() => setLegend(!legend)} />
+      ${legend && html`<${KindLegend} meta=${meta} />`}
+      <${ProvenancePanel} detail=${detail} meta=${meta} viewing=${doc.version} openVersion=${setVersion} />
+      ${doc.as_published_sibling && html`
+        <div class="notice">
+          You are reading the <b>${kindLabel(meta, doc.version_kind)}</b> text — enacting terms only.
+          The preamble and recitals are part of the original act:${" "}
+          <a onClick=${() => setVersion(doc.as_published_sibling)}>open the as-published version →</a>
+        </div>`}
       <div class="meta-grid">
         <span>retrieved <b>${doc.retrieved_at}</b></span>
         <span>sha256 <span class="mono">${(doc.content_hash || "").slice(0, 16)}…</span></span>
@@ -384,6 +429,74 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
         ${inspect && html`<${Inspector} info=${info} />`}
       </div>
     </div>`;
+}
+
+function CurrentTextBadge({ detail, doc, meta, viewing, reset, toggleLegend }) {
+  const inForce = detail.versions.find((v) => v.status === "in_force");
+  const viewingCurrent = inForce && viewing === inForce.version_label;
+  const shown = detail.versions.find((v) => v.version_label === viewing) || inForce;
+  if (!shown) return null;
+  const when = shown.as_of_date || shown.version_label.split(":").pop();
+  return html`
+    <div class="curbadge" style=${viewingCurrent ? {} : { borderLeftColor: "var(--amber-600)" }}>
+      ${viewingCurrent
+        ? html`<span>Current text</span>`
+        : html`<span>Viewing <b>${shown.status}</b> text</span>`}
+      <span class="kindbadge ${shown.version_kind}" title=${kindDef(meta, shown.version_kind)}>
+        ${kindLabel(meta, shown.version_kind)}${shown.version_kind === "edition" ? ` ${when}` : ` · ${when}`}
+      </span>
+      ${!viewingCurrent && html`<a style=${{ cursor: "pointer" }} onClick=${reset}>back to current text</a>`}
+      <button class="info" onClick=${toggleLegend}>version kinds ⓘ</button>
+    </div>`;
+}
+
+function KindLegend({ meta }) {
+  if (!meta) return null;
+  return html`
+    <div class="legend">
+      <b>What the version kinds mean</b>
+      <dl>
+        ${Object.entries(meta.version_kinds).map(([kind, entry]) => html`
+          <div key=${kind}>
+            <dt><span class="kindbadge ${kind}">${entry.label}</span></dt>
+            <dd>${entry.definition}</dd>
+          </div>`)}
+      </dl>
+    </div>`;
+}
+
+function ProvenancePanel({ detail, meta, viewing, openVersion }) {
+  const states = (detail.provenance && detail.provenance.text_states) || [];
+  const instruments = (detail.provenance && detail.provenance.related_instruments) || [];
+  if (states.length <= 1 && instruments.length === 0) return null;
+  return html`
+    <details class="prov" open=${states.length > 1}>
+      <summary>Provenance — what led to today's text
+        (${states.length} text state${states.length === 1 ? "" : "s"}, ${instruments.length} related instrument${instruments.length === 1 ? "" : "s"})</summary>
+      <h4>Text states</h4>
+      ${states.map((v) => html`
+        <div class=${"provrow" + (v.version_label === viewing ? " viewing" : "")} key=${v.version_label}>
+          <span class="kindbadge ${v.version_kind}" title=${kindDef(meta, v.version_kind)}>${kindLabel(meta, v.version_kind)}</span>
+          <span class="mono">${v.as_of_date || v.version_label}</span>
+          <span class="badge ${v.status === "in_force" ? "open" : "citator"}">${v.status === "in_force" ? "in force" : "superseded"}</span>
+          <span class="mono" style=${{ opacity: 0.6 }}>sha ${v.content_hash.slice(0, 10)}</span>
+          ${v.version_label === viewing
+            ? html`<span class="mono">viewing</span>`
+            : html`<span class="open" onClick=${() => openVersion(v.version_label)}>open</span>`}
+        </div>`)}
+      ${instruments.length > 0 && html`
+        <h4>Instruments that shaped this text</h4>
+        ${instruments.slice(0, 60).map((i) => html`
+          <div class="provrow" key=${i.key}>
+            <span class="badge ${i.relation === "root" ? "root" : "binding"}">${i.relation}</span>
+            <span class="badge ${i.tier}">${i.tier}</span>
+            <span>${i.name}</span>
+            <span class="mono">${i.key}</span>
+            ${i.added_via === "citator" && html`<span class="badge citator">citator</span>`}
+            <a href=${i.canonical_url} target="_blank" rel="noreferrer">official ↗</a>
+          </div>`)}
+        ${instruments.length > 60 && html`<div class="mono">… ${instruments.length - 60} more</div>`}`}
+    </details>`;
 }
 
 function DocLine({ n, first, amended, inspect, hover, selected, onEnter, onLeave, onClick }) {
@@ -487,17 +600,23 @@ const STAGE_ORDER = ["fetch", "parse", "gate", "hints", "llm_repair", "salvage",
 
 function FleetView({ open }) {
   const [board, setBoard] = useState(null);
+  const [job, setJob] = useState(null);
+  const [mode, setMode] = useState("canvas");
   const [runId, setRunId] = useState(null);
   const [run, setRun] = useState(null);
 
-  const load = () => api("/api/clhear/fleet").then(setBoard).catch(() => setBoard([]));
+  const load = () => {
+    api("/api/clhear/fleet").then(setBoard).catch(() => setBoard([]));
+    api("/api/clhear/jobs/latest").then(setJob).catch(() => setJob(false));
+  };
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    // real-time: poll while any run is executing
-    if (!board || !board.some((r) => r.last_run && r.last_run.status === "running")) return;
+    // real-time: poll while the latest job (or any run) is executing
+    const active = (job && job.running) || (board && board.some((r) => r.last_run && r.last_run.status === "running"));
+    if (!active) return;
     const t = setInterval(load, 2500);
     return () => clearInterval(t);
-  }, [board]);
+  }, [board, job]);
   useEffect(() => {
     if (runId) api(`/api/clhear/runs/${runId}`).then(setRun).catch(() => setRun(null));
     else setRun(null);
@@ -509,8 +628,21 @@ function FleetView({ open }) {
       <h2 style=${{ margin: "0 0 4px" }}>Fleet — the ingestion pipeline, live</h2>
       <div class="charter">Every source runs fetch → parse → fidelity gate (99.5% + invariants) →
         repair tiers (learned hints → LLM proposals → bounded salvage) → persist → diff.
-        Click a run to see its pipeline; press play to replay it from the ledger.</div>
+        Click a task to see its pipeline; press play to replay the job from the ledger.</div>
+      <div class="tabs mode">
+        <button class=${mode === "canvas" ? "active" : ""} onClick=${() => setMode("canvas")}>workflow</button>
+        <button class=${mode === "table" ? "active" : ""} onClick=${() => setMode("table")}>table</button>
+      </div>
+      ${mode === "canvas" && (job
+        ? html`<${JobCanvas} job=${job} selectRun=${setRunId} selectedRun=${runId} />`
+        : html`<div class="empty">No fleet job recorded yet — run scripts/build_corpus.py.</div>`)}
       ${run && html`<${RunDag} run=${run} close=${() => setRunId(null)} />`}
+      ${mode === "table" && html`<${FleetTable} board=${board} open=${open} setRunId=${setRunId} />`}
+    </div>`;
+}
+
+function FleetTable({ board, open, setRunId }) {
+  return html`
       <table class="fleet">
         <thead><tr>
           <th>source</th><th>adapter</th><th>version</th><th>last run</th><th>coverage</th><th>stages</th><th>schedule</th>
@@ -521,6 +653,7 @@ function FleetView({ open }) {
             <td><a onClick=${() => open(r.source_key)}>${r.source_name}</a><div class="mono">${r.source_key}</div></td>
             <td class="mono">${r.adapter}</td>
             <td>
+              ${r.current_version_kind && html`<span class="kindbadge ${r.current_version_kind}">${r.current_version_kind.replace("_", " ")}</span>`}
               <div class="mono">${r.current_version || "—"}</div>
               ${r.previous_version && html`<div class="mono" style=${{ opacity: 0.6 }}>prev: ${r.previous_version}</div>`}
               <div class="mono" style=${{ opacity: 0.6 }}>${r.versions} version${r.versions === 1 ? "" : "s"}</div>
@@ -537,7 +670,98 @@ function FleetView({ open }) {
             <td class="mono">${r.schedule}</td>
           </tr>`)}
         </tbody>
-      </table>
+      </table>`;
+}
+
+/* Databricks-style job workflow canvas: lanes per source, task cards with
+   live statuses, start/relay convergence, replay from the ledger. */
+function JobCanvas({ job, selectRun, selectedRun }) {
+  const allTasks = job.lanes.flatMap((l) => l.tasks).concat(job.relay ? [job.relay] : []);
+  const ordered = [...allTasks].sort((a, b) => a.run_id - b.run_id);
+  const [lit, setLit] = useState(new Set(ordered.map((t) => t.run_id)));
+  const replay = () => {
+    setLit(new Set());
+    const total = Math.max(1, ordered.reduce((a, t) => a + (t.duration_ms || 1), 0));
+    const scale = Math.min(1, 6000 / total);
+    let t = 0;
+    ordered.forEach((task) => {
+      t += Math.max(200, (task.duration_ms || 1) * scale);
+      setTimeout(() => setLit((prev) => new Set([...prev, task.run_id])), t);
+    });
+  };
+
+  const W = 208, H = 66, GAPX = 54, LANEH = 86, LEFT = 96;
+  const maxLen = Math.max(...job.lanes.map((l) => l.tasks.length));
+  const relayX = LEFT + maxLen * (W + GAPX) + 30;
+  const width = relayX + W + 30;
+  const height = Math.max(2, job.lanes.length) * LANEH + 30;
+  const midY = height / 2;
+  const laneY = (i) => 20 + i * LANEH + H / 2;
+  const pos = {};
+  job.lanes.forEach((lane, li) =>
+    lane.tasks.forEach((task, ti) => { pos[task.run_id] = { x: LEFT + ti * (W + GAPX), y: laneY(li) }; })
+  );
+  if (job.relay) pos[job.relay.run_id] = { x: relayX, y: midY };
+
+  const statusColor = (task) =>
+    !lit.has(task.run_id) ? "var(--pearl-dark)"
+    : task.status === "failure" ? "var(--rose-600)"
+    : task.status === "warning" ? "var(--amber-600)"
+    : task.status === "running" ? "var(--indigo-500)"
+    : task.status === "info" ? "var(--indigo-100)"
+    : "var(--mint-600)";
+  const counts = job.status_counts || {};
+
+  const edgePath = (from, to) => {
+    const x1 = from === 0 ? 44 : pos[from].x + W;
+    const y1 = from === 0 ? midY : pos[from].y;
+    const x2 = pos[to].x;
+    const y2 = pos[to].y;
+    const mx = (x1 + x2) / 2;
+    return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+  };
+
+  return html`
+    <div class="dagwrap">
+      <h3><span class="mono">${job.job_id}</span> · trigger ${job.trigger} · started ${job.started_at}
+        · ${(job.total_duration_ms / 1000).toFixed(1)}s
+        ${job.running ? html` · <span class="dot running"></span> running` : ""}</h3>
+      <div class="charter">
+        ${allTasks.length} tasks —
+        ${["success", "warning", "failure", "running", "info"].filter((s) => counts[s])
+          .map((s) => `${counts[s]} ${s}`).join(" · ")}
+        · click a task for its stage pipeline
+      </div>
+      <div style=${{ overflowX: "auto" }}>
+        <svg width=${width} height=${height} style=${{ display: "block" }}>
+          ${job.edges.map(([from, to], i) => {
+            const on = (from === 0 || lit.has(from)) && lit.has(to);
+            return html`<path key=${i} d=${edgePath(from, to)} fill="none"
+              stroke=${on ? "var(--indigo-500)" : "var(--pearl-dark)"} stroke-width="1.8" />`;
+          })}
+          <circle cx="32" cy=${midY} r="13" fill="var(--indigo-900)" />
+          <text x="32" y=${midY + 4} text-anchor="middle" font-size="11" fill="white">▶</text>
+          <text x="32" y=${midY + 30} text-anchor="middle" font-size="10.5" fill="var(--muted)">job start</text>
+          ${allTasks.map((task) => {
+            const p = pos[task.run_id];
+            const selected = selectedRun === task.run_id;
+            return html`
+              <g key=${task.run_id} style=${{ cursor: "pointer" }} onClick=${() => selectRun(task.run_id)}>
+                <rect x=${p.x} y=${p.y - H / 2} width=${W} height=${H} rx="10"
+                      fill="white" stroke=${statusColor(task)} stroke-width=${selected ? 3.5 : 2.2} />
+                <circle cx=${p.x + 14} cy=${p.y - H / 2 + 15} r="4.5" fill=${statusColor(task)} />
+                <text x=${p.x + 26} y=${p.y - H / 2 + 19}
+                      font-family="ui-monospace, Menlo, monospace" font-size="11" fill="var(--muted)">
+                  ${task.fleet} · #${task.run_id}</text>
+                <text x=${p.x + 12} y=${p.y + 6} font-size="12" font-weight="700" fill="var(--ink)">
+                  ${(task.source || "").slice(0, 26)}</text>
+                <text x=${p.x + 12} y=${p.y + 22} font-size="10.5" fill="var(--muted)">
+                  ${task.step.slice(0, 30)}${task.coverage != null ? ` · ${(task.coverage * 100).toFixed(1)}%` : ""}${task.duration_ms != null ? ` · ${(task.duration_ms / 1000).toFixed(1)}s` : ""}</text>
+              </g>`;
+          })}
+        </svg>
+      </div>
+      <button class="playbtn" onClick=${replay}>▶ replay job</button>
     </div>`;
 }
 

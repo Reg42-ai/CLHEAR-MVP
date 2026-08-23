@@ -39,6 +39,12 @@ class SourceMeta:
     adapter: str
     license_ref: str = ""
     scope_charter: dict = field(default_factory=dict)
+    # Curated semantic context (deterministic; reviewed with the code).
+    about: str = ""
+    topics: list[str] = field(default_factory=list)
+    # Declared version-ingestion policy, e.g. "as_published+consolidated",
+    # "consolidated", "edition" — which version kinds this source tracks.
+    version_policy: str = ""
 
 
 @dataclass
@@ -91,9 +97,11 @@ class Artifact:
 
 @dataclass
 class FetchResult:
-    version_label: str
+    version_label: str  # standardized: "{kind}:{as_of|identifier}"
     artifacts: list[Artifact]
     tree: list[DocNode]
+    version_kind: str = "consolidated"  # as_published|consolidated|edition
+    as_of_date: date | None = None      # the date the text state represents
     effective_date: date | None = None
 
 

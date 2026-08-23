@@ -72,11 +72,19 @@ def _label_for(tag: str, number: str) -> str:
 class UkLegislationAdapter:
     key = "uk_legislation"
 
-    def __init__(self, doc: str = MLR_DOC, name: str = MLR_NAME, snapshot: str | None = None):
+    def __init__(
+        self,
+        doc: str = MLR_DOC,
+        name: str = MLR_NAME,
+        snapshot: str | None = None,
+        as_made: bool = False,
+    ):
         self.doc = doc
         self.name = name
         # Point-in-time date (YYYY-MM-DD) for historical replay; None = current.
         self.snapshot = snapshot
+        # as_made=True fetches the SI exactly as originally made (as_published).
+        self.as_made = as_made
 
     def meta(self) -> SourceMeta:
         return SourceMeta(
@@ -96,15 +104,38 @@ class UkLegislationAdapter:
                 "guidance": "JMLSG (later)",
                 "out": ["FCA speeches", "consultations"],
             },
+            about=(
+                "The UK's principal anti-money-laundering and counter-terrorist-financing "
+                "regulation (SI 2017/692), implementing the EU's Fourth and Fifth Money "
+                "Laundering Directives. It binds credit and financial institutions, auditors, "
+                "legal professionals, estate agents, art market participants and cryptoasset "
+                "businesses, prescribing risk assessments, customer due diligence, and "
+                "record-keeping obligations."
+            ),
+            topics=["aml", "financial-crime", "kyc", "uk"],
+            version_policy="as_published+consolidated",
         )
 
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
-        path = f"{self.doc}/{self.snapshot}/data.xml" if self.snapshot else f"{self.doc}/data.xml"
+        if self.as_made:
+            path = f"{self.doc}/made/data.xml"
+        elif self.snapshot:
+            path = f"{self.doc}/{self.snapshot}/data.xml"
+        else:
+            path = f"{self.doc}/data.xml"
         content = http.get(f"{BASE}/{path}")
         root = ET.fromstring(content)
 
-        valid = root.findtext(f"{UKM}Metadata/{DCT}valid") or root.findtext(f"{UKM}Metadata/{DC}modified")
-        version_label = f"consolidated-{self.snapshot or valid}"
+        if self.as_made:
+            made = root.find(f"{UKM}Metadata//{UKM}Made")
+            as_of = (made.get("Date") if made is not None else None) or ""
+            version_kind = "as_published"
+            version_label = f"as-published:{as_of or 'made'}"
+        else:
+            valid = root.findtext(f"{UKM}Metadata/{DCT}valid") or root.findtext(f"{UKM}Metadata/{DC}modified")
+            as_of = self.snapshot or valid or ""
+            version_kind = "consolidated"
+            version_label = f"consolidated:{as_of}"
         if since_version == version_label:
             return None
 
@@ -133,10 +164,18 @@ class UkLegislationAdapter:
         if signed is not None:
             tree.append(self._node(signed, "signature", ref=signed.get("id") or "signed"))
 
+        from datetime import date as _date
+
+        try:
+            as_of_date = _date.fromisoformat(as_of) if as_of else None
+        except ValueError:
+            as_of_date = None
         return FetchResult(
             version_label=version_label,
             artifacts=[Artifact(name="data.xml", content=content, content_type="application/xml")],
             tree=tree,
+            version_kind=version_kind,
+            as_of_date=as_of_date,
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:

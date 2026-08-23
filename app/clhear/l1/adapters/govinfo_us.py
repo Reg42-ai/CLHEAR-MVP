@@ -7,6 +7,7 @@ v1 charter (HLD §7.3).
 """
 import re
 import xml.etree.ElementTree as ET
+from datetime import date
 
 from bs4 import BeautifulSoup, Tag
 
@@ -68,11 +69,19 @@ class GovInfoUscAdapter:
                 "binding": "statute + 26 CFR ch.4 + current FFI-agreement Rev. Proc. + form instructions",
                 "out": ["IGAs (reference-level stubs in v1)"],
             },
+            about=(
+                "The FATCA statute (Internal Revenue Code chapter 4): US federal law requiring "
+                "foreign financial institutions to identify and report US account holders, "
+                "enforced through a 30% withholding tax on withholdable payments to "
+                "non-compliant institutions and recalcitrant account holders."
+            ),
+            topics=["tax", "fatca", "reporting", "us"],
+            version_policy="edition",
             **FAMILY,
         )
 
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
-        version_label = f"USCODE-{USC_EDITION}"
+        version_label = f"edition:{USC_EDITION}"
         if since_version == version_label:
             return None
         tree: list[DocNode] = []
@@ -126,7 +135,9 @@ class GovInfoUscAdapter:
                     children=children,
                 )
             )
-        return FetchResult(version_label=version_label, artifacts=artifacts, tree=tree)
+        return FetchResult(
+            version_label=version_label, artifacts=artifacts, tree=tree, version_kind="edition"
+        )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
         """Fidelity oracle: the statute field of each page (between GPO's
@@ -163,10 +174,18 @@ class GovInfoEcfrAdapter:
             canonical_url="https://www.ecfr.gov/current/title-26/chapter-I/subchapter-A/part-1",
             adapter="govinfo_us",
             scope_charter={"binding": "26 CFR ch.4 regulation series (T.D. 9610 et seq.)"},
+            about=(
+                "The Treasury/IRS implementing regulations for FATCA (26 CFR §§1.1471–1.1474): "
+                "the operational rulebook for withholding agents and foreign financial "
+                "institutions — definitions, due-diligence procedures for identifying US "
+                "accounts, registration, reporting and withholding mechanics."
+            ),
+            topics=["tax", "fatca", "withholding", "us"],
+            version_policy="consolidated",
         )
 
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
-        version_label = f"eCFR-{self.as_of}"
+        version_label = f"consolidated:{self.as_of}"
         if since_version == version_label:
             return None
         tree: list[DocNode] = []
@@ -230,7 +249,17 @@ class GovInfoEcfrAdapter:
                     children=children,
                 )
             )
-        return FetchResult(version_label=version_label, artifacts=artifacts, tree=tree)
+        try:
+            as_of_date = date.fromisoformat(self.as_of)
+        except ValueError:
+            as_of_date = None
+        return FetchResult(
+            version_label=version_label,
+            artifacts=artifacts,
+            tree=tree,
+            version_kind="consolidated",
+            as_of_date=as_of_date,
+        )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
         """Fidelity oracle: every text piece of each eCFR section XML."""

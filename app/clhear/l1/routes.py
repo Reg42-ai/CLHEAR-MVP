@@ -50,6 +50,8 @@ def list_sources() -> list[dict]:
                 sources.c.license,
                 sources.c.canonical_url,
                 sources.c.adapter,
+                sources.c.about,
+                sources.c.topics,
             ).join(sources, sources.c.id == family_members.c.source_id)
         ).all()
         latest = {
@@ -58,6 +60,8 @@ def list_sources() -> list[dict]:
                 sa.select(
                     source_versions.c.source_id,
                     source_versions.c.version_label,
+                    source_versions.c.version_kind,
+                    source_versions.c.as_of_date,
                     source_versions.c.retrieved_at,
                     source_versions.c.content_hash,
                     source_versions.c.id.label("version_id"),
@@ -90,7 +94,11 @@ def list_sources() -> list[dict]:
                     "status": m.status,
                     "added_via": m.added_via,
                     "canonical_url": m.canonical_url,
+                    "about": m.about,
+                    "topics": m.topics if isinstance(m.topics, list) else json.loads(m.topics or "[]"),
                     "latest_version": version.version_label if version else None,
+                    "version_kind": version.version_kind if version else None,
+                    "as_of_date": str(version.as_of_date) if version and version.as_of_date else None,
                     "retrieved_at": str(version.retrieved_at) if version else None,
                     "content_hash": version.content_hash if version else None,
                     "clauses": counts.get(version.version_id, 0) if version else 0,
@@ -142,10 +150,20 @@ def source_document(key: str, version_label: str | None = None) -> dict:
         amended = []
         if latest_change is not None and latest_change.kind == "amended":
             amended = latest_change.clause_refs if isinstance(latest_change.clause_refs, list) else []
+        # For the preamble notice: does an as-published sibling exist?
+        as_published_sibling = conn.execute(
+            sa.select(source_versions.c.version_label)
+            .where(source_versions.c.source_id == source.id)
+            .where(source_versions.c.version_kind == "as_published")
+            .limit(1)
+        ).scalar()
 
     return {
         "source": key,
         "version": version.version_label,
+        "version_kind": version.version_kind,
+        "as_of_date": str(version.as_of_date) if version.as_of_date else None,
+        "as_published_sibling": as_published_sibling if version.version_kind != "as_published" else None,
         "retrieved_at": str(version.retrieved_at),
         "s3_uri": version.s3_uri,
         "content_hash": version.content_hash,
@@ -279,6 +297,18 @@ def source_clauses(
     }
 
 
+def _version_dict(v) -> dict:
+    return {
+        "version_label": v.version_label,
+        "version_kind": v.version_kind,
+        "as_of_date": str(v.as_of_date) if v.as_of_date else None,
+        "retrieved_at": str(v.retrieved_at),
+        "status": v.status,
+        "content_hash": v.content_hash,
+        "s3_uri": v.s3_uri,
+    }
+
+
 @router.get("/api/clhear/sources/{key:path}")
 def source_detail(key: str) -> dict:
     engine = get_engine()
@@ -296,6 +326,23 @@ def source_detail(key: str) -> dict:
             .where(change_events.c.source_id == source.id)
             .order_by(change_events.c.id.desc())
         ).all()
+        # Provenance axis 2: the family instruments that caused the changes
+        # (amending SIs, corrigenda; informative-tier drafts join here in P2+).
+        instruments = conn.execute(
+            sa.select(
+                sources.c.key,
+                sources.c.name,
+                sources.c.canonical_url,
+                family_members.c.relation,
+                family_members.c.tier,
+                family_members.c.status,
+                family_members.c.added_via,
+            )
+            .join(family_members, family_members.c.source_id == sources.c.id)
+            .where(family_members.c.family_id == source.family_id)
+            .where(sources.c.id != source.id)
+            .order_by(sources.c.key)
+        ).all()
     return {
         "key": source.key,
         "name": source.name,
@@ -306,17 +353,39 @@ def source_detail(key: str) -> dict:
         "license_ref": source.license_ref,
         "adapter": source.adapter,
         "canonical_url": source.canonical_url,
-        "versions": [
-            {
-                "version_label": v.version_label,
-                "retrieved_at": str(v.retrieved_at),
-                "status": v.status,
-                "content_hash": v.content_hash,
-                "s3_uri": v.s3_uri,
-            }
-            for v in versions
-        ],
+        "about": source.about,
+        "topics": source.topics if isinstance(source.topics, list) else json.loads(source.topics or "[]"),
+        "versions": [_version_dict(v) for v in versions],
         "changes": [_change_dict(c) for c in changes],
+        "provenance": {
+            "text_states": [_version_dict(v) for v in reversed(versions)],  # oldest first
+            "related_instruments": [
+                {
+                    "key": i.key,
+                    "name": i.name,
+                    "relation": i.relation,
+                    "tier": i.tier,
+                    "status": i.status,
+                    "added_via": i.added_via,
+                    "canonical_url": i.canonical_url,
+                }
+                for i in instruments
+            ],
+        },
+    }
+
+
+@router.get("/api/clhear/meta")
+def meta() -> dict:
+    """UI-facing constants: the version-kind dictionary + gate thresholds."""
+    from app.clhear.l1.models import VERSION_KINDS
+    from app.clhear.settings import get_settings
+
+    settings = get_settings()
+    return {
+        "version_kinds": VERSION_KINDS,
+        "fidelity_threshold": settings.clhear_fidelity_threshold,
+        "salvage_cap": settings.clhear_salvage_cap,
     }
 
 
@@ -402,6 +471,9 @@ def _run_item(row) -> dict:
     bits = []
     if outputs.get("change"):
         bits.append(outputs["change"])
+    if outputs.get("version"):
+        kind = outputs.get("version_kind")
+        bits.append(f"{outputs['version']}" + (f" ({kind})" if kind else ""))
     if outputs.get("nodes"):
         bits.append(f"{outputs['nodes']} nodes / {outputs.get('clauses', 0)} clauses")
     if outputs.get("coverage") is not None:
@@ -564,6 +636,8 @@ def fleet_board() -> list[dict]:
                 "adapter": source.adapter,
                 "license": source.license,
                 "current_version": current.version_label if current else None,
+                "current_version_kind": current.version_kind if current else None,
+                "current_as_of": str(current.as_of_date) if current and current.as_of_date else None,
                 "current_retrieved_at": str(current.retrieved_at) if current else None,
                 "previous_version": previous.version_label if previous else None,
                 "versions": len(source_version_list),
@@ -572,6 +646,104 @@ def fleet_board() -> list[dict]:
             }
         )
     return board
+
+
+# ------------------------------------------------------------ fleet job graph
+
+def _job_tasks(conn, job_id: str) -> list[dict]:
+    rows = conn.execute(sa.select(runs).order_by(runs.c.id)).all()
+    tasks = []
+    for row in rows:
+        inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
+        if inputs.get("job_id") != job_id:
+            continue
+        outputs = _outputs_of(row)
+        status = _RUN_STATUS.get(outputs.get("status", ""), "info")
+        source = inputs.get("source") or inputs.get("family") or ""
+        if row.fleet == "l1.citator":
+            step = f"citator sync ({len(outputs.get('new_members', []))} new members)"
+        elif row.fleet == "l0.relay":
+            step = f"relay events ({outputs.get('relayed', 0)} relayed)"
+        elif outputs.get("version"):
+            step = f"ingest {outputs['version']}"
+        else:
+            step = outputs.get("status", "run")
+        tasks.append(
+            {
+                "run_id": row.id,
+                "fleet": row.fleet,
+                "source": source,
+                "step": step,
+                "status": status,
+                "ts": str(row.created_at),
+                "duration_ms": row.duration_ms,
+                "coverage": outputs.get("coverage"),
+                "version": outputs.get("version"),
+                "version_kind": outputs.get("version_kind"),
+                "llm_assisted": bool(outputs.get("llm_assisted")),
+                "recovered_spans": outputs.get("recovered_spans", 0),
+            }
+        )
+    return tasks
+
+
+def _job_graph(conn, job_id: str) -> dict:
+    tasks = _job_tasks(conn, job_id)
+    if not tasks:
+        raise HTTPException(status_code=404, detail="job not found")
+    # Lanes: tasks chained per source in run order; relay is the convergence.
+    lanes: dict[str, list[dict]] = {}
+    relay_task = None
+    for task in tasks:
+        if task["fleet"] == "l0.relay":
+            relay_task = task
+            continue
+        lanes.setdefault(task["source"], []).append(task)
+    edges: list[list[int]] = []  # [from_run_id, to_run_id]; 0 = job start
+    for lane in lanes.values():
+        edges.append([0, lane[0]["run_id"]])
+        for a, b in zip(lane, lane[1:]):
+            edges.append([a["run_id"], b["run_id"]])
+        if relay_task is not None:
+            edges.append([lane[-1]["run_id"], relay_task["run_id"]])
+    counts: dict[str, int] = {}
+    for task in tasks:
+        counts[task["status"]] = counts.get(task["status"], 0) + 1
+    first = min(tasks, key=lambda t: t["run_id"])
+    return {
+        "job_id": job_id,
+        "trigger": "build_corpus" if any(t["fleet"] == "l0.relay" for t in tasks) else "cli",
+        "started_at": first["ts"],
+        "total_duration_ms": sum(t["duration_ms"] or 0 for t in tasks),
+        "status_counts": counts,
+        "running": any(t["status"] == "running" for t in tasks),
+        "lanes": [{"source": source, "tasks": lane} for source, lane in lanes.items()],
+        "relay": relay_task,
+        "edges": edges,
+    }
+
+
+@router.get("/api/clhear/jobs/latest")
+def latest_job() -> dict:
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(sa.select(runs.c.inputs).order_by(runs.c.id.desc()).limit(300)).all()
+        job_id = None
+        for row in rows:
+            inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
+            if inputs.get("job_id"):
+                job_id = inputs["job_id"]
+                break
+        if job_id is None:
+            raise HTTPException(status_code=404, detail="no jobs recorded")
+        return _job_graph(conn, job_id)
+
+
+@router.get("/api/clhear/jobs/{job_id}")
+def job_detail(job_id: str) -> dict:
+    engine = get_engine()
+    with engine.connect() as conn:
+        return _job_graph(conn, job_id)
 
 
 @router.get("/api/clhear/runs/{run_id}")

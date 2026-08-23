@@ -16,6 +16,7 @@ License: EUR-Lex legal notice permits reuse of legal texts (Commission
 Decision 2011/833/EU) — verbatim reproduction with source acknowledgement.
 """
 import re
+from datetime import date
 
 from bs4 import BeautifulSoup, Tag
 
@@ -28,6 +29,9 @@ GDPR_CELEX = "32016R0679"
 # ARCH: consolidation discovery via the Cellar work tree lands with the P2
 # relations work; until then the adapter pins the current consolidated version.
 GDPR_CONSOLIDATED = "02016R0679-20160504"
+
+# OJ publication dates of the original acts we track (as_published as_of).
+OJ_DATES = {"32016R0679": date(2016, 5, 4)}  # OJ L 119, 4.5.2016
 
 _HEADERS = {"Accept": "application/xhtml+xml", "Accept-Language": "eng"}
 
@@ -95,13 +99,36 @@ class EurLexAdapter:
                 "guidance": "EDPB guidelines (watcher, later)",
                 "out": ["national DPA guidance"],
             },
+            about=(
+                "The EU General Data Protection Regulation, the union-wide framework for "
+                "processing personal data. It binds controllers and processors established in "
+                "the EU or targeting EU data subjects, defining lawful bases, data-subject "
+                "rights, accountability duties, international-transfer rules and supervisory "
+                "enforcement with penalties up to 4% of worldwide turnover."
+            ),
+            topics=["data-protection", "privacy", "eu"],
+            version_policy="as_published+consolidated",
         )
 
     @property
-    def version_label(self) -> str:
+    def version_kind(self) -> str:
+        return "consolidated" if self.celex_version.startswith("0") else "as_published"
+
+    @property
+    def as_of_date(self) -> date | None:
         if self.celex_version.startswith("0"):
-            return f"consolidated-{self.celex_version}"
-        return f"oj-{self.celex_version}"
+            suffix = self.celex_version.rsplit("-", 1)[-1]
+            try:
+                return date(int(suffix[:4]), int(suffix[4:6]), int(suffix[6:8]))
+            except (ValueError, IndexError):
+                return None
+        return OJ_DATES.get(self.celex_version)
+
+    @property
+    def version_label(self) -> str:
+        as_of = self.as_of_date
+        suffix = as_of.isoformat() if as_of else self.celex_version
+        return f"{'consolidated' if self.version_kind == 'consolidated' else 'as-published'}:{suffix}"
 
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
         if since_version == self.version_label:
@@ -126,6 +153,8 @@ class EurLexAdapter:
             version_label=self.version_label,
             artifacts=[Artifact(name=f"{self.celex_version}.xhtml", content=content, content_type="application/xhtml+xml")],
             tree=tree,
+            version_kind=self.version_kind,
+            as_of_date=self.as_of_date,
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
