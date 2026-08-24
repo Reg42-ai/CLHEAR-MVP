@@ -316,7 +316,9 @@ function App() {
 }
 
 function Library({ families, open }) {
-  const ingested = families.flatMap((f) => f.members).filter((m) => m.latest_version);
+  const allMembers = families.flatMap((f) => f.members);
+  const ingested = allMembers.filter((m) => m.latest_version);
+  const planned = allMembers.filter((m) => !m.latest_version && m.added_via === "watchlist");
   return html`
     <div>
       ${families.length === 0 && html`<div class="empty">No sources ingested yet.</div>`}
@@ -325,6 +327,8 @@ function Library({ families, open }) {
           <h2>${f.name}</h2>
           ${f.scope_charter && f.scope_charter.binding && html`
             <div class="charter">charter — binding: ${f.scope_charter.binding}${f.scope_charter.out ? ` · out of scope: ${[].concat(f.scope_charter.out).join(", ")}` : ""}</div>`}
+          ${f.scope_charter && f.scope_charter.registry && html`
+            <div class="charter">${f.scope_charter.registry}${f.scope_charter.partner ? ` · partner: ${f.scope_charter.partner}` : ""}</div>`}
           <table class="members">
             <thead><tr><th>source</th><th>relation</th><th>tier</th><th>license</th><th>version</th><th>clauses</th><th>added via</th></tr></thead>
             <tbody>
@@ -341,7 +345,7 @@ function Library({ families, open }) {
                 <td><span class="badge ${m.relation === "root" ? "root" : "binding"}">${m.relation}</span></td>
                 <td><span class="badge ${m.tier}">${m.tier}</span></td>
                 <td><span class="badge ${m.license}">${m.license}</span></td>
-                <td class="mono">${m.latest_version || "reference-level"}</td>
+                <td class="mono">${m.latest_version || (m.added_via === "watchlist" ? "planned" : "reference-level")}</td>
                 <td class="mono">${m.clauses || ""}</td>
                 <td>${m.added_via === "citator" ? html`<span class="badge citator">citator</span>` : m.added_via}</td>
               </tr>`)}
@@ -349,7 +353,7 @@ function Library({ families, open }) {
           </table>
         </div>`)}
       <div class="charter" style=${{ textAlign: "center" }}>
-        ${ingested.length} ingested source${ingested.length === 1 ? "" : "s"} ·
+        ${ingested.length} ingested source${ingested.length === 1 ? "" : "s"}${planned.length ? ` · ${planned.length} planned (eToro blueprint)` : ""} ·
         every ingest passes a 99.5% fidelity gate against the official artifact
       </div>
     </div>`;
