@@ -439,62 +439,19 @@ def search_clauses(
     q: str = Query(min_length=2),
     category: str | None = None,
     topic: str | None = None,
-    limit: int = Query(default=50, le=100),
+    scope: str | None = None,
+    limit: int = Query(default=30, le=100),
 ) -> list[dict]:
-    """Full-text search over PUBLIC clause text (pg_trgm on Aurora; LIKE on
-    SQLite — # ARCH), optionally filtered by annotation category/topic.
-    Restricted text is excluded by construction."""
-    engine = get_engine()
-    pattern = f"%{q.lower()}%"
-    public = clauses_public_select().subquery()
-    query = (
-        sa.select(
-            public.c.ref,
-            public.c.path,
-            public.c.text,
-            public.c.doc_node_id,
-            sources.c.key.label("source_key"),
-            sources.c.name.label("source_name"),
-            sources.c.short_name,
-            source_versions.c.version_label,
-        )
-        .join(source_versions, source_versions.c.id == public.c.source_version_id)
-        .join(sources, sources.c.id == source_versions.c.source_id)
-        .where(source_versions.c.status == "in_force")
-        .where(sa.func.lower(public.c.text).like(pattern))
+    """Hybrid search over the unified search-unit store: ref-lookup + FTS5/BM25
+    + LIKE fused with Reciprocal Rank Fusion, deduped per clause, capped per
+    source, with context restored. Units are built from PUBLIC clauses only,
+    so restricted text is excluded by construction. `scope` narrows to a
+    family key or topic (the "projects" pattern)."""
+    from app.clhear.l1 import retrieval
+
+    return retrieval.search(
+        get_engine(), q, scope=scope, category=category, topic=topic, limit=limit
     )
-    if category or topic:
-        annotation_filter = sa.select(clause_annotations.c.id).where(
-            clause_annotations.c.clause_id == public.c.id
-        )
-        if category:
-            annotation_filter = annotation_filter.where(clause_annotations.c.category == category)
-        if topic:
-            annotation_filter = annotation_filter.where(
-                clause_annotations.c.topics.cast(sa.Text).like(f'%"{topic}"%')
-            )
-        query = query.where(annotation_filter.exists())
-    with engine.connect() as conn:
-        rows = conn.execute(query.order_by(sources.c.key, public.c.ordering).limit(limit)).all()
-    out = []
-    for row in rows:
-        text = row.text
-        pos = text.lower().find(q.lower())
-        start = max(0, pos - 120)
-        snippet = ("…" if start > 0 else "") + text[start : pos + len(q) + 200] + "…"
-        out.append(
-            {
-                "ref": row.ref,
-                "path": row.path,
-                "doc_node_id": row.doc_node_id,
-                "source_key": row.source_key,
-                "source_name": row.source_name,
-                "short_name": row.short_name,
-                "version": row.version_label,
-                "snippet": snippet,
-            }
-        )
-    return out
 
 
 # ---------------------------------------------------------------- audit trail

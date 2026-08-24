@@ -184,7 +184,8 @@ STAGE_INFO = {
     "llm_repair": "AI escalation for novel gaps: the model proposes how to classify missed spans; recovered text still comes only from the artifact, and the gate re-validates everything.",
     "salvage": "Recover small residual gaps (≤ 2% of the text) as clearly flagged notes so nothing is silently lost while the parser gets fixed.",
     "persist": "Write the new version, its document nodes and the clause projection to the corpus in one transaction.",
-    "annotate": "Deterministically classify every clause (definitions, obligation, scope …) and inherit topic tags from the curated source metadata — the orientation layer for readers.",
+    "annotate": "Deterministically classify every clause (definition, requirement, enforcement, other) and inherit topic tags from the curated source metadata — the orientation layer for readers.",
+    "index": "Build the hybrid search units: each clause in distilled form (short name + path + classification + text) plus substantial paragraphs with their clause heading — the corpus becomes findable by citation, exact tokens, or plain words.",
     "diff": "Clause-level comparison against the previous version (aligned by stable references) producing the change event.",
     "relay": "Ship the recorded change events from the transactional outbox to the SQS event queue.",
     "drain": "Consume the queued events worker-style (idempotent on event id), leaving the queue clean.",
@@ -332,15 +333,14 @@ change_events = sa.Table(
 # classification from stable signals; origin 'llm' = gateway-generated
 # plain-language explainer with full model provenance, clearly marked
 # non-authoritative in the UI.
+# Deliberately minimal (4 types) so readers can actually use them:
+# definition = what terms mean; requirement = what someone must or must not
+# do; enforcement = offences/penalties/liability; other = everything else.
 ANNOTATION_CATEGORIES = (
-    "definitions",
-    "obligation",
-    "prohibition",
-    "scope",
+    "definition",
+    "requirement",
     "enforcement",
-    "procedure",
-    "exemption",
-    "administrative",
+    "other",
 )
 
 clause_annotations = sa.Table(
@@ -362,6 +362,37 @@ clause_annotations = sa.Table(
     sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.UniqueConstraint("clause_id", "origin", name="clause_annotations_clause_origin_key"),
     sa.Index("clause_annotations_clause_idx", "clause_id"),
+)
+
+# Unified search-unit store (Cerebras-lesson analog of the "one embeddings
+# table"): every searchable thing, from every source, lands here in the same
+# shape and is queryable through one hybrid interface. Built at ingest from
+# PUBLIC clauses only (restricted discipline). Two grains:
+#   clause    — the DISTILLED form (short name + path + category/topics +
+#               clause text [+ LLM summary when it lands])
+#   paragraph — "bursting": one paragraph/point with its clause heading
+#               prepended as context, indexed only above a signal threshold.
+# `embedding` stays NULL until the P2 embedding retriever plugs in.
+search_units = sa.Table(
+    "search_units",
+    metadata,
+    sa.Column("id", BigId, sa.Identity(), primary_key=True),
+    sa.Column("source_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.sources.id"), nullable=False),
+    sa.Column("source_version_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.source_versions.id"), nullable=False),
+    sa.Column("clause_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.clauses.id"), nullable=True),
+    sa.Column("doc_node_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.doc_nodes.id"), nullable=True),
+    sa.Column(
+        "grain",
+        sa.Text,
+        sa.CheckConstraint("grain in ('clause','paragraph')", name="search_units_grain_check"),
+        nullable=False,
+    ),
+    sa.Column("ref", sa.Text, nullable=False, default=""),
+    sa.Column("text", sa.Text, nullable=False),
+    sa.Column("embedding", Json, nullable=True),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Index("search_units_version_idx", "source_version_id"),
+    sa.Index("search_units_clause_idx", "clause_id"),
 )
 
 # Learned parse hints (fidelity repair loop): discovered once (LLM tier or
@@ -428,6 +459,7 @@ ALL_TABLES = (
     doc_nodes,
     clauses,
     clause_annotations,
+    search_units,
     citations,
     discovery_candidates,
     change_events,

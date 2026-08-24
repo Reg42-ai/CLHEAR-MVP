@@ -477,8 +477,10 @@ def _persist(
         if clause_rows:
             conn.execute(clauses.insert(), clause_rows)
         from app.clhear.l1 import annotate as l1_annotate
+        from app.clhear.l1 import retrieval as l1_retrieval
 
         annotation_count = l1_annotate.heuristics_for_version(conn, version_id, list(meta.topics))
+        unit_count = l1_retrieval.build_units_for_version(conn, meta, source_id, version_id, tree)
 
         new_map = {row["ref"]: row["text_hash"] for row in clause_rows}
         old_map = _clause_map(conn, previous.id) if previous is not None else {}
@@ -565,6 +567,7 @@ def _persist(
     node_count = sum(1 for n in tree for _ in n.walk())
     recorder.stage("persist", version=result.version_label, nodes=node_count, clauses=len(clause_rows))
     recorder.stage("annotate", annotations=annotation_count)
+    recorder.stage("index", search_units=unit_count)
     recorder.stage(
         "diff",
         old_version=previous.version_label if previous else None,
@@ -634,6 +637,7 @@ def persist_tree(
             )
             .returning(doc_nodes.c.id)
         ).scalar_one()
+        node.db_id = node_id  # dynamic attr: the search indexer maps tree -> rows
 
         crumb = node.heading or node.label or node.ref
         child_path = path_parts + (

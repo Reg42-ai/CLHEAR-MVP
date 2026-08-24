@@ -231,10 +231,11 @@ def test_sources_api_and_search(engine, client, tmp_path):
     assert payload["clauses"][0]["text"]
     assert payload["clauses"][0]["doc_node_id"]
 
+    # P2 headline query: reg 27-28 for CDD (clause- or paragraph-grain hits).
     hits = client.get("/api/clhear/search?q=customer due diligence").json()
-    refs = {h["ref"] for h in hits}
-    assert {"regulation-27", "regulation-28"} <= refs
-    assert all(h["doc_node_id"] for h in hits if h["ref"] in {"regulation-27", "regulation-28"})
+    joined = " ".join(h["ref"] for h in hits)
+    assert "regulation-27" in joined and "regulation-28" in joined
+    assert all(h["doc_node_id"] for h in hits)
 
 
 def test_restricted_discipline(engine, client, tmp_path):

@@ -12,7 +12,7 @@ from app.clhear.l1.models import STAGE_INFO, clause_annotations
 from app.clhear.models import llm_calls
 from app.clhear.platform.gateway import FakeProvider, Gateway
 
-PIPELINE_STAGES = {"fetch", "parse", "gate", "hints", "llm_repair", "salvage", "persist", "annotate", "diff", "relay", "drain"}
+PIPELINE_STAGES = {"fetch", "parse", "gate", "hints", "llm_repair", "salvage", "persist", "annotate", "index", "diff", "relay", "drain"}
 
 
 def test_stage_dictionary_is_complete_and_served(client, engine):
@@ -20,7 +20,7 @@ def test_stage_dictionary_is_complete_and_served(client, engine):
     payload = client.get("/api/clhear/meta").json()
     assert set(payload["stages"]) == set(STAGE_INFO)
     assert all(len(v) > 40 for v in payload["stages"].values())
-    assert "obligation" in payload["annotation_categories"]
+    assert payload["annotation_categories"] == ["definition", "requirement", "enforcement", "other"]
 
 
 @pytest.mark.parametrize("key", list(ADAPTER_KEYS))
@@ -37,12 +37,12 @@ def test_heuristic_annotator_on_mlr(engine, client, tmp_path):
     doc = client.get("/api/clhear/sources/uksi/2017/692/document").json()
     assert doc["short_name"] == "UK AML Regulations (MLRs 2017)"
     by_ref = {n["ref"]: n for n in doc["nodes"] if n.get("annotation")}
-    assert by_ref["regulation-3"]["annotation"]["category"] == "definitions"  # "General interpretation"
-    assert by_ref["regulation-28"]["annotation"]["category"] == "obligation"  # "must apply CDD measures"
+    assert by_ref["regulation-3"]["annotation"]["category"] == "definition"  # "General interpretation"
+    assert by_ref["regulation-28"]["annotation"]["category"] == "requirement"  # "must apply CDD measures"
     assert "aml" in by_ref["regulation-28"]["annotation"]["topics"]
 
-    # Search category filter: definitions hits exclude reg 28.
-    hits = client.get("/api/clhear/search?q=customer due diligence&category=definitions").json()
+    # Search category filter: definition hits exclude reg 28.
+    hits = client.get("/api/clhear/search?q=customer due diligence&category=definition").json()
     refs = {h["ref"] for h in hits}
     assert "regulation-3" in refs and "regulation-28" not in refs
     assert all(h["short_name"] == "UK AML Regulations (MLRs 2017)" for h in hits)
@@ -91,9 +91,9 @@ def test_llm_explainer_job_offline(engine, client, tmp_path):
 
     canned = {
         "annotations": [
-            {"ref": "r1", "summary": "Firms have to keep transaction records for five years.", "category": "obligation", "topics": ["record-keeping"]},
-            {"ref": "r2", "summary": "Defines what counts as a transaction.", "category": "definitions", "topics": ["definitions"]},
-            {"ref": "r3", "summary": "Tipping off the customer is forbidden.", "category": "prohibition", "topics": ["confidentiality"]},
+            {"ref": "r1", "summary": "Firms have to keep transaction records for five years.", "category": "requirement", "topics": ["record-keeping"]},
+            {"ref": "r2", "summary": "Defines what counts as a transaction.", "category": "definition", "topics": ["definitions"]},
+            {"ref": "r3", "summary": "Tipping off the customer is forbidden.", "category": "requirement", "topics": ["confidentiality"]},
         ]
     }
     provider = FakeProvider(canned_text=json.dumps(canned))
@@ -125,8 +125,8 @@ def test_llm_explainer_job_offline(engine, client, tmp_path):
 
 
 def test_heuristic_classifier_units():
-    assert annotate.classify("General interpretation", "anything must anything", "Part 1") == "definitions"
-    assert annotate.classify("", "The person must not disclose", "") == "prohibition"
+    assert annotate.classify("General interpretation", "anything must anything", "Part 1") == "definition"
+    assert annotate.classify("", "The person must not disclose", "") == "requirement"
     assert annotate.classify("", "A person who fails commits an offence and is liable to a fine", "") == "enforcement"
-    assert annotate.classify("", "The firm must assess risks.", "") == "obligation"
-    assert annotate.classify("Signature block", "Signed by authority of the Treasury", "") == "administrative"
+    assert annotate.classify("", "The firm must assess risks.", "") == "requirement"
+    assert annotate.classify("Signature block", "Signed by authority of the Treasury", "") == "other"

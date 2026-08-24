@@ -401,10 +401,25 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
   if (!detail || !doc) return html`<div class="spin">Loading ${sourceKey}…</div>`;
   const amended = new Set(doc.amended_refs || []);
   const toc = buildToc(doc.nodes);
-  const visible = computeVisible(doc.nodes, filter, category);
-  const visibleCount = visible ? doc.nodes.filter((n) => visible.has(n.id)).length : doc.nodes.length;
+  const { visible, matches } = computeVisible(doc.nodes, filter, category);
   const selectedNode = selectedId && doc.nodes.find((n) => n.id === selectedId);
   const selectedAnnotation = selectedNode ? selectedNode.annotation : null;
+  // "Contains" preview for container nodes (chapters/sections have no text of
+  // their own): assemble the first stretch of descendant text client-side.
+  let containsPreview = null;
+  if (selectedNode && !ws(selectedNode.raw_text || "")) {
+    const kids = [];
+    const collect = (parentId) => {
+      for (const n of doc.nodes) {
+        if (n.parent_id !== parentId) continue;
+        kids.push(n);
+        if (kids.length < 60) collect(n.id);
+      }
+    };
+    collect(selectedNode.id);
+    const text = kids.map((k) => ws(`${k.label || ""} ${k.heading || ""} ${k.raw_text || ""}`)).filter(Boolean).join(" ");
+    if (text) containsPreview = { count: kids.length, text: text.slice(0, 420) + (text.length > 420 ? "…" : "") };
+  }
 
   return html`
     <div>
@@ -443,16 +458,6 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
         <button class=${inspect ? "active" : ""} onClick=${() => setInspect(true)}>inspect</button>
         <button class=${explain ? "active" : ""} onClick=${() => setExplain(!explain)}>explain</button>
       </div>
-      <div class="readerbar">
-        <input placeholder="Filter this document… (text, e.g. risk assessment)"
-               value=${filter} onInput=${(e) => setFilter(e.target.value)} />
-        ${(meta ? meta.annotation_categories : []).map((c) => html`
-          <button key=${c} class=${"catchip" + (category === c ? " on" : "")}
-                  onClick=${() => setCategory(category === c ? null : c)}>${c}</button>`)}
-        ${(filter.trim().length >= 2 || category) && html`
-          <span class="count">${visibleCount} matching element${visibleCount === 1 ? "" : "s"}</span>
-          <button class="catchip" onClick=${() => { setFilter(""); setCategory(null); }}>clear</button>`}
-      </div>
       ${detail.changes.length > 0 && html`
         <div class="change">
           latest change: <span class=${"kind-" + detail.changes[0].kind}>${detail.changes[0].kind}</span>
@@ -463,6 +468,16 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
       ${doc.locked && html`
         <div class="locked">This source is license-restricted: structure, references and integrity hashes are
         public, verbatim text is not. BYOL unlock arrives in P3.</div>`}
+      <div class="readerbar">
+        <input placeholder="Filter this document… (e.g. risk assessment)"
+               value=${filter} onInput=${(e) => setFilter(e.target.value)} />
+        ${(meta ? meta.annotation_categories : []).map((c) => html`
+          <button key=${c} class=${"catchip" + (category === c ? " on" : "")}
+                  onClick=${() => setCategory(category === c ? null : c)}>${c}</button>`)}
+        ${(filter.trim().length >= 2 || category) && html`
+          <span class="count">${matches} matching clause${matches === 1 ? "" : "s"}</span>
+          <button class="catchip" onClick=${() => { setFilter(""); setCategory(null); }}>clear</button>`}
+      </div>
       <div class="layout">
         ${toc.length > 1 && html`
           <nav class="toc">
@@ -481,7 +496,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
               onLeave=${() => hoverId === n.id && setHoverId(null)}
               onClick=${() => { setInspect(true); setSelectedId(n.id); }} />`)}
         </div>
-        ${inspect && html`<${Inspector} info=${info} annotation=${selectedAnnotation} />`}
+        ${inspect && html`<${Inspector} info=${info} annotation=${selectedAnnotation} contains=${containsPreview} />`}
       </div>
     </div>`;
 }
@@ -505,22 +520,67 @@ function buildToc(nodes) {
 }
 
 function computeVisible(nodes, filter, category) {
+  // Subtree-aware filtering. Categories live on clause-grain nodes while the
+  // text lives in their descendants, so:
+  //   1. category eligibility propagates DOWN from annotated clause nodes,
+  //   2. a node matches if it or ANY DESCENDANT contains the term,
+  //   3. visible = matches + their ancestors (headings) + their descendants
+  //      (the actual text).
   const term = filter.trim().toLowerCase();
   const active = term.length >= 2 || category;
-  if (!active) return null;
-  const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
-  const visible = new Set();
+  if (!active) return { visible: null, matches: 0 };
+  const byId = {};
+  const children = {};
   for (const n of nodes) {
-    const text = `${n.label || ""} ${n.heading || ""} ${n.raw_text || ""}`.toLowerCase();
-    const textHit = term.length < 2 || text.includes(term);
-    const catHit = !category || (n.annotation && n.annotation.category === category);
-    if (textHit && catHit && (term.length >= 2 || n.annotation)) {
-      visible.add(n.id);
-      let parent = n.parent_id;
-      while (parent && !visible.has(parent)) { visible.add(parent); parent = byId[parent] && byId[parent].parent_id; }
-    }
+    byId[n.id] = n;
+    if (n.parent_id) (children[n.parent_id] = children[n.parent_id] || []).push(n.id);
   }
-  return visible;
+  // 1. category eligibility (inherited downward from the annotated clause)
+  const eligible = new Set();
+  if (category) {
+    const markSubtree = (id) => {
+      if (eligible.has(id)) return;
+      eligible.add(id);
+      for (const c of children[id] || []) markSubtree(c);
+    };
+    for (const n of nodes) if (n.annotation && n.annotation.category === category) markSubtree(n.id);
+  }
+  const catOk = (n) => !category || eligible.has(n.id);
+  // 2. text hits (per node)
+  const selfHit = (n) =>
+    term.length < 2 ||
+    `${n.label || ""} ${n.heading || ""} ${n.raw_text || ""}`.toLowerCase().includes(term);
+  // 3. matched = annotated-clause units (or any node when no category is set)
+  //    whose subtree contains the term
+  const visible = new Set();
+  const matchedClauses = new Set();
+  let rawHits = 0;
+  const addAncestors = (n) => {
+    let parent = n.parent_id;
+    while (parent && !visible.has(parent)) { visible.add(parent); parent = byId[parent] && byId[parent].parent_id; }
+  };
+  const addSubtree = (id) => {
+    if (!visible.has(id)) visible.add(id);
+    for (const c of children[id] || []) addSubtree(c);
+  };
+  const clauseOf = (n) => {
+    let cur = n;
+    while (cur) {
+      if (cur.annotation) return cur.id;
+      cur = cur.parent_id ? byId[cur.parent_id] : null;
+    }
+    return null;
+  };
+  for (const n of nodes) {
+    if (!catOk(n) || !selfHit(n)) continue;
+    rawHits += 1;
+    const clause = clauseOf(n);
+    if (clause) matchedClauses.add(clause);
+    visible.add(n.id);
+    addAncestors(n);
+    addSubtree(n.id);
+  }
+  return { visible: visible.size ? visible : new Set(), matches: matchedClauses.size || rawHits };
 }
 
 function CurrentTextBadge({ detail, doc, meta, viewing, reset, toggleLegend }) {
@@ -623,12 +683,17 @@ function DocLine({ n, first, amended, inspect, explain, hover, selected, onEnter
     </div>`;
 }
 
-function Inspector({ info, annotation }) {
+function Inspector({ info, annotation, contains }) {
   if (!info) return html`<aside class="inspector"><h3>Inspector</h3><div class="charter">Hover and click any element in the document to see its corpus record — id, hash, version, change history, permalink. This is the L2-ready layer.</div></aside>`;
   const copy = () => navigator.clipboard.writeText(location.origin + info.permalink);
   return html`
     <aside class="inspector">
       <h3>${info.node_type}${info.ref ? ` · ${info.ref}` : ""}</h3>
+      ${contains && html`
+        <div class="annot">
+          <span class="tag">contains — ${contains.count} element${contains.count === 1 ? "" : "s"}</span>
+          <div style=${{ marginTop: "4px" }}>${contains.text}</div>
+        </div>`}
       ${annotation && (annotation.summary || annotation.category) && html`
         <div class="annot">
           <span class="tag">${annotation.origin === "llm" ? "AI-generated explainer — not legal text" : "heuristic classification"}</span>
@@ -981,13 +1046,17 @@ function RunDag({ run, close, meta }) {
 function SearchView({ q, open, back }) {
   const [results, setResults] = useState(null);
   const [category, setCategory] = useState(null);
+  const [scope, setScope] = useState(null);
+  const [families, setFamilies] = useState([]);
   const [meta, setMeta] = useState(_meta);
-  useEffect(() => { getMeta().then(setMeta); }, []);
+  useEffect(() => { getMeta().then(setMeta); api("/api/clhear/sources").then(setFamilies).catch(() => {}); }, []);
   useEffect(() => {
     setResults(null);
-    const cat = category ? `&category=${encodeURIComponent(category)}` : "";
-    api(`/api/clhear/search?q=${encodeURIComponent(q)}${cat}`).then(setResults);
-  }, [q, category]);
+    const params = new URLSearchParams({ q });
+    if (category) params.set("category", category);
+    if (scope) params.set("scope", scope);
+    api(`/api/clhear/search?${params}`).then(setResults);
+  }, [q, category, scope]);
   if (results === null) return html`<div class="spin">Searching “${q}”…</div>`;
   const groups = [];
   for (const r of results) {
@@ -1000,6 +1069,11 @@ function SearchView({ q, open, back }) {
       <div class="crumbs"><a onClick=${back}>Library</a> / search</div>
       <h2>“${q}” — ${results.length} hit${results.length === 1 ? "" : "s"} in public clause text</h2>
       <div class="readerbar">
+        <span class="count">scope:</span>
+        ${families.map((f) => html`
+          <button key=${f.key} class=${"catchip" + (scope === f.key ? " on" : "")}
+                  onClick=${() => setScope(scope === f.key ? null : f.key)}>${f.name.split(" (")[0]}</button>`)}
+        <span class="count">type:</span>
         ${(meta ? meta.annotation_categories : []).map((c) => html`
           <button key=${c} class=${"catchip" + (category === c ? " on" : "")}
                   onClick=${() => setCategory(category === c ? null : c)}>${c}</button>`)}
@@ -1010,7 +1084,10 @@ function SearchView({ q, open, back }) {
           <div class="dayhead">${g.name} · ${g.items.length} hit${g.items.length === 1 ? "" : "s"}</div>
           ${g.items.map((r, i) => html`
             <div class="result" key=${i} onClick=${() => open(r.source_key, r.ref, r.doc_node_id)}>
-              <div class="where"><span class="mono">${r.ref}</span>${r.path ? ` · ${r.path}` : ""}</div>
+              <div class="where">
+                <span class="mono">${r.ref || r.grain}</span>
+                ${r.context ? ` · ${r.context}` : ""}
+              </div>
               <div dangerouslySetInnerHTML=${{ __html: highlight(r.snippet, q) }} />
             </div>`)}
         </div>`)}

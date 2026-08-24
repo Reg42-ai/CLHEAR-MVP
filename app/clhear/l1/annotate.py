@@ -27,21 +27,17 @@ ANNOTATE_FLEET = "l1.annotate"
 BATCH_SIZE = 8
 
 # Heading/path signals (stable, high precision): a clause HEADED
-# "Interpretation" is definitions even if its body says "must".
+# "Interpretation" is a definition even if its body says "must".
 _HEAD_RULES: list[tuple[str, re.Pattern]] = [
-    ("definitions", re.compile(r"\b(definition|interpretation|meaning of|glossary)\b", re.I)),
-    ("exemption", re.compile(r"\b(exempt|exception|disapplication)\b", re.I)),
+    ("definition", re.compile(r"\b(definition|interpretation|meaning of|glossary)\b", re.I)),
     ("enforcement", re.compile(r"\b(offence|offense|penalt|sanction|enforcement|withholding of tax)", re.I)),
-    ("scope", re.compile(r"\b(scope|application|applies to|extent|subject[- ]matter|prescribed)\b", re.I)),
-    ("procedure", re.compile(r"\b(procedure|appeal|review|registration|notification|filing)\b", re.I)),
 ]
 
-# Body signals (modal verbs; ordered so "must not" wins over "must").
+# Body signals (modal verbs; prohibitions count as requirements — "what
+# someone must or must not do").
 _BODY_RULES: list[tuple[str, re.Pattern]] = [
-    ("prohibition", re.compile(r"\b(must not|shall not|may not|prohibit|is not permitted)\b", re.I)),
     ("enforcement", re.compile(r"\b(commits an offence|liable to a fine|liable on conviction|civil penalty)\b", re.I)),
-    ("obligation", re.compile(r"\b(must|shall|is required to|are required to)\b", re.I)),
-    ("exemption", re.compile(r"\b(does not apply|is exempt)\b", re.I)),
+    ("requirement", re.compile(r"\b(must not|shall not|may not|prohibit|is not permitted|must|shall|is required to|are required to)\b", re.I)),
 ]
 
 
@@ -54,7 +50,7 @@ def classify(heading: str, text: str, path: str) -> str:
     for category, pattern in _BODY_RULES:
         if pattern.search(text[:2000]):
             return category
-    return "administrative"
+    return "other"
 
 
 def heuristics_for_version(conn: Connection, version_id: int, source_topics: list[str]) -> int:
@@ -138,7 +134,7 @@ def explain_batch(gateway, model: str, batch) -> list[dict]:
             {
                 "ref": str(entry["ref"]),
                 "summary": str(entry["summary"])[:1200],
-                "category": category if category in ANNOTATION_CATEGORIES else "administrative",
+                "category": category if category in ANNOTATION_CATEGORIES else "other",
                 "topics": [str(t) for t in entry.get("topics", [])][:8],
                 "model": result.model,
                 "prompt_hash": "",
@@ -164,6 +160,8 @@ def annotate_llm(engine: Engine, gateway, *, model: str | None = None, max_claus
         annotations = explain_batch(gateway, model, batch)
         batches += 1
         with engine.begin() as conn:
+            from app.clhear.l1.retrieval import append_summary_to_unit
+
             for entry in annotations:
                 row = by_ref.get(entry["ref"])
                 if row is None:
@@ -179,6 +177,9 @@ def annotate_llm(engine: Engine, gateway, *, model: str | None = None, max_claus
                         prompt_hash=hashlib.sha256(row.text.encode()).hexdigest(),
                     )
                 )
+                # Distillation-first indexing: the plain-language summary joins
+                # the clause's search unit so semantic phrasing becomes findable.
+                append_summary_to_unit(conn, row.id, entry["summary"])
                 done += 1
             # Any clause the model skipped gets a placeholder-free retry next
             # run (we insert nothing for it), but we must not loop forever on
@@ -190,7 +191,7 @@ def annotate_llm(engine: Engine, gateway, *, model: str | None = None, max_claus
                             clause_id=row.id,
                             origin="llm",
                             summary="",
-                            category="administrative",
+                            category="other",
                             topics=[],
                             model=model,
                             prompt_hash="unexplained",
