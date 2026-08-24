@@ -126,6 +126,7 @@ def test_llm_explainer_job_offline(engine, client, tmp_path):
 
 def test_heuristic_classifier_units():
     assert annotate.classify("General interpretation", "anything must anything", "Part 1") == "definition"
+    assert annotate.classify("Definitions", "For the purposes of this Regulation: …", "") == "definition"  # plural
     assert annotate.classify("", "The person must not disclose", "") == "requirement"
     assert annotate.classify("", "A person who fails commits an offence and is liable to a fine", "") == "enforcement"
     assert annotate.classify("", "The firm must assess risks.", "") == "requirement"

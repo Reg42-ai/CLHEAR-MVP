@@ -29,7 +29,7 @@ BATCH_SIZE = 8
 # Heading/path signals (stable, high precision): a clause HEADED
 # "Interpretation" is a definition even if its body says "must".
 _HEAD_RULES: list[tuple[str, re.Pattern]] = [
-    ("definition", re.compile(r"\b(definition|interpretation|meaning of|glossary)\b", re.I)),
+    ("definition", re.compile(r"\b(definitions?|interpretation|meaning of|glossary|terms? used)\b", re.I)),
     ("enforcement", re.compile(r"\b(offence|offense|penalt|sanction|enforcement|withholding of tax)", re.I)),
 ]
 

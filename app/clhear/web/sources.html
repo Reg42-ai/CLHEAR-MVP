@@ -489,6 +489,10 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
               </a>`)}
           </nav>`}
         <div class="doc">
+          ${visible !== null && visible.size === 0 && html`
+            <div class="empty">No clause in this document matches
+              ${filter.trim().length >= 2 ? html` “${filter.trim()}”` : ""}${category ? html` (type: ${category})` : ""}.
+              Try the global search box above — it covers every source.</div>`}
           ${doc.nodes.map((n, i) => (visible === null || visible.has(n.id)) && html`
             <${DocLine} key=${n.id} n=${n} first=${i === 0} amended=${amended.has(n.ref)}
               inspect=${inspect} explain=${explain} hover=${hoverId === n.id} selected=${selectedId === n.id}
