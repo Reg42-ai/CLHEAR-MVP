@@ -183,6 +183,33 @@ their artifacts on every ingest, and the fleet learns from failures.
   and redeploy. UI marks AI output "AI-generated explainer — not legal text".
 - 51 tests green; corpus rebuilt + deployed + browser-verified (6/6).
 
+## Hybrid knowledge retrieval (Cerebras lessons) — DONE (2026-08-24)
+
+Applied from the Cerebras Knowledge write-up (x.com/cerebras article):
+- **`search_units`** (models.py): unified store — every PUBLIC clause in
+  DISTILLED form (short name + path + classification + text, LLM summary
+  folded in when the explainer runs) + paragraph-grain "burst" units
+  (clause heading prepended, ≥120 chars). Built by the pipeline `index`
+  stage; only in-force versions; restricted sources never indexed.
+  FTS5 mirror for BM25 (verified working on the Lambda runtime; falls back
+  to LIKE if absent).
+- **`l1/retrieval.py`**: citation router (reg 27 / art 6 / §1471 /
+  1.1471-5(b) / ac-2 / GV.OC-01) + FTS5 + LIKE retrievers fused with
+  Reciprocal Rank Fusion (weight/(60+rank)), per-clause dedup, per-source
+  cap, context restoration (clause path / sibling preview). The P2
+  embedding retriever plugs into the same fusion (add a ranked list).
+- `/api/clhear/search` + UI: scope chips (family "projects"), grouped
+  results with context lines.
+- Reader filter FIXED (subtree-aware visibility: category inherited from
+  clause ancestors, text matched on descendants, matches+ancestors+
+  descendants shown); taxonomy simplified to 4 types (definition/
+  requirement/enforcement/other — plural-aware "Definitions" regex);
+  compact reader bar above the document; inspector "contains" preview;
+  zero-match empty-state message.
+- 56 tests green; corpus rebuilt (5,969 search units) + deployed; live
+  checks: "reg 27"→regulation-27 first, "legitimate interests"→art_6.1(f)
+  paragraph burst first with context, scope=uk-mlr filters correctly.
+
 ## Next: P2–P4 (one PR per phase, HLD §9)
 
 - **P2** — `families.py` citation mining + reconciliation; `embeddings.py`
