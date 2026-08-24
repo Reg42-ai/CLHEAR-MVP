@@ -210,6 +210,30 @@ Applied from the Cerebras Knowledge write-up (x.com/cerebras article):
   checks: "reg 27"→regulation-27 first, "legitimate interests"→art_6.1(f)
   paragraph burst first with context, scope=uk-mlr filters correctly.
 
+## eToro design-partner scope (L1 blueprint) — DONE (2026-08-24)
+
+- Input: `docs/etoro-clhear-source-registry.md` (draft v0.1 — ~200 registry
+  IDs across 15 legal entities, source classes SC1–SC5, clusters A–F).
+- `docs/ETORO_L1_SCOPE.md`: full registry-ID → CLHEAR mapping — 20 families,
+  per-source adapter assignment, feasibility classes (A param-reuse /
+  B new-HTML-adapter / C Docling-PDF / D restricted / E list-feeds /
+  W watchers), 4 import waves. Wave 1 (~50 sources) needs ZERO new adapters:
+  eur_lex takes any CELEX id, uk_legislation any legislation.gov.uk doc,
+  govinfo title 26 already wired.
+- `scripts/seed_registry.py`: idempotent seed — 20 families + 96
+  reference-level sources (`added_via='watchlist'`) with short_name/about/
+  topics/registry-IDs/wave; attaches already-known keys (DPA 2018, PSRs 2017)
+  to blueprint families instead of duplicating; restricted standards (ISO,
+  SOC 2 TSC, PCI, IFRS) flagged `license='restricted'` for the P3 importer.
+- Library UI: charter registry notes, "planned" state for watchlist members,
+  footer "6 ingested · 96 planned (eToro blueprint)". Deployed + verified live.
+- Blockers needing eToro input before scope freeze are listed in the scope
+  doc (§20 verify items: eToroX Gibraltar status gates F16-GI, QI entity map,
+  clearing/CAT split vs Apex, ISA manager of record, SFTR lending, …).
+- Next concrete step: Wave-1 ingestion — run the existing pipeline over the
+  seeded CELEX/UK keys (fixtures + fidelity gates per doc; expect per-doc
+  parse-hint work for directives with different CONVEX quirks).
+
 ## Next: P2–P4 (one PR per phase, HLD §9)
 
 - **P2** — `families.py` citation mining + reconciliation; `embeddings.py`
