@@ -29,10 +29,13 @@ from app.clhear.l1 import fidelity
 from app.clhear.l1.adapters.base import CLAUSE_TYPES, Adapter, DocNode, FetchResult, SourceMeta
 from app.clhear.l1.models import (
     change_events,
+    citations,
+    clause_annotations,
     clauses,
     doc_nodes,
     family_members,
     parse_hints,
+    search_units,
     source_families,
     source_versions,
     sources,
@@ -281,6 +284,7 @@ def ingest(
     trigger: str = "manual",
     gateway=None,
     job_id: str | None = None,
+    force: bool = False,
 ) -> dict:
     """Run one adapter through fetch -> fidelity gate/repair loop -> persist.
 
@@ -300,7 +304,10 @@ def ingest(
         previous = _latest_version(conn, source_id)
         stored_hints = _load_active_hints(conn, source_id)
 
-    result = adapter.fetch(previous.version_label if previous else None)
+    # force=True: re-fetch and re-parse even when the publisher artifact is
+    # unchanged (parser/spine fixes). Adapters short-circuit fetch() when the
+    # version label already matches, so we pass since_version=None.
+    result = adapter.fetch(None if force else (previous.version_label if previous else None))
     recorder.stage("fetch", artifacts=len(result.artifacts) if result else 0)
     if result is None:
         summary = {"source": meta.source_key, "version": previous.version_label if previous else None}
@@ -308,7 +315,7 @@ def ingest(
         return {**summary, "status": "up-to-date", "run_id": recorder.run_id, "stages": outputs["stages"]}
 
     content_hash = sha256(b"".join(a.content for a in sorted(result.artifacts, key=lambda a: a.name)))
-    if previous is not None and previous.content_hash == content_hash:
+    if previous is not None and previous.content_hash == content_hash and not force:
         summary = {"source": meta.source_key, "version": previous.version_label}
         outputs = recorder.finish("unchanged", summary)
         return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"]}
@@ -423,6 +430,7 @@ def ingest(
         return _persist(
             engine, store, meta, source_id, previous, result, content_hash, report,
             hints_used, new_llm_hints, recovered_spans, llm_assisted, recorder,
+            force=force,
         )
     except Exception as exc:
         recorder.finish("failed", {"source": meta.source_key, "error": str(exc)[:300]})
@@ -443,6 +451,7 @@ def _persist(
     recovered_spans: int,
     llm_assisted: bool,
     recorder: RunRecorder,
+    force: bool = False,
 ) -> dict:
     prefix = "public-ok" if meta.license == "open" else "restricted"
     artifact_uris = []
@@ -454,24 +463,44 @@ def _persist(
     tree = result.tree
 
     with engine.begin() as conn:
-        if previous is not None:
+        # Same publisher version + parser change: replace the tree in place
+        # (source_id, version_label is unique — a second insert would fail).
+        reuse = (
+            force
+            and previous is not None
+            and previous.version_label == result.version_label
+        )
+        if reuse:
+            version_id = previous.id
+            _clear_version_tree(conn, version_id)
             conn.execute(
-                source_versions.update().where(source_versions.c.id == previous.id).values(status="superseded")
+                source_versions.update()
+                .where(source_versions.c.id == version_id)
+                .values(
+                    s3_uri=artifact_uris[0] if artifact_uris else previous.s3_uri,
+                    content_hash=content_hash,
+                    status="in_force",
+                )
             )
-        version_id = conn.execute(
-            source_versions.insert()
-            .values(
-                source_id=source_id,
-                version_label=result.version_label,
-                version_kind=result.version_kind,
-                as_of_date=result.as_of_date,
-                effective_date=result.effective_date,
-                s3_uri=artifact_uris[0] if artifact_uris else "",
-                content_hash=content_hash,
-                status="in_force",
-            )
-            .returning(source_versions.c.id)
-        ).scalar_one()
+        else:
+            if previous is not None:
+                conn.execute(
+                    source_versions.update().where(source_versions.c.id == previous.id).values(status="superseded")
+                )
+            version_id = conn.execute(
+                source_versions.insert()
+                .values(
+                    source_id=source_id,
+                    version_label=result.version_label,
+                    version_kind=result.version_kind,
+                    as_of_date=result.as_of_date,
+                    effective_date=result.effective_date,
+                    s3_uri=artifact_uris[0] if artifact_uris else "",
+                    content_hash=content_hash,
+                    status="in_force",
+                )
+                .returning(source_versions.c.id)
+            ).scalar_one()
 
         clause_rows = persist_tree(conn, version_id, tree, public_ok)
         if clause_rows:
@@ -639,7 +668,7 @@ def persist_tree(
         ).scalar_one()
         node.db_id = node_id  # dynamic attr: the search indexer maps tree -> rows
 
-        crumb = node.heading or node.label or node.ref
+        crumb = _path_crumb(node)
         child_path = path_parts + (
             [crumb] if crumb and node.node_type in {"part", "chapter", "section", "group", "schedule"} else []
         )
@@ -664,3 +693,39 @@ def persist_tree(
     for root in tree:
         visit(root, None, 0, [])
     return clause_rows
+
+
+def _path_crumb(node: DocNode) -> str:
+    """Spine crumb for clauses.path: 'TITLE VI — …' when both exist."""
+    label = (node.label or "").strip()
+    heading = (node.heading or "").strip()
+    if label and heading and heading != label:
+        return f"{label} — {heading}"
+    return heading or label or node.ref
+
+
+def _clear_version_tree(conn: Connection, version_id: int) -> None:
+    """Drop nodes/clauses/index rows for a version so persist_tree can reuse it."""
+    unit_ids = [
+        r[0]
+        for r in conn.execute(sa.select(search_units.c.id).where(search_units.c.source_version_id == version_id))
+    ]
+    if unit_ids:
+        try:
+            conn.exec_driver_sql(
+                f"DELETE FROM search_units_fts WHERE rowid IN ({','.join(str(i) for i in unit_ids)})"
+            )
+        except Exception:
+            pass
+        conn.execute(search_units.delete().where(search_units.c.source_version_id == version_id))
+    clause_ids = [
+        r[0] for r in conn.execute(sa.select(clauses.c.id).where(clauses.c.source_version_id == version_id))
+    ]
+    if clause_ids:
+        conn.execute(citations.delete().where(citations.c.from_clause_id.in_(clause_ids)))
+        conn.execute(clause_annotations.delete().where(clause_annotations.c.clause_id.in_(clause_ids)))
+        conn.execute(clauses.delete().where(clauses.c.id.in_(clause_ids)))
+    conn.execute(
+        doc_nodes.update().where(doc_nodes.c.source_version_id == version_id).values(parent_id=None)
+    )
+    conn.execute(doc_nodes.delete().where(doc_nodes.c.source_version_id == version_id))

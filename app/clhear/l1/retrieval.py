@@ -362,20 +362,21 @@ def _result_dict(conn: Connection, row, query: str, score: float) -> dict:
             clause_ref = clause.ref
     elif row.doc_node_id is not None:
         node = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.id == row.doc_node_id)).first()
-        if node is not None and node.parent_id is not None:
-            parent = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.id == node.parent_id)).first()
-            siblings = conn.execute(
-                sa.select(doc_nodes.c.raw_text)
-                .where(doc_nodes.c.parent_id == node.parent_id)
-                .where(doc_nodes.c.public_ok.is_(True))
-                .where(doc_nodes.c.seq.in_((node.seq - 1, node.seq + 1)))
-                .order_by(doc_nodes.c.seq)
-            ).all()
-            head = f"{parent.label} {parent.heading}".strip() if parent is not None else ""
-            neighbor = next((ws(s.raw_text)[:140] for s in siblings if ws(s.raw_text)), "")
-            context = ws(f"{head}" + (f" · near: {neighbor}" if neighbor else ""))
-            if parent is not None and parent.ref and not clause_ref:
-                clause_ref = parent.ref
+        cursor = node
+        while cursor is not None:
+            if cursor.node_type in CLAUSE_TYPES:
+                label = (cursor.label or "").strip()
+                heading = (cursor.heading or "").strip()
+                if label and heading and heading != label:
+                    context = f"{label} — {heading}"
+                else:
+                    context = ws(f"{label} {heading}") or cursor.ref
+                if cursor.ref:
+                    clause_ref = cursor.ref
+                break
+            if cursor.parent_id is None:
+                break
+            cursor = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.id == cursor.parent_id)).first()
     return {
         "ref": clause_ref,
         "grain": row.grain,

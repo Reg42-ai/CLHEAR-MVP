@@ -32,6 +32,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter", default=None, help="only this adapter key (eur_lex | uk_legislation)")
     parser.add_argument("--only", default=None, help="only this source key")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="re-fetch and re-parse even when the publisher artifact hash is unchanged",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
@@ -58,7 +63,7 @@ def main() -> int:
         key = entry["key"]
         try:
             summary = pipeline.ingest(
-                engine, adapter, store, trigger="wave1", gateway=gateway, job_id=job_id
+                engine, adapter, store, trigger="wave1", gateway=gateway, job_id=job_id, force=args.force
             )
             results.append({"key": key, **{k: summary.get(k) for k in ("status", "version", "coverage", "clauses")}})
         except Exception as exc:  # isolate: one bad source never kills the batch

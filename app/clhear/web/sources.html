@@ -419,7 +419,9 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
   const toc = buildToc(doc.nodes);
   const { visible, matches } = computeVisible(doc.nodes, filter, category);
   const selectedNode = selectedId && doc.nodes.find((n) => n.id === selectedId);
-  const selectedAnnotation = selectedNode ? selectedNode.annotation : null;
+  const annotationHit = selectedNode ? inheritAnnotation(doc.nodes, selectedNode) : { annotation: null, from: null };
+  const selectedAnnotation = annotationHit.annotation;
+  const annotationFrom = annotationHit.from;
   // "Contains" preview for container nodes (chapters/sections have no text of
   // their own): assemble the first stretch of descendant text client-side.
   let containsPreview = null;
@@ -516,26 +518,37 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
               onLeave=${() => hoverId === n.id && setHoverId(null)}
               onClick=${() => { setInspect(true); setSelectedId(n.id); }} />`)}
         </div>
-        ${inspect && html`<${Inspector} info=${info} annotation=${selectedAnnotation} contains=${containsPreview} />`}
+        ${inspect && html`<${Inspector} info=${info} annotation=${selectedAnnotation} annotationFrom=${annotationFrom} contains=${containsPreview} />`}
       </div>
     </div>`;
 }
 
-const TOC_L1 = new Set(["part", "chapter", "schedule"]);
-const TOC_L2 = new Set(["group", "section", "article", "provision", "control"]);
+const TOC_SPINE = new Set(["part", "chapter", "section", "group"]);
+const TOC_ARTICLE = new Set(["article", "provision", "control"]);
+
+function tocLabel(n) {
+  const label = ws(n.label || "");
+  const heading = ws(n.heading || "");
+  if (label && heading && heading !== label) return `${label} — ${heading}`;
+  return label || heading || ws(n.raw_text || "");
+}
 
 function buildToc(nodes) {
-  const level1 = nodes.filter((n) => TOC_L1.has(n.node_type) && (n.heading || n.label));
-  let level2 = nodes.filter((n) => TOC_L2.has(n.node_type) && (n.heading || (n.label && n.node_type !== "provision")));
-  if (level2.length > 140) level2 = level2.filter((n) => ["group", "section"].includes(n.node_type));
-  if (level2.length > 140) level2 = [];
-  const picked = new Set([...level1, ...level2].map((n) => n.id));
+  const labeled = (n) => !!(ws(n.heading || "") || ws(n.label || ""));
+  const spine = nodes.filter((n) => labeled(n) && TOC_SPINE.has(n.node_type));
+  const annexes = nodes.filter((n) => n.node_type === "schedule" && labeled(n));
+  const articles = nodes.filter((n) =>
+    TOC_ARTICLE.has(n.node_type) && (n.heading || (n.label && n.node_type !== "provision"))
+  );
+  // Keep every labeled article. A previous 140-row wipe dropped MiCA's 149
+  // articles when the OJ parser had not yet emitted TITLE/CHAPTER nodes.
+  const picked = new Set([...spine, ...articles, ...annexes].map((n) => n.id));
   return nodes
     .filter((n) => picked.has(n.id))
     .map((n) => ({
       id: n.id,
-      level: TOC_L1.has(n.node_type) ? 1 : 2,
-      text: ws(`${n.label || ""} ${n.heading || (n.raw_text || "").slice(0, 60)}`).slice(0, 70),
+      level: TOC_SPINE.has(n.node_type) || n.node_type === "schedule" ? 1 : 2,
+      text: tocLabel(n),
     }));
 }
 
@@ -703,7 +716,27 @@ function DocLine({ n, first, amended, inspect, explain, hover, selected, onEnter
     </div>`;
 }
 
-function Inspector({ info, annotation, contains }) {
+function ancestorLabel(a) {
+  const label = (a.label || "").trim();
+  const heading = (a.heading || "").trim();
+  if (label && heading && heading !== label) return `${label} — ${heading}`;
+  return label || heading || a.ref || a.node_type;
+}
+
+function inheritAnnotation(nodes, selected) {
+  const byId = {};
+  for (const n of nodes) byId[n.id] = n;
+  let cur = selected;
+  while (cur) {
+    if (cur.annotation && (cur.annotation.summary || cur.annotation.category)) {
+      return { annotation: cur.annotation, from: cur === selected ? null : cur };
+    }
+    cur = cur.parent_id ? byId[cur.parent_id] : null;
+  }
+  return { annotation: null, from: null };
+}
+
+function Inspector({ info, annotation, annotationFrom, contains }) {
   if (!info) return html`<aside class="inspector"><h3>Inspector</h3><div class="charter">Hover and click any element in the document to see its corpus record — id, hash, version, change history, permalink. This is the L2-ready layer.</div></aside>`;
   const copy = () => navigator.clipboard.writeText(location.origin + info.permalink);
   return html`
@@ -716,7 +749,7 @@ function Inspector({ info, annotation, contains }) {
         </div>`}
       ${annotation && (annotation.summary || annotation.category) && html`
         <div class="annot">
-          <span class="tag">${annotation.origin === "llm" ? "AI-generated explainer — not legal text" : "heuristic classification"}</span>
+          <span class="tag">${annotation.origin === "llm" ? "AI-generated explainer — not legal text" : "heuristic classification"}${annotationFrom ? ` · inherited from ${ancestorLabel(annotationFrom)}` : ""}</span>
           ${annotation.category && html`<span class="cat">${annotation.category}</span>`}
           ${(annotation.topics || []).map((t) => html`<span class="cat" key=${t}>${t}</span>`)}
           ${annotation.summary && html`<div style=${{ marginTop: "4px" }}>${annotation.summary}</div>`}
@@ -727,14 +760,15 @@ function Inspector({ info, annotation, contains }) {
         <dt>sha256</dt><dd class="mono">${info.text_hash}</dd>
         <dt>version</dt><dd>${info.version_label}<div class="mono">retrieved ${info.retrieved_at}</div></dd>
         <dt>immutable original</dt><dd class="mono">${info.s3_uri}</dd>
+        ${info.indexed_as && html`<dt>indexed as</dt><dd>${info.indexed_as}</dd>`}
         <dt>ancestors</dt>
-        <dd>${info.ancestors.length === 0 ? "—" : info.ancestors.map((a) => a.label || a.heading || a.ref || a.node_type).join(" › ")}</dd>
+        <dd>${info.ancestors.length === 0 ? "—" : info.ancestors.map((a) => ancestorLabel(a)).join(" › ")}</dd>
         ${info.changes.length > 0 && html`
           <dt>changes touching this ref</dt>
           <dd>${info.changes.map((c) => html`<div class=${"kind-" + c.kind}>${c.kind} ${c.old_version || ""} → ${c.new_version}</div>`)}</dd>`}
       </dl>
       ${info.raw_text && html`<dt style=${{ marginTop: "10px" }}>raw text</dt><pre>${info.raw_text}</pre>`}
-      ${info.source_fragment && html`<dt>source fragment</dt><pre>${info.source_fragment.slice(0, 1200)}${info.source_fragment.length > 1200 ? "…" : ""}</pre>`}
+      ${info.source_fragment && html`<dt>source fragment</dt><pre>${info.source_fragment}</pre>`}
       <button onClick=${copy}>copy permalink</button>
     </aside>`;
 }

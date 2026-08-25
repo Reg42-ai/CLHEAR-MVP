@@ -351,47 +351,42 @@ class EurLexAdapter:
                             )
             tree.append(preamble)
 
+        current_part: DocNode | None = None
         current_chapter: DocNode | None = None
         current_section: DocNode | None = None
         enacting = soup.find("div", id="enc_1") or soup
         for div in enacting.find_all("div", id=True):
             div_id = str(div.get("id", ""))
-            if re.fullmatch(r"cpt_[IVXLC]+", div_id):
-                headings = div.find_all("p", class_=re.compile(r"^oj-ti-section"), limit=2)
-                current_chapter = DocNode(
-                    node_type="chapter",
-                    ref=div_id,
-                    label=_txt(headings[0]) if headings else "",
-                    heading=_txt(headings[1]) if len(headings) > 1 else "",
-                )
+            # Subtitle wrappers (tis_I.tit_1 / art_1.tit_1) are not structure.
+            if re.search(r"\.tit_\d+$", div_id):
+                continue
+            label, heading = self._oj_section_headings(div)
+            # TITLE I / TITLE 1 (MiCA Roman `tis_I`; some older acts `tis_1`)
+            if re.fullmatch(r"tis_(?:[IVXLC]+|\d+)", div_id):
+                current_part = DocNode(node_type="part", ref=div_id, label=label or _txt(div), heading=heading)
+                current_chapter = None
                 current_section = None
-                tree.append(current_chapter)
-            elif re.fullmatch(r"cpt_[IVXLC]+\.sct_\d+", div_id):
-                headings = div.find_all("p", class_=re.compile(r"^oj-ti-section"), limit=2)
-                current_section = DocNode(
-                    node_type="group",
-                    ref=div_id,
-                    label=_txt(headings[0]) if headings else "",
-                    heading=_txt(headings[1]) if len(headings) > 1 else "",
-                )
-                (current_chapter.children if current_chapter else tree).append(current_section)
-            elif re.fullmatch(r"tis_\d+", div_id):
-                # Flat heading divs (TITLE / CHAPTER / Section in older OJ acts,
-                # e.g. MiFID II): each starts a new grouping level-agnostically.
-                headings = div.find_all("p", class_=re.compile(r"^oj-ti-"), limit=2)
-                current_chapter = DocNode(
-                    node_type="chapter",
-                    ref=div_id,
-                    label=_txt(headings[0]) if headings else _txt(div),
-                    heading=_txt(headings[1]) if len(headings) > 1 else "",
-                )
+                tree.append(current_part)
+            elif re.fullmatch(r"cpt_[IVXLC]+", div_id):
+                current_chapter = DocNode(node_type="chapter", ref=div_id, label=label, heading=heading)
                 current_section = None
-                tree.append(current_chapter)
+                (current_part.children if current_part else tree).append(current_chapter)
+            elif re.fullmatch(r"tis_(?:[IVXLC]+|\d+)\.cpt_(?:[IVXLC]+|\d+)", div_id):
+                current_chapter = DocNode(node_type="chapter", ref=div_id, label=label, heading=heading)
+                current_section = None
+                (current_part.children if current_part else tree).append(current_chapter)
+            elif re.fullmatch(
+                r"(?:tis_(?:[IVXLC]+|\d+)(?:\.cpt_(?:[IVXLC]+|\d+))?|cpt_[IVXLC]+)\.sct_\d+",
+                div_id,
+            ):
+                current_section = DocNode(node_type="group", ref=div_id, label=label, heading=heading)
+                parent = current_chapter or current_part
+                (parent.children if parent else tree).append(current_section)
             elif re.fullmatch(r"art_\d+[a-z]*", div_id):
                 if div.find_parent("div", id=re.compile(r"^anx_")) is not None:
                     continue  # quoted article inside an annex: captured by annex flow
                 article = self._oj_article(div, div_id)
-                target = current_section or current_chapter
+                target = current_section or current_chapter or current_part
                 (target.children if target else tree).append(article)
         # Annexes (anx_I, anx_II, …): heterogeneous flow content (amending
         # instructions, quoted blocks, marker tables) captured verbatim.
@@ -427,6 +422,16 @@ class EurLexAdapter:
                     container.children.append(DocNode(node_type="note", raw_text=text))
             tree.append(container)
         return tree
+
+    def _oj_section_headings(self, div: Tag) -> tuple[str, str]:
+        """TITLE/CHAPTER/Section: oj-ti-section-1 number + oj-ti-section-2 title."""
+        label = _txt(div.find("p", class_=re.compile(r"^oj-ti-section-1")))
+        heading = _txt(div.find("p", class_=re.compile(r"^oj-ti-section-2")))
+        if not label and not heading:
+            headings = div.find_all("p", class_=re.compile(r"^oj-ti-"), limit=2)
+            label = _txt(headings[0]) if headings else ""
+            heading = _txt(headings[1]) if len(headings) > 1 else ""
+        return label, heading
 
     def _oj_recital(self, div: Tag, div_id: str) -> DocNode:
         cells = div.find_all("td")

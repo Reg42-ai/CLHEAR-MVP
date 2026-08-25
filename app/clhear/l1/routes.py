@@ -20,6 +20,7 @@ from app.clhear.l1.models import (
     clauses,
     doc_nodes,
     family_members,
+    search_units,
     source_families,
     source_versions,
     sources,
@@ -252,6 +253,28 @@ def node_inspector(node_id: int) -> dict:
                 refs = change.clause_refs if isinstance(change.clause_refs, list) else []
                 if node.ref in refs:
                     changes.append(_change_dict(change))
+        indexed_as = None
+        walk_id = node.id
+        seen: set[int] = set()
+        while walk_id and walk_id not in seen:
+            seen.add(walk_id)
+            # Prefer paragraph-grain (heading prefix used at index time) over
+            # the distilled clause line. Walk ancestors so a short point still
+            # shows the article unit that actually made the search hit.
+            unit_text = conn.execute(
+                sa.select(search_units.c.text)
+                .where(search_units.c.doc_node_id == walk_id)
+                .order_by(search_units.c.grain.desc(), search_units.c.id)
+                .limit(1)
+            ).scalar()
+            if unit_text:
+                indexed_as = unit_text.split("\n", 1)[0].strip() or None
+                if indexed_as:
+                    break
+            parent = conn.execute(
+                sa.select(doc_nodes.c.parent_id).where(doc_nodes.c.id == walk_id)
+            ).first()
+            walk_id = parent.parent_id if parent is not None else None
     return {
         "id": node.id,
         "node_type": node.node_type,
@@ -273,6 +296,7 @@ def node_inspector(node_id: int) -> dict:
         "content_hash": version.content_hash,
         "permalink": f"/sources?source={source.key}&node={node.id}",
         "ancestors": ancestors,
+        "indexed_as": indexed_as,
         "changes": changes,
     }
 
