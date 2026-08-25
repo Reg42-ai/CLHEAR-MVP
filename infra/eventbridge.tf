@@ -4,11 +4,11 @@
 # shows that dictionary, so keep the two in sync.
 locals {
   adapter_schedules = {
-    uk_legislation   = "cron(20 5 * * ? *)"  # daily 05:20 UTC
-    eur_lex          = "cron(40 5 * * ? *)"  # daily 05:40 UTC
-    govinfo_us       = "cron(0 6 ? * MON *)" # weekly Mon 06:00 UTC (+ NIST)
-    irs_gov          = "cron(20 6 ? * MON *)" # weekly; no-op until P3 adapter
-    catalog_watchers = "cron(40 6 ? * MON *)" # weekly; no-op until P3 watchers
+    uk_legislation   = "cron(0 0 * * ? *)" # daily 00:00 UTC
+    eur_lex          = "cron(0 0 * * ? *)" # daily 00:00 UTC
+    govinfo_us       = "cron(0 0 * * ? *)" # daily 00:00 UTC (+ NIST)
+    irs_gov          = "cron(0 0 * * ? *)" # daily; no-op until P3 adapter
+    catalog_watchers = "cron(0 0 * * ? *)" # daily; no-op until P3 watchers
   }
 }
 

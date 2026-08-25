@@ -10,15 +10,16 @@ def test_fleet_schedules_match_eventbridge_contract():
     }
     assert FLEET_SCHEDULES["uk_legislation"]["cadence"] == "daily"
     assert FLEET_SCHEDULES["eur_lex"]["cadence"] == "daily"
-    assert FLEET_SCHEDULES["uk_legislation"]["cron"] == "cron(20 5 * * ? *)"
-    assert FLEET_SCHEDULES["eur_lex"]["cron"] == "cron(40 5 * * ? *)"
-    assert FLEET_SCHEDULES["govinfo_us"]["cadence"] == "weekly"
+    assert FLEET_SCHEDULES["uk_legislation"]["cron"] == "cron(0 0 * * ? *)"
+    assert FLEET_SCHEDULES["eur_lex"]["cron"] == "cron(0 0 * * ? *)"
+    assert FLEET_SCHEDULES["govinfo_us"]["cadence"] == "daily"
+    assert all(s["utc_time"] == "00:00" for s in FLEET_SCHEDULES.values())
 
 
 def test_meta_serves_schedules(client):
     data = client.get("/api/clhear/meta").json()
     assert "schedules" in data
-    assert data["schedules"]["eur_lex"]["utc_time"] == "05:40"
+    assert data["schedules"]["eur_lex"]["utc_time"] == "00:00"
 
 
 def test_wave1_plan_covers_class_a_only():
