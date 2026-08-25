@@ -14,6 +14,7 @@ import json
 
 from app.clhear.db import get_engine
 from app.clhear.l1.models import (
+    FLEET_SCHEDULES,
     change_events,
     clause_annotations,
     clauses,
@@ -602,6 +603,19 @@ def activity(
     return items[:limit]
 
 
+def _schedule_label(adapter: str) -> str:
+    """Human schedule for the Fleet table — same dictionary the EventBridge rules use."""
+    key = adapter
+    if adapter.startswith("govinfo") or adapter.startswith("nist"):
+        key = "govinfo_us"
+    elif adapter.startswith("irs"):
+        key = "irs_gov"
+    sched = FLEET_SCHEDULES.get(key)
+    if not sched:
+        return "unscheduled"
+    return f"{sched['cadence']} · {sched['utc_time']} UTC"
+
+
 @router.get("/api/clhear/fleet")
 def fleet_board() -> list[dict]:
     """Per-source pipeline health: last run + stages, coverage, versions,
@@ -653,7 +667,7 @@ def fleet_board() -> list[dict]:
                 "current_retrieved_at": str(current.retrieved_at) if current else None,
                 "previous_version": previous.version_label if previous else None,
                 "versions": len(source_version_list),
-                "schedule": "manual (EventBridge schedules ship disabled in P0)",
+                "schedule": _schedule_label(source.adapter),
                 "last_run": latest_run.get(source.key),
             }
         )

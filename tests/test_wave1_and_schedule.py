@@ -16,6 +16,16 @@ def test_fleet_schedules_match_eventbridge_contract():
     assert all(s["utc_time"] == "00:00" for s in FLEET_SCHEDULES.values())
 
 
+def test_fleet_board_schedule_is_midnight_utc():
+    from app.clhear.l1.routes import _schedule_label
+
+    assert _schedule_label("eur_lex") == "daily · 00:00 UTC"
+    assert _schedule_label("uk_legislation") == "daily · 00:00 UTC"
+    assert _schedule_label("nist_sp800_53") == "daily · 00:00 UTC"
+    assert _schedule_label("govinfo_us_ecfr") == "daily · 00:00 UTC"
+    assert "disabled" not in _schedule_label("eur_lex")
+
+
 def test_meta_serves_schedules(client):
     data = client.get("/api/clhear/meta").json()
     assert "schedules" in data
