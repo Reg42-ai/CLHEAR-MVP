@@ -32,8 +32,8 @@
             padding: 18px 20px; margin-bottom: 16px; }
   .family h2 { margin: 0 0 4px; font-size: 16px; }
   .charter { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
-  .schedbar { font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0 12px; }
-  .scheditem { display: inline-block; margin: 2px 10px 2px 0; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); white-space: nowrap; }
+  .schedbar { font-size: 12.5px; background: white; border: 1px solid var(--pearl-dark); border-radius: 8px; padding: 8px 12px; margin: 8px 0 16px; }
+  .scheditem { display: inline-block; margin: 2px 10px 2px 0; padding: 2px 8px; border: 1px solid var(--pearl-dark); border-radius: 999px; background: var(--pearl); white-space: nowrap; }
   table.members { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   table.members th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
                      padding: 6px 8px; border-bottom: 1px solid var(--pearl-dark); }
@@ -318,11 +318,21 @@ function App() {
 }
 
 function Library({ families, open }) {
+  const [meta, setMeta] = useState(_meta);
+  useEffect(() => { getMeta().then(setMeta); }, []);
   const allMembers = families.flatMap((f) => f.members);
   const ingested = allMembers.filter((m) => m.latest_version);
   const planned = allMembers.filter((m) => !m.latest_version && m.added_via === "watchlist");
   return html`
     <div>
+      ${meta && meta.schedules && html`
+        <div class="schedbar">
+          <strong>L1 fleet</strong> runs daily at 00:00 UTC
+          ${Object.entries(meta.schedules).map(([k, s]) => html`
+            <span class="scheditem" key=${k} title=${s.covers}>
+              <span class="mono">${k}</span> ${s.cadence} · ${s.utc_time} UTC
+            </span>`)}
+        </div>`}
       ${families.length === 0 && html`<div class="empty">No sources ingested yet.</div>`}
       ${families.map((f) => html`
         <div class="family" key=${f.key}>
