@@ -24,7 +24,7 @@
   header input { border: none; border-radius: 8px; padding: 7px 12px; font-size: 13px; width: 340px;
                  background: rgba(255,255,255,0.12); color: white; }
   header input::placeholder { color: rgba(255,255,255,0.5); }
-  main { max-width: 1280px; margin: 24px auto; padding: 0 20px; }
+  main { max-width: 1600px; margin: 24px auto; padding: 0 20px; }
   a { color: var(--indigo-700); text-decoration: none; }
   .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
   .crumbs a { cursor: pointer; }
@@ -104,13 +104,14 @@
   .notice a { font-weight: 700; cursor: pointer; }
 
   /* ------------------------- TOC + reader tools --------------------------- */
-  .toc { position: sticky; top: 72px; width: 250px; flex-shrink: 0; max-height: calc(100vh - 100px);
-         overflow-y: auto; background: white; border: 1px solid var(--pearl-dark); border-radius: 12px;
-         padding: 12px 10px; font-size: 12.5px; }
+  .toc { position: sticky; top: 72px; width: 300px; flex-shrink: 0; max-height: calc(100vh - 100px);
+         overflow-x: hidden; overflow-y: auto; background: white; border: 1px solid var(--pearl-dark);
+         border-radius: 12px; padding: 12px 10px; font-size: 12.5px; }
   .toc h3 { margin: 0 0 8px 6px; font-size: 11.5px; color: var(--muted); text-transform: uppercase;
             letter-spacing: 0.06em; }
   .toc a { display: block; padding: 3px 8px; border-radius: 6px; color: var(--ink); cursor: pointer;
-           white-space: normal; overflow: visible; }
+           white-space: normal; overflow: visible; overflow-wrap: anywhere; word-break: break-word;
+           text-overflow: clip; }
   .toc a:hover { background: var(--indigo-100); color: var(--indigo-700); }
   .toc a.lvl1 { font-weight: 700; }
   .toc a.lvl2 { padding-left: 20px; color: var(--muted); }
@@ -177,16 +178,19 @@
     border-radius: 6px; padding: 3px 8px; pointer-events: none; white-space: nowrap;
   }
   .inspector {
-    position: sticky; top: 72px; width: 360px; flex-shrink: 0;
+    position: sticky; top: 72px; width: 380px; flex-shrink: 0;
+    max-height: calc(100vh - 100px); overflow-x: hidden; overflow-y: auto;
     background: white; border: 1px solid var(--pearl-dark); border-radius: 12px;
     padding: 16px 18px; font-size: 13px;
   }
   .inspector h3 { margin: 0 0 8px; font-size: 14px; }
   .inspector dt { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
-  .inspector dd { margin: 0; word-break: break-all; }
+  .inspector dd { margin: 0; word-break: break-word; overflow-wrap: anywhere; }
   .inspector pre { background: var(--pearl); border-radius: 8px; padding: 8px 10px;
-                   font-size: 11.5px; overflow: auto; max-height: min(70vh, 900px); white-space: pre-wrap; }
-  .inspector .contains { max-height: min(70vh, 900px); overflow: auto; white-space: pre-wrap; }
+                   font-size: 11.5px; overflow: auto; max-height: min(40vh, 480px); white-space: pre-wrap;
+                   overflow-wrap: anywhere; }
+  .inspector .contains { max-height: min(40vh, 480px); overflow: auto; white-space: pre-wrap;
+                         overflow-wrap: anywhere; }
   .inspector button { border: 1px solid var(--indigo-700); color: var(--indigo-700); background: white;
                       border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 12px; margin-top: 10px; }
   .mode { margin-bottom: 12px; }
@@ -743,11 +747,6 @@ function Inspector({ info, annotation, annotationFrom, contains }) {
   return html`
     <aside class="inspector">
       <h3>${info.node_type}${info.ref ? ` · ${info.ref}` : ""}</h3>
-      ${contains && html`
-        <div class="annot">
-          <span class="tag">contains — ${contains.count} element${contains.count === 1 ? "" : "s"}</span>
-          <div class="contains" style=${{ marginTop: "4px" }}>${contains.text}</div>
-        </div>`}
       ${annotation && (annotation.summary || annotation.category) && html`
         <div class="annot">
           <span class="tag">${annotation.origin === "llm" ? "AI-generated explainer — not legal text" : "heuristic classification"}${annotationFrom ? ` · inherited from ${ancestorLabel(annotationFrom)}` : ""}</span>
@@ -768,6 +767,11 @@ function Inspector({ info, annotation, annotationFrom, contains }) {
           <dt>changes touching this ref</dt>
           <dd>${info.changes.map((c) => html`<div class=${"kind-" + c.kind}>${c.kind} ${c.old_version || ""} → ${c.new_version}</div>`)}</dd>`}
       </dl>
+      ${contains && html`
+        <div class="annot">
+          <span class="tag">contains — ${contains.count} element${contains.count === 1 ? "" : "s"} (scroll for full stored text)</span>
+          <div class="contains" style=${{ marginTop: "4px" }}>${contains.text}</div>
+        </div>`}
       ${info.raw_text && html`<dt style=${{ marginTop: "10px" }}>raw text</dt><pre>${info.raw_text}</pre>`}
       ${info.source_fragment && html`<dt>source fragment</dt><pre>${info.source_fragment}</pre>`}
       <button onClick=${copy}>copy permalink</button>
