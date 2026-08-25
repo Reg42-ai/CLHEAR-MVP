@@ -6,5 +6,5 @@ existing_private_subnet_ids = ["subnet-0a5312ab914fbdc56", "subnet-0eb0ad6df81f6
 worker_assign_public_ip    = true
 schedules_enabled          = true
 webui_db_key               = "webui/clhear-latest.db"
-webui_zip_key               = "webui/webui-20260825T155940Z.zip"
-webui_zip_sha256            = "9TX+qlTqOUk4igdKlreZT+7LgALBDYjoNFVI0Z7/Kz8="
+webui_zip_key               = "webui/webui-20260825T193720Z.zip"
+webui_zip_sha256            = "WQ8yvtkf3/OTmhoTo+6AovR8FbLeYAujf8tRZYPblo4="
