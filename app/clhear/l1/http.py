@@ -54,8 +54,8 @@ def _write_fixture(path: Path, url: str, status: int, content: bytes) -> None:
     path.write_bytes(gzip.compress(json.dumps(record).encode()))
 
 
-def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts: int = 6) -> bytes:
-    delay = 2.0
+def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts: int = 8) -> bytes:
+    delay = 5.0
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
