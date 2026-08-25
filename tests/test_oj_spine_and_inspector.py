@@ -50,6 +50,51 @@ class _SpineAdapter:
         return [str(s) for s in soup.strings if str(s).strip()]
 
 
+_ARABIC_AND_PART = """
+<html><body><div id="enc_1">
+  <div id="cpt_1">
+    <p class="oj-ti-section-1">CHAPTER 1</p>
+    <div class="eli-title" id="cpt_1.tit_1"><p class="oj-ti-section-2">General provisions</p></div>
+    <div class="eli-subdivision" id="art_1">
+      <p class="oj-ti-art">Article 1</p>
+      <div id="001.001"><p class="oj-normal">1. Scope.</p></div>
+    </div>
+  </div>
+  <div id="prt_I">
+    <p class="oj-ti-section-1">PART I</p>
+    <div class="eli-title" id="prt_I.tit_1"><p class="oj-ti-section-2">OWN FUNDS</p></div>
+    <div id="prt_I.tis_II">
+      <p class="oj-ti-section-1">TITLE II</p>
+      <div class="eli-title" id="prt_I.tis_II.tit_1"><p class="oj-ti-section-2">Capital</p></div>
+      <div id="prt_I.tis_II.cpt_1">
+        <p class="oj-ti-section-1">CHAPTER 1</p>
+        <div class="eli-title" id="prt_I.tis_II.cpt_1.tit_1"><p class="oj-ti-section-2">Composition</p></div>
+        <div class="eli-subdivision" id="art_5">
+          <p class="oj-ti-art">Article 5</p>
+          <div id="005.001"><p class="oj-normal">1. Own funds.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></body></html>
+"""
+
+
+def test_oj_arabic_chapters_and_part_wrappers():
+    soup = BeautifulSoup(_ARABIC_AND_PART, "html.parser")
+    tree = EurLexAdapter(celex="32014R0596", celex_version="32014R0596")._parse_oj(soup)
+    chapters = [n for n in flatten(tree) if n.node_type == "chapter"]
+    assert any(c.ref == "cpt_1" and c.heading == "General provisions" for c in chapters)
+    assert any(c.ref == "art_1" for c in flatten(tree) if c.ref == "art_1")
+    parts = [n for n in flatten(tree) if n.node_type == "part"]
+    assert any(p.ref == "prt_I" and p.label == "PART I" for p in parts)
+    title = next(p for p in parts if p.ref == "prt_I.tis_II")
+    assert title.heading == "Capital"
+    nested = next(c for c in chapters if c.ref == "prt_I.tis_II.cpt_1")
+    assert nested.heading == "Composition"
+    assert any(c.ref == "art_5" for c in nested.children)
+
+
 def test_oj_roman_titles_become_parts_and_nest_articles():
     soup = BeautifulSoup(FIXTURE.read_bytes(), "html.parser")
     tree = EurLexAdapter(celex="32023R1114", celex_version="32023R1114")._parse_oj(soup)

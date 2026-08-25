@@ -351,7 +351,9 @@ class EurLexAdapter:
                             )
             tree.append(preamble)
 
-        current_part: DocNode | None = None
+        _n = r"(?:[IVXLC]+|\d+)"
+        current_prt: DocNode | None = None  # PART I (`prt_I`, IFR)
+        current_part: DocNode | None = None  # TITLE I (`tis_I` / `prt_I.tis_II`)
         current_chapter: DocNode | None = None
         current_section: DocNode | None = None
         enacting = soup.find("div", id="enc_1") or soup
@@ -361,32 +363,33 @@ class EurLexAdapter:
             if re.search(r"\.tit_\d+$", div_id):
                 continue
             label, heading = self._oj_section_headings(div)
-            # TITLE I / TITLE 1 (MiCA Roman `tis_I`; some older acts `tis_1`)
-            if re.fullmatch(r"tis_(?:[IVXLC]+|\d+)", div_id):
+            if re.fullmatch(rf"prt_{_n}", div_id):
+                current_prt = DocNode(node_type="part", ref=div_id, label=label or _txt(div), heading=heading)
+                current_part = None
+                current_chapter = None
+                current_section = None
+                tree.append(current_prt)
+            elif re.fullmatch(rf"(?:prt_{_n}\.)?tis_{_n}", div_id):
                 current_part = DocNode(node_type="part", ref=div_id, label=label or _txt(div), heading=heading)
                 current_chapter = None
                 current_section = None
-                tree.append(current_part)
-            elif re.fullmatch(r"cpt_[IVXLC]+", div_id):
+                (current_prt.children if current_prt else tree).append(current_part)
+            elif re.fullmatch(rf"(?:(?:prt_{_n}\.)?tis_{_n}\.)?cpt_{_n}", div_id):
+                # CHAPTER I / CHAPTER 1 (GDPR `cpt_I`; MAR/UCPD `cpt_1`;
+                # MiCA `tis_VI.cpt_1`; IFR `prt_I.tis_II.cpt_1`)
                 current_chapter = DocNode(node_type="chapter", ref=div_id, label=label, heading=heading)
                 current_section = None
-                (current_part.children if current_part else tree).append(current_chapter)
-            elif re.fullmatch(r"tis_(?:[IVXLC]+|\d+)\.cpt_(?:[IVXLC]+|\d+)", div_id):
-                current_chapter = DocNode(node_type="chapter", ref=div_id, label=label, heading=heading)
-                current_section = None
-                (current_part.children if current_part else tree).append(current_chapter)
-            elif re.fullmatch(
-                r"(?:tis_(?:[IVXLC]+|\d+)(?:\.cpt_(?:[IVXLC]+|\d+))?|cpt_[IVXLC]+)\.sct_\d+",
-                div_id,
-            ):
+                parent = current_part or current_prt
+                (parent.children if parent else tree).append(current_chapter)
+            elif re.search(rf"\.sct_{_n}$", div_id):
                 current_section = DocNode(node_type="group", ref=div_id, label=label, heading=heading)
-                parent = current_chapter or current_part
+                parent = current_chapter or current_part or current_prt
                 (parent.children if parent else tree).append(current_section)
             elif re.fullmatch(r"art_\d+[a-z]*", div_id):
                 if div.find_parent("div", id=re.compile(r"^anx_")) is not None:
                     continue  # quoted article inside an annex: captured by annex flow
                 article = self._oj_article(div, div_id)
-                target = current_section or current_chapter or current_part
+                target = current_section or current_chapter or current_part or current_prt
                 (target.children if target else tree).append(article)
         # Annexes (anx_I, anx_II, …): heterogeneous flow content (amending
         # instructions, quoted blocks, marker tables) captured verbatim.
