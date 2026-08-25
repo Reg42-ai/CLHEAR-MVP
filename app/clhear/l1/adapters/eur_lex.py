@@ -47,6 +47,7 @@ _EXCLUDED_CLASSES = {
     "reference",  # CONVEX consolidation banner line ("02016R0679 — EN — …")
     "title-doc-oj-reference",
     "title-fam-member",
+    "title-fam-member-star",  # CONVEX "amended by" apparatus (act list, not enacted text)
     "oj-separator",
 }
 
@@ -75,13 +76,22 @@ def _strip_excluded(soup: BeautifulSoup) -> BeautifulSoup:
 class EurLexAdapter:
     key = "eur_lex"
 
-    def __init__(self, celex: str = GDPR_CELEX, celex_version: str = GDPR_CONSOLIDATED):
+    def __init__(
+        self,
+        celex: str = GDPR_CELEX,
+        celex_version: str = GDPR_CONSOLIDATED,
+        meta: SourceMeta | None = None,
+    ):
         self.celex = celex
         # The Cellar id actually fetched: an original act ("3…") or a
         # consolidated text ("0…-YYYYMMDD").
         self.celex_version = celex_version
+        # Registry-supplied SourceMeta (eToro blueprint); default = GDPR.
+        self._meta = meta
 
     def meta(self) -> SourceMeta:
+        if self._meta is not None:
+            return self._meta
         return SourceMeta(
             family_key="eu-gdpr",
             family_name="EU General Data Protection Regulation",
@@ -197,7 +207,8 @@ class EurLexAdapter:
                 )
                 (current_chapter.children if current_chapter else tree).append(current_section)
                 continue
-            if re.fullmatch(r"art_\d+", div_id):
+            if re.fullmatch(r"art_\d+[a-z]*", div_id):
+                # amendment-inserted articles carry letter suffixes (art_14a)
                 article = self._convex_article(div, div_id)
                 target = current_section or current_chapter
                 (target.children if target else tree).append(article)
@@ -364,10 +375,38 @@ class EurLexAdapter:
                     heading=_txt(headings[1]) if len(headings) > 1 else "",
                 )
                 (current_chapter.children if current_chapter else tree).append(current_section)
-            elif re.fullmatch(r"art_\d+", div_id):
+            elif re.fullmatch(r"tis_\d+", div_id):
+                # Flat heading divs (TITLE / CHAPTER / Section in older OJ acts,
+                # e.g. MiFID II): each starts a new grouping level-agnostically.
+                headings = div.find_all("p", class_=re.compile(r"^oj-ti-"), limit=2)
+                current_chapter = DocNode(
+                    node_type="chapter",
+                    ref=div_id,
+                    label=_txt(headings[0]) if headings else _txt(div),
+                    heading=_txt(headings[1]) if len(headings) > 1 else "",
+                )
+                current_section = None
+                tree.append(current_chapter)
+            elif re.fullmatch(r"art_\d+[a-z]*", div_id):
+                if div.find_parent("div", id=re.compile(r"^anx_")) is not None:
+                    continue  # quoted article inside an annex: captured by annex flow
                 article = self._oj_article(div, div_id)
                 target = current_section or current_chapter
                 (target.children if target else tree).append(article)
+        # Annexes (anx_I, anx_II, …): heterogeneous flow content (amending
+        # instructions, quoted blocks, marker tables) captured verbatim.
+        for anx in soup.find_all("div", id=re.compile(r"^anx_")):
+            if anx.find_parent("div", id=re.compile(r"^anx_")) is not None:
+                continue
+            anx_id = str(anx.get("id"))
+            heading_el = anx.find("p", class_="oj-doc-ti")
+            label = _txt(heading_el)
+            if heading_el is not None:
+                heading_el.extract()
+            annex = DocNode(
+                node_type="schedule", ref=anx_id, label=label, children=self._oj_flow(anx)
+            )
+            tree.append(annex)
         # Final provisions block (sits AFTER enc_1): enacting formula,
         # "Done at …", signatories.
         fnp = soup.find("div", id="fnp_1")
@@ -441,6 +480,76 @@ class EurLexAdapter:
                 else:
                     article.children.append(node)
         return article
+
+    def _oj_flow(self, container: Tag) -> list[DocNode]:
+        """Generic verbatim walker for heterogeneous OJ flow content (annexes,
+        quoted blocks): every visible string captured exactly once, in order."""
+        nodes: list[DocNode] = []
+        for child in container.children:
+            if not isinstance(child, Tag):
+                text = _ws(str(child))
+                if text:
+                    nodes.append(DocNode(node_type="paragraph", raw_text=text))
+                continue
+            classes = set(child.get("class") or [])
+            if child.name == "p":
+                if "oj-note" in classes:
+                    continue  # collected once in the document-level footnotes block
+                text = _txt(child)
+                if text:
+                    nodes.append(DocNode(node_type="paragraph", raw_text=text))
+            elif child.name == "table":
+                nodes.extend(self._oj_table_flow(child))
+            elif child.name in {"div", "blockquote", "section", "td", "th"}:
+                nodes.extend(self._oj_flow(child))
+            else:
+                text = _txt(child)
+                if text:
+                    nodes.append(DocNode(node_type="paragraph", raw_text=text))
+        return nodes
+
+    def _oj_table_flow(self, table: Tag) -> list[DocNode]:
+        """Tables in flow content: simple 2-column marker rows become points;
+        complex rows (nested tables/divs) recurse cell by cell."""
+        nodes: list[DocNode] = []
+        rows = [tr for tr in table.find_all("tr") if tr.find_parent("table") is table]
+        if not rows:
+            text = _txt(table)
+            return [DocNode(node_type="paragraph", raw_text=text)] if text else []
+        for tr in rows:
+            cells = [td for td in tr.find_all(["td", "th"]) if td.find_parent("tr") is tr]
+            if not cells:
+                continue
+            if all(c.find("table") is None for c in cells):
+                if len(cells) == 1:
+                    text = _txt(cells[0])
+                    if text:
+                        nodes.append(DocNode(node_type="paragraph", raw_text=text))
+                else:
+                    marker = _txt(cells[0])
+                    content = " ".join(t for t in (_txt(c) for c in cells[1:]) if t)
+                    if re.fullmatch(r"\(?[a-z0-9ivx]+[).]", marker or ""):
+                        # genuine list marker -> point node
+                        nodes.append(DocNode(node_type="point", label=marker, raw_text=content))
+                    elif marker or content:
+                        # data/correlation row: cells may legitimately repeat
+                        # (e.g. correlation tables) — keep as one flat paragraph.
+                        nodes.append(DocNode(node_type="paragraph", raw_text=" — ".join(t for t in (marker, content) if t)))
+                continue
+            marker = "" if cells[0].find("table") is not None else _txt(cells[0])
+            list_marker = bool(re.fullmatch(r"\(?[a-z0-9ivx]+[).]", marker or ""))
+            body_cells = cells[1:] if marker else cells
+            children: list[DocNode] = []
+            if marker and not list_marker:
+                children.append(DocNode(node_type="paragraph", raw_text=marker))
+            for cell in body_cells:
+                children.extend(self._oj_flow(cell))
+            if children:
+                nodes.append(
+                    DocNode(node_type="point" if list_marker else "group",
+                            label=marker if list_marker else "", children=children)
+                )
+        return nodes
 
     def _oj_table_row(self, table: Tag) -> tuple[str, str]:
         cells = table.find_all("td")

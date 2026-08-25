@@ -78,6 +78,7 @@ class UkLegislationAdapter:
         name: str = MLR_NAME,
         snapshot: str | None = None,
         as_made: bool = False,
+        meta: SourceMeta | None = None,
     ):
         self.doc = doc
         self.name = name
@@ -85,8 +86,12 @@ class UkLegislationAdapter:
         self.snapshot = snapshot
         # as_made=True fetches the SI exactly as originally made (as_published).
         self.as_made = as_made
+        # Registry-supplied SourceMeta (eToro blueprint); default = MLRs.
+        self._meta = meta
 
     def meta(self) -> SourceMeta:
+        if self._meta is not None:
+            return self._meta
         return SourceMeta(
             family_key="uk-mlr",
             family_name="UK Money Laundering Regulations (MLRs 2017)",
@@ -144,7 +149,9 @@ class UkLegislationAdapter:
         if doc_el is None:
             doc_el = root.find(f"{CLML}Primary")
         if doc_el is None:
-            raise ValueError(f"no Secondary/Primary element in CLML for {self.doc}")
+            doc_el = root.find(f"{CLML}EURetained")
+        if doc_el is None:
+            raise ValueError(f"no Secondary/Primary/EURetained element in CLML for {self.doc}")
 
         tree: list[DocNode] = []
         prelims = doc_el.find(f"{CLML}SecondaryPrelims")
@@ -152,7 +159,12 @@ class UkLegislationAdapter:
             prelims = doc_el.find(f"{CLML}PrimaryPrelims")
         if prelims is not None:
             tree.extend(self._prelims_nodes(prelims))
+        eu_prelims = doc_el.find(f"{CLML}EUPrelims")
+        if eu_prelims is not None:
+            tree.extend(self._eu_prelims_nodes(eu_prelims))
         body = doc_el.find(f"{CLML}Body")
+        if body is None:
+            body = doc_el.find(f"{CLML}EUBody")
         if body is not None:
             tree.extend(self._children(body))
         schedules = doc_el.find(f"{CLML}Schedules")
@@ -161,9 +173,25 @@ class UkLegislationAdapter:
             if schedules_title is not None and _txt(schedules_title).strip():
                 tree.append(DocNode(node_type="heading", ref="schedules", raw_text=_txt(schedules_title)))
             tree.extend(self._children(schedules))
+        attachments = doc_el.find(f"{CLML}Attachments")
+        if attachments is not None:
+            tree.extend(self._children(attachments))
         signed = doc_el.find(f"{CLML}SignedSection")
         if signed is not None:
             tree.append(self._node(signed, "signature", ref=signed.get("id") or "signed"))
+
+        # Consolidations occasionally repeat an id (substituted/duplicated
+        # provisions). Keep the first occurrence addressable; blank the rest —
+        # the text stays, the fidelity invariant (unique refs) holds.
+        seen_refs: set[str] = set()
+        for top in tree:
+            for node in top.walk():
+                if not node.ref:
+                    continue
+                if node.ref in seen_refs:
+                    node.ref = ""
+                else:
+                    seen_refs.add(node.ref)
 
         from datetime import date as _date
 
@@ -191,8 +219,13 @@ class UkLegislationAdapter:
             if doc_el is None:
                 doc_el = root.find(f"{CLML}Primary")
             if doc_el is None:
+                doc_el = root.find(f"{CLML}EURetained")
+            if doc_el is None:
                 continue
-            for tag in ("SecondaryPrelims", "PrimaryPrelims", "Body", "Schedules", "SignedSection"):
+            for tag in (
+                "SecondaryPrelims", "PrimaryPrelims", "EUPrelims", "EUPreamble",
+                "Body", "EUBody", "Schedules", "Attachments", "SignedSection",
+            ):
                 section = doc_el.find(f"{CLML}{tag}")
                 if section is None:
                     continue
@@ -211,9 +244,12 @@ class UkLegislationAdapter:
         title = prelims.find(f"{CLML}Title")
         if title is not None:
             container.children.append(DocNode(node_type="title", raw_text=_txt(title)))
+        long_title = prelims.find(f"{CLML}LongTitle")
+        if long_title is not None:
+            container.children.append(DocNode(node_type="title", raw_text=_join_pieces(long_title)))
 
         preamble = DocNode(node_type="preamble", ref="preamble")
-        for tag in ("MadeDate", "LaidDate", "LaidDraft", "ComingIntoForce"):
+        for tag in ("MadeDate", "LaidDate", "LaidDraft", "ComingIntoForce", "DateOfEnactment"):
             el = prelims.find(f"{CLML}{tag}")
             if el is not None:
                 preamble.children.append(DocNode(node_type="preamble", raw_text=_join_pieces(el)))
@@ -243,12 +279,59 @@ class UkLegislationAdapter:
                 out.append(node)
         return out
 
+    def _eu_prelims_nodes(self, prelims: ET.Element) -> list[DocNode]:
+        """EUPrelims (retained EU law): multiline title + nested EUPreamble
+        (citations as P/Text; recitals as Division with Number + Title body)."""
+        out: list[DocNode] = []
+        container = DocNode(node_type="title", ref="prelims", source_fragment=_fragment(prelims))
+        for child in prelims:
+            if _tag(child) == "EUPreamble":
+                continue
+            for text_el in child.iter(f"{CLML}Text"):
+                text = _txt(text_el)
+                if text:
+                    container.children.append(DocNode(node_type="title", raw_text=text))
+        if container.children:
+            out.append(container)
+
+        preamble_el = prelims.find(f"{CLML}EUPreamble")
+        if preamble_el is not None:
+            preamble = DocNode(node_type="preamble", ref="preamble")
+            for child in preamble_el:
+                tag = _tag(child)
+                if tag == "P":
+                    text = _join_pieces(child)
+                    if text:
+                        preamble.children.append(DocNode(node_type="preamble", raw_text=text))
+                elif tag == "Division":
+                    label = _child_txt(child, "Number").strip()
+                    body_parts = [
+                        _join_pieces(sub) for sub in child if _tag(sub) != "Number"
+                    ]
+                    preamble.children.append(
+                        DocNode(
+                            node_type="recital",
+                            ref=child.get("id") or "",
+                            label=label,
+                            raw_text=" ".join(p for p in body_parts if p),
+                        )
+                    )
+            if preamble.children:
+                out.append(preamble)
+        return out
+
     def _from_element(self, el: ET.Element) -> DocNode | None:
         tag = _tag(el)
         if tag == "Part":
             return self._node(el, "part", ref=el.get("id") or "", label=_child_txt(el, "Number"), heading=_child_txt(el, "Title"))
         if tag == "Chapter":
             return self._node(el, "chapter", ref=el.get("id") or "", label=_child_txt(el, "Number"), heading=_child_txt(el, "Title"))
+        if tag in {"EUPart", "EUTitle"}:
+            return self._node(el, "part", ref=el.get("id") or "", label=_child_txt(el, "Number"), heading=_child_txt(el, "Title"))
+        if tag in {"EUChapter", "EUSection", "EUSubsection"}:
+            return self._node(el, "chapter" if tag == "EUChapter" else "group", ref=el.get("id") or "", label=_child_txt(el, "Number"), heading=_child_txt(el, "Title"))
+        if tag == "Division":
+            return self._node(el, "group", ref=el.get("id") or "", label=_child_txt(el, "Number"), heading=_child_txt(el, "Title"))
         if tag == "P1group":
             return self._node(
                 el, "group", ref=el.get("id") or "", heading=_child_txt(el, "Title")

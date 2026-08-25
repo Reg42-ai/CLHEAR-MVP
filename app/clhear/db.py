@@ -43,6 +43,14 @@ def set_engine(engine: Engine) -> None:
     _engine = engine
 
 
+def dispose_engine() -> None:
+    """Drop pooled connections and rebuild on next use (snapshot refresh)."""
+    global _engine
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+
+
 def run_migrations(engine: Engine) -> list[int]:
     """Apply pending numbered migrations from the top-level `migrations` package."""
     from app.clhear.l1.models import L1_SCHEMA

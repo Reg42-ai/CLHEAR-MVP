@@ -191,6 +191,42 @@ STAGE_INFO = {
     "drain": "Consume the queued events worker-style (idempotent on event id), leaving the queue clean.",
 }
 
+# The fleet's automatic schedules. Mirrors infra/eventbridge.tf (EventBridge
+# cron rules -> SQS AdapterRunRequested -> clhear-workers). Times are UTC;
+# the UI shows this dictionary verbatim so users know when fresh text lands.
+FLEET_SCHEDULES = {
+    "uk_legislation": {
+        "cadence": "daily",
+        "utc_time": "05:20",
+        "cron": "cron(20 5 * * ? *)",
+        "covers": "UK statutes & SIs (legislation.gov.uk) — MLRs, FSMA, POCA, ECCTA, e-money/payments, ISA, CRS regs …",
+    },
+    "eur_lex": {
+        "cadence": "daily",
+        "utc_time": "05:40",
+        "cron": "cron(40 5 * * ? *)",
+        "covers": "EU law (EUR-Lex/Cellar) — GDPR, MiFID II/MiFIR + RTS, MAR, EMIR, MiCA, DORA, AML package, AI Act, DAC8 …",
+    },
+    "govinfo_us": {
+        "cadence": "weekly",
+        "utc_time": "Mon 06:00",
+        "cron": "cron(0 6 ? * MON *)",
+        "covers": "US federal law (GovInfo/eCFR) + NIST standards — FATCA statute & regulations, SP 800-53, CSF 2.0.",
+    },
+    "irs_gov": {
+        "cadence": "weekly",
+        "utc_time": "Mon 06:20",
+        "cron": "cron(20 6 ? * MON *)",
+        "covers": "IRS guidance watcher (P3: Docling importer) — reserved; no-ops until the adapter lands.",
+    },
+    "catalog_watchers": {
+        "cadence": "weekly",
+        "utc_time": "Mon 06:40",
+        "cron": "cron(40 6 ? * MON *)",
+        "covers": "Publisher catalogs for new-document discovery (P3) — reserved; no-ops until watchers land.",
+    },
+}
+
 NODE_TYPES = (
     "title",
     "part",

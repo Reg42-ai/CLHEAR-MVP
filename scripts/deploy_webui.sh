@@ -30,9 +30,12 @@ terraform -chdir=infra apply -input=false -auto-approve \
 
 echo "== uploading artifacts =="
 ZIP_KEY="webui/$(basename "$ZIP")"
-DB_KEY="webui/clhear-${STAMP}.db"
+# Stable key: the daily fleet republishes this object and the Lambda
+# re-fetches it on a TTL — deploys and scheduled runs share one snapshot.
+DB_KEY="webui/clhear-latest.db"
 aws s3 cp "$ZIP" "s3://${BUCKET}/${ZIP_KEY}" --region "$REGION"
 aws s3 cp deploy/clhear.db "s3://${BUCKET}/${DB_KEY}" --region "$REGION"
+aws s3 cp deploy/clhear.db "s3://${BUCKET}/webui/clhear-${STAMP}.db" --region "$REGION" # audit copy
 ZIP_SHA=$(openssl dgst -sha256 -binary "$ZIP" | openssl base64)
 
 echo "== terraform apply (lambda + function url) =="

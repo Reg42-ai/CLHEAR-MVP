@@ -60,8 +60,21 @@ variable "worker_image" {
 }
 
 variable "worker_max_count" {
+  # Snapshot mode is single-writer (SQLite in S3): exactly one worker.
   type    = number
-  default = 2
+  default = 1
+}
+
+variable "worker_assign_public_ip" {
+  # True when workers run in public subnets (default VPC) and need egress
+  # without a NAT gateway (near-zero idle cost posture).
+  type    = bool
+  default = false
+}
+
+variable "schedules_enabled" {
+  type    = bool
+  default = true
 }
 
 variable "database_url_ssm_param" {

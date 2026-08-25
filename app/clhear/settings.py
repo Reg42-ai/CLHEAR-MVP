@@ -47,6 +47,11 @@ class Settings(BaseSettings):
 
     clhear_artifacts_dir: str = "./artifacts"
 
+    # Snapshot mode for the scheduled fleet: the corpus SQLite lives in S3
+    # (same object the public explorer serves); workers pull it, ingest, and
+    # publish it back. Empty = use database_url directly (Aurora / local dev).
+    clhear_snapshot_s3_uri: str = ""
+
     @property
     def maintainer_set(self) -> set[str]:
         return {m.strip() for m in self.clhear_maintainers.split(",") if m.strip()}

@@ -234,6 +234,28 @@ Applied from the Cerebras Knowledge write-up (x.com/cerebras article):
   seeded CELEX/UK keys (fixtures + fidelity gates per doc; expect per-doc
   parse-hint work for directives with different CONVEX quirks).
 
+## Wave-1 eToro ingest + daily fleet schedule — DONE (2026-08-25)
+
+Honest status of the daily fleet *before* this work: EventBridge rules
+existed (`rate(1 day)` for UK/EUR-Lex) but were **DISABLED**, the
+`clhear-cluster` had **no worker service**, and the last corpus had 6
+ingested sources + 96 planned. The fleet did **not** run daily.
+
+Now:
+- **Wave-1 ingested live** through the fidelity gate: 53/53 class-A sources
+  (EU CELEX + UK legislation.gov.uk) plus the original starter (GDPR, MLRs,
+  FATCA, NIST) = **59 ingested versions**. Parser generalizations: OJ annex
+  flow, `tis_*` titles, CONVEX `art_14a` suffixes, UK `EURetained` +
+  `EUPreamble` recitals, unique-ref dedup. `uksi/1986/1711` stays planned
+  (image-only, 504 from legislation.gov.uk).
+- **Schedule is visible in the UI** (`FLEET_SCHEDULES` via `/api/clhear/meta`):
+  UK daily 05:20 UTC, EUR-Lex daily 05:40 UTC, GovInfo/NIST weekly Mon 06:00.
+- **Workers handle `AdapterRunRequested`**: EventBridge cron → SQS →
+  `run_adapter_fleet` over the Wave-1 plan; snapshot SQLite published to
+  `s3://…/webui/clhear-latest.db`; Lambda re-fetches on a 5-min TTL.
+- Enabling the cron + deploying the worker image is the remaining infra
+  apply (ECR + ECS service on the default VPC, `schedules_enabled=true`).
+
 ## Next: P2–P4 (one PR per phase, HLD §9)
 
 - **P2** — `families.py` citation mining + reconciliation; `embeddings.py`

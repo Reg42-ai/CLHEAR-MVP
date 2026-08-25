@@ -408,7 +408,7 @@ def source_detail(key: str) -> dict:
 @router.get("/api/clhear/meta")
 def meta() -> dict:
     """UI-facing constants: version-kind + pipeline-stage dictionaries + gates."""
-    from app.clhear.l1.models import ANNOTATION_CATEGORIES, STAGE_INFO, VERSION_KINDS
+    from app.clhear.l1.models import ANNOTATION_CATEGORIES, FLEET_SCHEDULES, STAGE_INFO, VERSION_KINDS
     from app.clhear.settings import get_settings
 
     settings = get_settings()
@@ -418,6 +418,7 @@ def meta() -> dict:
         "annotation_categories": list(ANNOTATION_CATEGORIES),
         "fidelity_threshold": settings.clhear_fidelity_threshold,
         "salvage_cap": settings.clhear_salvage_cap,
+        "schedules": FLEET_SCHEDULES,
     }
 
 

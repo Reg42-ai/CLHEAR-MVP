@@ -43,6 +43,10 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "CLHEAR_EVENTS_QUEUE_URL", value = aws_sqs_queue.events.url },
         { name = "CLHEAR_DATALAKE_BUCKET", value = aws_s3_bucket.datalake.bucket },
         { name = "REG42_CLHEAR_ENABLED", value = "true" },
+        # Snapshot mode: the corpus SQLite the public explorer serves.
+        { name = "CLHEAR_SNAPSHOT_S3_URI", value = "s3://${aws_s3_bucket.deploy.bucket}/webui/clhear-latest.db" },
+        { name = "CLHEAR_HTTP_MODE", value = "live" },
+        { name = "CLHEAR_ARTIFACT_STORE", value = "s3" },
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
@@ -85,8 +89,9 @@ resource "aws_ecs_service" "workers" {
   }
 
   network_configuration {
-    subnets         = var.existing_private_subnet_ids
-    security_groups = [aws_security_group.workers[0].id]
+    subnets          = var.existing_private_subnet_ids
+    security_groups  = [aws_security_group.workers[0].id]
+    assign_public_ip = var.worker_assign_public_ip
   }
 
   lifecycle {
