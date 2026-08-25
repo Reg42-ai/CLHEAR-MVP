@@ -110,6 +110,7 @@ def test_oj_roman_titles_become_parts_and_nest_articles():
     assert any(c.ref == "art_91" for c in chapters[0].children)
     art91 = next(n for n in flatten(tree) if n.ref == "art_91")
     assert art91.heading == "Prohibition of market manipulation"
+    assert any(c.node_type == "heading" and c.heading == "Quoted chapter heading" for c in flatten([art91]))
     annex = next(n for n in tree if n.node_type == "schedule")
     assert annex.label == "ANNEX I"
 

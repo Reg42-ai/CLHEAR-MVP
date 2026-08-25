@@ -188,7 +188,7 @@ class EurLexAdapter:
 
         for div in soup.find_all("div", id=True):
             div_id = str(div.get("id", ""))
-            if re.fullmatch(r"cpt_[IVXLC]+", div_id):
+            if re.fullmatch(r"cpt_(?:[IVXLC]+|\d+)", div_id):
                 current_chapter = DocNode(
                     node_type="chapter",
                     ref=div_id,
@@ -198,7 +198,7 @@ class EurLexAdapter:
                 current_section = None
                 tree.append(current_chapter)
                 continue
-            if re.fullmatch(r"cpt_[IVXLC]+\.sct_\d+", div_id):
+            if re.fullmatch(r"cpt_(?:[IVXLC]+|\d+)\.sct_\d+", div_id):
                 current_section = DocNode(
                     node_type="group",
                     ref=div_id,
@@ -460,10 +460,15 @@ class EurLexAdapter:
                 continue  # cell paragraphs are captured via their table
             classes = set(el.get("class") or [])
             if el.name == "p":
-                if not classes & {"oj-normal"}:
+                # Article number/subtitle already live on the parent; footnotes
+                # are collected once at document level.
+                if classes & {"oj-ti-art", "oj-sti-art"} or "oj-note" in classes:
                     continue
                 text = _txt(el)
                 if not text:
+                    continue
+                if any(c.startswith("oj-ti-") for c in classes):
+                    article.children.append(DocNode(node_type="heading", heading=text))
                     continue
                 match = re.match(r"^(\d+)\.\s+", text)
                 label = f"{match.group(1)}." if match else ""
