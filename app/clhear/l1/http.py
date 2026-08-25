@@ -54,7 +54,7 @@ def _write_fixture(path: Path, url: str, status: int, content: bytes) -> None:
     path.write_bytes(gzip.compress(json.dumps(record).encode()))
 
 
-def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts: int = 4) -> bytes:
+def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts: int = 6) -> bytes:
     delay = 2.0
     last_error: Exception | None = None
     for attempt in range(attempts):
@@ -69,12 +69,21 @@ def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts:
                 raise httpx.HTTPStatusError(
                     f"{resp.status_code} from {url}", request=resp.request, response=resp
                 )
+            # legislation.gov.uk often answers 202 Accepted with an empty body
+            # while it materializes data.xml — treat as retryable, not success.
+            if resp.status_code == 202 or not resp.content:
+                raise httpx.HTTPStatusError(
+                    f"{resp.status_code} empty/accepted from {url}",
+                    request=resp.request,
+                    response=resp,
+                )
             resp.raise_for_status()
             return resp.content
         except (httpx.TransportError, httpx.HTTPStatusError) as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
-            if status is not None and status not in (429,) and status < 500:
-                raise  # 4xx other than 429: retrying will not help
+            # 202 / empty body (TNA materializing XML) is retryable, like 429.
+            if status is not None and status not in (202, 429) and status < 500:
+                raise  # other 4xx: retrying will not help
             last_error = exc
             if attempt < attempts - 1:
                 log.warning("fetch %s failed (%s); backing off %.0fs", url, exc, delay)
