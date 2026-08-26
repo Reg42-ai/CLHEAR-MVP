@@ -18,6 +18,21 @@ resource "aws_iam_role_policy_attachment" "worker_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+resource "aws_iam_role_policy" "worker_execution_ssm" {
+  name = "${var.name_prefix}-worker-execution-ssm"
+  role = aws_iam_role.worker_execution.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:GetParameters"]
+        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/clhear/*"
+      }
+    ]
+  })
+}
+
 # clhear_writer-equivalent runtime role: datalake rw (incl. restricted/),
 # events queue consume+produce, SSM params read, logs.
 resource "aws_iam_role" "worker_task" {
@@ -36,6 +51,12 @@ resource "aws_iam_role_policy" "worker_task" {
         Effect   = "Allow"
         Action   = ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket"]
         Resource = [aws_s3_bucket.datalake.arn, "${aws_s3_bucket.datalake.arn}/*"]
+      },
+      {
+        Sid      = "SnapshotDb"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
+        Resource = [aws_s3_bucket.deploy.arn, "${aws_s3_bucket.deploy.arn}/webui/*"]
       },
       {
         Sid    = "EventsQueue"

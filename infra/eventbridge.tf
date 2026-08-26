@@ -1,13 +1,14 @@
 # One rule per adapter schedule (HLD §5). Enqueues an AdapterRunRequested job
 # message; the clhear-workers service scales from queue depth and runs it.
-# Rules ship DISABLED in P0 and are enabled per-adapter as P1–P3 land.
+# Cron times (UTC) mirror FLEET_SCHEDULES in app/clhear/l1/models.py — the UI
+# shows that dictionary, so keep the two in sync.
 locals {
   adapter_schedules = {
-    uk_legislation   = "rate(1 day)"
-    eur_lex          = "rate(1 day)"
-    govinfo_us       = "rate(7 days)"
-    irs_gov          = "rate(7 days)"
-    catalog_watchers = "rate(7 days)"
+    uk_legislation   = "cron(0 0 * * ? *)" # daily 00:00 UTC
+    eur_lex          = "cron(0 0 * * ? *)" # daily 00:00 UTC
+    govinfo_us       = "cron(0 0 * * ? *)" # daily 00:00 UTC (+ NIST)
+    irs_gov          = "cron(0 0 * * ? *)" # daily; no-op until P3 adapter
+    catalog_watchers = "cron(0 0 * * ? *)" # daily; no-op until P3 watchers
   }
 }
 
@@ -15,7 +16,7 @@ resource "aws_cloudwatch_event_rule" "adapter" {
   for_each            = local.adapter_schedules
   name                = "${var.name_prefix}-adapter-${each.key}"
   schedule_expression = each.value
-  state               = "DISABLED" # enabled when the adapter lands (P1+)
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
 }
 
 resource "aws_cloudwatch_event_target" "adapter_to_sqs" {

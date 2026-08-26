@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     clhear_gateway_fleet_daily_cap_usd: float = 20.0
     clhear_gateway_global_daily_cap_usd: float = 100.0
 
+    # Fidelity gate + repair loop (evals are gates, not reports).
+    clhear_fidelity_threshold: float = 0.995
+    clhear_ingest_max_attempts: int = 3
+    # Max share of tokens dumb salvage may recover as unstructured notes;
+    # bigger gaps need typed hints (learned or LLM-proposed) or the run fails.
+    clhear_salvage_cap: float = 0.02
+    clhear_model_repair: str = "claude-sonnet-4-20250514"
+
     # ARCH: stand-in for reg42-os auth; comma-separated identities with the
     # `maintainer` role. Replace with the existing session/role dependency on merge.
     clhear_maintainers: str = "avner@reg42.ai"
@@ -38,6 +46,11 @@ class Settings(BaseSettings):
     clhear_export_git_token: str = ""
 
     clhear_artifacts_dir: str = "./artifacts"
+
+    # Snapshot mode for the scheduled fleet: the corpus SQLite lives in S3
+    # (same object the public explorer serves); workers pull it, ingest, and
+    # publish it back. Empty = use database_url directly (Aurora / local dev).
+    clhear_snapshot_s3_uri: str = ""
 
     @property
     def maintainer_set(self) -> set[str]:
