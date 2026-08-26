@@ -21,7 +21,9 @@ def parse_app_keys(raw: str) -> dict[str, dict]:
         app_id, secret = bits[0], bits[1]
         scopes = {"read:l1"}
         if len(bits) > 2 and bits[2]:
-            scopes = {s.strip() for s in bits[2].replace("+", ",").split(",") if s.strip()}
+            # Remainder is scope list (read:l1+read:l2). Do not split scopes on ':'.
+            scope_raw = ":".join(bits[2:])
+            scopes = {s.strip() for s in scope_raw.replace("+", ",").split(",") if s.strip()}
         out[app_id] = {"secret": secret, "scopes": scopes}
     return out
 

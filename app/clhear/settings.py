@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     clhear_snapshot_s3_uri: str = ""
 
     # Consumer API keys: "app_id:secret" or "app_id:secret:read:l1+read:l2"
-    clhear_app_keys: str = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key:read:l1"
+    clhear_app_keys: str = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key"
 
     # Named releases live under this prefix (s3://bucket/releases/...).
     # Empty = local artifacts dir (dev/tests).
