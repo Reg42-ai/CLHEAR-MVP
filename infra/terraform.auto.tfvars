@@ -7,5 +7,5 @@ worker_assign_public_ip    = true
 schedules_enabled          = true
 clhear_hostname            = "clhear.reg42.ai"
 webui_db_key               = "webui/clhear-latest.db"
-webui_zip_key               = "webui/webui-20260825T201940Z.zip"
-webui_zip_sha256            = "sL1x5+D62mjyear7AcqqlbOonQ7YrGByXs9L6W4L8ZI="
+webui_zip_key               = "webui/webui-20260826T085146Z.zip"
+webui_zip_sha256            = "7jhC/DFjktNlVEXqh69jwatWZganJbII4hAOlvOZ510="

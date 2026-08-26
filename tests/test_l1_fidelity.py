@@ -260,3 +260,28 @@ def test_activity_feed_and_fleet_board(engine, client, tmp_path):
 
     # Audit trail carries metadata only — no clause text.
     assert "fine text" not in json.dumps(feed)
+
+
+def test_stale_running_run_is_failed_not_spinner(engine, client, tmp_path):
+    """Midnight TNA 202 crashes left status=running; Fleet must not pulse forever."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.clhear.models import runs
+
+    store = pipeline.LocalStore(tmp_path / "lake")
+    pipeline.ingest(engine, _GappyAdapter(missing=[], parsed=["fine text " * 10], source_suffix="ok"), store)
+    with engine.begin() as conn:
+        conn.execute(
+            runs.insert().values(
+                fleet="l1.uk_legislation",
+                trigger="schedule",
+                inputs={"source": "gappy/ok"},
+                outputs={"status": "running", "stages": []},
+                created_at=datetime.now(timezone.utc) - timedelta(hours=8),
+            )
+        )
+    board = client.get("/api/clhear/fleet").json()
+    row = next(r for r in board if r["source_key"] == "gappy/ok")
+    assert row["last_run"]["status"] == "failure"
+    assert row["last_run"]["raw_status"] == "failed"
+    assert "crashed before finish" in (row["last_run"].get("error") or "")

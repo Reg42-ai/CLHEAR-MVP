@@ -57,6 +57,18 @@ def test_completeness_fails_when_registry_row_has_no_version(engine):
     assert scores["missing_count"] > 0
 
 
+def test_evals_route_resolves_slashed_source_key(engine, client, tmp_path):
+    """/{key:path}/evals must win over /{key:path} or Evidence 404s on UK/CELEX keys."""
+    store = pipeline.LocalStore(tmp_path / "lake")
+    pipeline.ingest(engine, _Tiny(), store)
+    resp = client.get("/api/clhear/sources/celex/32014L0065/evals")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["source"] == "celex/32014L0065"
+    assert body["version"]
+    assert "scorecard" in body
+
+
 def test_restricted_placeholder_is_not_an_e1_fail(engine, tmp_path):
     store = pipeline.LocalStore(tmp_path / "lake")
     pipeline.ingest(engine, RestrictedFileAdapter("iso/27001-2022", "ISO 27001"), store)

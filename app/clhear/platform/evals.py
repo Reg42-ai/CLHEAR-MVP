@@ -301,19 +301,28 @@ def e6_retrievability(engine: Engine, source_key: str | None) -> tuple[dict, boo
     if not goldens:
         return {"note": "n/a — no golden queries for this source", "n/a": True}, True
     from app.clhear.l1 import retrieval
+    from app.clhear.l1.models import source_families
+
+    source, _, _, _ = _latest_source(engine, source_key)
+    family_key = None
+    if source is not None:
+        with engine.connect() as conn:
+            family_key = conn.execute(
+                sa.select(source_families.c.key).where(source_families.c.id == source.family_id)
+            ).scalar()
 
     hits = 0
     details = []
     for query, expected in goldens:
-        rows = retrieval.search(engine, query, limit=5)
-        refs = {r.get("ref") for r in rows if r.get("source_key") == source_key}
-        hit = any(any(exp in (ref or "") for exp in expected) for ref in refs) or any(
-            r.get("source_key") == source_key for r in rows
-        )
+        # Per-source (per-family) hits@5 — not "beat the whole corpus".
+        rows = retrieval.search(engine, query, limit=5, scope=family_key)
+        own = [r for r in rows if r.get("source_key") == source_key][:5]
+        refs = {r.get("ref") for r in own}
+        hit = any(any(exp in (ref or "") for exp in expected) for ref in refs)
         hits += int(hit)
-        details.append({"q": query, "hit": hit, "n": len(rows)})
+        details.append({"q": query, "hit": hit, "n": len(own), "refs": sorted(r for r in refs if r)})
     score = hits / len(goldens)
-    return {"score": round(score, 5), "queries": details}, score >= 0.95
+    return {"score": round(score, 5), "queries": details, "scope": family_key}, score >= 0.95
 
 
 @register_suite("e7_closure")
