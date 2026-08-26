@@ -94,8 +94,10 @@ resource "aws_lambda_function" "webui" {
 
   environment {
     variables = {
-      CLHEAR_DB_S3_URI     = var.webui_db_key != "" ? "s3://${aws_s3_bucket.deploy.bucket}/${var.webui_db_key}" : ""
-      REG42_CLHEAR_ENABLED = "true"
+      CLHEAR_DB_S3_URI          = var.webui_db_key != "" ? "s3://${aws_s3_bucket.deploy.bucket}/${var.webui_db_key}" : ""
+      CLHEAR_RELEASES_S3_PREFIX = "s3://${aws_s3_bucket.deploy.bucket}/releases"
+      CLHEAR_APP_KEYS           = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key:read:l1"
+      REG42_CLHEAR_ENABLED      = "true"
     }
   }
 }

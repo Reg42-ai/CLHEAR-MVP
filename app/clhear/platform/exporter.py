@@ -58,8 +58,16 @@ def write_snapshot(snapshot: dict, repo_dir: Path) -> list[Path]:
     """Write snapshot into the public-repo layout: /spec /evals /snapshots."""
     release = snapshot["release"]
     written = []
-    snap_dir = repo_dir / "snapshots" / release
+    # Layer-shaped layout: /snapshots/{release}/l1/ now; sibling l2/–l8/ later.
+    snap_dir = repo_dir / "snapshots" / release / "l1"
     snap_dir.mkdir(parents=True, exist_ok=True)
+    for n in range(2, 9):
+        reserved = repo_dir / "snapshots" / release / f"l{n}"
+        reserved.mkdir(parents=True, exist_ok=True)
+        keep = reserved / ".reserved"
+        if not keep.exists():
+            keep.write_text('{"layer_status":"not_published"}\n')
+            written.append(keep)
     for name, dump in (
         ("snapshot.json", lambda p: p.write_text(json.dumps(snapshot, indent=2, default=str))),
         ("snapshot.yaml", lambda p: p.write_text(yaml.safe_dump(snapshot, sort_keys=False))),

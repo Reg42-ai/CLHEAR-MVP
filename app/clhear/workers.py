@@ -139,15 +139,34 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
     return run_adapter_fleet(engine, envelope.payload.get("adapter", envelope.subject_ref), gateway)
 
 
+SNAPSHOT_LOCAL = "/tmp/clhear.db"
+
+
+def handle_publish_release(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """Named immutable L1 release. Unknown future layer kinds stay ignored."""
+    from app.clhear.releases import publish_release
+    from app.clhear.settings import get_settings
+
+    settings = get_settings()
+    snapshot_path = SNAPSHOT_LOCAL if os.path.exists(SNAPSHOT_LOCAL) else None
+    return publish_release(
+        engine,
+        snapshot_path=snapshot_path,
+        snapshot_uri=settings.clhear_snapshot_s3_uri or None,
+        release_id=envelope.payload.get("release_id"),
+    )
+
+
 HANDLERS = {
     "DummyChanged": handle_dummy_changed,
     "AdapterRunRequested": handle_adapter_run,
-    # P1+: SourceChanged -> embeddings + citation-mining jobs, etc.
+    "PublishReleaseRequested": handle_publish_release,
+    # Later layers: add kinds here. handle_envelope already ignores unknown kinds.
 }
 
 # Scheduled kinds re-fire with the same envelope id by design (EventBridge
 # static input); their work is naturally idempotent (unchanged -> no-op run).
-_ALWAYS_RUN = {"AdapterRunRequested"}
+_ALWAYS_RUN = {"AdapterRunRequested", "PublishReleaseRequested"}
 
 
 def _already_handled(engine: Engine, event_id: str) -> bool:
@@ -185,9 +204,6 @@ def handle_envelope(engine: Engine, gateway: Gateway, body: str) -> dict | None:
             )
         )
     return outputs
-
-
-SNAPSHOT_LOCAL = "/tmp/clhear.db"
 
 
 def _snapshot_pull(uri: str, region: str) -> None:
@@ -266,6 +282,16 @@ def main() -> None:
             if handled_work and snapshot_uri:
                 relay_once(engine, transport)  # ship this batch's change events too
                 _snapshot_push(snapshot_uri, settings.aws_region)
+                try:
+                    from app.clhear.releases import publish_release
+
+                    publish_release(
+                        engine,
+                        snapshot_path=SNAPSHOT_LOCAL,
+                        snapshot_uri=snapshot_uri,
+                    )
+                except Exception:
+                    log.exception("named release publish after snapshot failed")
         except Exception:
             log.exception("worker iteration failed; backing off")
             time.sleep(10)

@@ -45,6 +45,7 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "REG42_CLHEAR_ENABLED", value = "true" },
         # Snapshot mode: the corpus SQLite the public explorer serves.
         { name = "CLHEAR_SNAPSHOT_S3_URI", value = "s3://${aws_s3_bucket.deploy.bucket}/webui/clhear-latest.db" },
+        { name = "CLHEAR_RELEASES_S3_PREFIX", value = "s3://${aws_s3_bucket.deploy.bucket}/releases" },
         { name = "CLHEAR_HTTP_MODE", value = "live" },
         { name = "CLHEAR_ARTIFACT_STORE", value = "s3" },
       ]
@@ -81,7 +82,7 @@ resource "aws_ecs_service" "workers" {
   name            = "${var.name_prefix}-workers"
   cluster         = local.cluster_arn
   task_definition = aws_ecs_task_definition.workers[0].arn
-  desired_count   = 0
+  desired_count   = 1
 
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
@@ -104,7 +105,7 @@ resource "aws_appautoscaling_target" "workers" {
   service_namespace  = "ecs"
   resource_id        = "service/${split("/", local.cluster_arn)[1]}/${aws_ecs_service.workers[0].name}"
   scalable_dimension = "ecs:service:DesiredCount"
-  min_capacity       = 0
+  min_capacity       = 1
   max_capacity       = var.worker_max_count
 }
 
