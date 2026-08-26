@@ -3,12 +3,32 @@
 # Cron times (UTC) mirror FLEET_SCHEDULES in app/clhear/l1/models.py — the UI
 # shows that dictionary, so keep the two in sync.
 locals {
+  # One rule per adapter key in app/clhear/l1/models.py FLEET_SCHEDULES.
+  # catalog_watchers / "P3 reserved no-op" lanes are gone — every key has a real adapter.
   adapter_schedules = {
-    uk_legislation   = "cron(0 0 * * ? *)" # daily 00:00 UTC
-    eur_lex          = "cron(0 0 * * ? *)" # daily 00:00 UTC
-    govinfo_us       = "cron(0 0 * * ? *)" # daily 00:00 UTC (+ NIST)
-    irs_gov          = "cron(0 0 * * ? *)" # daily; no-op until P3 adapter
-    catalog_watchers = "cron(0 0 * * ? *)" # daily; no-op until P3 watchers
+    uk_legislation   = "cron(0 0 * * ? *)"
+    eur_lex          = "cron(0 0 * * ? *)"
+    govinfo_us       = "cron(0 0 * * ? *)"
+    fca_handbook     = "cron(0 0 * * ? *)"
+    au_legislation   = "cron(0 0 * * ? *)"
+    sg_legislation   = "cron(0 0 * * ? *)"
+    finra            = "cron(0 0 * * ? *)"
+    adgm             = "cron(0 0 * * ? *)"
+    nydfs            = "cron(0 0 * * ? *)"
+    nasdaq           = "cron(0 0 * * ? *)"
+    malta            = "cron(0 0 * * ? *)"
+    uae              = "cron(0 0 * * ? *)"
+    cysec            = "cron(0 0 * * ? *)"
+    mas              = "cron(0 0 * * ? *)"
+    fatf             = "cron(0 0 * * ? *)"
+    wolfsberg        = "cron(0 0 * * ? *)"
+    irs_gov          = "cron(0 0 * * ? *)"
+    lists            = "cron(0 0 * * ? *)"
+    overlay          = "cron(0 0 * * ? *)"
+    restricted_file  = "cron(0 0 * * ? *)"
+    seychelles       = "cron(0 0 * * ? *)"
+    gibraltar        = "cron(0 0 * * ? *)"
+    israel           = "cron(0 0 * * ? *)"
   }
 }
 

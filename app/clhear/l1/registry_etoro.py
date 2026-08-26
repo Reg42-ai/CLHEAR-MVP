@@ -26,6 +26,7 @@ FAMILIES = [
     ("eu-aml", "EU financial crime", "AMLD + AML package 2024 + whistleblowing (F4: EU-040..042)"),
     ("eu-prudential", "EU prudential & resilience", "IFR/IFD + DORA (F5: EU-050..054)"),
     ("eu-consumer", "EU consumer, marketing & platform", "DMFSD recast, UCPD, DSA, SFDR, CSRD, ePrivacy (F6: EU-060..065, GRP-038)"),
+    ("eu-gdpr", "EU General Data Protection Regulation", "GDPR OJ + corrigenda (F7: GRP-030)"),
     ("eu-data", "EU data protection & AI", "AI Act, Accessibility Act, EU sanctions regs (F7: GRP-036/037/022; GDPR lives in eu-gdpr)"),
     ("uk-fca", "UK conduct & prudential (FCA)", "FSMA, FCA Handbook, UK MiFIR/EMIR/MAR/SSR, promotions (F8: UK-001..024)"),
     ("uk-fincrime", "UK financial crime", "POCA, TACT, CFA 2017, ECCTA, Bribery (F9: UK-030..034; MLRs live in uk-mlr)"),
@@ -88,7 +89,7 @@ _eu("eu-mifid", "32017R0585", "RTS 23", "Delegated Regulation (EU) 2017/585 — 
 _eu("eu-mifid", "32017R0574", "RTS 25", "Delegated Regulation (EU) 2017/574 — clock synchronisation", "regulation", "implements", ["markets", "eu"], ["EU-009"])
 _eu("eu-mifid", "32017R0589", "RTS 6", "Delegated Regulation (EU) 2017/589 — algo trading controls", "regulation", "implements", ["markets", "eu"], ["EU-010"])
 _eu("eu-mifid", "32017L0593", "MiFID PG Dir", "Commission Delegated Directive (EU) 2017/593 — product governance & safeguarding", "law", "implements", ["products", "client-assets", "eu"], ["EU-011", "EU-054"])
-_src("eu-mifid", "cy/l87i-2017", "Cyprus ISL", "Cyprus Investment Services Law L.87(I)/2017", "law", "CY", "Republic of Cyprus / CySEC", "https://www.cysec.gov.cy/", "cysec", "implements", "binding", ["conduct", "cyprus"], ["EU-003"], 3)
+_src("eu-mifid", "cy/l87i-2017", "Cyprus ISL", "Cyprus Investment Services Law L.87(I)/2017", "law", "CY", "Republic of Cyprus / CySEC", "https://www.cysec.gov.cy/en-GB/legislation/investment-services/", "cysec", "implements", "binding", ["conduct", "cyprus"], ["EU-003"], 3, fetch={"url": "https://www.cysec.gov.cy/en-GB/legislation/investment-services/", "kind": "pdf"})
 
 # ---- F2 eu-markets ----
 _eu("eu-markets", "32014R0596", "MAR", "Market Abuse Regulation (EU) 596/2014", "regulation", "root", ["market-abuse", "surveillance", "eu"], ["EU-014"])
@@ -125,6 +126,12 @@ _src("eu-consumer", "celex/32002L0058", "ePrivacy", "Directive 2002/58/EC (ePriv
      EURLEX + "32002L0058", "eur_lex", "supplements", "binding", ["privacy", "marketing", "eu"], ["GRP-038"], 1,
      fetch={"celex": "32002L0058", "celex_version": "02002L0058-20091219"})
 
+# ---- F7 eu-gdpr (corrigenda are ingested instruments, not citator stubs) ----
+_eu("eu-gdpr", "32016R0679", "GDPR", "Regulation (EU) 2016/679 (General Data Protection Regulation)", "regulation", "root", ["data-protection", "privacy", "eu"], ["GRP-030"])
+_eu("eu-gdpr", "32016R0679R(01)", "GDPR corr. 1", "Corrigendum to Regulation (EU) 2016/679 (first)", "regulation", "corrects", ["data-protection", "eu"], ["GRP-030"])
+_eu("eu-gdpr", "32016R0679R(02)", "GDPR corr. 2", "Corrigendum to Regulation (EU) 2016/679 (second)", "regulation", "corrects", ["data-protection", "eu"], ["GRP-030"])
+_eu("eu-gdpr", "32016R0679R(03)", "GDPR corr. 3", "Corrigendum to Regulation (EU) 2016/679 (third)", "regulation", "corrects", ["data-protection", "eu"], ["GRP-030"])
+
 # ---- F7 eu-data ----
 _eu("eu-data", "32024R1689", "EU AI Act", "Artificial Intelligence Act (EU) 2024/1689 (tranche 2 live Aug 2026)", "regulation", "root", ["ai", "eu"], ["GRP-036"])
 _eu("eu-data", "32019L0882", "EU Accessibility Act", "Directive (EU) 2019/882 — accessibility requirements", "law", "supplements", ["accessibility", "consumer", "eu"], ["GRP-037"])
@@ -135,12 +142,13 @@ _uk("uk-fca", "ukpga/2000/8", "FSMA 2000", "Financial Services and Markets Act 2
 _uk("uk-fca", "ukpga/2023/29", "FSMA 2023", "Financial Services and Markets Act 2023", "law", "amends", ["conduct", "uk"], ["UK-001"])
 _uk("uk-fca", "uksi/2001/544", "RAO 2001", "FSMA (Regulated Activities) Order 2001", "regulation", "implements", ["perimeter", "uk"], ["UK-001", "UK-041"])
 _uk("uk-fca", "uksi/2005/1529", "FPO 2005", "FSMA (Financial Promotion) Order 2005", "regulation", "implements", ["marketing", "uk"], ["UK-020", "UK-021"])
-_src("uk-fca", "fca/handbook", "FCA Handbook", "FCA Handbook (PRIN incl. Consumer Duty, SYSC, COBS, CASS, PROD, SUP, DISP, MIFIDPRU)", "regulation", "UK", "Financial Conduct Authority", "https://www.handbook.fca.org.uk/", "fca_handbook", "implements", "binding", ["conduct", "client-assets", "prudential", "uk"], ["UK-002", "UK-008", "UK-009", "UK-010", "UK-011"], 2)
+_src("uk-fca", "fca/handbook", "FCA Handbook", "FCA Handbook (PRIN incl. Consumer Duty, SYSC, COBS, CASS, PROD, SUP, DISP, MIFIDPRU)", "regulation", "UK", "Financial Conduct Authority", "https://www.handbook.fca.org.uk/handbook/PRIN/1/?view=chapter", "fca_handbook", "implements", "binding", ["conduct", "client-assets", "prudential", "uk"], ["UK-002", "UK-008", "UK-009", "UK-010", "UK-011"], 2, fetch={"url": "https://www.handbook.fca.org.uk/handbook/PRIN/1/?view=chapter"})
 _uk("uk-fca", "eur/2014/600", "UK MiFIR", "UK MiFIR — onshored Regulation 600/2014", "regulation", "supplements", ["reporting", "uk"], ["UK-003"], key="eur/2014/600/uk")
 _uk("uk-fca", "eur/2012/648", "UK EMIR", "UK EMIR — onshored Regulation 648/2012", "regulation", "supplements", ["derivatives", "reporting", "uk"], ["UK-004"], key="eur/2012/648/uk")
 _uk("uk-fca", "eur/2014/596", "UK MAR", "UK MAR — onshored Regulation 596/2014", "regulation", "supplements", ["market-abuse", "uk"], ["UK-005"], key="eur/2014/596/uk")
 
 # ---- F9 uk-fincrime ----
+_uk("uk-fincrime", "uksi/2017/692", "UK MLRs 2017", "The Money Laundering, Terrorist Financing and Transfer of Funds (Information on the Payer) Regulations 2017", "regulation", "implements", ["aml", "kyc", "uk"], ["UK-030"])
 _uk("uk-fincrime", "ukpga/2002/29", "POCA 2002", "Proceeds of Crime Act 2002", "law", "root", ["aml", "uk"], ["UK-031"])
 _uk("uk-fincrime", "ukpga/2000/11", "Terrorism Act 2000", "Terrorism Act 2000", "law", "supplements", ["cft", "uk"], ["UK-031"])
 _uk("uk-fincrime", "ukpga/2017/22", "Criminal Finances Act", "Criminal Finances Act 2017", "law", "supplements", ["tax-evasion", "uk"], ["UK-032"])
@@ -155,59 +163,59 @@ _uk("uk-data-products", "uksi/2011/99", "EMRs 2011", "Electronic Money Regulatio
 _uk("uk-data-products", "uksi/2017/752", "PSRs 2017", "Payment Services Regulations 2017", "regulation", "supplements", ["payments", "uk"], ["UK-050"])
 
 # ---- F11 us-broker-dealer ----
-_src("us-broker-dealer", "usc/15/exchange-act", "Exchange Act 1934", "Securities Exchange Act of 1934 (15 USC ch. 2B)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/", "govinfo_us", "root", "binding", ["securities", "us"], ["US-001", "GRP-002", "GRP-005", "GRP-006"], 2)
-_src("us-broker-dealer", "cfr/17/240-bd", "SEC BD rules (17 CFR 240)", "SEC broker-dealer rules — 15c3-1, 15c3-3, 17a-3/4/5, 10b-10, 606", "regulation", "US", "SEC (published by GPO/eCFR)", "https://www.ecfr.gov/current/title-17/chapter-II/part-240", "govinfo_us", "implements", "binding", ["broker-dealer", "us"], ["US-001", "US-003"], 2)
-_src("us-broker-dealer", "cfr/17/reg-bi-sp", "Reg BI / S-P / S-ID", "SEC Regulations Best Interest, S-P (as amended 2024), S-ID", "regulation", "US", "SEC (eCFR)", "https://www.ecfr.gov/current/title-17", "govinfo_us", "implements", "binding", ["conduct", "privacy", "us"], ["US-002", "US-004", "US-005"], 2)
-_src("us-broker-dealer", "finra/rulebook", "FINRA Rulebook", "FINRA rules 3110/3120/3130, 2210, 2090/2111, 3310, 4511, 4530, 1210", "regulation", "US", "FINRA", "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "finra", "supplements", "binding", ["supervision", "aml", "communications", "us"], ["US-006", "US-007", "US-008"], 2)
-_src("us-broker-dealer", "usc/15/securities-act", "Securities Act 1933", "Securities Act of 1933", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/", "govinfo_us", "supplements", "binding", ["securities", "us"], ["GRP-001"], 2)
-_src("us-broker-dealer", "usc/15/sox", "SOX 2002", "Sarbanes-Oxley Act 2002 (§302/404/906)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/", "govinfo_us", "supplements", "binding", ["governance", "icfr", "us"], ["GRP-003"], 2)
-_src("us-broker-dealer", "nasdaq/5600", "Nasdaq 5600", "Nasdaq Listing Rules — 5600 governance series", "regulation", "US", "Nasdaq", "https://listingcenter.nasdaq.com/rulebook/nasdaq/rules", "nasdaq", "supplements", "binding", ["listed-company", "us"], ["GRP-004"], 2)
+_src("us-broker-dealer", "usc/15/exchange-act", "Exchange Act 1934", "Securities Exchange Act of 1934 (15 USC ch. 2B)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm", "govinfo_us", "root", "binding", ["securities", "us"], ["US-001", "GRP-002", "GRP-005", "GRP-006"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm"})
+_src("us-broker-dealer", "cfr/17/240-bd", "SEC BD rules (17 CFR 240)", "SEC broker-dealer rules — 15c3-1, 15c3-3, 17a-3/4/5, 10b-10, 606", "regulation", "US", "SEC (published by GPO/eCFR)", "https://www.ecfr.gov/current/title-17/chapter-II/part-240", "govinfo_us", "implements", "binding", ["broker-dealer", "us"], ["US-001", "US-003"], 2, fetch={"url": "https://www.ecfr.gov/current/title-17/chapter-II/part-240"})
+_src("us-broker-dealer", "cfr/17/reg-bi-sp", "Reg BI / S-P / S-ID", "SEC Regulations Best Interest, S-P (as amended 2024), S-ID", "regulation", "US", "SEC (eCFR)", "https://www.ecfr.gov/current/title-17/chapter-II/part-240/subpart-N", "govinfo_us", "implements", "binding", ["conduct", "privacy", "us"], ["US-002", "US-004", "US-005"], 2, fetch={"ecfr_title": "17", "ecfr_sections": ["240.15l-1", "248.30", "248.201"], "chapter": "II", "part": "240"})
+_src("us-broker-dealer", "finra/rulebook", "FINRA Rulebook", "FINRA rules 3110/3120/3130, 2210, 2090/2111, 3310, 4511, 4530, 1210", "regulation", "US", "FINRA", "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "finra", "supplements", "binding", ["supervision", "aml", "communications", "us"], ["US-006", "US-007", "US-008"], 2, fetch={"url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules"})
+_src("us-broker-dealer", "usc/15/securities-act", "Securities Act 1933", "Securities Act of 1933", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2A.htm", "govinfo_us", "supplements", "binding", ["securities", "us"], ["GRP-001"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2A.htm"})
+_src("us-broker-dealer", "usc/15/sox", "SOX 2002", "Sarbanes-Oxley Act 2002 (§302/404/906)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/COMPS-1883/html/COMPS-1883.htm", "govinfo_us", "supplements", "binding", ["governance", "icfr", "us"], ["GRP-003"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/COMPS-1883/html/COMPS-1883.htm"})
+_src("us-broker-dealer", "nasdaq/5600", "Nasdaq 5600", "Nasdaq Listing Rules — 5600 governance series", "regulation", "US", "Nasdaq", "https://listingcenter.nasdaq.com/rulebook/nasdaq/rules/nasdaq-5600-series", "nasdaq", "supplements", "binding", ["listed-company", "us"], ["GRP-004"], 2, fetch={"url": "https://listingcenter.nasdaq.com/rulebook/nasdaq/rules/nasdaq-5600-series"})
 
 # ---- F12 us-crypto-msb ----
-_src("us-crypto-msb", "cfr/31/chapter-x", "BSA / 31 CFR Ch. X", "Bank Secrecy Act rules — 31 CFR Chapter X (MSB: AML program, SAR/CTR, travel rule)", "regulation", "US", "FinCEN (eCFR)", "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-X", "govinfo_us", "root", "binding", ["aml", "msb", "us"], ["US-020"], 2)
-_src("us-crypto-msb", "nydfs/part200-500", "NYDFS 200 + 500", "NYDFS 23 NYCRR Part 200 (BitLicense) + Part 500 (cybersecurity, as amended)", "regulation", "US-NY", "NYDFS", "https://www.dfs.ny.gov/", "nydfs", "supplements", "binding", ["crypto", "cyber", "us"], ["US-022"], 2)
+_src("us-crypto-msb", "cfr/31/chapter-x", "BSA / 31 CFR Ch. X", "Bank Secrecy Act rules — 31 CFR Chapter X (MSB: AML program, SAR/CTR, travel rule)", "regulation", "US", "FinCEN (eCFR)", "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-X", "govinfo_us", "root", "binding", ["aml", "msb", "us"], ["US-020"], 2, fetch={"url": "https://www.ecfr.gov/current/title-31/subtitle-B/chapter-X"})
+_src("us-crypto-msb", "nydfs/part200-500", "NYDFS 200 + 500", "NYDFS 23 NYCRR Part 200 (BitLicense) + Part 500 (cybersecurity, as amended)", "regulation", "US-NY", "NYDFS", "https://www.dfs.ny.gov/industry_guidance/regulations", "nydfs", "supplements", "binding", ["crypto", "cyber", "us"], ["US-022"], 2, fetch={"url": "https://www.dfs.ny.gov/industry_guidance/regulations"})
 
 # ---- F13 au-afsl ----
-_src("au-afsl", "au/corporations-act-ch7", "Corporations Act Ch 7", "Corporations Act 2001 — Chapter 7 (AFSL, disclosure, client money)", "law", "AU", "Commonwealth of Australia", "https://www.legislation.gov.au/C2004A00818/latest", "au_legislation", "root", "binding", ["conduct", "au"], ["AU-001", "AU-002", "AU-004"], 2)
-_src("au-afsl", "au/aml-ctf-act", "AML/CTF Act", "Anti-Money Laundering and Counter-Terrorism Financing Act 2006 (2024 reform live Mar 2026)", "law", "AU", "Commonwealth of Australia / AUSTRAC", "https://www.legislation.gov.au/C2006A00169/latest", "au_legislation", "supplements", "binding", ["aml", "au"], ["AU-007"], 2)
-_src("au-afsl", "au/asic-dtr-2024", "ASIC DTR 2024", "ASIC Derivative Transaction Rules (Reporting) 2024", "regulation", "AU", "ASIC", "https://www.legislation.gov.au/", "au_legislation", "implements", "binding", ["reporting", "au"], ["AU-005"], 2)
-_src("au-afsl", "au/privacy-act-1988", "AU Privacy Act", "Privacy Act 1988 (incl. 2024 amendments)", "law", "AU", "Commonwealth of Australia", "https://www.legislation.gov.au/C2004A03712/latest", "au_legislation", "supplements", "binding", ["privacy", "au"], ["GRP-034"], 2)
+_src("au-afsl", "au/corporations-act-ch7", "Corporations Act Ch 7", "Corporations Act 2001 — Chapter 7 (AFSL, disclosure, client money)", "law", "AU", "Commonwealth of Australia", "https://www.legislation.gov.au/C2004A00818/latest/text", "au_legislation", "root", "binding", ["conduct", "au"], ["AU-001", "AU-002", "AU-004"], 2, fetch={"url": "https://www.legislation.gov.au/C2004A00818/latest/text"})
+_src("au-afsl", "au/aml-ctf-act", "AML/CTF Act", "Anti-Money Laundering and Counter-Terrorism Financing Act 2006 (2024 reform live Mar 2026)", "law", "AU", "Commonwealth of Australia / AUSTRAC", "https://www.legislation.gov.au/C2006A00169/latest/text", "au_legislation", "supplements", "binding", ["aml", "au"], ["AU-007"], 2, fetch={"url": "https://www.legislation.gov.au/C2006A00169/latest/text"})
+_src("au-afsl", "au/asic-dtr-2024", "ASIC DTR 2024", "ASIC Derivative Transaction Rules (Reporting) 2024", "regulation", "AU", "ASIC", "https://www.legislation.gov.au/F2024L00661/latest/text", "au_legislation", "implements", "binding", ["reporting", "au"], ["AU-005"], 2, fetch={"url": "https://www.legislation.gov.au/F2024L00661/latest/text"})
+_src("au-afsl", "au/privacy-act-1988", "AU Privacy Act", "Privacy Act 1988 (incl. 2024 amendments)", "law", "AU", "Commonwealth of Australia", "https://www.legislation.gov.au/C2004A03712/latest/text", "au_legislation", "supplements", "binding", ["privacy", "au"], ["GRP-034"], 2, fetch={"url": "https://www.legislation.gov.au/C2004A03712/latest/text"})
 
 # ---- F14 me-adgm ----
-_src("me-adgm", "adgm/fsmr", "ADGM FSMR", "ADGM Financial Services and Markets Regulations 2015 + FSRA rulebooks (GEN/COBS/PRU/AML)", "regulation", "AE-ADGM", "ADGM FSRA", "https://en.adgm.thomsonreuters.com/rulebook", "adgm", "root", "binding", ["conduct", "prudential", "uae"], ["ME-001", "ME-002"], 2)
-_src("me-adgm", "ae/aml-decree-20-2018", "UAE AML law", "UAE Federal Decree-Law 20/2018 on AML/CFT (as amended)", "law", "AE", "UAE Federal Government", "https://uaelegislation.gov.ae/", "uae", "supplements", "binding", ["aml", "uae"], ["ME-003"], 3)
+_src("me-adgm", "adgm/fsmr", "ADGM FSMR", "ADGM Financial Services and Markets Regulations 2015 + FSRA rulebooks (GEN/COBS/PRU/AML)", "regulation", "AE-ADGM", "ADGM FSRA", "https://en.adgm.thomsonreuters.com/rulebook/financial-services-and-markets-regulations-2015", "adgm", "root", "binding", ["conduct", "prudential", "uae"], ["ME-001", "ME-002"], 2, fetch={"url": "https://en.adgm.thomsonreuters.com/rulebook/financial-services-and-markets-regulations-2015"})
+_src("me-adgm", "ae/aml-decree-20-2018", "UAE AML law", "UAE Federal Decree-Law 20/2018 on AML/CFT (as amended)", "law", "AE", "UAE Federal Government", "https://uaelegislation.gov.ae/en/legislations/1514", "uae", "supplements", "binding", ["aml", "uae"], ["ME-003"], 3, fetch={"url": "https://uaelegislation.gov.ae/en/legislations/1514"})
 
 # ---- F15 sg-mas ----
-_src("sg-mas", "sg/sfa-2001", "SFA 2001", "Securities and Futures Act 2001 + LCB Regulations", "law", "SG", "Republic of Singapore / MAS", "https://sso.agc.gov.sg/Act/SFA2001", "sg_legislation", "root", "binding", ["conduct", "sg"], ["SG-001", "SG-004"], 3)
-_src("sg-mas", "sg/mas-aml-sfa04-n02", "MAS AML Notice", "MAS Notice SFA04-N02 — AML/CFT for capital markets intermediaries", "guidance", "SG", "MAS", "https://www.mas.gov.sg/regulation/notices/notice-sfa04-n02", "mas", "supplements", "binding", ["aml", "sg"], ["SG-002"], 3)
-_src("sg-mas", "sg/pdpa-2012", "PDPA", "Personal Data Protection Act 2012", "law", "SG", "Republic of Singapore", "https://sso.agc.gov.sg/Act/PDPA2012", "sg_legislation", "supplements", "binding", ["privacy", "sg"], ["SG-005", "GRP-035"], 3)
+_src("sg-mas", "sg/sfa-2001", "SFA 2001", "Securities and Futures Act 2001 + LCB Regulations", "law", "SG", "Republic of Singapore / MAS", "https://sso.agc.gov.sg/Act/SFA2001", "sg_legislation", "root", "binding", ["conduct", "sg"], ["SG-001", "SG-004"], 3, fetch={"url": "https://sso.agc.gov.sg/Act/SFA2001"})
+_src("sg-mas", "sg/mas-aml-sfa04-n02", "MAS AML Notice", "MAS Notice SFA04-N02 — AML/CFT for capital markets intermediaries", "guidance", "SG", "MAS", "https://www.mas.gov.sg/regulation/notices/notice-sfa04-n02", "mas", "supplements", "binding", ["aml", "sg"], ["SG-002"], 3, fetch={"url": "https://www.mas.gov.sg/regulation/notices/notice-sfa04-n02", "kind": "pdf"})
+_src("sg-mas", "sg/pdpa-2012", "PDPA", "Personal Data Protection Act 2012", "law", "SG", "Republic of Singapore", "https://sso.agc.gov.sg/Act/PDPA2012", "sg_legislation", "supplements", "binding", ["privacy", "sg"], ["SG-005", "GRP-035"], 3, fetch={"url": "https://sso.agc.gov.sg/Act/PDPA2012"})
 
 # ---- F16 small-entities ----
-_src("small-entities", "sc/securities-act-2007", "SC Securities Act", "Seychelles Securities Act 2007 + Conduct of Business Regulations (SD076 conditions)", "law", "SC", "Republic of Seychelles / FSA", "https://fsaseychelles.sc/", "seychelles", "root", "binding", ["conduct", "seychelles"], ["SC-001", "SC-005"], 3)
-_src("small-entities", "mt/cap376", "Malta FIA", "Malta Financial Institutions Act (Cap 376) + EMD2/PSD2 transpositions + safeguarding", "law", "MT", "Republic of Malta / MFSA", "https://legislation.mt/", "malta", "supplements", "binding", ["e-money", "malta"], ["MT-001", "MT-002"], 3)
-_src("small-entities", "mt/pmlftr", "Malta PMLFTR", "Prevention of Money Laundering and Funding of Terrorism Regulations (Cap 373) + FIAU procedures", "regulation", "MT", "Republic of Malta / FIAU", "https://legislation.mt/", "malta", "supplements", "binding", ["aml", "malta"], ["MT-003"], 3)
-_src("small-entities", "gi/fsa-2019-dlt", "Gibraltar DLT", "Gibraltar Financial Services Act 2019 — DLT provider framework [GATED: verify eToroX status]", "law", "GI", "HM Government of Gibraltar / GFSC", "https://www.gfsc.gi/", "gibraltar", "supplements", "binding", ["crypto", "gibraltar"], ["GI-001"], 3)
-_src("small-entities", "il/privacy-5741", "IL Privacy Law", "Israeli Privacy Protection Law 5741-1981 incl. Amendment 13 (in force Aug 2025)", "law", "IL", "State of Israel", "https://www.gov.il/he/departments/the_privacy_protection_authority", "israel", "supplements", "binding", ["privacy", "israel"], ["GRP-032", "IL-002"], 3)
+_src("small-entities", "sc/securities-act-2007", "SC Securities Act", "Seychelles Securities Act 2007 + Conduct of Business Regulations (SD076 conditions)", "law", "SC", "Republic of Seychelles / FSA", "https://fsaseychelles.sc/legal-framework/legislation", "seychelles", "root", "binding", ["conduct", "seychelles"], ["SC-001", "SC-005"], 3, fetch={"url": "https://fsaseychelles.sc/legal-framework/legislation", "kind": "pdf"})
+_src("small-entities", "mt/cap376", "Malta FIA", "Malta Financial Institutions Act (Cap 376) + EMD2/PSD2 transpositions + safeguarding", "law", "MT", "Republic of Malta / MFSA", "https://legislation.mt/eli/cap/376/eng", "malta", "supplements", "binding", ["e-money", "malta"], ["MT-001", "MT-002"], 3, fetch={"url": "https://legislation.mt/eli/cap/376/eng"})
+_src("small-entities", "mt/pmlftr", "Malta PMLFTR", "Prevention of Money Laundering and Funding of Terrorism Regulations (Cap 373) + FIAU procedures", "regulation", "MT", "Republic of Malta / FIAU", "https://legislation.mt/eli/sl/373.1/eng", "malta", "supplements", "binding", ["aml", "malta"], ["MT-003"], 3, fetch={"url": "https://legislation.mt/eli/sl/373.1/eng"})
+_src("small-entities", "gi/fsa-2019-dlt", "Gibraltar DLT", "Gibraltar Financial Services Act 2019 — DLT provider framework [GATED: verify eToroX status]", "law", "GI", "HM Government of Gibraltar / GFSC", "https://www.gibraltarlaws.gov.gi/legislations/financial-services-act-2019-4681", "gibraltar", "supplements", "binding", ["crypto", "gibraltar"], ["GI-001"], 3, fetch={"url": "https://www.gibraltarlaws.gov.gi/legislations/financial-services-act-2019-4681", "kind": "pdf"})
+_src("small-entities", "il/privacy-5741", "IL Privacy Law", "Israeli Privacy Protection Law 5741-1981 incl. Amendment 13 (in force Aug 2025)", "law", "IL", "State of Israel", "https://www.gov.il/en/departments/legalInfo/privacy_protection_law", "israel", "supplements", "binding", ["privacy", "israel"], ["GRP-032", "IL-002"], 3, fetch={"url": "https://www.gov.il/en/departments/legalInfo/privacy_protection_law", "kind": "pdf"})
 
 # ---- F17 sanctions-lists ----
-_src("sanctions-lists", "lists/un-consolidated", "UN sanctions list", "UN Security Council Consolidated List", "guidance", "INTL", "United Nations Security Council", "https://www.un.org/securitycouncil/content/un-sc-consolidated-list", "lists", "root", "binding", ["sanctions", "screening"], ["GRP-020"], 3)
-_src("sanctions-lists", "lists/ofac-sdn", "OFAC SDN", "US OFAC SDN + SSI lists + 50% rule guidance", "guidance", "US", "US Treasury OFAC", "https://sanctionslist.ofac.treas.gov/", "lists", "supplements", "binding", ["sanctions", "screening", "us"], ["GRP-021"], 3)
-_src("sanctions-lists", "lists/eu-consolidated", "EU consolidated list", "EU consolidated list of persons subject to financial sanctions", "guidance", "EU", "European Commission", "https://data.europa.eu/data/datasets/consolidated-list-of-persons-groups-and-entities-subject-to-eu-financial-sanctions", "lists", "supplements", "binding", ["sanctions", "screening", "eu"], ["GRP-022"], 3)
-_src("sanctions-lists", "lists/uk-ofsi", "UK OFSI list", "UK OFSI consolidated list of financial sanctions targets", "guidance", "UK", "HM Treasury OFSI", "https://www.gov.uk/government/publications/financial-sanctions-consolidated-list-of-targets", "lists", "supplements", "binding", ["sanctions", "screening", "uk"], ["GRP-023"], 3)
+_src("sanctions-lists", "lists/un-consolidated", "UN sanctions list", "UN Security Council Consolidated List", "guidance", "INTL", "United Nations Security Council", "https://scsanctions.un.org/resources/xml/en/consolidated.xml", "lists", "root", "binding", ["sanctions", "screening"], ["GRP-020"], 3, fetch={"url": "https://scsanctions.un.org/resources/xml/en/consolidated.xml"})
+_src("sanctions-lists", "lists/ofac-sdn", "OFAC SDN", "US OFAC SDN + SSI lists + 50% rule guidance", "guidance", "US", "US Treasury OFAC", "https://www.treasury.gov/ofac/downloads/sdn.xml", "lists", "supplements", "binding", ["sanctions", "screening", "us"], ["GRP-021"], 3, fetch={"url": "https://www.treasury.gov/ofac/downloads/sdn.xml"})
+_src("sanctions-lists", "lists/eu-consolidated", "EU consolidated list", "EU consolidated list of persons subject to financial sanctions", "guidance", "EU", "European Commission", "https://webgate.ec.europa.eu/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content?token=dG9rZW4tMjAxNw", "lists", "supplements", "binding", ["sanctions", "screening", "eu"], ["GRP-022"], 3, fetch={"url": "https://webgate.ec.europa.eu/fsd/fsf/public/files/xmlFullSanctionsList_1_1/content?token=dG9rZW4tMjAxNw"})
+_src("sanctions-lists", "lists/uk-ofsi", "UK OFSI list", "UK OFSI consolidated list of financial sanctions targets", "guidance", "UK", "HM Treasury OFSI", "https://ofsistorage.blob.core.windows.net/publishlive/2022format/ConList.csv", "lists", "supplements", "binding", ["sanctions", "screening", "uk"], ["GRP-023"], 3, fetch={"url": "https://ofsistorage.blob.core.windows.net/publishlive/2022format/ConList.csv"})
 
 # ---- F18 intl-tax-aeoi ----
 _eu("intl-tax-aeoi", "32023L2226", "DAC8", "Directive (EU) 2023/2226 — crypto-asset reporting (in force Jan 2026)", "law", "root", ["tax-reporting", "crypto", "eu"], ["TAX-003"])
 _uk("intl-tax-aeoi", "uksi/2015/878", "UK ITC Regs (CRS)", "International Tax Compliance Regulations 2015 (CRS/FATCA; CARF/CRS 2.0 amendments)", "regulation", "supplements", ["tax-reporting", "uk"], ["TAX-002", "TAX-004"])
-_src("intl-tax-aeoi", "irs/qi-agreement", "QI Agreement", "IRS Qualified Intermediary agreement (Rev. Proc. 2022-43) + Forms 1042/1042-S", "agreement", "US", "IRS", "https://www.irs.gov/businesses/international-businesses/qualified-intermediary-system", "irs_gov", "supplements", "binding", ["withholding", "us"], ["TAX-010"], 3)
-_src("intl-tax-aeoi", "cfr/26/871m", "§871(m) regs", "26 CFR §1.871-15 — dividend-equivalent withholding on derivatives", "regulation", "US", "Treasury/IRS (eCFR)", "https://www.ecfr.gov/current/title-26/chapter-I/subchapter-A/part-1", "govinfo_us", "supplements", "binding", ["withholding", "cfd", "us"], ["TAX-011"], 2)
-# uksi/1986/1711 has no digital text at legislation.gov.uk (data.xml -> 504,
-# image-only era) — reference-level until the P3 Docling/PDF importer lands.
+_src("intl-tax-aeoi", "irs/qi-agreement", "QI Agreement", "IRS Qualified Intermediary agreement (Rev. Proc. 2022-43) + Forms 1042/1042-S", "agreement", "US", "IRS", "https://www.irs.gov/pub/irs-drop/rp-22-43.pdf", "irs_gov", "supplements", "binding", ["withholding", "us"], ["TAX-010"], 3, fetch={"url": "https://www.irs.gov/pub/irs-drop/rp-22-43.pdf", "kind": "pdf"})
+_src("intl-tax-aeoi", "cfr/26/871m", "§871(m) regs", "26 CFR §1.871-15 — dividend-equivalent withholding on derivatives", "regulation", "US", "Treasury/IRS (eCFR)", "https://www.ecfr.gov/current/title-26/chapter-I/subchapter-A/part-1/section-1.871-15", "govinfo_us", "supplements", "binding", ["withholding", "cfd", "us"], ["TAX-011"], 2, fetch={"ecfr_title": "26", "ecfr_sections": ["1.871-15"], "chapter": "I", "part": "1"})
+# Image-only SI PDF at legislation.gov.uk — ingest the HTML contents page instead.
 _src("intl-tax-aeoi", "uksi/1986/1711", "UK SDRT", "Stamp Duty Reserve Tax Regulations 1986 + FA 1986 Part IV", "regulation", "UK", UK_ISSUER,
-     UKLEG + "uksi/1986/1711", "uk_legislation", "supplements", "binding", ["transaction-tax", "uk"], ["TAX-020"], 3)
+     UKLEG + "uksi/1986/1711/contents", "uk_legislation", "supplements", "binding", ["transaction-tax", "uk"], ["TAX-020"], 3,
+     fetch={"kind": "html", "url": UKLEG + "uksi/1986/1711/contents"})
 
 # ---- F19 standards ----
-_src("standards", "fatf/40-recommendations", "FATF 40", "FATF Recommendations incl. VASP guidance and travel rule", "standard", "INTL", "FATF", "https://www.fatf-gafi.org/en/publications/Fatfrecommendations/Fatf-recommendations.html", "fatf", "root", "guidance", ["aml", "standards"], ["GRP-026", "STD-008"], 3)
-_src("standards", "wolfsberg/standards", "Wolfsberg", "Wolfsberg Group standards (CBDDQ, payment transparency, monitoring)", "standard", "INTL", "Wolfsberg Group", "https://db.wolfsberg-group.org/", "wolfsberg", "supplements", "guidance", ["aml", "standards"], ["GRP-027"], 3)
+_src("standards", "fatf/40-recommendations", "FATF 40", "FATF Recommendations incl. VASP guidance and travel rule", "standard", "INTL", "FATF", "https://www.fatf-gafi.org/content/fatf-gafi/en/publications/Fatfrecommendations/Fatf-recommendations.html", "fatf", "root", "guidance", ["aml", "standards"], ["GRP-026", "STD-008"], 3, fetch={"url": "https://www.fatf-gafi.org/content/fatf-gafi/en/publications/Fatfrecommendations/Fatf-recommendations.html", "kind": "pdf"})
+_src("standards", "wolfsberg/standards", "Wolfsberg", "Wolfsberg Group standards (CBDDQ, payment transparency, monitoring)", "standard", "INTL", "Wolfsberg Group", "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "wolfsberg", "supplements", "guidance", ["aml", "standards"], ["GRP-027"], 3, fetch={"url": "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "kind": "pdf"})
 _src("standards", "iso/27001-2022", "ISO 27001", "ISO/IEC 27001:2022 + Amd 1:2024 [RESTRICTED — P3 importer + BYOL]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/27001", "restricted_file", "supplements", "guidance", ["infosec", "standards"], ["STD-001"], 4, license="restricted")
 _src("standards", "aicpa/soc2-tsc", "SOC 2 TSC", "AICPA Trust Services Criteria 2017 (2022 points of focus) [RESTRICTED]", "standard", "US", "AICPA", "https://www.aicpa-cima.com/", "restricted_file", "supplements", "guidance", ["infosec", "assurance", "standards"], ["STD-002"], 4, license="restricted")
 _src("standards", "pci/dss-v4", "PCI DSS v4", "PCI DSS v4.x [RESTRICTED — license check]", "standard", "INTL", "PCI SSC", "https://www.pcisecuritystandards.org/", "restricted_file", "supplements", "guidance", ["payments", "infosec"], ["STD-004"], 4, license="restricted")
@@ -221,16 +229,29 @@ for _cc, _name, _ids in [
     ("de", "Germany — BaFin CFD general administrative act + marketing rules", ["OVL-DE"]),
     ("it", "Italy — Consob measures + FTT interaction", ["OVL-IT"]),
 ]:
-    _src("host-state-overlays", f"ovl/{_cc}", f"Overlay {_cc.upper()}", _name, "guidance", _cc.upper(), "National regulator", "https://www.esma.europa.eu/", "overlay", "supplements" if _cc != "be" else "root", "binding", ["product-intervention", "marketing", _cc], _ids, 3)
+    _src("host-state-overlays", f"ovl/{_cc}", f"Overlay {_cc.upper()}", _name, "guidance", _cc.upper(), "National regulator", "https://www.esma.europa.eu/", "overlay", "supplements" if _cc != "be" else "root", "binding", ["product-intervention", "marketing", _cc], _ids, 3, fetch={"url": "https://www.esma.europa.eu/sites/default/files/library/esma35-43-349_qas_mifid_ii.pdf", "kind": "pdf"})
 
 
 def _about(entry: dict) -> str:
     return f"eToro blueprint (registry {', '.join(entry['registry_ids'])}; import wave {entry['wave']})."
 
 
+_LICENSE_REF = {
+    "uk_legislation": "OGL-UK-3.0",
+    "eur_lex": "Commission Decision 2011/833/EU",
+    "govinfo_us": "public domain (17 U.S.C. 105)",
+    "lists": "publisher terms — list data reused as published",
+    "restricted_file": "BYOL — public APIs omit raw_text until a licensed file is in restricted/",
+    "fca_handbook": "FCA Handbook copyright notice",
+    "finra": "FINRA rulebook copyright notice",
+    "au_legislation": "CC BY 4.0 (Federal Register of Legislation)",
+    "sg_legislation": "Singapore legislation copyright",
+}
+
+
 def source_meta(entry: dict) -> SourceMeta:
-    """Build the adapter SourceMeta for a registry entry (Wave-1 ingestion)."""
-    license_ref = "OGL-UK-3.0" if entry["adapter"] == "uk_legislation" else "Commission Decision 2011/833/EU"
+    """Build the adapter SourceMeta for a registry entry."""
+    license_ref = _LICENSE_REF.get(entry["adapter"], entry.get("license_ref") or "")
     return SourceMeta(
         family_key=entry["family"],
         family_name=FAMILY_NAMES[entry["family"]],
@@ -251,8 +272,18 @@ def source_meta(entry: dict) -> SourceMeta:
 
 
 def wave1_entries() -> list[dict]:
-    """Registry entries ingestable today (class A: existing-adapter reuse)."""
-    return [e for e in S if e.get("fetch")]
+    """Class-A subset: EUR-Lex / UK CLML rows with a structured fetch dict.
+
+    HTML-only UK paths (e.g. SDRT) and later-class adapters are fleet rows,
+    not Wave-1.
+    """
+    return [
+        e
+        for e in S
+        if e.get("fetch")
+        and e["adapter"] in {"eur_lex", "uk_legislation"}
+        and (e.get("fetch") or {}).get("kind") != "html"
+    ]
 
 
 def wave1_adapters(adapter_key: str | None = None) -> list[tuple[dict, object]]:

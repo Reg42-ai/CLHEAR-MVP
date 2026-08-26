@@ -8,6 +8,7 @@ boto3>=1.34
 PyYAML>=6.0
 beautifulsoup4>=4.12
 mangum>=0.17
+pypdf>=5.0
 
 # dev/test
 pytest>=8.2

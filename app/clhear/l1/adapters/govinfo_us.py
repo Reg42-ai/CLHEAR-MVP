@@ -58,7 +58,31 @@ def _field(html: str, name: str) -> str:
 class GovInfoUscAdapter:
     key = "govinfo_us_usc"
 
+    def __init__(
+        self,
+        title: str = "26",
+        sections: tuple[str, ...] = USC_SECTIONS,
+        edition: str = USC_EDITION,
+        meta: SourceMeta | None = None,
+        url_template: str | None = None,
+    ):
+        self.title = title
+        self.sections = sections
+        self.edition = edition
+        self._meta = meta
+        self._url_template = url_template or (
+            "https://www.govinfo.gov/content/pkg/USCODE-{ed}-title{title}/html/"
+            "USCODE-{ed}-title{title}-subtitleA-chap4-sec{sec}.htm"
+            if title == "26"
+            else (
+                "https://www.govinfo.gov/content/pkg/USCODE-{ed}-title{title}/html/"
+                "USCODE-{ed}-title{title}-sec{sec}.htm"
+            )
+        )
+
     def meta(self) -> SourceMeta:
+        if self._meta is not None:
+            return self._meta
         return SourceMeta(
             source_key="usc/26/ch4",
             name="26 USC §§1471–1474 — Taxes to enforce reporting on certain foreign accounts",
@@ -82,13 +106,13 @@ class GovInfoUscAdapter:
         )
 
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
-        version_label = f"edition:{USC_EDITION}"
+        version_label = f"edition:{self.edition}"
         if since_version == version_label:
             return None
         tree: list[DocNode] = []
         artifacts: list[Artifact] = []
-        for sec in USC_SECTIONS:
-            content = http.get(USC_URL.format(ed=USC_EDITION, sec=sec))
+        for sec in self.sections:
+            content = http.get(self._url_template.format(ed=self.edition, sec=sec, title=self.title))
             artifacts.append(Artifact(name=f"sec{sec}.htm", content=content, content_type="text/html"))
             html = content.decode("utf-8", errors="replace")
             # The GPO page delimits its own sections with field comments; the
@@ -158,10 +182,32 @@ class GovInfoUscAdapter:
 class GovInfoEcfrAdapter:
     key = "govinfo_us_ecfr"
 
-    def __init__(self, as_of: str = ECFR_DATE):
+    def __init__(
+        self,
+        as_of: str = ECFR_DATE,
+        title: str = "26",
+        sections: tuple[str, ...] = ECFR_SECTIONS,
+        chapter: str = "I",
+        part: str = "1",
+        subchapter: str = "A",
+        meta: SourceMeta | None = None,
+        url_template: str | None = None,
+    ):
         self.as_of = as_of
+        self.title = title
+        self.sections = sections
+        self.chapter = chapter
+        self.part = part
+        self.subchapter = subchapter
+        self._meta = meta
+        self._url_template = url_template or (
+            "https://www.ecfr.gov/api/versioner/v1/full/{date}/title-{title}.xml"
+            "?chapter={chapter}&subchapter={subchapter}&part={part}&section={section}"
+        )
 
     def meta(self) -> SourceMeta:
+        if self._meta is not None:
+            return self._meta
         return SourceMeta(
             source_key="cfr/26/ch4",
             name="26 CFR §§1.1471–1.1474 — FATCA regulations",
@@ -192,8 +238,17 @@ class GovInfoEcfrAdapter:
             return None
         tree: list[DocNode] = []
         artifacts: list[Artifact] = []
-        for section in ECFR_SECTIONS:
-            content = http.get(ECFR_URL.format(date=self.as_of, section=section))
+        for section in self.sections:
+            content = http.get(
+                self._url_template.format(
+                    date=self.as_of,
+                    section=section,
+                    title=self.title,
+                    chapter=self.chapter,
+                    part=self.part,
+                    subchapter=self.subchapter,
+                )
+            )
             artifacts.append(Artifact(name=f"{section}.xml", content=content, content_type="application/xml"))
             root = ET.fromstring(content)
             head = (root.findtext("HEAD") or f"§ {section}").strip()

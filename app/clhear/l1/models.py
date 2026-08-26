@@ -194,37 +194,34 @@ STAGE_INFO = {
 # The fleet's automatic schedules. Mirrors infra/eventbridge.tf (EventBridge
 # cron rules -> SQS AdapterRunRequested -> clhear-workers). Times are UTC;
 # the UI shows this dictionary verbatim so users know when fresh text lands.
+def _daily(covers: str) -> dict:
+    return {"cadence": "daily", "utc_time": "00:00", "cron": "cron(0 0 * * ? *)", "covers": covers}
+
+
 FLEET_SCHEDULES = {
-    "uk_legislation": {
-        "cadence": "daily",
-        "utc_time": "00:00",
-        "cron": "cron(0 0 * * ? *)",
-        "covers": "UK statutes & SIs (legislation.gov.uk) — MLRs, FSMA, POCA, ECCTA, e-money/payments, ISA, CRS regs …",
-    },
-    "eur_lex": {
-        "cadence": "daily",
-        "utc_time": "00:00",
-        "cron": "cron(0 0 * * ? *)",
-        "covers": "EU law (EUR-Lex/Cellar) — GDPR, MiFID II/MiFIR + RTS, MAR, EMIR, MiCA, DORA, AML package, AI Act, DAC8 …",
-    },
-    "govinfo_us": {
-        "cadence": "daily",
-        "utc_time": "00:00",
-        "cron": "cron(0 0 * * ? *)",
-        "covers": "US federal law (GovInfo/eCFR) + NIST standards — FATCA statute & regulations, SP 800-53, CSF 2.0.",
-    },
-    "irs_gov": {
-        "cadence": "daily",
-        "utc_time": "00:00",
-        "cron": "cron(0 0 * * ? *)",
-        "covers": "IRS guidance watcher (P3: Docling importer) — reserved; no-ops until the adapter lands.",
-    },
-    "catalog_watchers": {
-        "cadence": "daily",
-        "utc_time": "00:00",
-        "cron": "cron(0 0 * * ? *)",
-        "covers": "Publisher catalogs for new-document discovery (P3) — reserved; no-ops until watchers land.",
-    },
+    "uk_legislation": _daily("UK statutes & SIs (legislation.gov.uk) — MLRs, FSMA, POCA, ECCTA, e-money/payments, ISA, CRS, SDRT …"),
+    "eur_lex": _daily("EU law (EUR-Lex/Cellar) — GDPR + corrigenda, MiFID II/MiFIR + RTS, MAR, EMIR, MiCA, DORA, AML package, AI Act, DAC8 …"),
+    "govinfo_us": _daily("US federal law (GovInfo/eCFR) + NIST — FATCA, Exchange Act, Securities Act, SOX, 17 CFR 240, Reg BI/S-P/S-ID, 31 CFR X, §871(m)."),
+    "fca_handbook": _daily("FCA Handbook (PRIN/SYSC/COBS/CASS/PROD/SUP/DISP/MIFIDPRU) — handbook.fca.org.uk HTML."),
+    "au_legislation": _daily("Australia — Corporations Act Ch 7, AML/CTF, ASIC DTR, Privacy Act (legislation.gov.au)."),
+    "sg_legislation": _daily("Singapore — SFA 2001, PDPA (sso.agc.gov.sg)."),
+    "finra": _daily("FINRA rulebook subset (finra.org)."),
+    "adgm": _daily("ADGM FSMR + FSRA GEN/COBS/PRU/AML."),
+    "nydfs": _daily("NYDFS 23 NYCRR Parts 200 and 500."),
+    "nasdaq": _daily("Nasdaq Listing Rules 5600 series."),
+    "malta": _daily("Malta Cap 376 + PMLFTR (legislation.mt)."),
+    "uae": _daily("UAE Federal Decree-Law 20/2018 (uaelegislation.gov.ae)."),
+    "cysec": _daily("Cyprus Investment Services Law L.87(I)/2017 (PDF/HTML)."),
+    "mas": _daily("MAS Notice SFA04-N02 AML/CFT (PDF/HTML)."),
+    "fatf": _daily("FATF 40 Recommendations (open PDF)."),
+    "wolfsberg": _daily("Wolfsberg Group standards."),
+    "irs_gov": _daily("IRS QI Rev. Proc. 2022-43 (PDF)."),
+    "lists": _daily("Sanctions list feeds — OFAC SDN, UN SC, EU consolidated, UK OFSI."),
+    "overlay": _daily("EU/EEA host-state overlays (BE/DE/ES/FR/IT)."),
+    "restricted_file": _daily("Restricted BYOL prefix watch — ISO 27001, SOC 2 TSC, PCI DSS, IFRS."),
+    "seychelles": _daily("Seychelles Securities Act 2007."),
+    "gibraltar": _daily("Gibraltar FSA 2019 DLT framework."),
+    "israel": _daily("Israeli Privacy Protection Law 5741-1981."),
 }
 
 NODE_TYPES = (
