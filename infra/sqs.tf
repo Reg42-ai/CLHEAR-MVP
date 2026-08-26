@@ -5,7 +5,7 @@ resource "aws_sqs_queue" "events_dlq" {
 }
 
 resource "aws_sqs_queue" "events" {
-  name                       = "${var.name_prefix}-events"
+  name = "${var.name_prefix}-events"
   # A daily adapter run can take 15–40 minutes (dozens of sources through
   # the fidelity gate). Must exceed that so EventBridge messages aren't
   # redelivered mid-ingest.

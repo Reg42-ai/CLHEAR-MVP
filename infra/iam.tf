@@ -53,10 +53,14 @@ resource "aws_iam_role_policy" "worker_task" {
         Resource = [aws_s3_bucket.datalake.arn, "${aws_s3_bucket.datalake.arn}/*"]
       },
       {
-        Sid      = "SnapshotDb"
-        Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
-        Resource = [aws_s3_bucket.deploy.arn, "${aws_s3_bucket.deploy.arn}/webui/*"]
+        Sid    = "SnapshotDb"
+        Effect = "Allow"
+        Action = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
+        Resource = [
+          aws_s3_bucket.deploy.arn,
+          "${aws_s3_bucket.deploy.arn}/webui/*",
+          "${aws_s3_bucket.deploy.arn}/releases/*",
+        ]
       },
       {
         Sid    = "EventsQueue"

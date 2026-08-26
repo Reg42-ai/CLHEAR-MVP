@@ -82,7 +82,7 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
     from datetime import datetime, timezone
 
     from app.clhear.l1 import families, pipeline, registry_etoro
-    from app.clhear.l1.adapters import ADAPTER_KEYS, CITATOR_KEYS, get_adapter
+    from app.clhear.l1.adapters import CITATOR_KEYS
 
     settings = get_settings()
     if os.environ.get("CLHEAR_ARTIFACT_STORE") == "s3" or settings.clhear_snapshot_s3_uri:
@@ -93,21 +93,9 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
     registry_etoro.seed(engine)
     job_id = f"job-sched-{adapter_key}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
 
-    # Rule key -> adapter keys (the govinfo weekly rule also covers NIST).
-    rule_map = {
-        "uk_legislation": ["uk_legislation"],
-        "eur_lex": ["eur_lex"],
-        "govinfo_us": ["govinfo_us_usc", "govinfo_us_ecfr", "nist_sp800_53", "nist_csf"],
-    }
-    adapter_keys = rule_map.get(adapter_key, [])
-    plan: list = []
-    for key in adapter_keys:
-        if key in ADAPTER_KEYS:
-            plan.append((None, get_adapter(key)))
-    plan.extend(registry_etoro.wave1_adapters(adapter_key))
-    if not plan:
-        return {"adapter": adapter_key, "note": "no adapter registered yet (P3)", "ran": 0}
+    from app.clhear.l1.fleet import fleet_plan
 
+    plan = fleet_plan(adapter_key)
     statuses: dict[str, int] = {}
     failures: list[str] = []
     for entry, adapter in plan:
@@ -115,17 +103,35 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
         try:
             summary = pipeline.ingest(engine, adapter, store, trigger="schedule", gateway=gateway, job_id=job_id)
             status = summary.get("status", "?")
-        except Exception:
+        except Exception as exc:
             log.exception("scheduled ingest crashed for %s", source_key)
-            status = "crashed"
+            status = "failed"
+            try:
+                pipeline.RunRecorder(engine, f"l1.{adapter.key}", "schedule", {"source": source_key, "job_id": job_id}).finish(
+                    "failed", {"source": source_key, "error": str(exc)[:500]}
+                )
+            except Exception:
+                log.exception("could not record failed run for %s", source_key)
         statuses[status] = statuses.get(status, 0) + 1
-        if status in ("not-fully-successful", "crashed"):
+        if status in ("not-fully-successful", "crashed", "failed"):
             failures.append(source_key)
         if entry is None and adapter.key in CITATOR_KEYS:
             try:
                 families.sync_citator(engine, adapter, trigger="schedule", job_id=job_id)
             except Exception:
                 log.exception("citator sync failed for %s", source_key)
+    try:
+        from app.clhear.platform import evals as l1_evals
+
+        l1_evals.run_suite(engine, "l1_completeness", release=job_id)
+        for _entry, adapter in plan:
+            key = adapter.meta().source_key
+            try:
+                l1_evals.run_source_evals(engine, key, release=job_id)
+            except Exception:
+                log.exception("source evals failed for %s", key)
+    except Exception:
+        log.exception("fleet evals failed for %s", adapter_key)
     return {"adapter": adapter_key, "job_id": job_id, "ran": len(plan), "statuses": statuses, "failures": failures}
 
 
@@ -133,15 +139,34 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
     return run_adapter_fleet(engine, envelope.payload.get("adapter", envelope.subject_ref), gateway)
 
 
+SNAPSHOT_LOCAL = "/tmp/clhear.db"
+
+
+def handle_publish_release(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """Named immutable L1 release. Unknown future layer kinds stay ignored."""
+    from app.clhear.releases import publish_release
+    from app.clhear.settings import get_settings
+
+    settings = get_settings()
+    snapshot_path = SNAPSHOT_LOCAL if os.path.exists(SNAPSHOT_LOCAL) else None
+    return publish_release(
+        engine,
+        snapshot_path=snapshot_path,
+        snapshot_uri=settings.clhear_snapshot_s3_uri or None,
+        release_id=envelope.payload.get("release_id"),
+    )
+
+
 HANDLERS = {
     "DummyChanged": handle_dummy_changed,
     "AdapterRunRequested": handle_adapter_run,
-    # P1+: SourceChanged -> embeddings + citation-mining jobs, etc.
+    "PublishReleaseRequested": handle_publish_release,
+    # Later layers: add kinds here. handle_envelope already ignores unknown kinds.
 }
 
 # Scheduled kinds re-fire with the same envelope id by design (EventBridge
 # static input); their work is naturally idempotent (unchanged -> no-op run).
-_ALWAYS_RUN = {"AdapterRunRequested"}
+_ALWAYS_RUN = {"AdapterRunRequested", "PublishReleaseRequested"}
 
 
 def _already_handled(engine: Engine, event_id: str) -> bool:
@@ -179,9 +204,6 @@ def handle_envelope(engine: Engine, gateway: Gateway, body: str) -> dict | None:
             )
         )
     return outputs
-
-
-SNAPSHOT_LOCAL = "/tmp/clhear.db"
 
 
 def _snapshot_pull(uri: str, region: str) -> None:
@@ -260,6 +282,16 @@ def main() -> None:
             if handled_work and snapshot_uri:
                 relay_once(engine, transport)  # ship this batch's change events too
                 _snapshot_push(snapshot_uri, settings.aws_region)
+                try:
+                    from app.clhear.releases import publish_release
+
+                    publish_release(
+                        engine,
+                        snapshot_path=SNAPSHOT_LOCAL,
+                        snapshot_uri=snapshot_uri,
+                    )
+                except Exception:
+                    log.exception("named release publish after snapshot failed")
         except Exception:
             log.exception("worker iteration failed; backing off")
             time.sleep(10)

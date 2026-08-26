@@ -4,6 +4,7 @@ Clause text is served exclusively through l1.public (the clauses_public
 discipline): restricted sources expose refs and hashes, never text. BYOL
 endpoints arrive in P3.
 """
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import sqlalchemy as sa
@@ -68,12 +69,31 @@ def list_sources() -> list[dict]:
                     source_versions.c.as_of_date,
                     source_versions.c.retrieved_at,
                     source_versions.c.content_hash,
+                    source_versions.c.s3_uri,
                     source_versions.c.id.label("version_id"),
                 )
                 .where(source_versions.c.status == "in_force")
                 .order_by(source_versions.c.id)
             )
         }
+        from datetime import datetime, timezone
+
+        today = datetime.now(timezone.utc).date().isoformat()
+        failed_today: set[str] = set()
+        last_status: dict[str, str] = {}
+        for row in conn.execute(sa.select(runs).where(runs.c.fleet.like("l1.%")).order_by(runs.c.id.desc()).limit(800)):
+            inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
+            outputs = row.outputs if isinstance(row.outputs, dict) else json.loads(row.outputs or "{}")
+            key = inputs.get("source")
+            if not key:
+                continue
+            last_status.setdefault(key, outputs.get("status") or "")
+            if str(row.created_at)[:10] == today and outputs.get("status") in {
+                "failed",
+                "stale",
+                "not-fully-successful",
+            }:
+                failed_today.add(key)
         counts = {
             row.source_version_id: row.n
             for row in conn.execute(
@@ -87,6 +107,14 @@ def list_sources() -> list[dict]:
         fam_members = []
         for m in sorted((m for m in members if m.family_id == family.id), key=lambda m: (m.relation != "root", m.key)):
             version = latest.get(m.source_id)
+            if m.license == "restricted":
+                library_status = "locked-restricted"
+            elif version:
+                library_status = "ingested"
+            elif m.key in failed_today:
+                library_status = "failed-today"
+            else:
+                library_status = "never-fetched"
             fam_members.append(
                 {
                     "key": m.key,
@@ -106,7 +134,11 @@ def list_sources() -> list[dict]:
                     "as_of_date": str(version.as_of_date) if version and version.as_of_date else None,
                     "retrieved_at": str(version.retrieved_at) if version else None,
                     "content_hash": version.content_hash if version else None,
+                    "s3_uri": version.s3_uri if version else None,
                     "clauses": counts.get(version.version_id, 0) if version else 0,
+                    "library_status": library_status,
+                    "last_run_status": last_status.get(m.key),
+                    "failed_today": m.key in failed_today,
                 }
             )
         out.append(
@@ -363,6 +395,52 @@ def _version_dict(v) -> dict:
     }
 
 
+@router.get("/api/clhear/sources/{key:path}/evals")
+def source_evals(key: str) -> dict:
+    """E1–E7 scorecard + last fetch / artifact for the Evidence tab."""
+    from app.clhear.platform import evals as l1_evals
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        source = conn.execute(sa.select(sources).where(sources.c.key == key)).first()
+        if source is None:
+            raise HTTPException(status_code=404, detail="source not found")
+        version = conn.execute(
+            sa.select(source_versions)
+            .where(source_versions.c.source_id == source.id)
+            .where(source_versions.c.status == "in_force")
+            .order_by(source_versions.c.id.desc())
+            .limit(1)
+        ).first()
+        last_run = None
+        for row in conn.execute(sa.select(runs).where(runs.c.fleet.like("l1.%")).order_by(runs.c.id.desc()).limit(400)):
+            inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
+            if inputs.get("source") == key:
+                outputs = _display_outputs(row)
+                last_run = {
+                    "run_id": row.id,
+                    "status": outputs.get("status"),
+                    "ts": str(row.created_at),
+                    "coverage": outputs.get("coverage"),
+                    "freshness": outputs.get("freshness"),
+                    "error": outputs.get("error"),
+                    "note": outputs.get("note"),
+                }
+                break
+    card = l1_evals.latest_source_scorecard(engine, key)
+    return {
+        "source": key,
+        "locked": source.license != "open",
+        "version": version.version_label if version else None,
+        "s3_uri": version.s3_uri if version else "",
+        "content_hash": version.content_hash if version else "",
+        "retrieved_at": str(version.retrieved_at) if version else None,
+        "last_run": last_run,
+        "scorecard": card,
+        "l2_ready": card.get("green") and source.license == "open",
+    }
+
+
 @router.get("/api/clhear/sources/{key:path}")
 def source_detail(key: str) -> dict:
     engine = get_engine()
@@ -412,6 +490,8 @@ def source_detail(key: str) -> dict:
         "topics": source.topics if isinstance(source.topics, list) else json.loads(source.topics or "[]"),
         "versions": [_version_dict(v) for v in versions],
         "changes": [_change_dict(c) for c in changes],
+        "s3_uri": versions[0].s3_uri if versions else "",
+        "content_hash": versions[0].content_hash if versions else "",
         "provenance": {
             "text_states": [_version_dict(v) for v in reversed(versions)],  # oldest first
             "related_instruments": [
@@ -489,6 +569,8 @@ _RUN_STATUS = {
     "running": "running",
     "up-to-date": "info",
     "unchanged": "info",
+    "stale": "warning",
+    "not-fully-successful": "failure",
 }
 
 
@@ -496,8 +578,27 @@ def _outputs_of(row) -> dict:
     return row.outputs if isinstance(row.outputs, dict) else json.loads(row.outputs or "{}")
 
 
+_STALE_RUNNING = timedelta(minutes=15)
+
+
+def _display_outputs(row) -> dict:
+    """Crash before finish() left status=running — show failed, not a spinner."""
+    outputs = dict(_outputs_of(row))
+    if outputs.get("status") != "running":
+        return outputs
+    created = row.created_at
+    if created is not None and getattr(created, "tzinfo", None) is None:
+        created = created.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - created) if created is not None else _STALE_RUNNING
+    if age >= _STALE_RUNNING:
+        outputs["status"] = "failed"
+        outputs.setdefault("error", "crashed before finish")
+        outputs.setdefault("note", "crash ≠ running")
+    return outputs
+
+
 def _run_item(row) -> dict:
-    outputs = _outputs_of(row)
+    outputs = _display_outputs(row)
     inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
     status = _RUN_STATUS.get(outputs.get("status", ""), "info")
     source = inputs.get("source") or inputs.get("family") or ""
@@ -520,7 +621,13 @@ def _run_item(row) -> dict:
     if outputs.get("new_members") is not None:
         bits.append(f"{len(outputs['new_members'])} new family member(s)")
     if outputs.get("status") == "failed":
-        bits.append("pending manual rectification")
+        bits.append(outputs.get("error") or "pending manual rectification")
+    if outputs.get("status") in {"up-to-date", "unchanged"}:
+        bits.append(outputs.get("note") or "probed, unchanged")
+    if outputs.get("freshness") == "stale":
+        bits.append("stale last-good")
+    if outputs.get("error") and outputs.get("status") == "stale":
+        bits.append(outputs["error"][:160])
     summary = " · ".join(bits) if bits else outputs.get("status", "run")
     return {
         "ts": str(row.created_at),
@@ -632,9 +739,7 @@ def _schedule_label(adapter: str) -> str:
     key = adapter
     if adapter.startswith("govinfo") or adapter.startswith("nist"):
         key = "govinfo_us"
-    elif adapter.startswith("irs"):
-        key = "irs_gov"
-    sched = FLEET_SCHEDULES.get(key)
+    sched = FLEET_SCHEDULES.get(key) or FLEET_SCHEDULES.get(adapter)
     if not sched:
         return "unscheduled"
     return f"{sched['cadence']} · {sched['utc_time']} UTC"
@@ -659,21 +764,23 @@ def fleet_board() -> list[dict]:
         inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
         key = inputs.get("source") or inputs.get("family") or ""
         if key and key not in latest_run:
-            outputs = _outputs_of(row)
+            outputs = _display_outputs(row)
             latest_run[key] = {
                 "run_id": row.id,
                 "fleet": row.fleet,
                 "ts": str(row.created_at),
                 "status": _RUN_STATUS.get(outputs.get("status", ""), "info"),
+                "raw_status": outputs.get("status"),
                 "coverage": outputs.get("coverage"),
                 "duration_ms": row.duration_ms,
                 "stages": outputs.get("stages", []),
+                "freshness": outputs.get("freshness"),
+                "note": outputs.get("note"),
+                "error": outputs.get("error"),
             }
     board = []
     for source in source_rows:
         source_version_list = by_source_versions.get(source.id, [])
-        if not source_version_list and source.key not in latest_run:
-            continue  # reference-level family member, not a fleet job
         current = next((v for v in reversed(source_version_list) if v.status == "in_force"), None)
         previous = next(
             (v for v in reversed(source_version_list) if current is None or v.id != current.id), None
@@ -693,6 +800,15 @@ def fleet_board() -> list[dict]:
                 "versions": len(source_version_list),
                 "schedule": _schedule_label(source.adapter),
                 "last_run": latest_run.get(source.key),
+                "library_status": (
+                    "locked-restricted"
+                    if source.license == "restricted"
+                    else "ingested"
+                    if current
+                    else "failed-today"
+                    if (latest_run.get(source.key) or {}).get("status") == "failure"
+                    else "never-fetched"
+                ),
             }
         )
     return board
@@ -708,7 +824,7 @@ def _job_tasks(conn, job_id: str) -> list[dict]:
         inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
         if inputs.get("job_id") != job_id:
             continue
-        outputs = _outputs_of(row)
+        outputs = _display_outputs(row)
         status = _RUN_STATUS.get(outputs.get("status", ""), "info")
         source = inputs.get("source") or inputs.get("family") or ""
         if row.fleet == "l1.citator":
@@ -806,7 +922,7 @@ def run_detail(run_id: int) -> dict:
         row = conn.execute(sa.select(runs).where(runs.c.id == run_id)).first()
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
-    outputs = _outputs_of(row)
+    outputs = _display_outputs(row)
     return {
         "id": row.id,
         "fleet": row.fleet,

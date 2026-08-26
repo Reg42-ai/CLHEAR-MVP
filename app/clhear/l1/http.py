@@ -92,16 +92,91 @@ def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts:
     raise RuntimeError(f"fetch failed after {attempts} attempts: {url}") from last_error
 
 
+_last_good_used = False
+
+
+def last_good_used() -> bool:
+    """True when the most recent get() served datalake last-good instead of live."""
+    return _last_good_used
+
+
+def _cache_digest(url: str) -> str:
+    return hashlib.sha256(url.encode()).hexdigest()[:24]
+
+
+def _datalake_cache_key(url: str) -> str:
+    return f"public-ok/_http_cache/{_cache_digest(url)}.bin"
+
+
+def _datalake_put(url: str, content: bytes) -> None:
+    """Best-effort write of a successful live fetch so AWS workers can fall back."""
+    if not content:
+        return
+    try:
+        from app.clhear.settings import get_settings
+
+        settings = get_settings()
+        bucket = settings.clhear_datalake_bucket
+        if not bucket:
+            return
+        import boto3
+
+        boto3.client("s3", region_name=settings.aws_region).put_object(
+            Bucket=bucket,
+            Key=_datalake_cache_key(url),
+            Body=content,
+            ContentType="application/octet-stream",
+        )
+    except Exception as exc:
+        log.warning("datalake cache write failed for %s: %s", url, exc)
+
+
+def _datalake_get(url: str) -> bytes | None:
+    try:
+        from app.clhear.settings import get_settings
+
+        settings = get_settings()
+        bucket = settings.clhear_datalake_bucket
+        if not bucket:
+            return None
+        import boto3
+
+        resp = boto3.client("s3", region_name=settings.aws_region).get_object(
+            Bucket=bucket, Key=_datalake_cache_key(url)
+        )
+        body = resp["Body"].read()
+        return body or None
+    except Exception:
+        return None
+
+
 def get(url: str, timeout: float = 60.0, headers: dict | None = None) -> bytes:
-    """Fetch url as bytes honoring CLHEAR_HTTP_MODE (replay/record/live)."""
+    """Fetch url as bytes honoring CLHEAR_HTTP_MODE (replay/record/live).
+
+    Live fetches that survive also land in `s3://…/public-ok/_http_cache/`.
+    After TNA 202 / empty-body exhaustion the worker reads that last-good
+    object instead of crashing a source that already has text.
+    """
+    global _last_good_used
+    _last_good_used = False
     mode = _mode()
     path = _fixture_path(url)
     if path.exists():
         return _read_fixture(path)
     if mode == "replay":
         raise FixtureMissing(f"no recorded fixture for {url} (CLHEAR_HTTP_MODE=replay)")
-    content = _fetch_live(url, timeout, headers)
+    try:
+        content = _fetch_live(url, timeout, headers)
+    except Exception:
+        cached = _datalake_get(url)
+        if cached:
+            log.warning("live fetch failed for %s; using datalake last-good", url)
+            _last_good_used = True
+            return cached
+        raise
     # record mode saves committed fixtures; live mode caches to avoid re-hitting
     # official endpoints within a run. Same file format either way.
     _write_fixture(path, url, 200, content)
+    if mode == "live":
+        _datalake_put(url, content)
     return content

@@ -313,12 +313,14 @@ function App() {
       <button class=${view.page === "activity" ? "active" : ""} onClick=${() => go("activity")}>Activity</button>
       <button class=${view.page === "fleet" ? "active" : ""} onClick=${() => go("fleet")}>Fleet</button>
       <button class=${view.page === "changes" ? "active" : ""} onClick=${() => go("changes")}>Change events</button>
+      <button class=${view.page === "evidence" ? "active" : ""} onClick=${() => go("evidence")}>Evidence</button>
     </div>`;
   if (view.page === "source") return html`<${SourceView} sourceKey=${view.key} back=${() => go("library")} openRef=${view.ref} openNodeId=${view.nodeId} />`;
   if (view.page === "search") return html`<${SearchView} q=${query} open=${openSource} back=${() => go("library")} />`;
   if (view.page === "changes") return html`<div>${tabs}<${ChangesView} open=${(key) => openSource(key)} /></div>`;
   if (view.page === "activity") return html`<div>${tabs}<${ActivityView} open=${openSource} /></div>`;
   if (view.page === "fleet") return html`<div>${tabs}<${FleetView} open=${openSource} /></div>`;
+  if (view.page === "evidence") return html`<div>${tabs}<${EvidenceIndex} families=${families} open=${(key) => openSource(key)} /></div>`;
   return html`<div>${tabs}<${Library} families=${families} open=${(key) => openSource(key)} /></div>`;
 }
 
@@ -326,8 +328,10 @@ function Library({ families, open }) {
   const [meta, setMeta] = useState(_meta);
   useEffect(() => { getMeta().then(setMeta); }, []);
   const allMembers = families.flatMap((f) => f.members);
-  const ingested = allMembers.filter((m) => m.latest_version);
-  const planned = allMembers.filter((m) => !m.latest_version && m.added_via === "watchlist");
+  const ingested = allMembers.filter((m) => m.library_status === "ingested" || m.latest_version);
+  const failed = allMembers.filter((m) => m.library_status === "failed-today");
+  const never = allMembers.filter((m) => m.library_status === "never-fetched");
+  const locked = allMembers.filter((m) => m.library_status === "locked-restricted");
   return html`
     <div>
       ${meta && meta.schedules && html`
@@ -352,8 +356,8 @@ function Library({ families, open }) {
             ${f.members.map((m) => html`
               <tr key=${m.key}>
                 <td>
-                  <span class=${"srcname" + (m.latest_version ? "" : " stub")} title=${m.name}
-                        onClick=${() => m.latest_version && open(m.key)}>${m.short_name || m.name}</span>
+                  <span class=${"srcname" + (m.latest_version || m.library_status === "locked-restricted" || m.library_status === "failed-today" ? "" : " stub")} title=${m.name}
+                        onClick=${() => open(m.key)}>${m.short_name || m.name}</span>
                   ${m.short_name && html`<div class="charter" style=${{ margin: 0 }}>${m.name}</div>`}
                   <div class="mono">${m.key}</div>
                   ${m.about && html`<div class="about" style=${{ margin: "4px 0 0" }}>${m.about.slice(0, 220)}${m.about.length > 220 ? "…" : ""}
@@ -362,7 +366,7 @@ function Library({ families, open }) {
                 <td><span class="badge ${m.relation === "root" ? "root" : "binding"}">${m.relation}</span></td>
                 <td><span class="badge ${m.tier}">${m.tier}</span></td>
                 <td><span class="badge ${m.license}">${m.license}</span></td>
-                <td class="mono">${m.latest_version || (m.added_via === "watchlist" ? "planned" : "reference-level")}</td>
+                <td class="mono">${m.latest_version || m.library_status || "never-fetched"}</td>
                 <td class="mono">${m.clauses || ""}</td>
                 <td>${m.added_via === "citator" ? html`<span class="badge citator">citator</span>` : m.added_via}</td>
               </tr>`)}
@@ -370,8 +374,8 @@ function Library({ families, open }) {
           </table>
         </div>`)}
       <div class="charter" style=${{ textAlign: "center" }}>
-        ${ingested.length} ingested source${ingested.length === 1 ? "" : "s"}${planned.length ? ` · ${planned.length} planned (eToro blueprint)` : ""} ·
-        every ingest passes a 99.5% fidelity gate against the official artifact
+        ${ingested.length} ingested · ${failed.length} failed-today · ${never.length} never-fetched · ${locked.length} locked-restricted
+        · every ingest passes a 99.5% fidelity gate against the official artifact · scorecards at https://clhear.reg42.ai
       </div>
     </div>`;
 }
@@ -382,6 +386,8 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
   const [doc, setDoc] = useState(null);
   const [version, setVersion] = useState(null);
   const [inspect, setInspect] = useState(false);
+  const [evidence, setEvidence] = useState(false);
+  const [scorecard, setScorecard] = useState(null);
   const [hoverId, setHoverId] = useState(null);
   const [selectedId, setSelectedId] = useState(openNodeId || null);
   const [info, setInfo] = useState(null);
@@ -396,6 +402,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
   useEffect(() => {
     setDetail(null); setDoc(null); scrolled.current = false; setFilter(""); setCategory(null);
     api(`/api/clhear/sources/${sourceKey}`).then(setDetail);
+    api(`/api/clhear/sources/${sourceKey}/evals`).then(setScorecard).catch(() => setScorecard(null));
     const q = version ? `?version_label=${encodeURIComponent(version)}` : "";
     api(`/api/clhear/sources/${sourceKey}/document${q}`).then(setDoc);
   }, [sourceKey, version]);
@@ -477,9 +484,10 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
         <span><b>${doc.total}</b> nodes</span>
       </div>
       <div class="tabs mode">
-        <button class=${!inspect ? "active" : ""} onClick=${() => setInspect(false)}>document</button>
-        <button class=${inspect ? "active" : ""} onClick=${() => setInspect(true)}>inspect</button>
+        <button class=${!inspect && !evidence ? "active" : ""} onClick=${() => { setInspect(false); setEvidence(false); }}>document</button>
+        <button class=${inspect ? "active" : ""} onClick=${() => { setInspect(true); setEvidence(false); }}>inspect</button>
         <button class=${explain ? "active" : ""} onClick=${() => setExplain(!explain)}>explain</button>
+        <button class=${evidence ? "active" : ""} onClick=${() => { setEvidence(true); setInspect(false); }}>evidence</button>
       </div>
       ${detail.changes.length > 0 && html`
         <div class="change">
@@ -490,7 +498,8 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
         </div>`}
       ${doc.locked && html`
         <div class="locked">This source is license-restricted: structure, references and integrity hashes are
-        public, verbatim text is not. BYOL unlock arrives in P3.</div>`}
+        public, verbatim text is not until a BYOL file is in <span class="mono">restricted/${sourceKey}/</span>.</div>`}
+      ${evidence && html`<${EvidencePanel} card=${scorecard} sourceKey=${sourceKey} />`}
       <div class="readerbar">
         <input placeholder="Filter this document… (e.g. risk assessment)"
                value=${filter} onInput=${(e) => setFilter(e.target.value)} />
@@ -778,6 +787,71 @@ function Inspector({ info, annotation, annotationFrom, contains }) {
     </aside>`;
 }
 
+function EvidencePanel({ card, sourceKey }) {
+  if (!card) return html`<div class="spin">Loading E1–E7 scorecard…</div>`;
+  const suites = card.scorecard && card.scorecard.suites ? card.scorecard.suites : {};
+  const order = ["e1_fidelity", "e2_completeness", "e3_roundtrip", "e4_change_replay", "e5_provenance", "e6_retrievability", "e7_closure"];
+  const labels = {
+    e1_fidelity: "E1 Fidelity",
+    e2_completeness: "E2 Completeness",
+    e3_roundtrip: "E3 Round-trip",
+    e4_change_replay: "E4 Change replay",
+    e5_provenance: "E5 Provenance",
+    e6_retrievability: "E6 Retrievability",
+    e7_closure: "E7 Closure",
+  };
+  return html`
+    <div class="family" style=${{ marginBottom: "16px" }}>
+      <h3 style=${{ margin: "0 0 8px" }}>Evidence — ${sourceKey}</h3>
+      <div class="charter">Last fetch ${card.last_run ? card.last_run.ts : "never"} ·
+        artifact <span class="mono">${card.s3_uri || "—"}</span> ·
+        run ${card.last_run ? "#" + card.last_run.run_id : "—"}
+        ${card.last_run && card.last_run.error ? html` · <span style=${{ color: "var(--rose-600)" }}>${card.last_run.error}</span>` : ""}
+        ${card.last_run && card.last_run.note ? html` · ${card.last_run.note}` : ""}
+      </div>
+      <table class="members">
+        <thead><tr><th>suite</th><th>status</th><th>score</th></tr></thead>
+        <tbody>
+          ${order.map((s) => {
+            const row = suites[s];
+            const scores = row && row.scores ? row.scores : {};
+            const score = scores.score != null ? scores.score : (scores.note || "");
+            const ok = row ? row.passed : null;
+            return html`<tr key=${s}>
+              <td>${labels[s]}</td>
+              <td><span class=${"badge " + (ok === true ? "open" : ok === false ? "restricted" : "guidance")}>${ok === true ? "pass" : ok === false ? "fail" : "not run"}</span></td>
+              <td class="mono">${score === "" ? JSON.stringify(scores) : score}</td>
+            </tr>`;
+          })}
+        </tbody>
+      </table>
+      <div class="charter">L2 gate: ${card.l2_ready ? "this open source is green" : "not green yet — L2 waits for every open source"} · https://clhear.reg42.ai</div>
+    </div>`;
+}
+
+function EvidenceIndex({ families, open }) {
+  const members = (families || []).flatMap((f) => f.members);
+  return html`
+    <div>
+      <h2 style=${{ margin: "0 0 4px" }}>Evidence — E1–E7 per source</h2>
+      <div class="charter">A stranger can read a green (or honestly red) scorecard for every registry row.
+        Open a source’s Evidence tab for gauges, last fetch, artifact URI and run id.</div>
+      <table class="members">
+        <thead><tr><th>source</th><th>library</th><th>version</th><th>last run</th></tr></thead>
+        <tbody>
+          ${members.map((m) => html`
+            <tr key=${m.key}>
+              <td><span class="srcname" onClick=${() => open(m.key)}>${m.short_name || m.name}</span>
+                <div class="mono">${m.key}</div></td>
+              <td><span class=${"badge " + (m.library_status === "ingested" ? "open" : m.library_status === "failed-today" ? "restricted" : "guidance")}>${m.library_status || "never-fetched"}</span></td>
+              <td class="mono">${m.latest_version || "—"}</td>
+              <td class="mono">${m.last_run_status || "—"}</td>
+            </tr>`)}
+        </tbody>
+      </table>
+    </div>`;
+}
+
 /* ------------------------------- activity feed ------------------------------ */
 const STATUS_FILTERS = ["all", "success", "warning", "failure", "info"];
 
@@ -927,7 +1001,10 @@ function FleetTable({ board, open, setRunId, meta }) {
               ${r.last_run ? html`
                 <span class=${"dot " + r.last_run.status}></span>
                 <span class="runlink" onClick=${() => setRunId(r.last_run.run_id)}>run #${r.last_run.run_id}</span>
-                <div class="mono">${r.last_run.ts}</div>` : html`<span class="mono">no runs</span>`}
+                <div class="mono">${r.last_run.raw_status === "unchanged" || r.last_run.raw_status === "up-to-date" ? "probed, unchanged" : (r.last_run.note || r.last_run.raw_status || r.last_run.status)}</div>
+                ${r.last_run.freshness === "stale" ? html`<div class="mono" style=${{ color: "var(--amber-600)" }}>stale last-good</div>` : ""}
+                ${r.last_run.error ? html`<div class="mono" style=${{ color: "var(--rose-600)" }}>${r.last_run.error}</div>` : ""}
+                <div class="mono">${r.last_run.ts}</div>` : html`<span class="mono">never-fetched</span>`}
             </td>
             <td class="mono">${r.last_run && r.last_run.coverage != null ? (r.last_run.coverage * 100).toFixed(2) + "%" : "—"}</td>
             <td>${r.last_run ? r.last_run.stages.map((s, i) => html`

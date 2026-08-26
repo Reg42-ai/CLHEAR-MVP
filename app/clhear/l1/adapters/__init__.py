@@ -7,8 +7,10 @@ if TYPE_CHECKING:
 
 
 def get_adapter(key: str) -> "Adapter":
-    """Instantiate a registered adapter by key (import-on-demand keeps
-    optional parser deps out of unrelated code paths)."""
+    """Instantiate a registered starter adapter by key (import-on-demand).
+
+    Parameterized registry rows go through `fleet.adapter_for`, not this map.
+    """
     from app.clhear.l1.adapters import eur_lex, govinfo_us, nist, uk_legislation
 
     registry = {

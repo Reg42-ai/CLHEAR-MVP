@@ -75,12 +75,12 @@ def test_dummy_fleet_rehearsal(engine, client, tmp_path):
 
     out_dir = tmp_path / "public-repo"
     result = export_release(engine, RELEASE, repo_dir=out_dir)
-    snapshot = json.loads((out_dir / "snapshots" / RELEASE / "snapshot.json").read_text())
+    snapshot = json.loads((out_dir / "snapshots" / RELEASE / "l1" / "snapshot.json").read_text())
     assert snapshot["release"] == RELEASE
     assert snapshot["sources"] == []          # empty-but-valid
     assert snapshot["all_evals_passed"] is True
     assert (out_dir / "evals" / f"{RELEASE}.json").exists()
-    assert (out_dir / "snapshots" / RELEASE / "snapshot.yaml").exists()
+    assert (out_dir / "snapshots" / RELEASE / "l1" / "snapshot.yaml").exists()
     assert result["snapshot"]["eval_scores"]
 
     # Everything was recorded in the run ledger (replayability).

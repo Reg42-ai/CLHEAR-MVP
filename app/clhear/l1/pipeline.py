@@ -80,6 +80,12 @@ class S3Store:
         self._client.put_object(Bucket=self.bucket, Key=key, Body=content, ContentType=content_type)
         return f"s3://{self.bucket}/{key}"
 
+    def get(self, key: str) -> bytes | None:
+        try:
+            return self._client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        except Exception:
+            return None
+
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -289,8 +295,10 @@ def ingest(
     """Run one adapter through fetch -> fidelity gate/repair loop -> persist.
 
     Returns the run summary. status: added|amended|unchanged|up-to-date|
-    not-fully-successful. `llm_assisted`/`recovered_spans`/`hints_used` mark
-    degraded-but-successful runs (warnings in the Activity feed).
+    stale|failed|not-fully-successful. `llm_assisted`/`recovered_spans`/
+    `hints_used` mark degraded-but-successful runs (warnings in the Activity
+    feed). A crash in fetch() always `finish()`es the run: previous version
+    kept as `stale`, first ingest recorded as `failed`.
     """
     settings = get_settings()
     meta = adapter.meta()
@@ -304,19 +312,47 @@ def ingest(
         previous = _latest_version(conn, source_id)
         stored_hints = _load_active_hints(conn, source_id)
 
-    # force=True: re-fetch and re-parse even when the publisher artifact is
-    # unchanged (parser/spine fixes). Adapters short-circuit fetch() when the
-    # version label already matches, so we pass since_version=None.
-    result = adapter.fetch(None if force else (previous.version_label if previous else None))
-    recorder.stage("fetch", artifacts=len(result.artifacts) if result else 0)
+    # Always probe the publisher (first ingest of a key must fetch; daily
+    # "up-to-date" is a content-hash match after a real GET, not a label skip).
+    from app.clhear.l1 import http as l1_http
+
+    try:
+        result = adapter.fetch(None)
+    except Exception as exc:
+        error = str(exc)[:500]
+        log.exception("fetch crashed for %s", meta.source_key)
+        if previous is not None:
+            summary = {
+                "source": meta.source_key,
+                "version": previous.version_label,
+                "error": error,
+                "freshness": "stale",
+            }
+            outputs = recorder.finish("stale", summary)
+            return {**summary, "status": "stale", "run_id": recorder.run_id, "stages": outputs["stages"]}
+        summary = {"source": meta.source_key, "error": error}
+        outputs = recorder.finish("failed", summary)
+        return {**summary, "status": "failed", "run_id": recorder.run_id, "stages": outputs["stages"]}
+    freshness = "stale" if l1_http.last_good_used() else "live"
+    recorder.stage("fetch", artifacts=len(result.artifacts) if result else 0, freshness=freshness)
     if result is None:
-        summary = {"source": meta.source_key, "version": previous.version_label if previous else None}
+        summary = {
+            "source": meta.source_key,
+            "version": previous.version_label if previous else None,
+            "freshness": "probed",
+            "note": "probed, unchanged",
+        }
         outputs = recorder.finish("up-to-date", summary)
         return {**summary, "status": "up-to-date", "run_id": recorder.run_id, "stages": outputs["stages"]}
 
     content_hash = sha256(b"".join(a.content for a in sorted(result.artifacts, key=lambda a: a.name)))
     if previous is not None and previous.content_hash == content_hash and not force:
-        summary = {"source": meta.source_key, "version": previous.version_label}
+        summary = {
+            "source": meta.source_key,
+            "version": previous.version_label,
+            "freshness": freshness,
+            "note": "probed, unchanged",
+        }
         outputs = recorder.finish("unchanged", summary)
         return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"]}
 
@@ -434,7 +470,7 @@ def ingest(
         )
     except Exception as exc:
         recorder.finish("failed", {"source": meta.source_key, "error": str(exc)[:300]})
-        raise
+        return {"source": meta.source_key, "status": "failed", "error": str(exc)[:300], "run_id": recorder.run_id}
 
 
 def _persist(
@@ -615,6 +651,7 @@ def _persist(
         "diff": diff,
         "artifacts": artifact_uris,
         "content_hash": content_hash,
+        "freshness": "live",
     }
     if hints_used:
         summary["hints_used"] = hints_used

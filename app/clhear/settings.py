@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     # publish it back. Empty = use database_url directly (Aurora / local dev).
     clhear_snapshot_s3_uri: str = ""
 
+    # Consumer API keys: "app_id:secret" or "app_id:secret:read:l1+read:l2"
+    clhear_app_keys: str = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key"
+
+    # Named releases live under this prefix (s3://bucket/releases/...).
+    # Empty = local artifacts dir (dev/tests).
+    clhear_releases_s3_prefix: str = ""
+
     @property
     def maintainer_set(self) -> set[str]:
         return {m.strip() for m in self.clhear_maintainers.split(",") if m.strip()}

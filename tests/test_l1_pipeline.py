@@ -83,8 +83,8 @@ def test_pipeline_diff_and_events(engine, tmp_path):
     assert s1["status"] == "added" and s1["clauses"] == 3
     assert s1["nodes"] == 3
 
-    # Re-ingest of the same version is a no-op (up-to-date short-circuit).
-    assert pipeline.ingest(engine, v1, store)["status"] == "up-to-date"
+    # Re-ingest of the same artifact is a probed hash match (not a label skip).
+    assert pipeline.ingest(engine, v1, store)["status"] == "unchanged"
 
     # v2: r2 amended, r3 removed, r4 added.
     v2 = _StubAdapter("v2", _tree(("r1", "alpha"), ("r2", "bravo AMENDED"), ("r4", "delta")))
