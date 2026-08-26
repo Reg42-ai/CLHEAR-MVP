@@ -1,8 +1,9 @@
 # Public Sources Explorer (P1).
-# ARCH: HLD §5 targets the existing reg42-os web service + ALB host rule
-# (clhear.reg42.ai). Until reg42-infra is wired, the same FastAPI app runs
-# behind a Lambda Function URL (near-zero idle). Enabled only when the deploy
-# artifacts exist (webui_zip_key set by the deploy script).
+# Served at https://clhear.reg42.ai via API Gateway HTTP API + Lambda
+# (Function URL is SCP-blocked). The ALB host rule in alb.tf is the later
+# reg42-os swap; DNS points here until that listener is wired.
+# Enabled only when the deploy artifacts exist (webui_zip_key set by the
+# deploy script).
 
 resource "aws_s3_bucket" "deploy" {
   bucket = "${var.name_prefix}-deploy-${data.aws_caller_identity.current.account_id}"
@@ -139,5 +140,10 @@ resource "aws_lambda_permission" "webui_apigw" {
 }
 
 output "webui_url" {
-  value = local.deploy_webui ? aws_apigatewayv2_api.webui[0].api_endpoint : null
+  value = local.deploy_webui ? "https://${var.clhear_hostname}" : null
+}
+
+output "webui_api_endpoint" {
+  description = "Raw execute-api URL (fallback; public hostname is webui_url)."
+  value       = local.deploy_webui ? aws_apigatewayv2_api.webui[0].api_endpoint : null
 }

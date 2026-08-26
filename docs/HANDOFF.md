@@ -69,7 +69,8 @@ Still pending from this phase (not blockers for P1):
   correct clause-diff (`regulation-3` et al amended) + `SourceChanged`; family
   auto-contains the 38 amending instruments incl. `uksi/2019/1511` via citator.
   Plus restricted-discipline tests (text never leaves for `public_ok=false`).
-- **Live UI deployed**: https://wpje8c1y3a.execute-api.us-east-1.amazonaws.com
+- **Live UI deployed**: https://clhear.reg42.ai
+  (execute-api fallback: https://wpje8c1y3a.execute-api.us-east-1.amazonaws.com)
   (`/sources` Explorer reconstructs the original document from `doc_nodes` —
   serif layout, hover badge with ref/hash/amended, click-pinned inspector
   with record id / sha256 / version / S3 original / change history /
