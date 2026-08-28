@@ -1,4 +1,4 @@
-"""Consumer /v1 API: L1 live, L2–L8 reserved 501, app-key auth."""
+"""Consumer /v1 API: L1 live, L2–L7 demo-labeled, L8 locked (501), app-key auth."""
 from app.clhear.releases import publish_release
 from app.clhear.workers import handle_envelope
 from app.clhear.platform.gateway import FakeProvider, Gateway
@@ -35,11 +35,20 @@ def test_l1_resources_and_reserved_layers(client, engine):
     assert snap.status_code == 200
     assert "url" in snap.json()
 
+    # Demo layers answer 200 but are unmistakably labeled — clients must branch
+    # on layer_status, and every demo payload carries the honesty banner.
     reserved = client.get("/v1/releases/clhear-v20260826/l2/obligations", headers=AUTH)
-    assert reserved.status_code == 501
-    assert reserved.json()["detail"]["layer_status"] == "not_published"
-    assert reserved.json()["detail"]["layer"] == "L2"
+    assert reserved.status_code == 200
+    assert reserved.json()["layer_status"] == "demo"
+    assert reserved.json()["banner"]["data_status"] == "demo"
+    assert reserved.json()["items"]
 
+    # Wrong resource name for the layer still feature-detects as not_published.
+    wrong = client.get("/v1/releases/clhear-v20260826/l2/profiles", headers=AUTH)
+    assert wrong.status_code == 501
+    assert wrong.json()["detail"]["layer_status"] == "not_published"
+
+    # L8 is locked by design: its data endpoint never opens.
     l8 = client.get("/v1/releases/latest/l8/benchmarks", headers=AUTH)
     assert l8.status_code == 501
     assert l8.json()["detail"]["layer"] == "L8"

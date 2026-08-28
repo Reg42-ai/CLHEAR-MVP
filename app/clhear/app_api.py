@@ -14,13 +14,33 @@ from app.clhear.app_auth import require_app, require_scope
 from app.clhear.db import get_engine
 from app.clhear.l1.models import change_events, clauses, source_families, source_versions, sources
 from app.clhear.l1.public import clauses_public_select
-from app.clhear.layers import LAYER_CATALOG, normalize_layer, not_published_body
+from app.clhear.layers import LAYER_CATALOG, demo_banner, layer_public_meta, normalize_layer, not_published_body
 
 router = APIRouter(prefix="/v1", tags=["app-api"])
+
+# Demo-layer collection names (resource -> layer) for the /v1 catch-all.
+DEMO_RESOURCES = {
+    "obligations": "L2",
+    "building-blocks": "L3",
+    "profiles": "L4",
+    "activities": "L5",
+    "programs": "L6",
+    "risk-scores": "L7",
+    "benchmarks": "L8",
+}
 
 
 def _engine():
     return get_engine()
+
+
+@router.get("/layers")
+def layers_catalog(app: dict = Depends(require_app)) -> dict:
+    """The 8-layer contract: statuses + derivation contracts (feature detection)."""
+    require_scope(app, "read:l1")
+    from app.clhear.layers import LAYER_ORDER
+
+    return {"layers": [layer_public_meta(code) for code in LAYER_ORDER]}
 
 
 @router.get("/releases/latest")
@@ -92,9 +112,16 @@ def layer_status(release_id: str, layer: str, app: dict = Depends(require_app)) 
     if not code:
         raise HTTPException(404, f"Unknown layer {layer}")
     meta = LAYER_CATALOG[code]
-    if not meta["published"]:
-        raise HTTPException(status_code=501, detail=not_published_body(code))
-    return {"release_id": release_id, "layer": code, "layer_status": "published", **meta}
+    if meta["published"]:
+        status = "published"
+    elif meta["status"] == "demo":
+        status = "demo"
+    else:
+        status = "not_published"
+    body = {"release_id": release_id, "layer": code, "layer_status": status, **layer_public_meta(code)}
+    if status == "demo":
+        body["banner"] = demo_banner(code)
+    return body
 
 
 def _require_published_l1(release_id: str, layer: str, app: dict) -> None:
@@ -229,7 +256,8 @@ def reserved_layer_resource(
     resource: str,
     app: dict = Depends(require_app),
 ) -> dict:
-    """Catch-all so /l2/obligations etc. feature-detect as not_published."""
+    """Demo layers answer with clearly-labeled illustrative data; locked layers
+    stay not_published (501). Clients MUST branch on layer_status."""
     require_scope(app, "read:l1")
     if not release_store.get_release(release_id, engine=_engine()):
         raise HTTPException(404, f"Release {release_id} not found")
@@ -237,6 +265,16 @@ def reserved_layer_resource(
     if not code:
         raise HTTPException(404, f"Unknown layer {layer}")
     meta = LAYER_CATALOG[code]
-    if not meta["published"]:
-        raise HTTPException(status_code=501, detail=not_published_body(code))
-    raise HTTPException(404, f"Unknown {code} resource {resource}")
+    if meta["published"]:
+        raise HTTPException(404, f"Unknown {code} resource {resource}")
+    if meta["status"] == "demo" and DEMO_RESOURCES.get(resource) == code:
+        from app.clhear import layer_service
+
+        return {
+            "release_id": release_id,
+            "layer": code,
+            "layer_status": "demo",
+            "banner": demo_banner(code),
+            "items": layer_service.layer_items(_engine(), code),
+        }
+    raise HTTPException(status_code=501, detail=not_published_body(code))

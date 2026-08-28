@@ -1,0 +1,114 @@
+[
+  {
+    "id": "BLK-CDD-PROGRAMME",
+    "name": "Customer due diligence programme",
+    "description": "End-to-end identity verification, beneficial-ownership resolution and risk classification at onboarding, with periodic refresh cycles keyed to customer risk.",
+    "capability": "KYC/identity operations",
+    "evidence_artifacts": ["ID&V records", "beneficial ownership register extracts", "risk classification log"],
+    "satisfies": ["OBL-UK-AML-CDD", "OBL-UK-AML-ONGOING-MONITOR"],
+    "implements_controls": [],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface, mapping ratified by maintainer; demo: authored"}
+  },
+  {
+    "id": "BLK-EDD-HIGH-RISK",
+    "name": "Enhanced due diligence track",
+    "description": "Escalation lane for high-risk relationships: senior-management approval, source-of-wealth/funds evidence, tightened monitoring thresholds, PEP and high-risk-country handling.",
+    "capability": "High-risk customer handling",
+    "evidence_artifacts": ["EDD case files", "senior management approvals", "PEP screening results"],
+    "satisfies": ["OBL-UK-AML-EDD"],
+    "implements_controls": [],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface; demo: authored"}
+  },
+  {
+    "id": "BLK-BUSINESS-RISK-ASSESSMENT",
+    "name": "Business-wide risk assessment",
+    "description": "Documented, periodically refreshed assessment of ML/TF exposure across customers, geographies, products, transactions and channels; feeds thresholds used by other blocks.",
+    "capability": "Risk governance",
+    "evidence_artifacts": ["written risk assessment", "board approval minutes"],
+    "satisfies": ["OBL-UK-AML-RISK-ASSESS"],
+    "implements_controls": [{"source_key": "nist/csf-2.0", "ref": "ID.RA-01"}],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface; demo: authored"}
+  },
+  {
+    "id": "BLK-AML-GOVERNANCE",
+    "name": "AML governance & internal controls",
+    "description": "Policies, controls and procedures proportionate to the risk assessment: MLRO appointment, screening of relevant employees, independent audit where warranted.",
+    "capability": "Compliance governance",
+    "evidence_artifacts": ["policy suite", "MLRO appointment record", "audit reports"],
+    "satisfies": ["OBL-UK-AML-POLICIES"],
+    "implements_controls": [{"source_key": "nist/csf-2.0", "ref": "GV.OC-03"}],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface; demo: authored"}
+  },
+  {
+    "id": "BLK-RECORDS-RETENTION",
+    "name": "Records & retention regime",
+    "description": "Unified retention schedule and retrieval capability covering CDD records, transaction data and processing-activity records, with defensible deletion at end of retention.",
+    "capability": "Records management",
+    "evidence_artifacts": ["retention schedule", "records of processing activities", "deletion certificates"],
+    "satisfies": ["OBL-UK-AML-RECORDS", "OBL-EU-GDPR-ROPA"],
+    "implements_controls": [{"source_key": "nist/sp800-53r5", "ref": "au-2"}],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface; demo: authored"}
+  },
+  {
+    "id": "BLK-PRIVACY-BY-DESIGN",
+    "name": "Privacy-by-design pipeline",
+    "description": "Lawful-basis register, DPIA workflow triggered from product intake, and privacy review gates embedded in the delivery process.",
+    "capability": "Privacy operations",
+    "evidence_artifacts": ["lawful basis register", "completed DPIAs", "privacy review sign-offs"],
+    "satisfies": ["OBL-EU-GDPR-LAWFUL-BASIS", "OBL-EU-GDPR-DPIA", "OBL-EU-GDPR-DPO"],
+    "implements_controls": [],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface; demo: authored"}
+  },
+  {
+    "id": "BLK-BREACH-RESPONSE",
+    "name": "Breach & incident response (72h-capable)",
+    "description": "Single incident pipeline that classifies personal-data breaches and ICT incidents, drives containment, and hits the GDPR 72-hour and DORA major-incident reporting clocks.",
+    "capability": "Incident response",
+    "evidence_artifacts": ["incident register", "notification records", "post-incident reviews"],
+    "satisfies": ["OBL-EU-GDPR-BREACH-72H", "OBL-EU-DORA-INCIDENT-REPORT"],
+    "implements_controls": [
+      {"source_key": "nist/sp800-53r5", "ref": "ir-4"},
+      {"source_key": "nist/sp800-53r5", "ref": "ir-6"},
+      {"source_key": "nist/csf-2.0", "ref": "RS.MA-01"}
+    ],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface; demo: authored"}
+  },
+  {
+    "id": "BLK-INFOSEC-BASELINE",
+    "name": "Information security baseline",
+    "description": "Core technical control set: account management, least privilege, audit logging, configuration baselines, vulnerability scanning and continuous monitoring.",
+    "capability": "Security engineering",
+    "evidence_artifacts": ["access reviews", "audit logs", "scan reports", "baseline configs"],
+    "satisfies": ["OBL-EU-GDPR-SECURITY", "OBL-ISO-ISMS-SCOPE"],
+    "implements_controls": [
+      {"source_key": "nist/sp800-53r5", "ref": "ac-2"},
+      {"source_key": "nist/sp800-53r5", "ref": "ac-6"},
+      {"source_key": "nist/sp800-53r5", "ref": "cm-2"},
+      {"source_key": "nist/sp800-53r5", "ref": "ra-5"},
+      {"source_key": "nist/sp800-53r5", "ref": "si-4"},
+      {"source_key": "nist/csf-2.0", "ref": "PR.AA-01"},
+      {"source_key": "nist/csf-2.0", "ref": "DE.CM-01"}
+    ],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface; demo: authored"}
+  },
+  {
+    "id": "BLK-ICT-RESILIENCE",
+    "name": "ICT resilience & third-party register",
+    "description": "DORA-grade operational resilience: ICT risk framework owned by the management body, register of ICT third-party arrangements, concentration analysis and exit plans.",
+    "capability": "Operational resilience",
+    "evidence_artifacts": ["ICT risk framework", "third-party register", "exit strategies", "test reports"],
+    "satisfies": ["OBL-EU-DORA-ICT-RISK-FRAMEWORK"],
+    "implements_controls": [{"source_key": "nist/csf-2.0", "ref": "ID.RA-01"}],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface; demo: authored"}
+  },
+  {
+    "id": "BLK-CRYPTO-CUSTODY",
+    "name": "Client asset safeguarding (crypto)",
+    "description": "Segregation of client crypto-assets and funds, custody policy, key-management ceremony, and daily reconciliation against client entitlement records.",
+    "capability": "Asset safeguarding",
+    "evidence_artifacts": ["segregation attestations", "reconciliation reports", "custody policy"],
+    "satisfies": ["OBL-EU-MICA-SAFEGUARD-ASSETS", "OBL-EU-MICA-GOVERNANCE"],
+    "implements_controls": [{"source_key": "nist/sp800-53r5", "ref": "ac-3"}],
+    "derivation": {"status": "demo-authored", "method": "Production: obligations clustered by shared control surface; demo: authored"}
+  }
+]
