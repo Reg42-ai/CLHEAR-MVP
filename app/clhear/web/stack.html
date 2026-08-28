@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · The Stack</title>
+<style>
+  /* ================= Reg42 design language — futurist dark-first =================
+     Indigo / pearl / mint tokens (Solon reference) pushed into a glass +
+     luminous-edge system. Light "pearl" theme via [data-theme=light]. */
+  :root {
+    --ind-950: #07071a; --ind-900: #0c0c26; --ind-800: #14143a; --ind-700: #4338ca;
+    --ind-500: #6366f1; --ind-400: #818cf8; --ind-200: #c7d2fe; --ind-100: #e0e7ff;
+    --mint-400: #34d399; --mint-600: #059669;
+    --amber-400: #fbbf24; --amber-600: #d97706;
+    --rose-400: #fb7185; --rose-600: #e11d48;
+    --canvas: var(--ind-950);
+    --panel: rgba(255,255,255,0.035);
+    --panel-strong: rgba(255,255,255,0.06);
+    --edge: rgba(129,140,248,0.22);
+    --edge-bright: rgba(129,140,248,0.55);
+    --ink: #eef0ff; --muted: #8b8fb8; --faint: #565a85;
+    --accent: var(--ind-400);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --glow: 0 0 24px rgba(99,102,241,0.18);
+  }
+  [data-theme="light"] {
+    --canvas: #f6f5f1;
+    --panel: rgba(255,255,255,0.72);
+    --panel-strong: #ffffff;
+    --edge: #e3e1d8;
+    --edge-bright: #c7d2fe;
+    --ink: #17163a; --muted: #6b6a8a; --faint: #a5a3c0;
+    --glow: 0 4px 20px rgba(30,27,75,0.07);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--canvas); color: var(--ink);
+    font: 15px/1.55 "Inter", -apple-system, "Segoe UI", Roboto, Helvetica, sans-serif;
+    min-height: 100vh;
+  }
+  body::before { /* ambient glow field */
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(900px 500px at 80% -10%, rgba(99,102,241,0.13), transparent 60%),
+      radial-gradient(700px 500px at 10% 110%, rgba(5,150,105,0.08), transparent 60%);
+  }
+  [data-theme="light"] body::before { opacity: 0.5; }
+  a { color: var(--accent); text-decoration: none; }
+  ::selection { background: rgba(99,102,241,0.35); }
+
+  /* ------------------------------------------------------------- chrome */
+  header {
+    position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 18px;
+    padding: 13px 26px; backdrop-filter: blur(14px);
+    background: color-mix(in srgb, var(--canvas) 72%, transparent);
+    border-bottom: 1px solid var(--edge);
+  }
+  .wordmark { display: flex; align-items: baseline; gap: 10px; cursor: pointer; user-select: none; }
+  .wordmark b {
+    font-size: 17px; letter-spacing: 0.22em; font-weight: 800;
+    background: linear-gradient(90deg, var(--ind-200), var(--ind-400) 60%, var(--mint-400));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  [data-theme="light"] .wordmark b { background: linear-gradient(90deg, var(--ind-700), var(--ind-500)); -webkit-background-clip: text; background-clip: text; }
+  .wordmark span { font-size: 11.5px; color: var(--muted); letter-spacing: 0.08em; }
+  .spacer { flex: 1; }
+  .navlink { font-size: 13px; color: var(--muted); padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  .navlink:hover { color: var(--ink); background: var(--panel-strong); }
+  .themebtn {
+    border: 1px solid var(--edge); background: var(--panel); color: var(--muted);
+    border-radius: 999px; padding: 5px 14px; font-size: 12px; cursor: pointer;
+  }
+  main { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 30px 22px 90px; }
+
+  /* --------------------------------------------------------------- home */
+  .hero { text-align: center; margin: 34px 0 8px; }
+  .hero h1 { font-size: clamp(26px, 4.4vw, 44px); margin: 0 0 10px; font-weight: 800; letter-spacing: -0.01em; }
+  .hero h1 .grad {
+    background: linear-gradient(92deg, var(--ind-400), var(--mint-400));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero p { color: var(--muted); max-width: 720px; margin: 0 auto; font-size: 15.5px; }
+  .stackwrap { position: relative; max-width: 860px; margin: 44px auto 0; }
+  .flowline { /* animated derivation current, L0 up to L8 */
+    position: absolute; left: -26px; top: 8px; bottom: 8px; width: 2px;
+    background: linear-gradient(180deg, rgba(52,211,153,0.5), rgba(99,102,241,0.45) 55%, transparent);
+    border-radius: 2px;
+  }
+  .flowline::after {
+    content: ""; position: absolute; left: -2.5px; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--mint-400); box-shadow: 0 0 12px var(--mint-400);
+    animation: rise 5.5s linear infinite;
+  }
+  @keyframes rise { from { bottom: 0; opacity: 0.2; } 12% { opacity: 1; } to { bottom: 100%; opacity: 0; } }
+  .slab {
+    display: grid; grid-template-columns: 84px 1fr auto; gap: 18px; align-items: center;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 16px;
+    padding: 17px 22px; margin-bottom: 12px; cursor: pointer; position: relative;
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+    animation: enter .5s ease both;
+  }
+  .slab:nth-child(odd) { animation-delay: .04s; }
+  @keyframes enter { from { opacity: 0; transform: translateY(10px); } }
+  .slab:hover { transform: translateY(-2px) scale(1.008); border-color: var(--edge-bright); box-shadow: var(--glow); }
+  .slab .code { font-family: var(--mono); font-size: 24px; font-weight: 700; color: var(--faint); letter-spacing: 0.04em; }
+  .slab:hover .code { color: var(--accent); }
+  .slab h3 { margin: 0 0 3px; font-size: 16.5px; }
+  .slab .purpose { font-size: 13px; color: var(--muted); max-width: 640px; }
+  .slab .right { text-align: right; display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
+  .slab .countline { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .led { display: inline-flex; align-items: center; gap: 7px; border-radius: 999px; padding: 3px 12px;
+         font-size: 11px; font-weight: 700; letter-spacing: 0.14em; }
+  .led i { width: 7px; height: 7px; border-radius: 50%; }
+  .led.live { background: rgba(52,211,153,0.12); color: var(--mint-400); }
+  .led.live i { background: var(--mint-400); box-shadow: 0 0 9px var(--mint-400); animation: blink 2.4s infinite; }
+  .led.demo { background: rgba(251,191,36,0.12); color: var(--amber-400); }
+  .led.demo i { background: var(--amber-400); }
+  .led.locked { background: rgba(251,113,133,0.10); color: var(--rose-400); }
+  .led.locked i { background: var(--rose-400); }
+  [data-theme="light"] .led.live { color: var(--mint-600); } [data-theme="light"] .led.demo { color: var(--amber-600); }
+  [data-theme="light"] .led.locked { color: var(--rose-600); }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+  /* -------------------------------------------------------- layer pages */
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+  .crumbs a { cursor: pointer; }
+  .layerhead { display: flex; align-items: center; gap: 20px; margin-bottom: 6px; flex-wrap: wrap; }
+  .layerhead .bigcode { font-family: var(--mono); font-size: 40px; font-weight: 800; color: var(--accent); }
+  .layerhead h2 { margin: 0; font-size: 27px; letter-spacing: -0.01em; }
+  .purposeline { color: var(--muted); max-width: 840px; margin: 6px 0 24px; font-size: 15px; }
+  .grid2 { display: grid; grid-template-columns: minmax(320px, 5fr) 7fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 20px 22px;
+  }
+  .panel h4 {
+    margin: 0 0 12px; font-size: 11.5px; letter-spacing: 0.2em; color: var(--faint);
+    text-transform: uppercase; font-weight: 700;
+  }
+  .reasonpanel { position: sticky; top: 76px; }
+  .reasonpanel .method { font-size: 13.5px; color: var(--ink); opacity: 0.92; margin-bottom: 14px; }
+  .kv { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+  .chip {
+    font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--edge);
+    border-radius: 999px; padding: 3px 11px; color: var(--muted); background: var(--panel-strong);
+  }
+  .chip.linky { cursor: pointer; color: var(--accent); border-color: rgba(129,140,248,0.4); }
+  .chip.linky:hover { background: rgba(99,102,241,0.14); }
+  .gatelist { margin: 0; padding: 0; list-style: none; }
+  .gatelist li { font-size: 13px; color: var(--muted); padding: 6px 0 6px 22px; position: relative; }
+  .gatelist li::before { content: "▸"; position: absolute; left: 4px; color: var(--mint-400); }
+  .gatelist.evidence li::before { content: "⬢"; color: var(--ind-400); font-size: 10px; top: 8px; }
+  .demobanner {
+    display: flex; gap: 12px; align-items: flex-start; border: 1px solid rgba(251,191,36,0.35);
+    background: rgba(251,191,36,0.07); border-radius: 12px; padding: 12px 16px; margin-bottom: 18px;
+    font-size: 13px; color: var(--amber-400);
+  }
+  [data-theme="light"] .demobanner { color: var(--amber-600); }
+  .demobanner b { letter-spacing: 0.1em; }
+
+  /* items */
+  .card {
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 14px;
+    padding: 16px 18px; margin-bottom: 12px; cursor: pointer;
+    transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+  }
+  .card:hover { border-color: var(--edge-bright); transform: translateY(-1px); box-shadow: var(--glow); }
+  .card .id { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .card h5 { margin: 3px 0 5px; font-size: 15px; }
+  .card .sum { font-size: 13px; color: var(--muted); }
+  .card .tags { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .lockicon { color: var(--rose-400); font-size: 12px; }
+
+  /* coverage matrix */
+  .covrow { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--edge); font-size: 13px; }
+  .covrow:last-child { border-bottom: none; }
+  .covrow .ob { font-family: var(--mono); font-size: 11.5px; flex: 1; color: var(--muted); }
+  .state { border-radius: 6px; padding: 1px 9px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; }
+  .state.covered { background: rgba(52,211,153,0.14); color: var(--mint-400); }
+  .state.partial { background: rgba(251,191,36,0.14); color: var(--amber-400); }
+  .state.gap { background: rgba(251,113,133,0.16); color: var(--rose-400); }
+
+  /* risk */
+  .score { font-family: var(--mono); font-size: 34px; font-weight: 800; }
+  .score.low { color: var(--mint-400); } .score.elevated { color: var(--amber-400); } .score.high { color: var(--rose-400); }
+  .bar { height: 6px; border-radius: 4px; background: var(--panel-strong); overflow: hidden; margin: 4px 0 10px; }
+  .bar i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--ind-500), var(--mint-400)); }
+  .comprow { font-size: 12px; color: var(--muted); font-family: var(--mono); display: flex; justify-content: space-between; }
+
+  /* L8 locked */
+  .blurred { filter: blur(0px); font-family: var(--mono); color: var(--muted); background: var(--panel-strong);
+             padding: 8px 12px; border-radius: 8px; letter-spacing: 0.06em; }
+
+  /* --------------------------------------------------------- lineage drawer */
+  .scrim { position: fixed; inset: 0; background: rgba(4,4,16,0.55); backdrop-filter: blur(3px); z-index: 60; animation: fade .2s ease; }
+  @keyframes fade { from { opacity: 0; } }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(660px, 94vw); z-index: 61;
+    background: color-mix(in srgb, var(--canvas) 92%, #000 0%);
+    border-left: 1px solid var(--edge-bright); box-shadow: -30px 0 80px rgba(0,0,0,0.5);
+    display: flex; flex-direction: column; animation: slidein .22s ease;
+  }
+  [data-theme="light"] .drawer { background: #fbfaf7; }
+  @keyframes slidein { from { transform: translateX(40px); opacity: 0; } }
+  .drawer header { position: static; display: flex; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--edge); background: transparent; }
+  .drawer header h3 { margin: 0; font-size: 15px; flex: 1; }
+  .drawer header .x { cursor: pointer; color: var(--muted); font-size: 20px; padding: 2px 10px; }
+  .drawer .body { overflow-y: auto; padding: 18px 20px 40px; flex: 1; }
+  .lnode { border-left: 2px solid var(--edge); margin: 0 0 10px 6px; padding: 8px 0 8px 16px; position: relative; }
+  .lnode::before { content: ""; position: absolute; left: -6px; top: 14px; width: 10px; height: 10px; border-radius: 50%;
+                   background: var(--canvas); border: 2px solid var(--accent); }
+  .lnode.l1::before { border-color: var(--mint-400); }
+  .lnode.locked::before { border-color: var(--rose-400); }
+  .lnode .laytag { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em; color: var(--faint); }
+  .lnode h6 { margin: 2px 0 3px; font-size: 13.5px; }
+  .lnode .det { font-size: 12.5px; color: var(--muted); }
+  .verbatim {
+    font-size: 12.5px; background: var(--panel-strong); border: 1px solid var(--edge);
+    border-left: 3px solid var(--mint-400); border-radius: 8px; padding: 10px 13px; margin-top: 8px;
+    max-height: 220px; overflow-y: auto; white-space: pre-wrap; color: var(--ink);
+  }
+  .verbatim.lockedtext { border-left-color: var(--rose-400); color: var(--muted); font-style: italic; }
+  .provline { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 6px; word-break: break-all; }
+  .provline a { color: var(--accent); }
+  .foldbtn { cursor: pointer; font-size: 11px; color: var(--accent); user-select: none; }
+
+  /* L0/L1 dashboards */
+  .statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 14px 16px; }
+  .stat .n { font-family: var(--mono); font-size: 26px; font-weight: 700; color: var(--ink); }
+  .stat .lbl { font-size: 11px; letter-spacing: 0.14em; color: var(--faint); text-transform: uppercase; margin-top: 2px; }
+  .feeditem { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--edge); font-size: 13px; align-items: baseline; }
+  .feeditem:last-child { border: none; }
+  .feeditem .dot { min-width: 8px; height: 8px; border-radius: 50%; position: relative; top: 2px; }
+  .dot.success { background: var(--mint-400); } .dot.failure { background: var(--rose-400); }
+  .dot.warning { background: var(--amber-400); } .dot.info, .dot.running { background: var(--ind-400); }
+  .feeditem .when { font-family: var(--mono); font-size: 11px; color: var(--faint); min-width: 74px; }
+  .feeditem .what { color: var(--muted); }
+  .bigbtn {
+    display: inline-block; background: linear-gradient(92deg, var(--ind-700), var(--ind-500));
+    color: white; border: none; border-radius: 12px; padding: 11px 22px; font-size: 14px;
+    font-weight: 600; cursor: pointer; box-shadow: var(--glow);
+  }
+  .bigbtn:hover { filter: brightness(1.12); }
+  .minitable { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .minitable th { text-align: left; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  .minitable td { padding: 7px 8px; border-bottom: 1px solid var(--edge); color: var(--muted); }
+  .minitable td:first-child { color: var(--ink); }
+  .spin { text-align: center; color: var(--faint); padding: 60px 0; font-family: var(--mono); letter-spacing: 0.2em; animation: blink 1.6s infinite; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect, useMemo } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const jget = (url) => fetch(url).then((r) => { if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); });
+
+/* ------------------------------------------------------------------ shell */
+
+function useHashRoute() {
+  const [hash, setHash] = useState(window.location.hash || "#/");
+  useEffect(() => {
+    const onHash = () => setHash(window.location.hash || "#/");
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  return hash.replace(/^#/, "");
+}
+const nav = (path) => { window.location.hash = path; };
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("clhear_theme", theme);
+  }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const STATUS_LED = { live: "LIVE", demo: "DEMO", locked: "LOCKED" };
+const Led = ({ status }) => html`<span class="led ${status}"><i></i>${STATUS_LED[status] || status}</span>`;
+
+/* ------------------------------------------------------------------- home */
+
+const COUNT_LABELS = {
+  events: "events", runs: "runs", proposals: "proposals", llm_calls: "LLM calls",
+  families: "families", sources: "sources", sources_ingested: "ingested",
+  clauses: "clauses", clauses_public: "public clauses", change_events: "changes",
+  obligations: "obligations", building_blocks: "blocks", profiles: "profiles",
+  activities: "activities", programs: "programs", risk_scores: "scores",
+  benchmark_definitions: "definitions", aggregates_published: "published",
+};
+function countline(counts, pick) {
+  return (pick || Object.keys(counts)).filter((k) => counts[k] !== undefined)
+    .map((k) => `${counts[k]} ${COUNT_LABELS[k] || k}`).join(" · ");
+}
+const HOME_COUNTS = {
+  L0: ["events", "runs", "proposals"], L1: ["sources_ingested", "clauses", "change_events"],
+};
+
+function Home({ layers }) {
+  const ordered = [...layers].sort((a, b) => b.layer.localeCompare(a.layer, undefined, { numeric: true }));
+  return html`
+    <div>
+      <div class="hero">
+        <h1>Regulatory truth, <span class="grad">layer by layer</span></h1>
+        <p>CLHEAR builds compliance from the ground up: immutable verbatim law at the bottom,
+           derived knowledge above it — and every claim, at every layer, traceable back to the
+           exact clause that justifies it.</p>
+      </div>
+      <div class="stackwrap">
+        <div class="flowline"></div>
+        ${ordered.map((l) => html`
+          <div class="slab" key=${l.layer} onClick=${() => nav(`/layer/${l.slug}`)}>
+            <div class="code">${l.layer}</div>
+            <div>
+              <h3>${l.name}</h3>
+              <div class="purpose">${l.purpose}</div>
+            </div>
+            <div class="right">
+              <${Led} status=${l.status} />
+              <div class="countline">${countline(l.counts, HOME_COUNTS[l.layer])}</div>
+            </div>
+          </div>`)}
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------- derivation ("reasoning") */
+
+function ReasonPanel({ meta }) {
+  const d = meta.derivation || {};
+  return html`
+    <div class="panel reasonpanel">
+      <h4>How this layer knows what it knows</h4>
+      <div class="method">${d.method}</div>
+      ${(d.inputs || []).length > 0 && html`
+        <h4>Derived from</h4>
+        <div class="kv">
+          ${d.inputs.map((code) => html`
+            <span class="chip linky" key=${code} onClick=${() => nav(`/layer/${code.toLowerCase()}`)}>${code} ↧</span>`)}
+        </div>`}
+      ${(d.inputs || []).length === 0 && html`
+        <h4>Derived from</h4>
+        <div class="kv"><span class="chip">ground layer — nothing below</span></div>`}
+      <h4>Human & eval gates</h4>
+      <ul class="gatelist">${(d.gates || []).map((g, i) => html`<li key=${i}>${g}</li>`)}</ul>
+      <h4>Evidence you can inspect</h4>
+      <ul class="gatelist evidence">${(d.evidence || []).map((e, i) => html`<li key=${i}>${e}</li>`)}</ul>
+    </div>`;
+}
+
+const DemoBanner = ({ banner }) => banner
+  ? html`<div class="demobanner"><b>DEMO</b><span>${banner.notice}</span></div>` : null;
+
+/* ------------------------------------------------------------ layer items */
+
+function ItemCard({ layer, item, onOpen }) {
+  const title = item.title || item.name || item.area || item.id;
+  const summary = item.summary || item.description || item.definition || "";
+  const restricted = item.restricted;
+  return html`
+    <div class="card" onClick=${() => onOpen(item)}>
+      <div class="id">${item.id} ${restricted && html`<span class="lockicon">⛨ restricted-source</span>`}</div>
+      <h5>${title}</h5>
+      <div class="sum">${summary || (restricted ? "Summary withheld — restricted source (refs only)." : "")}</div>
+      ${layer === "L2" && html`
+        <div class="tags">
+          ${(item.basis || []).map((b, i) => html`<span class="chip" key=${i}>${b.source_key} · ${b.ref}</span>`)}
+          <span class="chip">${item.jurisdiction}</span>
+        </div>`}
+      ${layer === "L3" && html`
+        <div class="tags">
+          ${(item.satisfies || []).map((o) => html`<span class="chip" key=${o}>${o}</span>`)}
+          ${(item.implements_controls || []).map((c, i) => html`<span class="chip" key=${"c" + i}>⛉ ${c.source_key.split("/")[0]} ${c.ref}</span>`)}
+        </div>`}
+      ${layer === "L4" && html`
+        <div class="tags">
+          ${Object.entries(item.attributes || {}).slice(0, 5).map(([k, v]) => html`
+            <span class="chip" key=${k}>${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}</span>`)}
+        </div>`}
+      ${layer === "L5" && html`
+        <div class="tags">${(item.triggers || []).map((t, i) => html`<span class="chip" key=${i}>${t.obligation}</span>`)}</div>`}
+      ${layer === "L6" && item.coverage_summary && html`
+        <div class="tags">
+          <span class="state covered">${item.coverage_summary.covered} covered</span>
+          ${item.coverage_summary.partial > 0 && html`<span class="state partial">${item.coverage_summary.partial} partial</span>`}
+          ${item.coverage_summary.gaps > 0 && html`<span class="state gap">${item.coverage_summary.gaps} gap${item.coverage_summary.gaps > 1 ? "s" : ""}</span>`}
+        </div>
+        <div style=${{ marginTop: "10px" }}>
+          ${(item.coverage || []).map((c) => html`
+            <div class="covrow" key=${c.obligation}>
+              <span class="ob">${c.obligation}</span>
+              <span class="state ${c.state}">${c.state.toUpperCase()}</span>
+            </div>`)}
+        </div>`}
+      ${layer === "L7" && item.result && html`
+        <div style=${{ marginTop: "8px" }}>
+          <span class="score ${item.result.band}">${item.result.score}</span>
+          <span class="chip" style=${{ marginLeft: "10px" }}>${item.result.band.toUpperCase()}</span>
+          <div style=${{ marginTop: "8px" }}>
+            ${Object.entries(item.result.components).map(([k, v]) => html`
+              <div key=${k}>
+                <div class="comprow"><span>${k}</span><span>${v}</span></div>
+                <div class="bar"><i style=${{ width: `${Math.min(100, v * 100)}%` }}></i></div>
+              </div>`)}
+          </div>
+          <div class="comprow"><span>live churn (${item.live_inputs.window_days}d)</span>
+            <span>${item.live_inputs.change_events} events · ${item.live_inputs.changed_clauses} clauses</span></div>
+        </div>`}
+      ${layer === "L8" && html`
+        <div style=${{ marginTop: "8px" }}>
+          <div class="blurred">${item.blurred_sample}</div>
+          <div class="tags">
+            <span class="chip">cluster: ${item.cluster}</span>
+            <span class="chip">k ≥ ${item.k_anonymity}</span>
+            <span class="state gap">LOCKED</span>
+          </div>
+        </div>`}
+    </div>`;
+}
+
+/* --------------------------------------------------------- lineage drawer */
+
+function LineageNode({ node, depth }) {
+  const [open, setOpen] = useState(depth < 2);
+  const isClause = node.kind === "clause";
+  const meta = node.meta || {};
+  const locked = isClause && meta.locked;
+  return html`
+    <div class="lnode ${node.layer === "L1" ? "l1" : ""} ${locked ? "locked" : ""}">
+      <div class="laytag">${node.layer} · ${node.kind.replace("_", " ").toUpperCase()}</div>
+      <h6>${node.title}</h6>
+      ${node.detail && html`<div class="det">${node.detail}</div>`}
+      ${isClause && meta.resolved && meta.text && html`
+        <div class="verbatim">${meta.text}</div>
+        <div class="provline">
+          sha256 ${meta.text_hash} · ${meta.version_label} · retrieved ${String(meta.retrieved_at).slice(0, 19)}<br/>
+          original: ${meta.s3_uri || "—"} · <a href=${meta.permalink}>open in Sources Explorer →</a>
+        </div>`}
+      ${isClause && meta.resolved && !meta.text && html`
+        <div class="verbatim lockedtext">⛨ Verbatim text withheld — ${meta.license} license. Ref + hash prove the anchor without exposing the text.</div>
+        <div class="provline">sha256 ${meta.text_hash || "—"} · ${meta.version_label || ""}</div>`}
+      ${isClause && !meta.resolved && html`
+        <div class="verbatim lockedtext">${meta.note || "not resolvable in this corpus snapshot"}</div>`}
+      ${!isClause && meta.derivation && html`
+        <div class="provline">derivation: ${meta.derivation.status || ""} · ${meta.derivation.method || ""}</div>`}
+      ${node.kind === "live_input" && html`<div class="provline">computed live from l1_sources.change_events at request time</div>`}
+      ${(node.children || []).length > 0 && html`
+        <div style=${{ margin: "8px 0 2px" }}>
+          <span class="foldbtn" onClick=${() => setOpen(!open)}>
+            ${open ? "▾ collapse" : `▸ expand ${node.children.length} underlying node${node.children.length > 1 ? "s" : ""}`}
+          </span>
+        </div>
+        ${open && node.children.map((c, i) => html`<${LineageNode} node=${c} depth=${depth + 1} key=${i} />`)}`}
+    </div>`;
+}
+
+function Drawer({ layer, item, onClose }) {
+  const [chain, setChain] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    setChain(null);
+    jget(`/api/clhear/layers/${layer.toLowerCase()}/items/${encodeURIComponent(item.id)}/lineage`)
+      .then((d) => setChain(d.lineage)).catch((e) => setErr(String(e)));
+  }, [layer, item.id]);
+  return html`
+    <div>
+      <div class="scrim" onClick=${onClose}></div>
+      <div class="drawer">
+        <header>
+          <h3>Lineage — why does this exist?</h3>
+          <span class="x" onClick=${onClose}>✕</span>
+        </header>
+        <div class="body">
+          ${err && html`<div class="demobanner">${err}</div>`}
+          ${!chain && !err && html`<div class="spin">TRACING…</div>`}
+          ${chain && html`<${LineageNode} node=${chain} depth=${0} />`}
+          ${chain && html`<div class="provline" style=${{ marginTop: "14px" }}>
+            Every chain terminates in L1: verbatim clause text (open sources), or ref + hash (restricted).
+            Nothing above L1 is ever the source of truth.</div>`}
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ---------------------------------------------------------- special pages */
+
+function L0Page({ detail }) {
+  const [activity, setActivity] = useState(null);
+  const [props, setProps] = useState(null);
+  useEffect(() => {
+    jget("/api/clhear/activity?limit=25").then(setActivity).catch(() => setActivity([]));
+    jget("/api/clhear/proposals").then(setProps).catch(() => setProps([]));
+  }, []);
+  const c = detail.counts || {};
+  return html`
+    <div>
+      <div class="statgrid">
+        <div class="stat"><div class="n">${c.events ?? "—"}</div><div class="lbl">outbox events</div></div>
+        <div class="stat"><div class="n">${c.runs ?? "—"}</div><div class="lbl">recorded runs</div></div>
+        <div class="stat"><div class="n">${c.proposals ?? "—"}</div><div class="lbl">proposals</div></div>
+        <div class="stat"><div class="n">${c.llm_calls ?? "—"}</div><div class="lbl">gated LLM calls</div></div>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <h4>Approval queue</h4>
+          ${props === null && html`<div class="spin">LOADING…</div>`}
+          ${props && props.length === 0 && html`<div class="sum" style=${{ color: "var(--muted)", fontSize: "13px" }}>Queue is empty — nothing awaiting a human.</div>`}
+          ${props && props.slice(0, 8).map((p) => html`
+            <div class="feeditem" key=${p.id}>
+              <span class="dot ${p.status === "proposed" ? "warning" : p.status === "approved" ? "success" : "failure"}"></span>
+              <span class="what"><b>${p.kind}</b> · ${p.subject_ref} · ${p.status}${p.approver ? ` by ${p.approver}` : ""}</span>
+            </div>`)}
+          <div style=${{ marginTop: "14px" }}><a class="bigbtn" href="/review">Open review console →</a></div>
+        </div>
+        <div class="panel">
+          <h4>Live rail activity</h4>
+          ${activity === null && html`<div class="spin">LOADING…</div>`}
+          ${activity && activity.slice(0, 18).map((a, i) => html`
+            <div class="feeditem" key=${i}>
+              <span class="dot ${a.status}"></span>
+              <span class="when">${String(a.ts).slice(5, 16)}</span>
+              <span class="what">${a.summary}</span>
+            </div>`)}
+        </div>
+      </div>
+    </div>`;
+}
+
+function L1Page({ detail }) {
+  const [families, setFamilies] = useState(null);
+  const [changes, setChanges] = useState(null);
+  useEffect(() => {
+    jget("/api/clhear/sources").then(setFamilies).catch(() => setFamilies([]));
+    jget("/api/clhear/changes?limit=12").then(setChanges).catch(() => setChanges([]));
+  }, []);
+  const c = detail.counts || {};
+  return html`
+    <div>
+      <div class="statgrid">
+        <div class="stat"><div class="n">${c.families ?? "—"}</div><div class="lbl">source families</div></div>
+        <div class="stat"><div class="n">${c.sources_ingested ?? "—"}<span style=${{ fontSize: "14px", color: "var(--faint)" }}>/${c.sources ?? "—"}</span></div><div class="lbl">sources ingested</div></div>
+        <div class="stat"><div class="n">${c.clauses ?? "—"}</div><div class="lbl">clauses stored</div></div>
+        <div class="stat"><div class="n">${c.change_events ?? "—"}</div><div class="lbl">change events</div></div>
+      </div>
+      <div style=${{ margin: "4px 0 20px" }}>
+        <a class="bigbtn" href="/sources">Open the full Sources Explorer →</a>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <h4>Recent clause-level changes</h4>
+          ${changes === null && html`<div class="spin">LOADING…</div>`}
+          ${changes && changes.length === 0 && html`<div style=${{ color: "var(--muted)", fontSize: "13px" }}>No changes detected yet in this corpus snapshot.</div>`}
+          ${changes && changes.slice(0, 10).map((ch) => html`
+            <div class="feeditem" key=${ch.id}>
+              <span class="dot ${ch.kind === "added" ? "success" : "warning"}"></span>
+              <span class="when">${String(ch.detected_at).slice(5, 16)}</span>
+              <span class="what"><b>${ch.source_name || ch.source_key}</b> — ${ch.kind} · ${(ch.clause_refs || []).length} clause(s)</span>
+            </div>`)}
+        </div>
+        <div class="panel">
+          <h4>Families</h4>
+          ${families === null && html`<div class="spin">LOADING…</div>`}
+          ${families && html`
+            <table class="minitable">
+              <thead><tr><th>Family</th><th>Members</th><th>Ingested</th><th>Clauses</th></tr></thead>
+              <tbody>
+                ${families.map((f) => {
+                  const ingested = f.members.filter((m) => m.latest_version).length;
+                  const clauses = f.members.reduce((s, m) => s + (m.clauses || 0), 0);
+                  return html`<tr key=${f.key}>
+                    <td>${f.name}</td><td>${f.members.length}</td><td>${ingested}</td>
+                    <td style=${{ fontFamily: "var(--mono)" }}>${clauses}</td></tr>`;
+                })}
+              </tbody>
+            </table>`}
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------------------- layer page */
+
+function LayerPage({ slug }) {
+  const [detail, setDetail] = useState(null);
+  const [err, setErr] = useState(null);
+  const [openItem, setOpenItem] = useState(null);
+  useEffect(() => {
+    setDetail(null); setOpenItem(null);
+    jget(`/api/clhear/layers/${slug}`).then(setDetail).catch((e) => setErr(String(e)));
+  }, [slug]);
+  if (err) return html`<div class="demobanner">${err}</div>`;
+  if (!detail) return html`<div class="spin">LOADING LAYER…</div>`;
+  const code = detail.layer;
+  return html`
+    <div>
+      <div class="crumbs"><a onClick=${() => nav("/")}>the stack</a> / ${code}</div>
+      <div class="layerhead">
+        <span class="bigcode">${code}</span>
+        <h2>${detail.name}</h2>
+        <${Led} status=${detail.status} />
+      </div>
+      <div class="purposeline">${detail.purpose}</div>
+      <div class="grid2">
+        <${ReasonPanel} meta=${detail} />
+        <div>
+          <${DemoBanner} banner=${detail.banner} />
+          ${code === "L0" && html`<${L0Page} detail=${detail} />`}
+          ${code === "L1" && html`<${L1Page} detail=${detail} />`}
+          ${code === "L8" && html`
+            <div class="demobanner" style=${{ borderColor: "rgba(251,113,133,0.4)", background: "rgba(251,113,133,0.06)", color: "var(--rose-400)" }}>
+              <b>LOCKED</b><span>Benchmarks are closed by design. Aggregate definitions are public;
+              peer data never is. No aggregates are published today.</span>
+            </div>`}
+          ${!["L0", "L1"].includes(code) && (detail.items || []).map((item) => html`
+            <${ItemCard} layer=${code} item=${item} key=${item.id} onOpen=${(it) => setOpenItem(it)} />`)}
+        </div>
+      </div>
+      ${openItem && html`<${Drawer} layer=${code} item=${openItem} onClose=${() => setOpenItem(null)} />`}
+    </div>`;
+}
+
+/* -------------------------------------------------------------------- app */
+
+function App() {
+  const route = useHashRoute();
+  const [theme, toggleTheme] = useTheme();
+  const [layers, setLayers] = useState(null);
+  useEffect(() => { jget("/api/clhear/layers").then((d) => setLayers(d.layers)).catch(() => setLayers([])); }, []);
+  const layerMatch = route.match(/^\/layer\/(l[0-8])$/);
+  return html`
+    <div>
+      <header>
+        <div class="wordmark" onClick=${() => nav("/")}>
+          <b>CLHEAR</b><span>the compliance stack</span>
+        </div>
+        <div class="spacer"></div>
+        <span class="navlink" onClick=${() => nav("/")}>Stack</span>
+        <a class="navlink" href="/sources">Sources Explorer</a>
+        <a class="navlink" href="/review">Review</a>
+        <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+      </header>
+      <main>
+        ${layerMatch
+          ? html`<${LayerPage} slug=${layerMatch[1]} key=${layerMatch[1]} />`
+          : layers === null
+            ? html`<div class="spin">BOOTING THE STACK…</div>`
+            : html`<${Home} layers=${layers} />`}
+      </main>
+    </div>`;
+}
+
+createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
