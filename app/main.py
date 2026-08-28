@@ -23,19 +23,15 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="CLHEAR", lifespan=lifespan)
     if get_settings().reg42_clhear_enabled:
-        from fastapi.responses import RedirectResponse
-
         from app.clhear.app_api import router as app_api_router
         from app.clhear.l1.routes import router as l1_router
+        from app.clhear.layer_routes import router as layers_router
         from app.clhear.routes import router
 
         app.include_router(router)
         app.include_router(l1_router)
         app.include_router(app_api_router)
-
-        @app.get("/", include_in_schema=False)
-        def index() -> RedirectResponse:
-            return RedirectResponse("/sources")
+        app.include_router(layers_router)  # serves "/" — the Stack UI
 
     return app
 
