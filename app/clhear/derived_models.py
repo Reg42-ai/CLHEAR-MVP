@@ -127,4 +127,48 @@ blueprints = sa.Table(
     schema=L6_SCHEMA,
 )
 
-DERIVED_TABLES = (obligations, blocks, activities, attribute_schema, sample_profiles, blueprints)
+# --------------------------------------------------- L2 concepts (m0006)
+# A concept is ONE representative "CLHEAR obligation" consolidating clause-
+# anchored obligations across jurisdictions. It never replaces them: it is a
+# resolution overlay, parameterized by the profile's jurisdiction set.
+
+concepts = sa.Table(
+    "concepts",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # "CON:<slug>"
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("canonical_statement", sa.Text, nullable=False, default=""),
+    sa.Column("themes", Json, nullable=False, default=list),
+    sa.Column(
+        "status",
+        sa.Text,
+        sa.CheckConstraint("status in ('proposed','curated','flagged')", name="concepts_status_check"),
+        nullable=False,
+        default="proposed",
+    ),
+    sa.Column("drafted_by", sa.Text, nullable=False, default="human"),  # human | gateway
+    sa.Column("approved_by", sa.Text, nullable=True),
+    sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("flag_reason", sa.Text, nullable=False, default=""),
+    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    schema=L2_SCHEMA,
+)
+
+concept_members = sa.Table(
+    "concept_members",
+    metadata,
+    sa.Column("concept_id", sa.Text, nullable=False, primary_key=True),
+    sa.Column("obligation_id", sa.Text, nullable=False, primary_key=True),
+    sa.Column("jurisdiction", sa.Text, nullable=False, default=""),
+    sa.Column(
+        "role",
+        sa.Text,
+        sa.CheckConstraint("role in ('primary','supplementary')", name="concept_members_role_check"),
+        nullable=False,
+        default="primary",
+    ),
+    sa.Column("note", sa.Text, nullable=False, default=""),
+    schema=L2_SCHEMA,
+)
+
+DERIVED_TABLES = (obligations, blocks, activities, attribute_schema, sample_profiles, blueprints, concepts, concept_members)

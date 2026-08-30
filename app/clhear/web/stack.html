@@ -413,6 +413,66 @@ function ObligationCard({ item, onOpen, auth }) {
     </div>`;
 }
 
+function ConceptCard({ concept, selected, onOpen }) {
+  const facets = {};
+  for (const m of concept.members || []) {
+    (facets[m.jurisdiction || "?"] = facets[m.jurisdiction || "?"] || []).push(m);
+  }
+  const jurs = Object.keys(facets).sort();
+  const covered = jurs.filter((j) => selected.size === 0 || selected.has(j));
+  const excluded = jurs.filter((j) => selected.size > 0 && !selected.has(j));
+  const weight = covered.reduce((n, j) => n + facets[j].length, 0);
+  return html`
+    <div class="card" onClick=${() => onOpen({ id: concept.id })}>
+      <div class="id">${concept.id}
+        <span class="led curated" style=${{ marginLeft: "8px" }}><i></i>${(concept.status || "").toUpperCase()}</span>
+      </div>
+      <h5>${concept.name}</h5>
+      <div class="sum">${concept.canonical_statement}</div>
+      <div class="tags" style=${{ marginTop: "10px" }}>
+        ${covered.map((j) => html`
+          <span class="chip" key=${j} style=${{ color: "var(--mint-400)", borderColor: "rgba(52,211,153,0.4)" }}>
+            ${j} · ${facets[j].length} clause-anchored</span>`)}
+        ${excluded.map((j) => html`
+          <span class="chip" key=${j} style=${{ opacity: 0.45, textDecoration: "line-through" }}
+                title="Not in your selected jurisdictions — this facet does not apply">${j} · ${facets[j].length}</span>`)}
+        <span class="chip">resolved weight: ${weight} obligation${weight === 1 ? "" : "s"}</span>
+      </div>
+      <div class="provline" style=${{ marginTop: "8px" }}>
+        drafted by ${concept.drafted_by}${concept.approved_by ? ` · approved by ${concept.approved_by}` : ""} ·
+        scoped claim: covers the cited clauses for ${covered.join(", ") || "none of your jurisdictions"} — never "global".
+      </div>
+    </div>`;
+}
+
+function ConsolidatedView({ concepts, onOpen }) {
+  const allJurs = [...new Set(concepts.flatMap((c) => c.jurisdictions || []))].sort();
+  const [selected, setSelected] = useState(new Set());
+  const toggle = (j) => {
+    const next = new Set(selected);
+    next.has(j) ? next.delete(j) : next.add(j);
+    setSelected(next);
+  };
+  return html`
+    <div>
+      <div class="panel" style=${{ marginBottom: "14px" }}>
+        <h4>View as — pick your entity's jurisdictions</h4>
+        <div class="tags">
+          ${allJurs.map((j) => html`
+            <span class=${"chip linky" + (selected.has(j) ? " sel" : "")} key=${j} onClick=${() => toggle(j)}>${j}</span>`)}
+          ${selected.size > 0 && html`<span class="chip linky" onClick=${() => setSelected(new Set())}>clear (show all)</span>`}
+        </div>
+        <div class="provline" style=${{ marginTop: "8px" }}>
+          A consolidated CLHEAR obligation is exactly as heavy as the jurisdictions you select: a UK-only
+          entity sees only UK facets; a US+EU+UK group gets the full union. Facets you don't select are
+          crossed out — not silently merged into your build.
+        </div>
+      </div>
+      ${concepts.length === 0 && html`<div class="spin">NO CONCEPTS YET — the nightly consolidation proposes candidates for maintainer review.</div>`}
+      ${concepts.map((c) => html`<${ConceptCard} concept=${c} selected=${selected} key=${c.id} onOpen=${onOpen} />`)}
+    </div>`;
+}
+
 function ObligationRegistry({ onOpen, auth }) {
   const [data, setData] = useState(null);
   const [q, setQ] = useState("");
@@ -640,6 +700,23 @@ function L1Page({ detail }) {
 
 /* ------------------------------------------------------------- layer page */
 
+function L2View({ detail, onOpen, auth }) {
+  const [tab, setTab] = useState("consolidated");
+  const concepts = detail.concepts || [];
+  return html`
+    <div>
+      <div class="tags" style=${{ marginBottom: "14px" }}>
+        <span class=${"chip linky" + (tab === "consolidated" ? " sel" : "")} onClick=${() => setTab("consolidated")}>
+          Consolidated CLHEAR obligations (${concepts.length})</span>
+        <span class=${"chip linky" + (tab === "registry" ? " sel" : "")} onClick=${() => setTab("registry")}>
+          Full clause registry (${detail.counts?.obligations ?? "…"})</span>
+      </div>
+      ${tab === "consolidated"
+        ? html`<${ConsolidatedView} concepts=${concepts} onOpen=${onOpen} />`
+        : html`<${ObligationRegistry} onOpen=${onOpen} auth=${auth} />`}
+    </div>`;
+}
+
 function LayerPage({ slug, auth }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState(null);
@@ -666,7 +743,7 @@ function LayerPage({ slug, auth }) {
           <${StatusBanner} banner=${detail.banner} />
           ${code === "L0" && html`<${L0Page} detail=${detail} />`}
           ${code === "L1" && html`<${L1Page} detail=${detail} />`}
-          ${code === "L2" && html`<${ObligationRegistry} onOpen=${(it) => setOpenItem(it)} auth=${auth} />`}
+          ${code === "L2" && html`<${L2View} detail=${detail} onOpen=${(it) => setOpenItem(it)} auth=${auth} />`}
           ${code === "L4" && detail.items && html`<${L4Panel} items=${detail.items} onOpen=${(it) => setOpenItem(it)} />`}
           ${code === "L8" && html`
             <div class="demobanner" style=${{ borderColor: "rgba(251,113,133,0.4)", background: "rgba(251,113,133,0.06)", color: "var(--rose-400)" }}>

@@ -80,3 +80,38 @@ def seed(engine: Engine) -> dict:
                 conn.execute(sample_profiles.insert().values(id=item["id"], **values))
             counts["profiles"] += 1
     return counts
+
+
+def seed_concepts(engine: Engine) -> dict:
+    """Seed the starter concept set AFTER extraction has run.
+
+    Create-only: existing concepts are never overwritten (maintainer edits and
+    gateway-drafted approvals win over the seed file). Members that don't
+    resolve to a derived obligation are skipped by upsert_concept, so the seed
+    naturally fills in as the corpus grows."""
+    from app.clhear.derived_models import concepts as concepts_t
+    from app.clhear.l2.concepts import upsert_concept
+
+    written = skipped_existing = 0
+    missing: list[str] = []
+    with engine.connect() as conn:
+        existing = {row.id for row in conn.execute(sa.select(concepts_t.c.id))}
+    for item in load("l2_concepts"):
+        if item["id"] in existing:
+            skipped_existing += 1
+            continue
+        result = upsert_concept(
+            engine,
+            concept_id=item["id"],
+            name=item["name"],
+            canonical_statement=item["canonical_statement"],
+            themes=item.get("themes", []),
+            members=item["members"],
+            status="curated",
+            drafted_by="human",
+            approved_by="seed:reviewed-catalog",
+        )
+        if result.get("written"):
+            written += 1
+        missing.extend(result.get("missing_members", []))
+    return {"concepts_written": written, "concepts_existing": skipped_existing, "missing_members": missing}

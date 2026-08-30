@@ -46,6 +46,9 @@ def layer_detail(
         body["registry"] = layer_service.obligation_items(
             engine, q=q, source_key=source_key, status=status, limit=limit, offset=offset
         )
+        from app.clhear.l2.concepts import list_concepts
+
+        body["concepts"] = list_concepts(engine)
     elif code not in ("L0", "L1"):
         body["items"] = layer_service.layer_items(engine, code)
     if code == "L8":

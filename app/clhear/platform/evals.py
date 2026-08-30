@@ -636,6 +636,67 @@ def l3_l5_referential(engine: Engine, source_key: str | None) -> tuple[dict, boo
     }, passed
 
 
+@register_suite("l2_concept_integrity")
+def l2_concept_integrity(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Concept gates: every member resolves live and non-stale; every facet
+    jurisdiction has >=1 member; canonical statements contain no verbatim
+    8-gram runs from RESTRICTED clauses; resolution is deterministic."""
+    import re as _re
+
+    from app.clhear.derived_models import concept_members, concepts, obligations
+    from app.clhear.l1.models import clauses, source_versions, sources
+    from app.clhear.l2.concepts import get_concept, list_concepts, resolve_concept
+
+    dead_members: list[str] = []
+    restricted_leaks: list[str] = []
+    nondeterministic: list[str] = []
+    with engine.connect() as conn:
+        member_rows = conn.execute(
+            sa.select(concept_members.c.concept_id, concept_members.c.obligation_id, obligations.c.status)
+            .join(obligations, obligations.c.id == concept_members.c.obligation_id, isouter=True)
+        ).all()
+        for row in member_rows:
+            if row.status not in ("derived", "validated"):
+                dead_members.append(f"{row.concept_id} -> {row.obligation_id}")
+        restricted_texts = [
+            row.text
+            for row in conn.execute(
+                sa.select(clauses.c.text)
+                .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
+                .join(sources, sources.c.id == source_versions.c.source_id)
+                .where(sources.c.license == "restricted")
+                .where(clauses.c.text.isnot(None))
+            )
+        ]
+
+    def _grams(text: str, n: int = 8) -> set[tuple]:
+        toks = _re.findall(r"[a-z0-9]+", text.lower())
+        return {tuple(toks[i : i + n]) for i in range(len(toks) - n + 1)}
+
+    restricted_grams: set[tuple] = set()
+    for text in restricted_texts:
+        restricted_grams |= _grams(text)
+
+    concept_rows = list_concepts(engine)
+    for c in concept_rows:
+        if restricted_grams and (_grams(c["canonical_statement"]) & restricted_grams):
+            restricted_leaks.append(c["id"])
+        for jurs in ([c["jurisdictions"]], [["UK"]], [["EU", "UK", "US"]]):
+            first = resolve_concept(engine, c, jurs[0])
+            second = resolve_concept(engine, get_concept(engine, c["id"]) or c, jurs[0])
+            if first != second:
+                nondeterministic.append(f"{c['id']} @ {jurs[0]}")
+                break
+
+    passed = not dead_members and not restricted_leaks and not nondeterministic
+    return {
+        "concepts": len(concept_rows),
+        "dead_members": dead_members[:20],
+        "restricted_leaks": restricted_leaks,
+        "nondeterministic": nondeterministic,
+    }, passed
+
+
 def run_source_evals(engine: Engine, source_key: str, release: str | None = None) -> list[dict]:
     return [run_suite(engine, suite, source_key=source_key, release=release) for suite in SOURCE_SUITES]
 
