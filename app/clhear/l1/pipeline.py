@@ -499,13 +499,12 @@ def _persist(
     tree = result.tree
 
     with engine.begin() as conn:
-        # Same publisher version + parser change: replace the tree in place
-        # (source_id, version_label is unique — a second insert would fail).
-        reuse = (
-            force
-            and previous is not None
-            and previous.version_label == result.version_label
-        )
+        # Same publisher version, different bytes/parse (parser upgrades,
+        # normalization drift): ALWAYS replace the tree in place —
+        # (source_id, version_label) is unique and a second insert would fail.
+        # A truly unchanged document never reaches this code (hash short-
+        # circuits upstream), so this branch is safe and idempotent.
+        reuse = previous is not None and previous.version_label == result.version_label
         if reuse:
             version_id = previous.id
             _clear_version_tree(conn, version_id)
