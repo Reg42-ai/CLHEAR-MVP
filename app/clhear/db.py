@@ -21,6 +21,7 @@ _engine: Engine | None = None
 
 
 def make_engine(database_url: str) -> Engine:
+    from app.clhear.community_models import COMMUNITY_SCHEMA
     from app.clhear.derived_models import L2_SCHEMA, L3_SCHEMA, L4_SCHEMA, L5_SCHEMA, L6_SCHEMA
     from app.clhear.l1.models import L1_SCHEMA
 
@@ -36,6 +37,7 @@ def make_engine(database_url: str) -> Engine:
                 L4_SCHEMA: None,
                 L5_SCHEMA: None,
                 L6_SCHEMA: None,
+                COMMUNITY_SCHEMA: None,
             }
         }
     return sa.create_engine(database_url, **kwargs)

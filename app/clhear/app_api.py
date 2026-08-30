@@ -249,6 +249,37 @@ def l1_snapshot(release_id: str, layer: str, app: dict = Depends(require_app)) -
     return {"release_id": release_id, "layer": "L1", "url": uri, "expires_in": 0, "snapshot_uri": uri}
 
 
+@router.post("/blueprint")
+async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dict:
+    """Tailored compliance-program blueprint for one business profile.
+
+    Body: {"attributes": {...L4 attribute schema...}, "activities": [ids]|null}
+    Returns the triggered obligations (real L2, basis-anchored), recommended
+    building blocks, coverage matrix with explicit gaps, and the legal block.
+    """
+    require_scope(app, "read:l1")
+    attributes = request_body.get("attributes")
+    if not isinstance(attributes, dict) or not attributes:
+        raise HTTPException(422, "body.attributes (profile facts) is required — see GET /v1/layers l4 schema")
+    activities = request_body.get("activities")
+    if activities is not None and not isinstance(activities, list):
+        raise HTTPException(422, "body.activities must be a list of activity ids or null for all")
+    from app.clhear import legal
+    from app.clhear.l6.composer import compose
+
+    engine = _engine()
+    latest = release_store.get_latest(engine) or {}
+    result = compose(
+        engine,
+        {"attributes": attributes, "activities": activities},
+        requested_by=app["app_id"],
+        release=latest.get("id", ""),
+    )
+    result["layer_status"] = {"L2": "derived", "L3": "curated", "L5": "curated", "L6": "computed"}
+    result["legal"] = legal.api_legal_block(sorted({c["source_key"] for c in result["coverage"]}))
+    return result
+
+
 @router.get("/releases/{release_id}/{layer}/{resource}")
 def reserved_layer_resource(
     release_id: str,

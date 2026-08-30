@@ -222,6 +222,8 @@ def source_document(key: str, version_label: str | None = None) -> dict:
             .limit(1)
         ).scalar()
 
+    from app.clhear import legal
+
     return {
         "source": key,
         "version": version.version_label,
@@ -232,6 +234,7 @@ def source_document(key: str, version_label: str | None = None) -> dict:
         "s3_uri": version.s3_uri,
         "content_hash": version.content_hash,
         "locked": locked,
+        "attribution": legal.attribution_for(source.key, source.license),
         "amended_refs": amended,
         "total": len(rows),
         "short_name": source.short_name,
@@ -478,6 +481,8 @@ def source_detail(key: str) -> dict:
             .where(sources.c.id != source.id)
             .order_by(sources.c.key)
         ).all()
+    from app.clhear import legal
+
     return {
         "key": source.key,
         "name": source.name,
@@ -487,6 +492,7 @@ def source_detail(key: str) -> dict:
         "jurisdiction": source.jurisdiction,
         "license": source.license,
         "license_ref": source.license_ref,
+        "attribution": legal.attribution_for(source.key, source.license),
         "adapter": source.adapter,
         "canonical_url": source.canonical_url,
         "about": source.about,

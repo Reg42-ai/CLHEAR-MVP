@@ -193,10 +193,18 @@ def handle_publish_release(engine: Engine, gateway: Gateway, envelope: Envelope)
     )
 
 
+def handle_community_write(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """Apply a community op from the read-only web app (single-writer rule)."""
+    from app.clhear import community_writes
+
+    return community_writes.apply_op(engine, envelope.payload)
+
+
 HANDLERS = {
     "DummyChanged": handle_dummy_changed,
     "AdapterRunRequested": handle_adapter_run,
     "PublishReleaseRequested": handle_publish_release,
+    "CommunityWrite": handle_community_write,
     # Later layers: add kinds here. handle_envelope already ignores unknown kinds.
 }
 

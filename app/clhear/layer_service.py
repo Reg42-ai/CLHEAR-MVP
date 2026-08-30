@@ -240,12 +240,18 @@ def obligation_items(
                 .order_by(sa.desc("n"))
             )
         ]
+    items = [_obligation_dict(r) for r in rows]
+    from app.clhear.community import vote_tallies
+
+    tallies = vote_tallies(engine, [i["id"] for i in items])
+    for item in items:
+        item["community"] = tallies.get(item["id"], {"confirm": 0, "dispute": 0, "promotion_suggested": False})
     return {
         "total": total,
         "limit": limit,
         "offset": offset,
         "per_source": per_source,
-        "items": [_obligation_dict(r) for r in rows],
+        "items": items,
     }
 
 

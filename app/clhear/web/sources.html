@@ -4,40 +4,36 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>CLHEAR · Sources Explorer</title>
+<link rel="stylesheet" href="/static/theme.css" />
 <style>
-  /* Reg42 UI language: indigo / pearl / mint tokens (Solon reference) */
-  :root {
-    --indigo-900: #1e1b4b; --indigo-700: #4338ca; --indigo-500: #6366f1; --indigo-100: #e0e7ff;
-    --pearl: #f8f7f4; --pearl-dark: #edeae3;
-    --mint-600: #059669; --mint-100: #d1fae5;
-    --rose-600: #e11d48; --rose-100: #ffe4e6;
-    --amber-600: #d97706; --amber-100: #fef3c7;
-    --ink: #17163a; --muted: #6b6a8a;
+  /* Page-specific styles; shared tokens + chrome live in /static/theme.css.
+     Alias block: legacy token names → dark-glass tokens (identical in both themes;
+     the underlying tokens flip via [data-theme="light"] in theme.css). */
+  :root, [data-theme="light"] {
+    --indigo-900: var(--ind-900); --indigo-700: var(--accent); --indigo-500: var(--ind-500);
+    --indigo-100: rgba(129,140,248,0.16);
+    --pearl: var(--panel); --pearl-dark: var(--edge);
+    --mint-100: rgba(52,211,153,0.14); --rose-100: rgba(251,113,133,0.14); --amber-100: rgba(251,191,36,0.14);
+    --mint-600: var(--ok); --rose-600: var(--bad); --amber-600: var(--warn);
   }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--pearl); color: var(--ink);
-         font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-  header { background: var(--indigo-900); color: var(--indigo-100); padding: 14px 28px;
-           display: flex; align-items: baseline; gap: 14px; position: sticky; top: 0; z-index: 5; }
-  header h1 { font-size: 18px; margin: 0; letter-spacing: 0.04em; cursor: pointer; }
-  header .sub { font-size: 13px; opacity: 0.75; flex: 1; }
-  header input { border: none; border-radius: 8px; padding: 7px 12px; font-size: 13px; width: 340px;
-                 background: rgba(255,255,255,0.12); color: white; }
-  header input::placeholder { color: rgba(255,255,255,0.5); }
-  main { max-width: 1600px; margin: 24px auto; padding: 0 20px; }
-  a { color: var(--indigo-700); text-decoration: none; }
+  main { position: relative; z-index: 1; max-width: 1600px; margin: 24px auto; padding: 0 20px 60px; }
+  header.appbar input {
+    border: 1px solid var(--edge); border-radius: 8px; padding: 7px 12px; font-size: 13px;
+    width: 340px; background: var(--panel-strong); color: var(--ink);
+  }
+  header.appbar input::placeholder { color: var(--faint); }
   .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
   .crumbs a { cursor: pointer; }
-  .family { background: white; border: 1px solid var(--pearl-dark); border-radius: 12px;
+  .family { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px;
             padding: 18px 20px; margin-bottom: 16px; }
   .family h2 { margin: 0 0 4px; font-size: 16px; }
   .charter { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
-  .schedbar { font-size: 12.5px; background: white; border: 1px solid var(--pearl-dark); border-radius: 8px; padding: 8px 12px; margin: 8px 0 16px; }
-  .scheditem { display: inline-block; margin: 2px 10px 2px 0; padding: 2px 8px; border: 1px solid var(--pearl-dark); border-radius: 999px; background: var(--pearl); white-space: nowrap; }
+  .schedbar { font-size: 12.5px; background: var(--panel); border: 1px solid var(--edge); border-radius: 8px; padding: 8px 12px; margin: 8px 0 16px; }
+  .scheditem { display: inline-block; margin: 2px 10px 2px 0; padding: 2px 8px; border: 1px solid var(--edge); border-radius: 999px; background: var(--panel-strong); white-space: nowrap; }
   table.members { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   table.members th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
-                     padding: 6px 8px; border-bottom: 1px solid var(--pearl-dark); }
-  table.members td { padding: 8px; border-bottom: 1px solid var(--pearl); vertical-align: top; }
+                     padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.members td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
   .srcname { cursor: pointer; color: var(--indigo-700); font-weight: 600; }
   .srcname.stub { color: var(--ink); font-weight: 500; cursor: default; }
   .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; }
@@ -46,29 +42,30 @@
   .badge.binding { background: var(--indigo-100); color: var(--indigo-700); }
   .badge.guidance { background: var(--amber-100); color: var(--amber-600); }
   .badge.citator { background: var(--amber-100); color: var(--amber-600); }
-  .badge.root { background: var(--indigo-900); color: white; }
+  .badge.root { background: var(--ind-800); color: var(--ind-100); border: 1px solid var(--edge); }
   .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); }
   .meta-grid { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--muted);
                margin: 8px 0 16px; }
   .meta-grid b { color: var(--ink); font-weight: 600; }
-  .locked { background: var(--rose-100); border-radius: 10px; padding: 14px 18px; color: var(--rose-600);
-            margin-bottom: 12px; font-size: 14px; }
+  .locked { background: var(--rose-100); border: 1px solid rgba(251,113,133,0.35); border-radius: 10px;
+            padding: 14px 18px; color: var(--bad); margin-bottom: 12px; font-size: 14px; }
   .empty { color: var(--muted); text-align: center; padding: 46px 0; }
-  .result { background: white; border: 1px solid var(--pearl-dark); border-radius: 10px;
+  .result { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px;
             padding: 12px 16px; margin-bottom: 10px; cursor: pointer; }
+  .result:hover { border-color: var(--edge-bright); }
   .result .where { font-size: 12.5px; color: var(--muted); margin-bottom: 3px; }
-  .result mark { background: var(--indigo-100); color: var(--indigo-900); border-radius: 3px; padding: 0 2px; }
+  .result mark { background: rgba(129,140,248,0.28); color: var(--ink); border-radius: 3px; padding: 0 2px; }
   .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
-  .tabs button { border: 1px solid var(--pearl-dark); background: white; border-radius: 999px;
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px;
                  padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
-  .tabs button.active { background: var(--indigo-700); border-color: var(--indigo-700); color: white; }
-  .change { background: white; border: 1px solid var(--pearl-dark); border-left: 4px solid var(--mint-600);
+  .tabs button.active { background: linear-gradient(92deg, var(--ind-700), var(--ind-500));
+                        border-color: var(--ind-500); color: white; }
+  .change { background: var(--panel); border: 1px solid var(--edge); border-left: 4px solid var(--ok);
             border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; font-size: 13.5px; }
-  .change .kind-amended { color: var(--amber-600); font-weight: 700; }
-  .change .kind-added { color: var(--mint-600); font-weight: 700; }
+  .change .kind-amended { color: var(--warn); font-weight: 700; }
+  .change .kind-added { color: var(--ok); font-weight: 700; }
   .change .refs { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted);
                   margin-top: 4px; word-break: break-all; }
-  .spin { text-align: center; color: var(--muted); padding: 30px; }
 
   /* ---------------------- current text + provenance ------------------------ */
   .about { font-size: 13px; color: var(--muted); max-width: 860px; margin: -6px 0 12px; }
@@ -79,50 +76,50 @@
   .kindbadge.as_published { background: var(--indigo-100); color: var(--indigo-700); }
   .kindbadge.consolidated { background: var(--mint-100); color: var(--mint-600); }
   .kindbadge.edition { background: var(--amber-100); color: var(--amber-600); }
-  .curbadge { display: flex; align-items: center; gap: 10px; background: white;
-              border: 1px solid var(--pearl-dark); border-left: 4px solid var(--mint-600);
+  .curbadge { display: flex; align-items: center; gap: 10px; background: var(--panel);
+              border: 1px solid var(--edge); border-left: 4px solid var(--ok);
               border-radius: 10px; padding: 10px 16px; margin-bottom: 12px; font-size: 14px; }
   .curbadge b { font-size: 15px; }
-  .curbadge .info { border: 1px solid var(--pearl-dark); background: white; color: var(--muted);
+  .curbadge .info { border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted);
                     border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; margin-left: auto; }
-  .legend { background: white; border: 1px solid var(--pearl-dark); border-radius: 10px;
+  .legend { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px;
             padding: 14px 18px; margin-bottom: 12px; font-size: 13px; }
   .legend dt { margin-top: 8px; }
   .legend dd { margin: 2px 0 0; color: var(--muted); }
-  details.prov { background: white; border: 1px solid var(--pearl-dark); border-radius: 10px;
+  details.prov { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px;
                  padding: 10px 16px; margin-bottom: 12px; font-size: 13.5px; }
-  details.prov summary { cursor: pointer; font-weight: 600; color: var(--indigo-700); }
+  details.prov summary { cursor: pointer; font-weight: 600; color: var(--accent); }
   .prov h4 { margin: 12px 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase;
              letter-spacing: 0.05em; }
   .provrow { display: flex; align-items: center; gap: 10px; padding: 6px 0;
-             border-bottom: 1px solid var(--pearl); }
+             border-bottom: 1px solid var(--edge); }
   .provrow:last-child { border-bottom: none; }
-  .provrow .open { cursor: pointer; color: var(--indigo-700); font-weight: 600; }
-  .provrow.viewing { background: rgba(99,102,241,0.06); border-radius: 6px; }
-  .notice { background: var(--indigo-100); color: var(--indigo-900); border-radius: 10px;
-            padding: 10px 16px; margin-bottom: 12px; font-size: 13.5px; }
+  .provrow .open { cursor: pointer; color: var(--accent); font-weight: 600; }
+  .provrow.viewing { background: rgba(99,102,241,0.10); border-radius: 6px; }
+  .notice { background: rgba(129,140,248,0.12); color: var(--ink); border: 1px solid var(--edge);
+            border-radius: 10px; padding: 10px 16px; margin-bottom: 12px; font-size: 13.5px; }
   .notice a { font-weight: 700; cursor: pointer; }
 
   /* ------------------------- TOC + reader tools --------------------------- */
   .toc { position: sticky; top: 72px; width: 300px; flex-shrink: 0; max-height: calc(100vh - 100px);
-         overflow-x: hidden; overflow-y: auto; background: white; border: 1px solid var(--pearl-dark);
+         overflow-x: hidden; overflow-y: auto; background: var(--panel); border: 1px solid var(--edge);
          border-radius: 12px; padding: 12px 10px; font-size: 12.5px; }
   .toc h3 { margin: 0 0 8px 6px; font-size: 11.5px; color: var(--muted); text-transform: uppercase;
             letter-spacing: 0.06em; }
   .toc a { display: block; padding: 3px 8px; border-radius: 6px; color: var(--ink); cursor: pointer;
            white-space: normal; overflow: visible; overflow-wrap: anywhere; word-break: break-word;
            text-overflow: clip; }
-  .toc a:hover { background: var(--indigo-100); color: var(--indigo-700); }
+  .toc a:hover { background: var(--indigo-100); color: var(--accent); }
   .toc a.lvl1 { font-weight: 700; }
   .toc a.lvl2 { padding-left: 20px; color: var(--muted); }
   .readerbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
-  .readerbar input { border: 1px solid var(--pearl-dark); border-radius: 8px; padding: 6px 12px;
-                     font-size: 13px; width: 300px; background: white; }
+  .readerbar input { border: 1px solid var(--edge); border-radius: 8px; padding: 6px 12px;
+                     font-size: 13px; width: 300px; background: var(--panel-strong); color: var(--ink); }
   .readerbar .count { font-size: 12px; color: var(--muted); }
-  .catchip { border: 1px solid var(--pearl-dark); background: white; border-radius: 999px;
+  .catchip { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px;
              padding: 3px 11px; font-size: 11.5px; cursor: pointer; color: var(--muted); }
-  .catchip.on { border-color: var(--indigo-700); color: var(--indigo-700); font-weight: 700; }
-  .annot { margin: 4px 0 10px; padding: 8px 12px; background: var(--pearl); border-left: 3px solid var(--indigo-500);
+  .catchip.on { border-color: var(--edge-bright); color: var(--accent); font-weight: 700; }
+  .annot { margin: 4px 0 10px; padding: 8px 12px; background: var(--panel-strong); border-left: 3px solid var(--ind-500);
            border-radius: 6px; font: 13px/1.5 -apple-system, "Segoe UI", sans-serif; color: var(--ink); }
   .annot .tag { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;
                 margin-right: 8px; }
@@ -132,21 +129,21 @@
   /* ------------------------------ document view ------------------------------ */
   .layout { display: flex; gap: 22px; align-items: flex-start; }
   .doc {
-    flex: 1; min-width: 0; background: white; border: 1px solid var(--pearl-dark);
+    flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--edge);
     border-radius: 12px; padding: 44px 56px 72px; max-width: 860px;
     font: 16.5px/1.7 Georgia, "Times New Roman", serif; color: var(--ink);
   }
   .n { position: relative; border-radius: 3px; }
-  .n:hover { background: rgba(99, 102, 241, 0.06); box-shadow: 0 1px 0 var(--indigo-500); cursor: pointer; }
+  .n:hover { background: rgba(99, 102, 241, 0.10); box-shadow: 0 1px 0 var(--ind-500); cursor: pointer; }
   .n.amended { background: var(--amber-100); }
-  .n.selected { outline: 2px solid var(--indigo-500); outline-offset: 2px; }
+  .n.selected { outline: 2px solid var(--ind-500); outline-offset: 2px; }
   .n.title { text-align: center; font-weight: 700; margin: 6px 0; }
   .n.title.docfirst { font-size: 17px; letter-spacing: 0.01em; }
   .n.part { margin: 34px 0 10px; text-align: center; font-family: -apple-system, "Segoe UI", sans-serif;
-            font-size: 19px; font-weight: 700; letter-spacing: 0.02em; color: var(--indigo-900); }
+            font-size: 19px; font-weight: 700; letter-spacing: 0.02em; color: var(--ink); }
   .n.chapter { margin: 30px 0 8px; text-align: center; }
   .n.chapter .lab { display: block; font-family: -apple-system, "Segoe UI", sans-serif;
-                    font-size: 15px; letter-spacing: 0.14em; font-weight: 600; color: var(--indigo-700); }
+                    font-size: 15px; letter-spacing: 0.14em; font-weight: 600; color: var(--accent); }
   .n.chapter .hd { display: block; font-size: 17px; font-weight: 700; font-style: italic; }
   .n.group { margin: 22px 0 6px; text-align: center; }
   .n.group .lab { display: block; font-size: 13.5px; letter-spacing: 0.12em; font-weight: 600; color: var(--muted); }
@@ -174,82 +171,78 @@
   .hd { font-weight: 600; }
   .float {
     position: absolute; top: -11px; right: 0; z-index: 2;
-    font: 11px/1.3 ui-monospace, Menlo, monospace; background: var(--indigo-900); color: var(--indigo-100);
-    border-radius: 6px; padding: 3px 8px; pointer-events: none; white-space: nowrap;
+    font: 11px/1.3 ui-monospace, Menlo, monospace; background: var(--ind-800); color: var(--ind-100);
+    border: 1px solid var(--edge); border-radius: 6px; padding: 3px 8px;
+    pointer-events: none; white-space: nowrap;
   }
   .inspector {
     position: sticky; top: 72px; width: 380px; flex-shrink: 0;
     max-height: calc(100vh - 100px); overflow-x: hidden; overflow-y: auto;
-    background: white; border: 1px solid var(--pearl-dark); border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 12px;
     padding: 16px 18px; font-size: 13px;
   }
   .inspector h3 { margin: 0 0 8px; font-size: 14px; }
   .inspector dt { color: var(--muted); font-size: 11.5px; margin-top: 8px; }
   .inspector dd { margin: 0; word-break: break-word; overflow-wrap: anywhere; }
-  .inspector pre { background: var(--pearl); border-radius: 8px; padding: 8px 10px;
+  .inspector pre { background: var(--panel-strong); border-radius: 8px; padding: 8px 10px;
                    font-size: 11.5px; overflow: auto; max-height: min(40vh, 480px); white-space: pre-wrap;
                    overflow-wrap: anywhere; }
   .inspector .contains { max-height: min(40vh, 480px); overflow: auto; white-space: pre-wrap;
                          overflow-wrap: anywhere; }
-  .inspector button { border: 1px solid var(--indigo-700); color: var(--indigo-700); background: white;
+  .inspector button { border: 1px solid var(--edge-bright); color: var(--accent); background: var(--panel);
                       border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 12px; margin-top: 10px; }
   .mode { margin-bottom: 12px; }
 
   /* ------------------------------ activity feed ------------------------------ */
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; }
-  .dot.success { background: var(--mint-600); }
-  .dot.warning { background: var(--amber-600); }
-  .dot.failure { background: var(--rose-600); }
-  .dot.info { background: var(--indigo-100); border: 1px solid var(--indigo-500); }
-  .dot.running { background: var(--indigo-500); animation: pulse 1.2s infinite; }
+  .dot.success { background: var(--ok); }
+  .dot.warning { background: var(--warn); }
+  .dot.failure { background: var(--bad); }
+  .dot.info { background: var(--indigo-100); border: 1px solid var(--ind-500); }
+  .dot.running { background: var(--ind-500); animation: pulse 1.2s infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
   .dayhead { margin: 20px 0 8px; font-size: 12.5px; font-weight: 700; color: var(--muted);
              text-transform: uppercase; letter-spacing: 0.06em; }
-  .act { background: white; border: 1px solid var(--pearl-dark); border-radius: 10px;
+  .act { background: var(--panel); border: 1px solid var(--edge); border-radius: 10px;
          padding: 10px 14px; margin-bottom: 8px; font-size: 13.5px; display: flex;
          align-items: flex-start; gap: 8px; }
   .act .fleetbadge { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
-                     background: var(--pearl); border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+                     background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 6px;
+                     padding: 2px 8px; white-space: nowrap; }
   .act .when { color: var(--muted); font-size: 12px; white-space: nowrap; margin-left: auto; }
   .act .body { flex: 1; min-width: 0; }
   .act .links a { margin-right: 10px; cursor: pointer; font-size: 12.5px; }
   .act details { margin-top: 4px; }
-  .act details pre { background: var(--pearl); border-radius: 8px; padding: 8px 10px; font-size: 11.5px;
+  .act details pre { background: var(--panel-strong); border-radius: 8px; padding: 8px 10px; font-size: 11.5px;
                      overflow: auto; max-height: 220px; }
   .filters { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-  .filters button { border: 1px solid var(--pearl-dark); background: white; border-radius: 999px;
+  .filters button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px;
                     padding: 4px 12px; font-size: 12px; cursor: pointer; color: var(--muted); }
-  .filters button.on { border-color: var(--indigo-700); color: var(--indigo-700); font-weight: 600; }
+  .filters button.on { border-color: var(--edge-bright); color: var(--accent); font-weight: 600; }
 
   /* ------------------------------ fleet view -------------------------------- */
-  table.fleet { width: 100%; border-collapse: collapse; font-size: 13px; background: white;
-                border: 1px solid var(--pearl-dark); border-radius: 12px; overflow: hidden; }
+  table.fleet { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--panel);
+                border: 1px solid var(--edge); border-radius: 12px; overflow: hidden; }
   table.fleet th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11.5px;
                    text-transform: uppercase; letter-spacing: 0.05em; padding: 10px 12px;
-                   border-bottom: 1px solid var(--pearl-dark); background: var(--pearl); }
-  table.fleet td { padding: 10px 12px; border-bottom: 1px solid var(--pearl); vertical-align: middle; }
+                   border-bottom: 1px solid var(--edge); background: var(--panel-strong); }
+  table.fleet td { padding: 10px 12px; border-bottom: 1px solid var(--edge); vertical-align: middle; }
   .stagechip { display: inline-block; border-radius: 6px; padding: 2px 8px; font-size: 11px;
                font-family: ui-monospace, Menlo, monospace; margin-right: 4px; margin-bottom: 3px;
-               background: var(--pearl); color: var(--muted); }
-  .stagechip.success { background: var(--mint-100); color: var(--mint-600); }
-  .stagechip.warning { background: var(--amber-100); color: var(--amber-600); }
-  .stagechip.failure { background: var(--rose-100); color: var(--rose-600); }
-  .runlink { cursor: pointer; color: var(--indigo-700); font-weight: 600; }
-  .dagwrap { background: white; border: 1px solid var(--pearl-dark); border-radius: 12px;
+               background: var(--panel-strong); color: var(--muted); }
+  .stagechip.success { background: var(--mint-100); color: var(--ok); }
+  .stagechip.warning { background: var(--amber-100); color: var(--warn); }
+  .stagechip.failure { background: var(--rose-100); color: var(--bad); }
+  .runlink { cursor: pointer; color: var(--accent); font-weight: 600; }
+  .dagwrap { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px;
              padding: 18px 20px; margin-bottom: 16px; }
   .dagwrap h3 { margin: 0 0 4px; font-size: 15px; }
-  .playbtn { border: 1px solid var(--indigo-700); color: var(--indigo-700); background: white;
+  .playbtn { border: 1px solid var(--edge-bright); color: var(--accent); background: var(--panel);
              border-radius: 999px; padding: 5px 16px; cursor: pointer; font-size: 12.5px; }
 </style>
 </head>
 <body>
-<header>
-  <h1 id="home">CLHEAR</h1>
-  <a href="/" style="color: rgba(255,255,255,0.75); font-size: 12.5px; text-decoration: none; border: 1px solid rgba(255,255,255,0.25); border-radius: 999px; padding: 3px 12px; white-space: nowrap;">◀ the Stack</a>
-  <span class="sub">Sources Explorer — L1 · verbatim regulatory ground truth</span>
-  <input id="q" placeholder="Search verbatim clause text (e.g. customer due diligence)…" />
-</header>
-<main id="root"></main>
+<div id="root"></div>
 
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
@@ -275,10 +268,20 @@ function initialView() {
   return { page: "library" };
 }
 
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("clhear_theme", theme);
+  }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
 function App() {
   const [view, setView] = useState(initialView);
   const [families, setFamilies] = useState(null);
   const [query, setQuery] = useState("");
+  const [theme, toggleTheme] = useTheme();
 
   useEffect(() => { api("/api/clhear/sources").then(setFamilies).catch(() => setFamilies([])); }, []);
   useEffect(() => {
@@ -307,22 +310,40 @@ function App() {
     setView({ page });
   };
 
-  if (families === null) return html`<div class="spin">Loading corpus…</div>`;
-  const tabs = html`
-    <div class="tabs">
-      <button class=${view.page === "library" ? "active" : ""} onClick=${() => go("library")}>Library</button>
-      <button class=${view.page === "activity" ? "active" : ""} onClick=${() => go("activity")}>Activity</button>
-      <button class=${view.page === "fleet" ? "active" : ""} onClick=${() => go("fleet")}>Fleet</button>
-      <button class=${view.page === "changes" ? "active" : ""} onClick=${() => go("changes")}>Change events</button>
-      <button class=${view.page === "evidence" ? "active" : ""} onClick=${() => go("evidence")}>Evidence</button>
+  let page;
+  if (families === null) page = html`<div class="spin">Loading corpus…</div>`;
+  else {
+    const tabs = html`
+      <div class="tabs">
+        <button class=${view.page === "library" ? "active" : ""} onClick=${() => go("library")}>Library</button>
+        <button class=${view.page === "activity" ? "active" : ""} onClick=${() => go("activity")}>Activity</button>
+        <button class=${view.page === "fleet" ? "active" : ""} onClick=${() => go("fleet")}>Fleet</button>
+        <button class=${view.page === "changes" ? "active" : ""} onClick=${() => go("changes")}>Change events</button>
+        <button class=${view.page === "evidence" ? "active" : ""} onClick=${() => go("evidence")}>Evidence</button>
+      </div>`;
+    if (view.page === "source") page = html`<${SourceView} sourceKey=${view.key} back=${() => go("library")} openRef=${view.ref} openNodeId=${view.nodeId} />`;
+    else if (view.page === "search") page = html`<${SearchView} q=${query} open=${openSource} back=${() => go("library")} />`;
+    else if (view.page === "changes") page = html`<div>${tabs}<${ChangesView} open=${(key) => openSource(key)} /></div>`;
+    else if (view.page === "activity") page = html`<div>${tabs}<${ActivityView} open=${openSource} /></div>`;
+    else if (view.page === "fleet") page = html`<div>${tabs}<${FleetView} open=${openSource} /></div>`;
+    else if (view.page === "evidence") page = html`<div>${tabs}<${EvidenceIndex} families=${families} open=${(key) => openSource(key)} /></div>`;
+    else page = html`<div>${tabs}<${Library} families=${families} open=${(key) => openSource(key)} /></div>`;
+  }
+  return html`
+    <div>
+      <header class="appbar">
+        <div class="wordmark" id="home">
+          <b>CLHEAR</b><span>sources explorer</span>
+        </div>
+        <input id="q" placeholder="Search verbatim clause text (e.g. customer due diligence)…" />
+        <div class="spacer"></div>
+        <a class="navlink" href="/">Stack</a>
+        <span class="navlink active">Sources Explorer</span>
+        <a class="navlink" href="/review">Review</a>
+        <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+      </header>
+      <main>${page}</main>
     </div>`;
-  if (view.page === "source") return html`<${SourceView} sourceKey=${view.key} back=${() => go("library")} openRef=${view.ref} openNodeId=${view.nodeId} />`;
-  if (view.page === "search") return html`<${SearchView} q=${query} open=${openSource} back=${() => go("library")} />`;
-  if (view.page === "changes") return html`<div>${tabs}<${ChangesView} open=${(key) => openSource(key)} /></div>`;
-  if (view.page === "activity") return html`<div>${tabs}<${ActivityView} open=${openSource} /></div>`;
-  if (view.page === "fleet") return html`<div>${tabs}<${FleetView} open=${openSource} /></div>`;
-  if (view.page === "evidence") return html`<div>${tabs}<${EvidenceIndex} families=${families} open=${(key) => openSource(key)} /></div>`;
-  return html`<div>${tabs}<${Library} families=${families} open=${(key) => openSource(key)} /></div>`;
 }
 
 function Library({ families, open }) {
@@ -1086,7 +1107,7 @@ function JobCanvas({ job, selectRun, selectedRun }) {
             return html`<path key=${i} d=${edgePath(from, to)} fill="none"
               stroke=${on ? "var(--indigo-500)" : "var(--pearl-dark)"} stroke-width="1.8" />`;
           })}
-          <circle cx="32" cy=${midY} r="13" fill="var(--indigo-900)" />
+          <circle cx="32" cy=${midY} r="13" fill="var(--ind-700)" />
           <text x="32" y=${midY + 4} text-anchor="middle" font-size="11" fill="white">▶</text>
           <text x="32" y=${midY + 30} text-anchor="middle" font-size="10.5" fill="var(--muted)">job start</text>
           ${allTasks.map((task) => {
@@ -1095,7 +1116,7 @@ function JobCanvas({ job, selectRun, selectedRun }) {
             return html`
               <g key=${task.run_id} style=${{ cursor: "pointer" }} onClick=${() => selectRun(task.run_id)}>
                 <rect x=${p.x} y=${p.y - H / 2} width=${W} height=${H} rx="10"
-                      fill="white" stroke=${statusColor(task)} stroke-width=${selected ? 3.5 : 2.2} />
+                      fill="var(--canvas)" stroke=${statusColor(task)} stroke-width=${selected ? 3.5 : 2.2} />
                 <circle cx=${p.x + 14} cy=${p.y - H / 2 + 15} r="4.5" fill=${statusColor(task)} />
                 <text x=${p.x + 26} y=${p.y - H / 2 + 19}
                       font-family="ui-monospace, Menlo, monospace" font-size="11" fill="var(--muted)">
@@ -1167,7 +1188,7 @@ function RunDag({ run, close, meta }) {
                   <path d=${`M ${x + W / 2} ${H - 6} C ${x + W / 2 - 40} ${H + 28}, ${x - GAP - W / 2 + 40} ${H + 28}, ${x - GAP - W / 2} ${H - 6}`}
                         fill="none" stroke="var(--amber-600)" stroke-width="1.5" stroke-dasharray="4 3" />`}
                 <rect x=${x} y=${H / 2 - 32} width=${W} height="64" rx="10"
-                      fill="white" stroke=${color(s, i)} stroke-width="2.5" />
+                      fill="var(--canvas)" stroke=${color(s, i)} stroke-width="2.5" />
                 <text x=${x + W / 2} y=${H / 2 - 8} text-anchor="middle"
                       font-family="ui-monospace, Menlo, monospace" font-size="13" font-weight="700"
                       fill="var(--ink)">${s.stage}${s.attempt > 1 ? ` #${s.attempt}` : ""}</text>
