@@ -321,17 +321,17 @@ def search(
         return results
 
 
-_family_cache: dict[int, str] = {}
-
-
 def _family_key(conn: Connection, family_id: int) -> str:
-    if family_id not in _family_cache:
-        from app.clhear.l1.models import source_families
+    # No module-level cache: numeric family ids restart per database, so a
+    # process-wide id->key map goes stale across DBs (it broke the scope
+    # filter whenever the process had seen another corpus first, e.g. the
+    # test suite or a worker switching snapshots). One indexed-PK lookup per
+    # search result is cheap; correctness wins.
+    from app.clhear.l1.models import source_families
 
-        _family_cache[family_id] = conn.execute(
-            sa.select(source_families.c.key).where(source_families.c.id == family_id)
-        ).scalar() or ""
-    return _family_cache[family_id]
+    return conn.execute(
+        sa.select(source_families.c.key).where(source_families.c.id == family_id)
+    ).scalar() or ""
 
 
 def _result_dict(conn: Connection, row, query: str, score: float) -> dict:
