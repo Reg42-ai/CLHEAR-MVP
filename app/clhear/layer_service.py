@@ -53,11 +53,15 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
             "clauses_public": _count(conn, clauses, clauses.c.public_ok.is_(True)),
             "change_events": _count(conn, change_events),
         }
+        from app.clhear.derived_models import concept_members, concepts
+
         out["L2"] = {
             "obligations": _count(conn, obligations, obligations.c.status.in_(("derived", "validated"))),
             "validated": _count(conn, obligations, obligations.c.status == "validated"),
             "derived_unreviewed": _count(conn, obligations, obligations.c.status == "derived"),
             "stale": _count(conn, obligations, obligations.c.status == "stale"),
+            "concepts": _count(conn, concepts, concepts.c.status != "proposed"),
+            "consolidated_obligations": _count(conn, concept_members),
         }
         out["L3"] = {"building_blocks": _count(conn, blocks_t)}
         out["L4"] = {
@@ -416,6 +420,40 @@ def _anchor_nodes(engine: Engine, anchor: dict, detail: str = "") -> list[dict]:
 
 
 def lineage(engine: Engine, layer: str, item_id: str) -> dict:
+    if layer == "L2" and item_id.startswith("CON:"):
+        from app.clhear.l2.concepts import get_concept
+
+        concept = get_concept(engine, item_id)
+        if concept is None:
+            raise KeyError(item_id)
+        facet_nodes = []
+        by_jur: dict[str, list[dict]] = {}
+        for m in concept.get("members", []):
+            by_jur.setdefault(m["jurisdiction"] or "unspecified", []).append(m)
+        for jur, members in sorted(by_jur.items()):
+            children = []
+            for m in members:
+                row = _obligation_row(engine, m["obligation_id"])
+                if row is not None:
+                    node = _obligation_node(engine, row)
+                    if m.get("note"):
+                        node["detail"] = f"{jur} facet — {m['note']}"
+                    children.append(node)
+            facet_nodes.append(
+                _node("L2", "jurisdiction_facet", f"{item_id}/{jur}", f"{jur} facet",
+                      f"{len(children)} clause-anchored obligation(s)", children=children)
+            )
+        return _node(
+            "L2", "concept", concept["id"], concept["name"],
+            concept["canonical_statement"],
+            meta={"status": concept["status"], "jurisdictions": concept["jurisdictions"],
+                  "drafted_by": concept["drafted_by"], "approved_by": concept["approved_by"],
+                  "derivation": {"status": concept["status"],
+                                 "method": "consolidation overlay: members stay clause-anchored; "
+                                           "resolution is parameterized by your jurisdiction set"}},
+            children=facet_nodes,
+        )
+
     if layer == "L2":
         row = _obligation_row(engine, item_id)
         if row is None:

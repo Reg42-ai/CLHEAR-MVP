@@ -51,6 +51,10 @@ def _decide(proposal_id: str, approver: str, action) -> dict:
         from app.clhear import community
 
         community.sync_submission_from_proposal(engine, decided)
+    if decided.get("kind") == "l2_concept" and decided.get("status") == "approved":
+        from app.clhear.l2.consolidate import apply_approved_concept
+
+        decided["concept"] = apply_approved_concept(engine, decided)
     return decided
 
 

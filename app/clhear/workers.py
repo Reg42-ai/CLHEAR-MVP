@@ -142,15 +142,26 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
     )
     try:
         from app.clhear import curated
+        from app.clhear.l2.concepts import flag_stale_concepts
+        from app.clhear.l2.consolidate import draft_and_propose
         from app.clhear.l2.extract import run_extraction
 
         seeded = curated.seed(engine)
         extraction = run_extraction(engine)
         stack_recorder.stage("extract", **{k: v for k, v in extraction.items() if isinstance(v, int)})
+        concepts_seed = curated.seed_concepts(engine)
+        flagged = flag_stale_concepts(engine)
+        consolidation = draft_and_propose(engine, gateway)
+        stack_recorder.stage("consolidate", proposed=consolidation["proposed"], flagged=len(flagged))
         l1_evals.run_suite(engine, "l2_basis_integrity", release=job_id)
         l1_evals.run_suite(engine, "l2_extraction_quality", release=job_id)
+        l1_evals.run_suite(engine, "l2_concept_integrity", release=job_id)
         l1_evals.run_suite(engine, "l3_l5_referential", release=job_id)
-        stack_recorder.finish("succeeded", {"extraction": extraction, "curated": seeded})
+        stack_recorder.finish(
+            "succeeded",
+            {"extraction": extraction, "curated": seeded, "concepts": concepts_seed,
+             "consolidation": consolidation, "flagged_concepts": flagged},
+        )
     except Exception as exc:
         log.exception("stack refresh failed for %s", adapter_key)
         stack_recorder.finish("failed", {"error": str(exc)[:400]})

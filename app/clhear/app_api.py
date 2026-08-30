@@ -251,30 +251,87 @@ def l1_snapshot(release_id: str, layer: str, app: dict = Depends(require_app)) -
 
 @router.post("/blueprint")
 async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dict:
-    """Tailored compliance-program blueprint for one business profile.
+    """Tailored compliance-program blueprint.
 
-    Body: {"attributes": {...L4 attribute schema...}, "activities": [ids]|null}
-    Returns the triggered obligations (real L2, basis-anchored), recommended
-    building blocks, coverage matrix with explicit gaps, and the legal block.
+    Body (single entity): {"attributes": {...L4 schema...}, "activities": [ids]|null}
+    Body (group):         {"entities": [{"name", "attributes", "activities"?}, ...]}
+
+    Consolidated CLHEAR obligations resolve per jurisdiction set: a group with
+    US+EU+UK entities gets the full union (common core + per-jurisdiction
+    deltas); an EU+UK-only group gets a strictly lighter resolution; each
+    entity additionally gets its own single-jurisdiction view. The claim scope
+    is always explicit — never "global compliance".
     """
     require_scope(app, "read:l1")
+    from app.clhear import legal
+    from app.clhear.l2.concepts import resolve_all
+    from app.clhear.l6.composer import compose
+
+    engine = _engine()
+    latest = release_store.get_latest(engine) or {}
+    release = latest.get("id", "")
+
+    entities = request_body.get("entities")
+    if entities is not None:
+        if not isinstance(entities, list) or not entities or not all(
+            isinstance(e, dict) and isinstance(e.get("attributes"), dict) for e in entities
+        ):
+            raise HTTPException(422, "body.entities must be a non-empty list of {name, attributes[, activities]}")
+        entity_results = []
+        union_jurisdictions: set[str] = set()
+        all_sources: set[str] = set()
+        for entity in entities:
+            bp = compose(
+                engine,
+                {"attributes": entity["attributes"], "activities": entity.get("activities")},
+                requested_by=f"{app['app_id']}:{entity.get('name', 'entity')}",
+                release=release,
+            )
+            jurs = list(entity["attributes"].get("jurisdictions", []))
+            union_jurisdictions.update(jurs)
+            all_sources.update(c["source_key"] for c in bp["coverage"])
+            entity_results.append(
+                {
+                    "name": entity.get("name", "entity"),
+                    "jurisdictions": jurs,
+                    "blueprint": bp,
+                    # Per-entity view: only this entity's facets — never heavier
+                    # than its own jurisdictions require.
+                    "consolidated": [r for r in resolve_all(engine, jurs) if r.get("resolvable")],
+                }
+            )
+        group_resolutions = [r for r in resolve_all(engine, sorted(union_jurisdictions)) if r.get("resolvable")]
+        return {
+            "mode": "group",
+            "release": release,
+            "engine_version": entity_results[0]["blueprint"]["engine_version"] if entity_results else "",
+            "group": {
+                "jurisdictions": sorted(union_jurisdictions),
+                "consolidated": group_resolutions,
+                "note": "Group view is the UNION of entity jurisdictions: common core + per-jurisdiction "
+                "deltas. Each entity's own view below is intentionally lighter — build to the entity "
+                "view per entity, to the group view for shared platforms.",
+            },
+            "entities": entity_results,
+            "layer_status": {"L2": "derived", "L3": "curated", "L5": "curated", "L6": "computed"},
+            "legal": legal.api_legal_block(sorted(all_sources)),
+        }
+
     attributes = request_body.get("attributes")
     if not isinstance(attributes, dict) or not attributes:
         raise HTTPException(422, "body.attributes (profile facts) is required — see GET /v1/layers l4 schema")
     activities = request_body.get("activities")
     if activities is not None and not isinstance(activities, list):
         raise HTTPException(422, "body.activities must be a list of activity ids or null for all")
-    from app.clhear import legal
-    from app.clhear.l6.composer import compose
-
-    engine = _engine()
-    latest = release_store.get_latest(engine) or {}
     result = compose(
         engine,
         {"attributes": attributes, "activities": activities},
         requested_by=app["app_id"],
-        release=latest.get("id", ""),
+        release=release,
     )
+    result["consolidated"] = [
+        r for r in resolve_all(engine, list(attributes.get("jurisdictions", []))) if r.get("resolvable")
+    ]
     result["layer_status"] = {"L2": "derived", "L3": "curated", "L5": "curated", "L6": "computed"}
     result["legal"] = legal.api_legal_block(sorted({c["source_key"] for c in result["coverage"]}))
     return result
