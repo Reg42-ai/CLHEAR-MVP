@@ -124,6 +124,8 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
         from app.clhear.platform import evals as l1_evals
 
         l1_evals.run_suite(engine, "l1_completeness", release=job_id)
+        schedule_kept = l1_evals.run_suite(engine, "l1_schedule_kept", release=job_id)
+        _put_schedule_metric(schedule_kept["scores"].get("missed_count", 0))
         for _entry, adapter in plan:
             key = adapter.meta().source_key
             try:
@@ -132,7 +134,41 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
                 log.exception("source evals failed for %s", key)
     except Exception:
         log.exception("fleet evals failed for %s", adapter_key)
+
+    # Stack refresh: L1 changes flow into the derived layers on the same
+    # nightly job (L6/L7 are computed on read, so the stack is now current).
+    stack_recorder = pipeline.RunRecorder(
+        engine, "l2.extract", "schedule", {"source": f"stack-refresh-{adapter_key}", "job_id": job_id}
+    )
+    try:
+        from app.clhear import curated
+        from app.clhear.l2.extract import run_extraction
+
+        seeded = curated.seed(engine)
+        extraction = run_extraction(engine)
+        stack_recorder.stage("extract", **{k: v for k, v in extraction.items() if isinstance(v, int)})
+        l1_evals.run_suite(engine, "l2_basis_integrity", release=job_id)
+        l1_evals.run_suite(engine, "l2_extraction_quality", release=job_id)
+        l1_evals.run_suite(engine, "l3_l5_referential", release=job_id)
+        stack_recorder.finish("succeeded", {"extraction": extraction, "curated": seeded})
+    except Exception as exc:
+        log.exception("stack refresh failed for %s", adapter_key)
+        stack_recorder.finish("failed", {"error": str(exc)[:400]})
+
     return {"adapter": adapter_key, "job_id": job_id, "ran": len(plan), "statuses": statuses, "failures": failures}
+
+
+def _put_schedule_metric(missed_count: int) -> None:
+    """CLHEAR/ScheduleMissedSources: alarmed in CloudWatch when > 0."""
+    try:
+        import boto3
+
+        boto3.client("cloudwatch", region_name=get_settings().aws_region).put_metric_data(
+            Namespace="CLHEAR",
+            MetricData=[{"MetricName": "ScheduleMissedSources", "Value": float(missed_count), "Unit": "Count"}],
+        )
+    except Exception:
+        log.exception("could not publish ScheduleMissedSources metric")
 
 
 def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
@@ -157,10 +193,18 @@ def handle_publish_release(engine: Engine, gateway: Gateway, envelope: Envelope)
     )
 
 
+def handle_community_write(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """Apply a community op from the read-only web app (single-writer rule)."""
+    from app.clhear import community_writes
+
+    return community_writes.apply_op(engine, envelope.payload)
+
+
 HANDLERS = {
     "DummyChanged": handle_dummy_changed,
     "AdapterRunRequested": handle_adapter_run,
     "PublishReleaseRequested": handle_publish_release,
+    "CommunityWrite": handle_community_write,
     # Later layers: add kinds here. handle_envelope already ignores unknown kinds.
 }
 

@@ -39,24 +39,59 @@ def list_proposals(status: str | None = None) -> list[dict]:
     return l0_proposals.list_proposals(get_engine(), status=status)
 
 
-@router.post("/api/clhear/proposals/{proposal_id}/approve")
-def approve_proposal(proposal_id: str, approver: str = Depends(require_maintainer)) -> dict:
+def _decide(proposal_id: str, approver: str, action) -> dict:
+    engine = get_engine()
     try:
-        return l0_proposals.approve(get_engine(), proposal_id, approver)
+        decided = action(engine, proposal_id, approver)
     except KeyError:
         raise HTTPException(status_code=404, detail="proposal not found")
     except l0_proposals.ProposalNotPending as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    if str(decided.get("kind", "")).startswith("community_"):
+        from app.clhear import community
+
+        community.sync_submission_from_proposal(engine, decided)
+    return decided
+
+
+@router.post("/api/clhear/proposals/{proposal_id}/approve")
+def approve_proposal(proposal_id: str, approver: str = Depends(require_maintainer)) -> dict:
+    return _decide(proposal_id, approver, l0_proposals.approve)
 
 
 @router.post("/api/clhear/proposals/{proposal_id}/reject")
 def reject_proposal(proposal_id: str, approver: str = Depends(require_maintainer)) -> dict:
-    try:
-        return l0_proposals.reject(get_engine(), proposal_id, approver)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="proposal not found")
-    except l0_proposals.ProposalNotPending as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+    return _decide(proposal_id, approver, l0_proposals.reject)
+
+
+@router.post("/api/clhear/obligations/{obligation_id:path}/validate")
+def validate_obligation(obligation_id: str, approver: str = Depends(require_maintainer)) -> dict:
+    """Named-human gate: promotion to `validated` is always a recorded
+    maintainer action — community votes only SUGGEST it."""
+    from datetime import datetime, timezone
+
+    import sqlalchemy as sa
+
+    from app.clhear.derived_models import obligations
+    from app.clhear.platform import events as l0_events
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        row = conn.execute(sa.select(obligations).where(obligations.c.id == obligation_id)).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="obligation not found")
+        if row.status not in ("derived",):
+            raise HTTPException(status_code=409, detail=f"obligation is {row.status}, only derived can be validated")
+        conn.execute(
+            obligations.update()
+            .where(obligations.c.id == obligation_id)
+            .values(status="validated", validated_by=approver, validated_at=datetime.now(timezone.utc))
+        )
+        l0_events.emit(
+            conn, layer="l2", kind="ObligationValidated", subject_ref=obligation_id,
+            payload={"approver": approver}, producer="l2.review",
+        )
+    return {"id": obligation_id, "status": "validated", "validated_by": approver}
 
 
 @router.get("/review", response_class=HTMLResponse)

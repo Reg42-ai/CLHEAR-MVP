@@ -4,74 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>CLHEAR · The Stack</title>
+<link rel="stylesheet" href="/static/theme.css" />
 <style>
-  /* ================= Reg42 design language — futurist dark-first =================
-     Indigo / pearl / mint tokens (Solon reference) pushed into a glass +
-     luminous-edge system. Light "pearl" theme via [data-theme=light]. */
-  :root {
-    --ind-950: #07071a; --ind-900: #0c0c26; --ind-800: #14143a; --ind-700: #4338ca;
-    --ind-500: #6366f1; --ind-400: #818cf8; --ind-200: #c7d2fe; --ind-100: #e0e7ff;
-    --mint-400: #34d399; --mint-600: #059669;
-    --amber-400: #fbbf24; --amber-600: #d97706;
-    --rose-400: #fb7185; --rose-600: #e11d48;
-    --canvas: var(--ind-950);
-    --panel: rgba(255,255,255,0.035);
-    --panel-strong: rgba(255,255,255,0.06);
-    --edge: rgba(129,140,248,0.22);
-    --edge-bright: rgba(129,140,248,0.55);
-    --ink: #eef0ff; --muted: #8b8fb8; --faint: #565a85;
-    --accent: var(--ind-400);
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    --glow: 0 0 24px rgba(99,102,241,0.18);
-  }
-  [data-theme="light"] {
-    --canvas: #f6f5f1;
-    --panel: rgba(255,255,255,0.72);
-    --panel-strong: #ffffff;
-    --edge: #e3e1d8;
-    --edge-bright: #c7d2fe;
-    --ink: #17163a; --muted: #6b6a8a; --faint: #a5a3c0;
-    --glow: 0 4px 20px rgba(30,27,75,0.07);
-  }
-  * { box-sizing: border-box; }
+  /* Page-specific styles; shared tokens + chrome live in /static/theme.css. */
   html { scroll-behavior: smooth; }
-  body {
-    margin: 0; background: var(--canvas); color: var(--ink);
-    font: 15px/1.55 "Inter", -apple-system, "Segoe UI", Roboto, Helvetica, sans-serif;
-    min-height: 100vh;
-  }
-  body::before { /* ambient glow field */
-    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
-    background:
-      radial-gradient(900px 500px at 80% -10%, rgba(99,102,241,0.13), transparent 60%),
-      radial-gradient(700px 500px at 10% 110%, rgba(5,150,105,0.08), transparent 60%);
-  }
-  [data-theme="light"] body::before { opacity: 0.5; }
-  a { color: var(--accent); text-decoration: none; }
-  ::selection { background: rgba(99,102,241,0.35); }
-
-  /* ------------------------------------------------------------- chrome */
-  header {
-    position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 18px;
-    padding: 13px 26px; backdrop-filter: blur(14px);
-    background: color-mix(in srgb, var(--canvas) 72%, transparent);
-    border-bottom: 1px solid var(--edge);
-  }
-  .wordmark { display: flex; align-items: baseline; gap: 10px; cursor: pointer; user-select: none; }
-  .wordmark b {
-    font-size: 17px; letter-spacing: 0.22em; font-weight: 800;
-    background: linear-gradient(90deg, var(--ind-200), var(--ind-400) 60%, var(--mint-400));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  [data-theme="light"] .wordmark b { background: linear-gradient(90deg, var(--ind-700), var(--ind-500)); -webkit-background-clip: text; background-clip: text; }
-  .wordmark span { font-size: 11.5px; color: var(--muted); letter-spacing: 0.08em; }
-  .spacer { flex: 1; }
-  .navlink { font-size: 13px; color: var(--muted); padding: 6px 12px; border-radius: 8px; cursor: pointer; }
-  .navlink:hover { color: var(--ink); background: var(--panel-strong); }
-  .themebtn {
-    border: 1px solid var(--edge); background: var(--panel); color: var(--muted);
-    border-radius: 999px; padding: 5px 14px; font-size: 12px; cursor: pointer;
-  }
   main { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 30px 22px 90px; }
 
   /* --------------------------------------------------------------- home */
@@ -110,17 +46,6 @@
   .slab .purpose { font-size: 13px; color: var(--muted); max-width: 640px; }
   .slab .right { text-align: right; display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
   .slab .countline { font-family: var(--mono); font-size: 12px; color: var(--faint); }
-  .led { display: inline-flex; align-items: center; gap: 7px; border-radius: 999px; padding: 3px 12px;
-         font-size: 11px; font-weight: 700; letter-spacing: 0.14em; }
-  .led i { width: 7px; height: 7px; border-radius: 50%; }
-  .led.live { background: rgba(52,211,153,0.12); color: var(--mint-400); }
-  .led.live i { background: var(--mint-400); box-shadow: 0 0 9px var(--mint-400); animation: blink 2.4s infinite; }
-  .led.demo { background: rgba(251,191,36,0.12); color: var(--amber-400); }
-  .led.demo i { background: var(--amber-400); }
-  .led.locked { background: rgba(251,113,133,0.10); color: var(--rose-400); }
-  .led.locked i { background: var(--rose-400); }
-  [data-theme="light"] .led.live { color: var(--mint-600); } [data-theme="light"] .led.demo { color: var(--amber-600); }
-  [data-theme="light"] .led.locked { color: var(--rose-600); }
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
   /* -------------------------------------------------------- layer pages */
@@ -132,20 +57,30 @@
   .purposeline { color: var(--muted); max-width: 840px; margin: 6px 0 24px; font-size: 15px; }
   .grid2 { display: grid; grid-template-columns: minmax(320px, 5fr) 7fr; gap: 20px; align-items: start; }
   @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
-  .panel {
-    background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 20px 22px;
-  }
-  .panel h4 {
-    margin: 0 0 12px; font-size: 11.5px; letter-spacing: 0.2em; color: var(--faint);
-    text-transform: uppercase; font-weight: 700;
-  }
   .reasonpanel { position: sticky; top: 76px; }
+  .regsearch { width: 100%; border: 1px solid var(--edge); background: var(--panel-strong);
+               color: var(--ink); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+  .regmeta { font-family: var(--mono); font-size: 12px; color: var(--faint); margin: 4px 2px 12px; }
+  .chip.sel { background: rgba(99,102,241,0.25); color: var(--ink); border-color: var(--edge-bright); }
+  .pipeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .pipestep { display: flex; gap: 12px; align-items: flex-start; }
+  .pipenum { font-family: var(--mono); font-weight: 800; color: var(--accent); border: 1px solid var(--edge-bright);
+             border-radius: 10px; min-width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
+  .codeblock { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px;
+               padding: 12px 14px; font-family: var(--mono); font-size: 11.5px; overflow-x: auto;
+               color: var(--ink); white-space: pre; }
+  .votebtns { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+  .votebtn { border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted);
+             border-radius: 8px; padding: 5px 13px; font-size: 12.5px; cursor: pointer; }
+  .votebtn:hover { border-color: var(--edge-bright); color: var(--ink); }
+  .votebtn.confirm.on { background: rgba(52,211,153,0.16); color: var(--ok); border-color: var(--ok); }
+  .votebtn.dispute.on { background: rgba(251,113,133,0.16); color: var(--bad); border-color: var(--bad); }
+  footer.sitefoot { position: relative; z-index: 1; border-top: 1px solid var(--edge); margin-top: 40px;
+                    padding: 22px 26px; display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline;
+                    font-size: 12.5px; color: var(--faint); }
+  footer.sitefoot a { color: var(--muted); }
   .reasonpanel .method { font-size: 13.5px; color: var(--ink); opacity: 0.92; margin-bottom: 14px; }
   .kv { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
-  .chip {
-    font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--edge);
-    border-radius: 999px; padding: 3px 11px; color: var(--muted); background: var(--panel-strong);
-  }
   .chip.linky { cursor: pointer; color: var(--accent); border-color: rgba(129,140,248,0.4); }
   .chip.linky:hover { background: rgba(99,102,241,0.14); }
   .gatelist { margin: 0; padding: 0; list-style: none; }
@@ -238,17 +173,10 @@
   .dot.warning { background: var(--amber-400); } .dot.info, .dot.running { background: var(--ind-400); }
   .feeditem .when { font-family: var(--mono); font-size: 11px; color: var(--faint); min-width: 74px; }
   .feeditem .what { color: var(--muted); }
-  .bigbtn {
-    display: inline-block; background: linear-gradient(92deg, var(--ind-700), var(--ind-500));
-    color: white; border: none; border-radius: 12px; padding: 11px 22px; font-size: 14px;
-    font-weight: 600; cursor: pointer; box-shadow: var(--glow);
-  }
-  .bigbtn:hover { filter: brightness(1.12); }
   .minitable { width: 100%; border-collapse: collapse; font-size: 13px; }
   .minitable th { text-align: left; font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); padding: 6px 8px; border-bottom: 1px solid var(--edge); }
   .minitable td { padding: 7px 8px; border-bottom: 1px solid var(--edge); color: var(--muted); }
   .minitable td:first-child { color: var(--ink); }
-  .spin { text-align: center; color: var(--faint); padding: 60px 0; font-family: var(--mono); letter-spacing: 0.2em; animation: blink 1.6s infinite; }
 </style>
 </head>
 <body>
@@ -285,7 +213,10 @@ function useTheme() {
   return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
 }
 
-const STATUS_LED = { live: "LIVE", demo: "DEMO", locked: "LOCKED" };
+const STATUS_LED = {
+  live: "LIVE", derived: "DERIVED", curated: "CURATED", computed: "COMPUTED",
+  locked: "LOCKED", validated: "VALIDATED", demo: "DEMO",
+};
 const Led = ({ status }) => html`<span class="led ${status}"><i></i>${STATUS_LED[status] || status}</span>`;
 
 /* ------------------------------------------------------------------- home */
@@ -294,9 +225,11 @@ const COUNT_LABELS = {
   events: "events", runs: "runs", proposals: "proposals", llm_calls: "LLM calls",
   families: "families", sources: "sources", sources_ingested: "ingested",
   clauses: "clauses", clauses_public: "public clauses", change_events: "changes",
-  obligations: "obligations", building_blocks: "blocks", profiles: "profiles",
-  activities: "activities", programs: "programs", risk_scores: "scores",
-  benchmark_definitions: "definitions", aggregates_published: "published",
+  obligations: "obligations", validated: "validated", derived_unreviewed: "unreviewed",
+  stale: "stale", building_blocks: "blocks", profile_attributes: "attributes",
+  sample_profiles: "sample profiles", activities: "activities",
+  sample_programs: "sample programs", blueprints_requested: "blueprints requested",
+  risk_areas: "risk areas", benchmark_definitions: "definitions", aggregates_published: "published",
 };
 function countline(counts, pick) {
   return (pick || Object.keys(counts)).filter((k) => counts[k] !== undefined)
@@ -304,6 +237,8 @@ function countline(counts, pick) {
 }
 const HOME_COUNTS = {
   L0: ["events", "runs", "proposals"], L1: ["sources_ingested", "clauses", "change_events"],
+  L2: ["obligations", "validated"], L4: ["profile_attributes", "sample_profiles"],
+  L6: ["sample_programs", "blueprints_requested"],
 };
 
 function Home({ layers }) {
@@ -358,47 +293,44 @@ function ReasonPanel({ meta }) {
     </div>`;
 }
 
-const DemoBanner = ({ banner }) => banner
-  ? html`<div class="demobanner"><b>DEMO</b><span>${banner.notice}</span></div>` : null;
+const StatusBanner = ({ banner }) => banner
+  ? html`<div class="demobanner"><b>${(banner.data_status || "").toUpperCase()}</b><span>${banner.notice}</span></div>` : null;
 
 /* ------------------------------------------------------------ layer items */
 
 function ItemCard({ layer, item, onOpen }) {
   const title = item.title || item.name || item.area || item.id;
-  const summary = item.summary || item.description || item.definition || "";
-  const restricted = item.restricted;
+  const summary = item.summary || item.statement || item.description || item.definition || "";
   return html`
     <div class="card" onClick=${() => onOpen(item)}>
-      <div class="id">${item.id} ${restricted && html`<span class="lockicon">⛨ restricted-source</span>`}</div>
+      <div class="id">${item.id}</div>
       <h5>${title}</h5>
-      <div class="sum">${summary || (restricted ? "Summary withheld — restricted source (refs only)." : "")}</div>
-      ${layer === "L2" && html`
-        <div class="tags">
-          ${(item.basis || []).map((b, i) => html`<span class="chip" key=${i}>${b.source_key} · ${b.ref}</span>`)}
-          <span class="chip">${item.jurisdiction}</span>
-        </div>`}
+      <div class="sum">${summary}</div>
       ${layer === "L3" && html`
         <div class="tags">
-          ${(item.satisfies || []).map((o) => html`<span class="chip" key=${o}>${o}</span>`)}
+          ${(item.satisfies || []).map((sel, i) => html`
+            <span class="chip" key=${i}>${sel.source_key} · ${(sel.refs || []).join(", ")}</span>`)}
           ${(item.implements_controls || []).map((c, i) => html`<span class="chip" key=${"c" + i}>⛉ ${c.source_key.split("/")[0]} ${c.ref}</span>`)}
-        </div>`}
-      ${layer === "L4" && html`
-        <div class="tags">
-          ${Object.entries(item.attributes || {}).slice(0, 5).map(([k, v]) => html`
-            <span class="chip" key=${k}>${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}</span>`)}
+          <span class="chip">${item.satisfies_resolved_obligations ?? 0} obligations resolved</span>
         </div>`}
       ${layer === "L5" && html`
-        <div class="tags">${(item.triggers || []).map((t, i) => html`<span class="chip" key=${i}>${t.obligation}</span>`)}</div>`}
+        <div class="tags">
+          ${(item.triggers || []).map((t, i) => html`
+            <span class="chip" key=${i}>${t.anchor.source_key} · ${(t.anchor.refs || []).join(", ")}
+              ${Object.keys(t.when || {}).length ? ` when ${Object.entries(t.when).map(([k, v]) => `${k}=${v}`).join(",")}` : ""}</span>`)}
+        </div>`}
       ${layer === "L6" && item.coverage_summary && html`
         <div class="tags">
           <span class="state covered">${item.coverage_summary.covered} covered</span>
-          ${item.coverage_summary.partial > 0 && html`<span class="state partial">${item.coverage_summary.partial} partial</span>`}
           ${item.coverage_summary.gaps > 0 && html`<span class="state gap">${item.coverage_summary.gaps} gap${item.coverage_summary.gaps > 1 ? "s" : ""}</span>`}
+          <span class="chip">engine ${item.engine_version}</span>
+          <span class="chip">${item.unmapped_obligations} unmapped in jurisdiction</span>
         </div>
-        <div style=${{ marginTop: "10px" }}>
+        <div style=${{ marginTop: "10px", maxHeight: "260px", overflowY: "auto" }}>
           ${(item.coverage || []).map((c) => html`
-            <div class="covrow" key=${c.obligation}>
-              <span class="ob">${c.obligation}</span>
+            <div class="covrow" key=${c.obligation_id}>
+              <span class="ob" title=${c.title}>${c.source_key} · ${c.clause_ref}</span>
+              <span class="chip">${(c.covered_by || []).join(", ") || "—"}</span>
               <span class="state ${c.state}">${c.state.toUpperCase()}</span>
             </div>`)}
         </div>`}
@@ -406,6 +338,7 @@ function ItemCard({ layer, item, onOpen }) {
         <div style=${{ marginTop: "8px" }}>
           <span class="score ${item.result.band}">${item.result.score}</span>
           <span class="chip" style=${{ marginLeft: "10px" }}>${item.result.band.toUpperCase()}</span>
+          <span class="chip">${item.inputs.obligation_count} obligations · ${item.inputs.derived_unreviewed} unreviewed</span>
           <div style=${{ marginTop: "8px" }}>
             ${Object.entries(item.result.components).map(([k, v]) => html`
               <div key=${k}>
@@ -425,6 +358,123 @@ function ItemCard({ layer, item, onOpen }) {
             <span class="state gap">LOCKED</span>
           </div>
         </div>`}
+    </div>`;
+}
+
+/* ----------------------------------------------- L2 obligation registry */
+
+function VoteButtons({ item, auth }) {
+  const [tally, setTally] = useState(item.community || { confirm: 0, dispute: 0 });
+  const [my, setMy] = useState(null);
+  const [note, setNote] = useState("");
+  const cast = async (vote, e) => {
+    e.stopPropagation();
+    if (!auth?.user) { nav(`/contribute`); return; }
+    const r = await fetch(`/api/clhear/community/obligations/${encodeURIComponent(item.id)}/vote`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vote }),
+    });
+    if (!r.ok) return;
+    const body = await r.json();
+    setMy(vote);
+    setTally({ confirm: body.confirm ?? tally.confirm, dispute: body.dispute ?? tally.dispute });
+    if (body.queued) setNote("recorded — appears after the next snapshot publish");
+    else setNote("");
+  };
+  return html`
+    <div class="votebtns" onClick=${(e) => e.stopPropagation()}>
+      <button class=${"votebtn confirm" + (my === "confirm" ? " on" : "")} onClick=${(e) => cast("confirm", e)}
+              title=${auth?.user ? "This is a real obligation, correctly anchored" : "Sign in to validate"}>
+        ✓ Confirm ${tally.confirm > 0 ? tally.confirm + (my === "confirm" && note ? "+1" : "") : ""}</button>
+      <button class=${"votebtn dispute" + (my === "dispute" ? " on" : "")} onClick=${(e) => cast("dispute", e)}
+              title=${auth?.user ? "Wrong, misanchored, or not an obligation" : "Sign in to dispute"}>
+        ✗ Dispute ${tally.dispute > 0 ? tally.dispute : ""}</button>
+      <span class="chip linky" onClick=${(e) => { e.stopPropagation(); sessionStorage.setItem("clhear_prefill", JSON.stringify({ kind: "correction", target_layer: "L2", target_id: item.id, title: `Correction: ${item.id}` })); nav("/contribute"); }}>⚑ flag</span>
+      ${tally.promotion_suggested && html`<span class="chip" style=${{ color: "var(--mint-400)" }}>promotion suggested</span>`}
+      ${note && html`<span class="provline">${note}</span>`}
+    </div>`;
+}
+
+function ObligationCard({ item, onOpen, auth }) {
+  return html`
+    <div class="card" onClick=${() => onOpen(item)}>
+      <div class="id">${item.id}
+        <span class="led ${item.status}" style=${{ marginLeft: "8px" }}><i></i>${(item.status || "").toUpperCase()}</span>
+      </div>
+      <h5>${item.title}</h5>
+      <div class="sum">${item.statement}</div>
+      <div class="tags">
+        <span class="chip">${item.source_key} · ${item.clause_ref}</span>
+        <span class="chip">${item.modality}</span>
+        ${item.addressee && html`<span class="chip">→ ${item.addressee}</span>`}
+        <span class="chip">confidence ${item.confidence}</span>
+        ${item.jurisdiction && html`<span class="chip">${item.jurisdiction}</span>`}
+      </div>
+      <${VoteButtons} item=${item} auth=${auth} />
+    </div>`;
+}
+
+function ObligationRegistry({ onOpen, auth }) {
+  const [data, setData] = useState(null);
+  const [q, setQ] = useState("");
+  const [sourceKey, setSourceKey] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (sourceKey) params.set("source_key", sourceKey);
+    params.set("offset", String(offset));
+    jget(`/api/clhear/layers/l2?${params}`).then((d) => {
+      setData(d.registry);
+      setItems((prev) => (offset === 0 ? d.registry.items : [...prev, ...d.registry.items]));
+    }).catch(() => setData({ total: 0, items: [], per_source: [] }));
+  }, [q, sourceKey, offset]);
+  const search = (value) => { setQ(value); setOffset(0); };
+  const pick = (key) => { setSourceKey(key === sourceKey ? "" : key); setOffset(0); };
+  return html`
+    <div>
+      <div class="panel" style=${{ marginBottom: "14px" }}>
+        <h4>Search the registry</h4>
+        <input class="regsearch" placeholder="search obligations (e.g. due diligence, breach, safeguard)"
+               value=${q} onInput=${(e) => search(e.target.value)} />
+        <div class="tags" style=${{ marginTop: "10px", maxHeight: "92px", overflowY: "auto" }}>
+          ${(data?.per_source || []).map((s) => html`
+            <span class=${"chip linky" + (s.source_key === sourceKey ? " sel" : "")} key=${s.source_key}
+                  onClick=${() => pick(s.source_key)}>${s.source_key} (${s.count})</span>`)}
+        </div>
+      </div>
+      ${data === null && html`<div class="spin">DERIVING VIEW…</div>`}
+      ${data && html`<div class="regmeta">${data.total} obligation(s)${sourceKey ? ` in ${sourceKey}` : ""}${q ? ` matching "${q}"` : ""} — machine-derived, basis-anchored</div>`}
+      ${items.map((item) => html`<${ObligationCard} item=${item} key=${item.id} onOpen=${onOpen} auth=${auth} />`)}
+      ${data && items.length < data.total && html`
+        <button class="bigbtn" style=${{ width: "100%" }} onClick=${() => setOffset(items.length)}>
+          Load more (${items.length} / ${data.total})
+        </button>`}
+    </div>`;
+}
+
+function L4Panel({ items, onOpen }) {
+  return html`
+    <div>
+      <div class="panel" style=${{ marginBottom: "14px" }}>
+        <h4>Profile attribute schema — every attribute exists because an obligation's scope reads it</h4>
+        ${(items.attribute_schema || []).map((a) => html`
+          <div class="covrow" key=${a.key}>
+            <span class="ob">${a.key} <span class="chip">${a.type}</span></span>
+            <span class="sum" style=${{ flex: 2, fontSize: "12.5px" }}>${a.description}</span>
+          </div>`)}
+      </div>
+      <h4 style=${{ color: "var(--faint)", letterSpacing: "0.2em", fontSize: "11.5px" }}>SAMPLE PROFILES</h4>
+      ${(items.sample_profiles || []).map((p) => html`
+        <div class="card" key=${p.id} onClick=${() => onOpen(p)}>
+          <div class="id">${p.id} <span class="chip">sample</span></div>
+          <h5>${p.name}</h5>
+          <div class="sum">${p.description}</div>
+          <div class="tags">
+            ${Object.entries(p.attributes || {}).slice(0, 6).map(([k, v]) => html`
+              <span class="chip" key=${k}>${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}</span>`)}
+          </div>
+        </div>`)}
     </div>`;
 }
 
@@ -590,7 +640,7 @@ function L1Page({ detail }) {
 
 /* ------------------------------------------------------------- layer page */
 
-function LayerPage({ slug }) {
+function LayerPage({ slug, auth }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState(null);
   const [openItem, setOpenItem] = useState(null);
@@ -613,19 +663,331 @@ function LayerPage({ slug }) {
       <div class="grid2">
         <${ReasonPanel} meta=${detail} />
         <div>
-          <${DemoBanner} banner=${detail.banner} />
+          <${StatusBanner} banner=${detail.banner} />
           ${code === "L0" && html`<${L0Page} detail=${detail} />`}
           ${code === "L1" && html`<${L1Page} detail=${detail} />`}
+          ${code === "L2" && html`<${ObligationRegistry} onOpen=${(it) => setOpenItem(it)} auth=${auth} />`}
+          ${code === "L4" && detail.items && html`<${L4Panel} items=${detail.items} onOpen=${(it) => setOpenItem(it)} />`}
           ${code === "L8" && html`
             <div class="demobanner" style=${{ borderColor: "rgba(251,113,133,0.4)", background: "rgba(251,113,133,0.06)", color: "var(--rose-400)" }}>
               <b>LOCKED</b><span>Benchmarks are closed by design. Aggregate definitions are public;
               peer data never is. No aggregates are published today.</span>
             </div>`}
-          ${!["L0", "L1"].includes(code) && (detail.items || []).map((item) => html`
+          ${!["L0", "L1", "L2", "L4"].includes(code) && Array.isArray(detail.items) && detail.items.map((item) => html`
             <${ItemCard} layer=${code} item=${item} key=${item.id} onOpen=${(it) => setOpenItem(it)} />`)}
         </div>
       </div>
       ${openItem && html`<${Drawer} layer=${code} item=${openItem} onClose=${() => setOpenItem(null)} />`}
+    </div>`;
+}
+
+/* ------------------------------------------------------------------- auth */
+
+function useAuth() {
+  const [auth, setAuth] = useState({ user: null, providers: { email: true } });
+  const refresh = () => jget("/auth/me").then(setAuth).catch(() => {});
+  useEffect(() => { refresh(); }, []);
+  return [auth, refresh];
+}
+
+function SignIn({ auth, onDone }) {
+  const [email, setEmail] = useState("");
+  const [state, setState] = useState("idle"); // idle | sending | sent | error
+  const [debugLink, setDebugLink] = useState(null);
+  const send = async () => {
+    setState("sending");
+    const r = await fetch("/auth/email", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, website: "" }),
+    });
+    if (!r.ok) { setState("error"); return; }
+    const body = await r.json();
+    if (body.debug_link) setDebugLink(body.debug_link);
+    setState("sent");
+  };
+  return html`
+    <div class="panel" style=${{ maxWidth: "480px" }}>
+      <h4>Join the movement</h4>
+      <p style=${{ fontSize: "13.5px", color: "var(--muted)", marginTop: 0 }}>
+        Compliance officer, lawyer, PM or developer — no GitHub account needed.
+        Sign in to open cases and validate outputs.</p>
+      ${state !== "sent" && html`
+        <input class="regsearch" type="email" placeholder="you@company.com"
+               value=${email} onInput=${(e) => setEmail(e.target.value)}
+               onKeyDown=${(e) => e.key === "Enter" && send()} />
+        <div style=${{ display: "flex", gap: "10px", marginTop: "12px", flexWrap: "wrap" }}>
+          <button class="bigbtn" disabled=${state === "sending" || !email.includes("@")} onClick=${send}>
+            ${state === "sending" ? "Sending…" : "Email me a sign-in link"}
+          </button>
+          ${auth.providers.google
+            ? html`<a class="bigbtn" style=${{ background: "var(--panel-strong)", color: "var(--ink)", border: "1px solid var(--edge)" }} href="/auth/google">Continue with Google</a>`
+            : html`<span class="chip" title="Google OAuth client not configured yet">Google — coming online</span>`}
+          ${!auth.providers.apple && html`<span class="chip" title="Requires an Apple Developer Service ID">Apple — coming online</span>`}
+        </div>
+        ${state === "error" && html`<div class="demobanner" style=${{ marginTop: "10px" }}>Could not send — try again.</div>`}`}
+      ${state === "sent" && html`
+        <div style=${{ color: "var(--mint-400)", fontSize: "14px" }}>
+          ✓ Check your inbox — the link expires in 15 minutes.
+          ${debugLink && html`<div class="provline"><a href=${debugLink}>dev: open the link</a></div>`}
+        </div>`}
+      <div class="provline" style=${{ marginTop: "14px" }}>
+        By contributing you accept the <a href="/terms">contribution license (CC BY 4.0 + DCO)</a>.
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------------------- contribute */
+
+const CASE_KINDS = [
+  ["missing_data", "Missing data", "A source we cover is missing a version, clause, or amendment"],
+  ["correction", "Correction", "Something derived or curated is wrong — tell us what and why"],
+  ["new_source", "New verbatim source", "A law, regulation or standard CLHEAR should track"],
+  ["output_validation", "Output validation", "Structured feedback on derived obligations at scale"],
+  ["product_suggestion", "Product suggestion", "APIs, views, exports or workflows you need"],
+];
+
+function CaseForm({ prefill, onSubmitted }) {
+  const [kind, setKind] = useState(prefill?.kind || "correction");
+  const [title, setTitle] = useState(prefill?.title || "");
+  const [body, setBody] = useState("");
+  const [evidence, setEvidence] = useState("");
+  const [state, setState] = useState("idle");
+  const [note, setNote] = useState("");
+  const submit = async () => {
+    setState("sending");
+    const r = await fetch("/api/clhear/community/submissions", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind, title, body, evidence_url: evidence, website: "",
+        target_layer: prefill?.target_layer || "", target_id: prefill?.target_id || "",
+      }),
+    });
+    if (!r.ok) { setState("error"); setNote((await r.json()).detail || ""); return; }
+    const out = await r.json();
+    setNote(out.note || "Case opened — a maintainer will review it.");
+    setState("done");
+    onSubmitted && onSubmitted();
+  };
+  if (state === "done") return html`<div class="panel"><h4>Thank you</h4>
+    <div style=${{ color: "var(--mint-400)", fontSize: "14px" }}>✓ ${note}</div></div>`;
+  return html`
+    <div class="panel">
+      <h4>Open a case ${prefill?.target_id ? html`<span class="chip">on ${prefill.target_id}</span>` : ""}</h4>
+      <div class="tags" style=${{ marginBottom: "12px" }}>
+        ${CASE_KINDS.map(([k, label, hint]) => html`
+          <span class=${"chip linky" + (kind === k ? " sel" : "")} key=${k} title=${hint}
+                onClick=${() => setKind(k)}>${label}</span>`)}
+      </div>
+      <input class="regsearch" placeholder="One-line summary (5-200 chars)" value=${title}
+             onInput=${(e) => setTitle(e.target.value)} />
+      <textarea class="regsearch" rows="4" style=${{ marginTop: "10px", resize: "vertical", fontFamily: "inherit" }}
+                placeholder="Details: what is missing/wrong, why it matters, how you know. Never paste licensed standard text (ISO/TSC/PCI/IFRS)."
+                value=${body} onInput=${(e) => setBody(e.target.value)}></textarea>
+      <input class="regsearch" style=${{ marginTop: "10px" }} placeholder="Evidence link (official URL, optional)"
+             value=${evidence} onInput=${(e) => setEvidence(e.target.value)} />
+      <div style=${{ marginTop: "12px" }}>
+        <button class="bigbtn" disabled=${title.trim().length < 5 || state === "sending"} onClick=${submit}>
+          ${state === "sending" ? "Submitting…" : "Submit case"}</button>
+      </div>
+      ${state === "error" && html`<div class="demobanner" style=${{ marginTop: "10px" }}>${note || "Could not submit."}</div>`}
+    </div>`;
+}
+
+function ContributePage({ auth, refreshAuth, prefill }) {
+  const [wall, setWall] = useState(null);
+  const [mine, setMine] = useState(null);
+  useEffect(() => {
+    jget("/api/clhear/community/wall").then(setWall).catch(() => setWall(null));
+    if (auth.user) jget("/api/clhear/community/submissions?mine=true").then(setMine).catch(() => setMine([]));
+  }, [auth.user]);
+  return html`
+    <div>
+      <div class="hero" style=${{ margin: "10px 0 26px" }}>
+        <h1>Help build <span class="grad">provable compliance</span></h1>
+        <p>CLHEAR is built in the open. Practitioners keep it honest: flag what's missing,
+           correct what's wrong, validate what the machine derived — and get public credit for it.</p>
+      </div>
+      ${wall && html`
+        <div class="statgrid">
+          <div class="stat"><div class="n">${wall.totals.contributors}</div><div class="lbl">contributors</div></div>
+          <div class="stat"><div class="n">${wall.totals.cases_total}</div><div class="lbl">cases opened</div></div>
+          <div class="stat"><div class="n">${wall.totals.cases_accepted}</div><div class="lbl">cases accepted</div></div>
+          <div class="stat"><div class="n">${wall.totals.validation_votes}</div><div class="lbl">validation votes</div></div>
+        </div>`}
+      <div class="grid2">
+        <div>
+          ${!auth.user && html`<${SignIn} auth=${auth} onDone=${refreshAuth} />`}
+          ${auth.user && html`
+            <div class="panel" style=${{ marginBottom: "14px" }}>
+              <h4>Signed in</h4>
+              <div style=${{ fontSize: "14px" }}>${auth.user.display_name} <span class="chip">${auth.user.email}</span></div>
+              <div class="provline" style=${{ marginTop: "8px", cursor: "pointer" }}
+                   onClick=${async () => { await fetch("/auth/logout", { method: "POST" }); refreshAuth(); }}>sign out</div>
+            </div>
+            <${CaseForm} prefill=${prefill} />`}
+          <div class="panel" style=${{ marginTop: "14px" }}>
+            <h4>Ways to participate</h4>
+            <ul class="gatelist">
+              ${CASE_KINDS.map(([k, label, hint]) => html`<li key=${k}><b>${label}</b> — ${hint}</li>`)}
+              <li><b>Validate obligations</b> — Confirm/Dispute buttons on every derived obligation (L2).
+                  3 confirms + 0 disputes suggests promotion; a named maintainer decides.</li>
+            </ul>
+          </div>
+        </div>
+        <div>
+          ${auth.user && mine && mine.length > 0 && html`
+            <div class="panel" style=${{ marginBottom: "14px" }}>
+              <h4>My cases</h4>
+              ${mine.map((s) => html`
+                <div class="feeditem" key=${s.id}>
+                  <span class="dot ${s.status === "accepted" || s.status === "shipped" ? "success" : s.status === "rejected" ? "failure" : "warning"}"></span>
+                  <span class="what"><b>${s.title}</b> · ${s.kind} · ${s.status}${s.resolution ? ` — ${s.resolution}` : ""}</span>
+                </div>`)}
+            </div>`}
+          <div class="panel">
+            <h4>Contributors wall</h4>
+            ${wall === null && html`<div class="spin">LOADING…</div>`}
+            ${wall && wall.top_contributors.length === 0 && html`
+              <div style=${{ color: "var(--muted)", fontSize: "13.5px" }}>
+                The wall is empty — be the first accepted contributor.</div>`}
+            ${wall && wall.top_contributors.map((c, i) => html`
+              <div class="feeditem" key=${i}><span class="dot success"></span>
+                <span class="what"><b>${c.name}</b> · ${c.accepted_cases} accepted case${c.accepted_cases > 1 ? "s" : ""}</span></div>`)}
+            ${wall && wall.top_validators.length > 0 && html`
+              <h4 style=${{ marginTop: "16px" }}>Top validators</h4>
+              ${wall.top_validators.map((c, i) => html`
+                <div class="feeditem" key=${i}><span class="dot info"></span>
+                  <span class="what"><b>${c.name}</b> · ${c.votes} vote${c.votes > 1 ? "s" : ""}</span></div>`)}`}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------------------ how it works */
+
+const HOW_STEPS = [
+  ["Fetch", "Adapters pull official texts from each authority (legislation.gov.uk, EUR-Lex, govinfo/eCFR, NIST, FCA…) on the nightly 00:00 UTC schedule. Politeness built in; originals stored immutably."],
+  ["Hash", "Every artifact and every clause gets a sha256. The stored original is the proof — text is never regenerated or cleaned up."],
+  ["Diff", "New versions align clause-by-clause against the previous text; changes become clause-level change events you can watch."],
+  ["Derive", "A deterministic, versioned extractor turns duty-bearing clauses into obligations — no LLM in the loop. Anything ambiguous is left for humans, not guessed."],
+  ["Gate", "Eval suites run nightly (extraction quality, basis integrity, schedule kept, E1–E7 per source). Humans ratify: promotions and family changes are recorded maintainer decisions."],
+  ["Publish", "The corpus snapshot republishes to the public site and API; blueprints and risk scores are computed on demand from the fresh registry."],
+];
+
+const POLICY_CARDS = [
+  ["Verbatim ground truth", "Original texts stored immutably (WORM S3); clause text always traceable to a hashed original. We never rewrite the law."],
+  ["Determinism first, LLM last", "If a step can be code, it is code. The only LLM surface is gated triage, hard-capped at $20/day per fleet, $100/day globally, every call ledgered."],
+  ["Named-human gates", "No obligation validation, family change, or community case lands without a recorded human identity and timestamp."],
+  ["Restricted-zone discipline", "Licensed standards (ISO, TSC, PCI, IFRS) never leave the restricted zone: refs + hashes only, enforced in code and tests."],
+  ["Evals are gates", "A failing suite blocks promotion — scores publish either way. Honest labels everywhere: LIVE, DERIVED, CURATED, COMPUTED, LOCKED."],
+  ["Everything replayable", "Every fleet run recorded (inputs, outputs, versions, cost). Same inputs, same corpus, same blueprint."],
+];
+
+function HowPage() {
+  const [job, setJob] = useState(null);
+  useEffect(() => { jget("/api/clhear/jobs/latest").then(setJob).catch(() => setJob(null)); }, []);
+  return html`
+    <div>
+      <div class="hero" style=${{ margin: "10px 0 26px" }}>
+        <h1>How CLHEAR <span class="grad">knows what it knows</span></h1>
+        <p>No black boxes: every mechanism, gate and policy decision below is inspectable on this site —
+           and in the code.</p>
+      </div>
+      <div class="panel" style=${{ marginBottom: "18px" }}>
+        <h4>The nightly pipeline — every day, 00:00 UTC</h4>
+        <div class="pipeline">
+          ${HOW_STEPS.map(([name, detail], i) => html`
+            <div class="pipestep" key=${name}>
+              <div class="pipenum">${i + 1}</div>
+              <div><b>${name}</b><div class="sum" style=${{ fontSize: "12.5px" }}>${detail}</div></div>
+            </div>`)}
+        </div>
+      </div>
+      ${job && html`
+        <div class="panel" style=${{ marginBottom: "18px" }}>
+          <h4>Latest run — live from the ledger (job ${job.job_id})</h4>
+          <div class="tags">
+            ${Object.entries(job.status_counts || {}).map(([s, n]) => html`
+              <span class="chip" key=${s}>${n} ${s}</span>`)}
+            <span class="chip">${(job.total_duration_ms / 1000).toFixed(0)}s total</span>
+            <span class="chip">${(job.lanes || []).length} source lanes</span>
+          </div>
+          <div class="provline" style=${{ marginTop: "8px" }}>
+            Full audit trail in the <a href="/sources">Explorer</a> (Activity + Fleet tabs).</div>
+        </div>`}
+      <div class="grid2" style=${{ gridTemplateColumns: "1fr 1fr" }}>
+        ${POLICY_CARDS.map(([title, body]) => html`
+          <div class="panel" key=${title} style=${{ marginBottom: "0" }}>
+            <h4>${title}</h4>
+            <div class="sum" style=${{ fontSize: "13px" }}>${body}</div>
+          </div>`)}
+      </div>
+      <div class="panel" style=${{ marginTop: "18px", textAlign: "center" }}>
+        <h4>Open by design</h4>
+        <p style=${{ color: "var(--muted)", fontSize: "14px" }}>
+          The code, the HLD, the eval scores and this corpus are public.
+          If you work in compliance, this is yours to shape.</p>
+        <a class="bigbtn" href="#/contribute">Join and contribute →</a>
+        <span style=${{ margin: "0 8px" }}></span>
+        <a class="bigbtn" style=${{ background: "var(--panel-strong)", color: "var(--ink)", border: "1px solid var(--edge)" }}
+           href="https://github.com/Reg42-ai/CLHEAR-MVP" target="_blank" rel="noopener">Source on GitHub</a>
+      </div>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------- docs */
+
+function DocsPage() {
+  return html`
+    <div>
+      <div class="hero" style=${{ margin: "10px 0 26px" }}>
+        <h1>Build on <span class="grad">CLHEAR</span></h1>
+        <p>Read the layers over a versioned API and compose a compliance-program blueprint
+           tailored to a business profile.</p>
+      </div>
+      <div class="grid2">
+        <div class="panel">
+          <h4>Quickstart</h4>
+          <ol class="gatelist" style=${{ listStyle: "none" }}>
+            <li>Get an app key: open a <a href="#/contribute">product_suggestion case</a> or email api@reg42.ai.</li>
+            <li>Send <span class="chip">X-App-Id</span> + <span class="chip">Authorization: Bearer …</span> on every call.</li>
+            <li>Feature-detect via <span class="chip">GET /v1/layers</span> — branch on <b>layer_status</b>
+                (published · derived · curated · computed · not_published).</li>
+            <li>Interactive OpenAPI schema at <a href="/docs" target="_blank">/docs</a> ·
+                full manual in <a href="https://github.com/Reg42-ai/CLHEAR-MVP/blob/main/docs/MANUAL.md" target="_blank" rel="noopener">docs/MANUAL.md</a>.</li>
+          </ol>
+        </div>
+        <div class="panel">
+          <h4>The blueprint call</h4>
+          <pre class="codeblock">POST /v1/blueprint
+{
+  "attributes": {
+    "jurisdictions": ["EU"],
+    "authorisations": ["CASP (MiCA)"],
+    "products": ["crypto custody"],
+    "customer_base": ["retail"],
+    "data_footprint": "large-scale personal data",
+    "crypto_services": true,
+    "financial_entity_dora": true
+  },
+  "activities": null
+}</pre>
+          <div class="sum" style=${{ fontSize: "12.5px" }}>
+            Returns triggered obligations (basis-anchored, status-labeled), recommended blocks,
+            a coverage matrix with explicit gaps, release pin, per-source attributions and the
+            disclaimer. Deterministic: same profile + release ⇒ same blueprint.</div>
+        </div>
+      </div>
+      <div class="panel" style=${{ marginTop: "18px" }}>
+        <h4>Read endpoints</h4>
+        <div class="covrow"><span class="ob">GET /v1/layers</span><span class="sum" style=${{ flex: 2 }}>the 8-layer contract: statuses + derivation contracts</span></div>
+        <div class="covrow"><span class="ob">GET /v1/releases/latest</span><span class="sum" style=${{ flex: 2 }}>current release manifest</span></div>
+        <div class="covrow"><span class="ob">GET /v1/releases/{"{id}"}/l1/families · /sources · /clauses · /change-events · /snapshot</span><span class="sum" style=${{ flex: 2 }}>the verbatim corpus</span></div>
+        <div class="covrow"><span class="ob">GET /v1/releases/{"{id}"}/l2/obligations</span><span class="sum" style=${{ flex: 2 }}>the derived obligation registry</span></div>
+        <div class="covrow"><span class="ob">GET /v1/releases/{"{id}"}/l3/building-blocks · l5/activities</span><span class="sum" style=${{ flex: 2 }}>the curated catalog</span></div>
+        <div class="covrow"><span class="ob">POST /v1/blueprint</span><span class="sum" style=${{ flex: 2 }}>tailored program blueprint</span></div>
+      </div>
     </div>`;
 }
 
@@ -634,28 +996,50 @@ function LayerPage({ slug }) {
 function App() {
   const route = useHashRoute();
   const [theme, toggleTheme] = useTheme();
+  const [auth, refreshAuth] = useAuth();
   const [layers, setLayers] = useState(null);
   useEffect(() => { jget("/api/clhear/layers").then((d) => setLayers(d.layers)).catch(() => setLayers([])); }, []);
   const layerMatch = route.match(/^\/layer\/(l[0-8])$/);
+  const page = route.startsWith("/contribute") ? "contribute"
+    : route.startsWith("/how") ? "how"
+    : route.startsWith("/docs") ? "docs"
+    : layerMatch ? "layer" : "home";
+  let prefill = null;
+  try { prefill = JSON.parse(sessionStorage.getItem("clhear_prefill") || "null"); } catch {}
+  if (page !== "contribute") sessionStorage.removeItem("clhear_prefill");
   return html`
     <div>
-      <header>
+      <header class="appbar">
         <div class="wordmark" onClick=${() => nav("/")}>
           <b>CLHEAR</b><span>the compliance stack</span>
         </div>
         <div class="spacer"></div>
-        <span class="navlink" onClick=${() => nav("/")}>Stack</span>
-        <a class="navlink" href="/sources">Sources Explorer</a>
-        <a class="navlink" href="/review">Review</a>
+        <span class=${"navlink" + (page === "home" || page === "layer" ? " active" : "")} onClick=${() => nav("/")}>Stack</span>
+        <a class="navlink" href="/sources">Explorer</a>
+        <span class=${"navlink" + (page === "how" ? " active" : "")} onClick=${() => nav("/how")}>How it works</span>
+        <span class=${"navlink" + (page === "docs" ? " active" : "")} onClick=${() => nav("/docs")}>API</span>
+        <span class=${"navlink" + (page === "contribute" ? " active" : "")} onClick=${() => nav("/contribute")}>
+          ${auth.user ? `☺ ${auth.user.display_name}` : "Contribute"}</span>
         <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
       </header>
       <main>
-        ${layerMatch
-          ? html`<${LayerPage} slug=${layerMatch[1]} key=${layerMatch[1]} />`
-          : layers === null
-            ? html`<div class="spin">BOOTING THE STACK…</div>`
-            : html`<${Home} layers=${layers} />`}
+        ${page === "contribute" && html`<${ContributePage} auth=${auth} refreshAuth=${refreshAuth} prefill=${prefill} />`}
+        ${page === "how" && html`<${HowPage} />`}
+        ${page === "docs" && html`<${DocsPage} />`}
+        ${page === "layer" && html`<${LayerPage} slug=${layerMatch[1]} key=${layerMatch[1]} auth=${auth} />`}
+        ${page === "home" && (layers === null
+          ? html`<div class="spin">BOOTING THE STACK…</div>`
+          : html`<${Home} layers=${layers} />`)}
       </main>
+      <footer class="sitefoot">
+        <span>CLHEAR by Reg42 — the open compliance stack.</span>
+        <a href="/disclaimer">Disclaimer</a>
+        <a href="/terms">Terms</a>
+        <a href="#/how" onClick=${() => nav("/how")}>How it works</a>
+        <a href="https://github.com/Reg42-ai/CLHEAR-MVP" target="_blank" rel="noopener">GitHub</a>
+        <span style=${{ flex: 1 }}></span>
+        <span>Not legal advice. Verify against the official source linked with every clause.</span>
+      </footer>
     </div>`;
 }
 

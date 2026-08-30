@@ -47,6 +47,21 @@ class Settings(BaseSettings):
 
     clhear_artifacts_dir: str = "./artifacts"
 
+    # --- community accounts & contributions (Phase C) ---
+    # HMAC key for session cookies + magic-link tokens. MUST be set in prod
+    # (SSM /clhear/SESSION_SECRET); the default keeps dev/tests working.
+    clhear_session_secret: str = "dev-only-not-a-secret"
+    clhear_auth_debug: bool = False  # dev: return magic links in the response
+    clhear_ses_sender: str = "CLHEAR <noreply@clhear.reg42.ai>"
+    clhear_public_base_url: str = "https://clhear.reg42.ai"
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    apple_oauth_client_id: str = ""  # Service ID; Apple flow activates when set
+    apple_oauth_team_id: str = ""
+    apple_oauth_key_id: str = ""
+    apple_oauth_private_key: str = ""
+    clhear_submissions_daily_limit: int = 10
+
     # Snapshot mode for the scheduled fleet: the corpus SQLite lives in S3
     # (same object the public explorer serves); workers pull it, ingest, and
     # publish it back. Empty = use database_url directly (Aurora / local dev).

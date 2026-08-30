@@ -35,13 +35,17 @@ def test_l1_resources_and_reserved_layers(client, engine):
     assert snap.status_code == 200
     assert "url" in snap.json()
 
-    # Demo layers answer 200 but are unmistakably labeled — clients must branch
-    # on layer_status, and every demo payload carries the honesty banner.
+    # Preview layers answer 200 but are unmistakably labeled — clients must
+    # branch on layer_status; every preview payload carries the honesty banner.
     reserved = client.get("/v1/releases/clhear-v20260826/l2/obligations", headers=AUTH)
     assert reserved.status_code == 200
-    assert reserved.json()["layer_status"] == "demo"
-    assert reserved.json()["banner"]["data_status"] == "demo"
-    assert reserved.json()["items"]
+    assert reserved.json()["layer_status"] == "derived"
+    assert reserved.json()["banner"]["data_status"] == "derived"
+    assert "registry" in reserved.json()
+
+    curated_resp = client.get("/v1/releases/clhear-v20260826/l3/building-blocks", headers=AUTH)
+    assert curated_resp.status_code == 200
+    assert curated_resp.json()["layer_status"] == "curated"
 
     # Wrong resource name for the layer still feature-detects as not_published.
     wrong = client.get("/v1/releases/clhear-v20260826/l2/profiles", headers=AUTH)
