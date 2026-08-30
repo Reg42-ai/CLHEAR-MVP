@@ -74,7 +74,7 @@ LAYER_CATALOG: dict[str, dict] = {
         "name": "Obligation registry",
         "schema": "l2_obligations",
         "published": False,
-        "status": "demo",
+        "status": "derived",
         "purpose": "Atomic obligations — who must do what, when — extracted from L1 "
         "clauses and kept current by clause-level change inference.",
         "derivation": {
@@ -101,7 +101,7 @@ LAYER_CATALOG: dict[str, dict] = {
         "name": "Building blocks",
         "schema": "l3_building_blocks",
         "published": False,
-        "status": "demo",
+        "status": "curated",
         "purpose": "Reusable compliance capabilities (a CDD programme, a breach-response "
         "process, an access-control regime) that satisfy sets of L2 obligations.",
         "derivation": {
@@ -123,7 +123,7 @@ LAYER_CATALOG: dict[str, dict] = {
         "name": "Profile space",
         "schema": "l4_profiles",
         "published": False,
-        "status": "demo",
+        "status": "curated",
         "purpose": "The dimensions that determine which rules apply to an organisation: "
         "jurisdictions, licenses, products, customer base, data footprint.",
         "derivation": {
@@ -144,7 +144,7 @@ LAYER_CATALOG: dict[str, dict] = {
         "name": "Activities",
         "schema": "l5_activities",
         "published": False,
-        "status": "demo",
+        "status": "curated",
         "purpose": "The business-compliance junction: concrete things a business does "
         "(onboard a customer, custody crypto-assets, run marketing) joined to the "
         "obligations those activities trigger.",
@@ -163,7 +163,7 @@ LAYER_CATALOG: dict[str, dict] = {
         "name": "Program composer",
         "schema": "l6_composer",
         "published": False,
-        "status": "demo",
+        "status": "computed",
         "purpose": "Composes a concrete compliance program for one profile: the set of "
         "L3 building blocks that covers every obligation the profile's activities trigger.",
         "derivation": {
@@ -185,7 +185,7 @@ LAYER_CATALOG: dict[str, dict] = {
         "name": "Risk scoring",
         "schema": "l7_risk",
         "published": False,
-        "status": "demo",
+        "status": "computed",
         "purpose": "Quantifies exposure per program area: where coverage is thin, where "
         "the underlying law is changing fastest, where evidence is weakest.",
         "derivation": {
@@ -222,7 +222,8 @@ LAYER_CATALOG: dict[str, dict] = {
 
 PUBLISHED_LAYERS = tuple(k for k, v in LAYER_CATALOG.items() if v["published"])
 RESERVED_LAYERS = tuple(k for k, v in LAYER_CATALOG.items() if not v["published"])
-DEMO_LAYERS = tuple(k for k, v in LAYER_CATALOG.items() if v["status"] == "demo")
+# Layers that answer with data but are not yet the /v1-published contract.
+PREVIEW_LAYERS = tuple(k for k, v in LAYER_CATALOG.items() if v["status"] in ("derived", "curated", "computed"))
 LAYER_ORDER = tuple(sorted(LAYER_CATALOG, key=lambda k: int(k[1:])))
 LAYER_SLUGS = {v["slug"]: k for k, v in LAYER_CATALOG.items()}
 
@@ -263,12 +264,31 @@ def not_published_body(layer: str) -> dict:
     }
 
 
-def demo_banner(layer: str) -> dict:
-    """The honesty label attached to every demo-layer payload."""
+_STATUS_NOTICES = {
+    "derived": "{layer} ({name}) is MACHINE-DERIVED from L1 clauses by a deterministic, "
+    "versioned extractor. Items marked `derived` have not yet been human-validated; "
+    "per-source extraction scorecards are published with every nightly run. "
+    "Community review and maintainer approval promote items to `validated`.",
+    "curated": "{layer} ({name}) is CURATED: human-authored policy content, reviewed "
+    "before seeding and changed only through the approval queue. Every mapping is an "
+    "anchor into real L1 clauses and can be contested.",
+    "computed": "{layer} ({name}) is COMPUTED: a deterministic, versioned engine over the "
+    "derived registry and curated catalog. Same inputs always produce the same output; "
+    "every result publishes its formula and its inputs.",
+    "locked": "{layer} ({name}) is LOCKED by design: definitions are public, data is not.",
+}
+
+
+def status_banner(layer: str) -> dict:
+    """The honesty label attached to every non-live layer payload."""
     meta = LAYER_CATALOG.get(layer, {})
+    status = meta.get("status", "")
+    notice = _STATUS_NOTICES.get(status, "")
     return {
-        "data_status": "demo",
-        "notice": f"{layer} ({meta.get('name')}) is shown with illustrative data authored "
-        "to preview the layer's shape. It is NOT derived output. Lineage links point at "
-        "real L1 clauses so the derivation chain itself is genuine.",
+        "data_status": status,
+        "notice": notice.format(layer=layer, name=meta.get("name")),
     }
+
+
+# Back-compat alias (previous phase labeled preview layers "demo").
+demo_banner = status_banner

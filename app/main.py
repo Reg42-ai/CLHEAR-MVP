@@ -16,7 +16,14 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    run_migrations(get_engine())
+    engine = get_engine()
+    run_migrations(engine)
+    try:
+        from app.clhear import curated
+
+        curated.seed(engine)  # idempotent: L3/L5/L4 catalog present everywhere
+    except Exception:
+        logging.getLogger("clhear").exception("curated seed failed (continuing)")
     yield
 
 

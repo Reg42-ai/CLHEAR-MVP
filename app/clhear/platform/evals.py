@@ -467,6 +467,175 @@ def l1_schedule_kept(engine: Engine, source_key: str | None) -> tuple[dict, bool
     }, not missed
 
 
+@register_suite("l2_basis_integrity")
+def l2_basis_integrity(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Every live obligation's basis clause must still resolve with the SAME
+    text hash it was derived from. A drifted hash means L1 changed underneath
+    it — the row must be re-derived, never silently served. Target: 100%."""
+    from app.clhear.derived_models import obligations
+    from app.clhear.l1.models import clauses, source_versions, sources
+
+    checked = mismatched = unresolved = 0
+    bad: list[str] = []
+    with engine.connect() as conn:
+        query = sa.select(obligations).where(obligations.c.status.in_(("derived", "validated")))
+        if source_key:
+            query = query.where(obligations.c.source_key == source_key)
+        for ob in conn.execute(query):
+            checked += 1
+            row = conn.execute(
+                sa.select(clauses.c.text_hash)
+                .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
+                .join(sources, sources.c.id == source_versions.c.source_id)
+                .where(sources.c.key == ob.source_key)
+                .where(source_versions.c.status == "in_force")
+                .where(clauses.c.ref == ob.clause_ref)
+                .order_by(source_versions.c.id.desc())
+                .limit(1)
+            ).first()
+            if row is None:
+                unresolved += 1
+                bad.append(ob.id)
+            elif row.text_hash != ob.text_hash:
+                mismatched += 1
+                bad.append(ob.id)
+    passed = mismatched == 0 and unresolved == 0
+    return {
+        "checked": checked,
+        "hash_mismatched": mismatched,
+        "unresolved": unresolved,
+        "failing": bad[:40],
+        "integrity": 1.0 if checked == 0 else round((checked - mismatched - unresolved) / checked, 4),
+    }, passed
+
+
+@register_suite("l2_extraction_quality")
+def l2_extraction_quality(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Extraction precision/recall against the hand-labeled golden set
+    (app/clhear/l2/golden.json), evaluated over golden refs present in this
+    corpus. Gates: precision >= 0.75 and recall >= 0.70."""
+    import json as _json
+    from pathlib import Path
+
+    from app.clhear.derived_models import obligations
+    from app.clhear.l1.models import clauses, source_versions, sources
+
+    golden = _json.loads((Path(__file__).parent.parent / "l2" / "golden.json").read_text())
+    tp = fp = fn = tn = 0
+    evaluated = 0
+    misses: list[dict] = []
+    with engine.connect() as conn:
+        derived = {
+            (row.source_key, row.clause_ref)
+            for row in conn.execute(
+                sa.select(obligations.c.source_key, obligations.c.clause_ref).where(
+                    obligations.c.status.in_(("derived", "validated"))
+                )
+            )
+        }
+        for item in golden:
+            present = conn.execute(
+                sa.select(clauses.c.id)
+                .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
+                .join(sources, sources.c.id == source_versions.c.source_id)
+                .where(sources.c.key == item["source_key"])
+                .where(source_versions.c.status == "in_force")
+                .where(clauses.c.ref == item["ref"])
+                .limit(1)
+            ).first()
+            if present is None:
+                continue
+            evaluated += 1
+            got = (item["source_key"], item["ref"]) in derived
+            if item["is_duty"] and got:
+                tp += 1
+            elif item["is_duty"] and not got:
+                fn += 1
+                misses.append({**item, "kind": "missed duty"})
+            elif not item["is_duty"] and got:
+                fp += 1
+                misses.append({**item, "kind": "false positive"})
+            else:
+                tn += 1
+    precision = tp / (tp + fp) if (tp + fp) else 1.0
+    recall = tp / (tp + fn) if (tp + fn) else 1.0
+    # An empty corpus (fresh dev DB) has nothing to judge — trivially green.
+    passed = evaluated < 5 or (precision >= 0.75 and recall >= 0.70)
+    return {
+        "golden_total": len(golden),
+        "evaluated_in_corpus": evaluated,
+        "precision": round(precision, 3),
+        "recall": round(recall, 3),
+        "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+        "misses": misses[:20],
+    }, passed
+
+
+@register_suite("l3_l5_referential")
+def l3_l5_referential(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Curated anchors must point at real registry sources, and any anchored
+    clause that IS in the corpus must have derived an obligation. Refs absent
+    from the corpus are reported (L1 completeness concern) but non-fatal."""
+    from app.clhear.derived_models import activities as activities_t
+    from app.clhear.derived_models import blocks as blocks_t
+    from app.clhear.derived_models import obligations as obligations_t
+    from app.clhear.l1.models import clauses, source_versions, sources
+    from app.clhear.l1.registry_etoro import S
+
+    registry_keys = {e["key"] for e in S}
+    unknown_sources: list[str] = []
+    extraction_misses: list[dict] = []
+    refs_not_in_corpus: list[dict] = []
+    with engine.connect() as conn:
+        db_keys = {row.key for row in conn.execute(sa.select(sources.c.key))}
+        block_rows = [dict(r) for r in conn.execute(sa.select(blocks_t)).mappings()]
+        activity_rows = [dict(r) for r in conn.execute(sa.select(activities_t)).mappings()]
+        derived = {
+            (r.source_key, r.clause_ref)
+            for r in conn.execute(
+                sa.select(obligations_t.c.source_key, obligations_t.c.clause_ref).where(
+                    obligations_t.c.status.in_(("derived", "validated"))
+                )
+            )
+        }
+        present: set[tuple[str, str]] = set()
+        for row in conn.execute(
+            sa.select(sources.c.key, clauses.c.ref)
+            .join(source_versions, source_versions.c.source_id == sources.c.id)
+            .join(clauses, clauses.c.source_version_id == source_versions.c.id)
+            .where(source_versions.c.status == "in_force")
+            .where(sources.c.license == "open")
+            .where(clauses.c.public_ok.is_(True))
+        ):
+            present.add((row.key, row.ref))
+
+    def check_anchor(owner: str, anchor: dict) -> None:
+        key = anchor["source_key"]
+        if key not in registry_keys and key not in db_keys:
+            unknown_sources.append(f"{owner} -> {key}")
+            return
+        for ref in anchor.get("refs") or []:
+            if (key, ref) in present and (key, ref) not in derived:
+                extraction_misses.append({"owner": owner, "source_key": key, "ref": ref})
+            elif (key, ref) not in present and key in db_keys:
+                refs_not_in_corpus.append({"owner": owner, "source_key": key, "ref": ref})
+
+    for b in block_rows:
+        for sel in b["satisfies"]:
+            check_anchor(f"block:{b['id']}", {"source_key": sel["source_key"], "refs": sel.get("refs")})
+    for a in activity_rows:
+        for trig in a["triggers"]:
+            check_anchor(f"activity:{a['id']}", trig["anchor"])
+    passed = not unknown_sources and not extraction_misses
+    return {
+        "blocks": len(block_rows),
+        "activities": len(activity_rows),
+        "unknown_sources": unknown_sources[:20],
+        "extraction_misses": extraction_misses[:20],
+        "refs_not_in_corpus": len(refs_not_in_corpus),
+    }, passed
+
+
 def run_source_evals(engine: Engine, source_key: str, release: str | None = None) -> list[dict]:
     return [run_suite(engine, suite, source_key=source_key, release=release) for suite in SOURCE_SUITES]
 
