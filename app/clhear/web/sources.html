@@ -331,7 +331,7 @@ function Library({ families, open }) {
   const allMembers = families.flatMap((f) => f.members);
   const ingested = allMembers.filter((m) => m.library_status === "ingested" || m.latest_version);
   const failed = allMembers.filter((m) => m.library_status === "failed-today");
-  const never = allMembers.filter((m) => m.library_status === "never-fetched");
+  const never = allMembers.filter((m) => m.library_status === "never-fetched" || m.library_status === "schedule-missed");
   const locked = allMembers.filter((m) => m.library_status === "locked-restricted");
   return html`
     <div>
@@ -844,7 +844,7 @@ function EvidenceIndex({ families, open }) {
             <tr key=${m.key}>
               <td><span class="srcname" onClick=${() => open(m.key)}>${m.short_name || m.name}</span>
                 <div class="mono">${m.key}</div></td>
-              <td><span class=${"badge " + (m.library_status === "ingested" ? "open" : m.library_status === "failed-today" ? "restricted" : "guidance")}>${m.library_status || "never-fetched"}</span></td>
+              <td><span class=${"badge " + (m.library_status === "ingested" ? "open" : m.library_status === "failed-today" || m.library_status === "schedule-missed" ? "restricted" : "guidance")}>${m.library_status || "never-fetched"}</span></td>
               <td class="mono">${m.latest_version || "—"}</td>
               <td class="mono">${m.last_run_status || "—"}</td>
             </tr>`)}
@@ -1005,7 +1005,8 @@ function FleetTable({ board, open, setRunId, meta }) {
                 <div class="mono">${r.last_run.raw_status === "unchanged" || r.last_run.raw_status === "up-to-date" ? "probed, unchanged" : (r.last_run.note || r.last_run.raw_status || r.last_run.status)}</div>
                 ${r.last_run.freshness === "stale" ? html`<div class="mono" style=${{ color: "var(--amber-600)" }}>stale last-good</div>` : ""}
                 ${r.last_run.error ? html`<div class="mono" style=${{ color: "var(--rose-600)" }}>${r.last_run.error}</div>` : ""}
-                <div class="mono">${r.last_run.ts}</div>` : html`<span class="mono">never-fetched</span>`}
+                <div class="mono">${r.last_run.ts}</div>` : html`<span class="mono" style=${r.library_status === "schedule-missed" ? { color: "var(--rose-600)" } : {}}>${r.library_status === "schedule-missed" ? "schedule missed — no run in 24h" : "never-fetched"}</span>`}
+              ${!r.last_run && r.next_run_utc ? html`<div class="mono">next: ${r.next_run_utc.slice(0, 16)}Z</div>` : ""}
             </td>
             <td class="mono">${r.last_run && r.last_run.coverage != null ? (r.last_run.coverage * 100).toFixed(2) + "%" : "—"}</td>
             <td>${r.last_run ? r.last_run.stages.map((s, i) => html`

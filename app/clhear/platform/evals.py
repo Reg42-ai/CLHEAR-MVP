@@ -422,6 +422,51 @@ def l1_completeness(engine: Engine, source_key: str | None) -> tuple[dict, bool]
     }, passed
 
 
+@register_suite("l1_schedule_kept")
+def l1_schedule_kept(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Honest-schedule gate: every source whose adapter advertises a daily
+    schedule must have a run ATTEMPT (any outcome) recorded within the last
+    24h, unless the registry marks it blocked. A promised schedule that did
+    not execute is a failure — never a silent no-op."""
+    from datetime import timedelta, timezone
+
+    from app.clhear.l1.models import FLEET_SCHEDULES
+    from app.clhear.l1.registry_etoro import S
+    from app.clhear.models import runs
+
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    attempted: set[str] = set()
+    with engine.connect() as conn:
+        for row in conn.execute(sa.select(runs).where(runs.c.fleet.like("l1.%")).order_by(runs.c.id.desc()).limit(3000)):
+            created = row.created_at
+            if isinstance(created, str):
+                try:
+                    created = datetime.fromisoformat(created)
+                except ValueError:
+                    continue
+            if created is not None and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if created is not None and created < since:
+                break
+            inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
+            if inputs.get("source"):
+                attempted.add(inputs["source"])
+    scheduled = [e for e in S if e["adapter"] in FLEET_SCHEDULES or e["adapter"] in {"nist"}]
+    missed = [
+        e["key"]
+        for e in scheduled
+        if e["key"] not in attempted and not (e.get("fetch") or {}).get("blocked")
+    ]
+    blocked = [e["key"] for e in scheduled if (e.get("fetch") or {}).get("blocked")]
+    return {
+        "scheduled_sources": len(scheduled),
+        "attempted_24h": len(attempted),
+        "missed": missed[:60],
+        "missed_count": len(missed),
+        "blocked": blocked,
+    }, not missed
+
+
 def run_source_evals(engine: Engine, source_key: str, release: str | None = None) -> list[dict]:
     return [run_suite(engine, suite, source_key=source_key, release=release) for suite in SOURCE_SUITES]
 

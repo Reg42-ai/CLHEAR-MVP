@@ -113,6 +113,9 @@ def list_sources() -> list[dict]:
                 library_status = "ingested"
             elif m.key in failed_today:
                 library_status = "failed-today"
+            elif m.adapter and _schedule_label(m.adapter) != "unscheduled" and m.key not in last_status:
+                # Scheduled but no run ever recorded: the schedule was not kept.
+                library_status = "schedule-missed"
             else:
                 library_status = "never-fetched"
             fam_members.append(
@@ -778,6 +781,8 @@ def fleet_board() -> list[dict]:
                 "note": outputs.get("note"),
                 "error": outputs.get("error"),
             }
+    now = datetime.now(timezone.utc)
+    next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     board = []
     for source in source_rows:
         source_version_list = by_source_versions.get(source.id, [])
@@ -785,6 +790,29 @@ def fleet_board() -> list[dict]:
         previous = next(
             (v for v in reversed(source_version_list) if current is None or v.id != current.id), None
         )
+        run = latest_run.get(source.key)
+        last_attempted = run["ts"] if run else None
+        attempted_24h = False
+        if last_attempted:
+            try:
+                attempted_at = datetime.fromisoformat(str(last_attempted))
+                if attempted_at.tzinfo is None:
+                    attempted_at = attempted_at.replace(tzinfo=timezone.utc)
+                attempted_24h = (now - attempted_at) <= timedelta(hours=24)
+            except ValueError:
+                pass
+        scheduled = _schedule_label(source.adapter) != "unscheduled"
+        if source.license == "restricted":
+            library_status = "locked-restricted"
+        elif current:
+            library_status = "ingested"
+        elif run and run.get("status") == "failure":
+            library_status = "failed-today"
+        elif scheduled and not attempted_24h:
+            # The schedule promised a run that did not happen — say so.
+            library_status = "schedule-missed"
+        else:
+            library_status = "never-fetched"
         board.append(
             {
                 "source_key": source.key,
@@ -799,16 +827,11 @@ def fleet_board() -> list[dict]:
                 "previous_version": previous.version_label if previous else None,
                 "versions": len(source_version_list),
                 "schedule": _schedule_label(source.adapter),
-                "last_run": latest_run.get(source.key),
-                "library_status": (
-                    "locked-restricted"
-                    if source.license == "restricted"
-                    else "ingested"
-                    if current
-                    else "failed-today"
-                    if (latest_run.get(source.key) or {}).get("status") == "failure"
-                    else "never-fetched"
-                ),
+                "last_run": run,
+                "last_attempted": last_attempted,
+                "attempted_24h": attempted_24h,
+                "next_run_utc": next_midnight.isoformat() if scheduled else None,
+                "library_status": library_status,
             }
         )
     return board

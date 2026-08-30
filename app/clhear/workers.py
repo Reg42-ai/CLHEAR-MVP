@@ -124,6 +124,8 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
         from app.clhear.platform import evals as l1_evals
 
         l1_evals.run_suite(engine, "l1_completeness", release=job_id)
+        schedule_kept = l1_evals.run_suite(engine, "l1_schedule_kept", release=job_id)
+        _put_schedule_metric(schedule_kept["scores"].get("missed_count", 0))
         for _entry, adapter in plan:
             key = adapter.meta().source_key
             try:
@@ -133,6 +135,19 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
     except Exception:
         log.exception("fleet evals failed for %s", adapter_key)
     return {"adapter": adapter_key, "job_id": job_id, "ran": len(plan), "statuses": statuses, "failures": failures}
+
+
+def _put_schedule_metric(missed_count: int) -> None:
+    """CLHEAR/ScheduleMissedSources: alarmed in CloudWatch when > 0."""
+    try:
+        import boto3
+
+        boto3.client("cloudwatch", region_name=get_settings().aws_region).put_metric_data(
+            Namespace="CLHEAR",
+            MetricData=[{"MetricName": "ScheduleMissedSources", "Value": float(missed_count), "Unit": "Count"}],
+        )
+    except Exception:
+        log.exception("could not publish ScheduleMissedSources metric")
 
 
 def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:

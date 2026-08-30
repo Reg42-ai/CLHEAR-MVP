@@ -12,6 +12,20 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
   treat_missing_data  = "notBreaching"
 }
 
+# Honest-schedule gate: the nightly fleet publishes how many scheduled
+# sources had NO run attempt in 24h. Anything above zero is a broken promise.
+resource "aws_cloudwatch_metric_alarm" "schedule_missed" {
+  alarm_name          = "${var.name_prefix}-schedule-missed-sources"
+  namespace           = "CLHEAR"
+  metric_name         = "ScheduleMissedSources"
+  statistic           = "Maximum"
+  period              = 86400
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "breaching" # no metric = the nightly job itself did not run
+}
+
 # Workers publish CLHEAR/DailyLlmSpendUsd from the llm_calls ledger.
 resource "aws_cloudwatch_metric_alarm" "llm_spend_over_cap" {
   alarm_name          = "${var.name_prefix}-llm-spend-over-cap"
