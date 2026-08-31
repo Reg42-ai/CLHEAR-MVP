@@ -315,7 +315,7 @@ def main() -> None:
     transport = SqsTransport(settings.clhear_events_queue_url, settings.aws_region)
     sqs = boto3.client("sqs", region_name=settings.aws_region)
 
-    log.info("clhear worker started (provider=%s, snapshot=%s)", provider.name, snapshot_uri or "off")
+    log.info("clhear worker started (providers=%s, snapshot=%s)", ",".join(providers) or "none", snapshot_uri or "off")
     while True:
         try:
             relay_once(engine, transport)
