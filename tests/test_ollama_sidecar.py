@@ -14,6 +14,7 @@ def test_cpu_models_never_include_27b():
 def test_is_cpu_manifest_key():
     assert sidecar.is_cpu_manifest_key("manifests/registry.ollama.ai/library/qwen3.5/4b")
     assert sidecar.is_cpu_manifest_key("ollama-models/manifests/registry.ollama.ai/library/qwen3.5/9b")
+    assert sidecar.is_cpu_manifest_key("ollama-models/models/manifests/registry.ollama.ai/library/qwen3.5/4b")
     assert not sidecar.is_cpu_manifest_key("manifests/registry.ollama.ai/library/qwen3.6/27b")
     assert not sidecar.is_cpu_manifest_key("manifests/registry.ollama.ai/library/qwen3.5/27b")
 

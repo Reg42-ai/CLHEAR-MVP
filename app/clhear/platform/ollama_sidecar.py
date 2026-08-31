@@ -49,10 +49,7 @@ def is_cpu_manifest_key(key: str) -> bool:
     k = key.replace("\\", "/").lower()
     if "27b" in k:
         return False
-    return any(
-        k.endswith(f"/qwen3.5/{tag}") or k.endswith(f"/qwen3.5/{tag}.json")
-        for tag in ("4b", "9b")
-    )
+    return any(k.endswith(f"/qwen3.5/{tag}") or k.endswith(f"/qwen3.5/{tag}.json") for tag in ("4b", "9b"))
 
 
 def blob_names_from_manifest(doc: dict | list | str) -> list[str]:
@@ -262,8 +259,10 @@ def run_sidecar(
 ) -> dict:
     """Restore → serve → pull 4b/9b. Injected callables keep this unit-testable."""
     cache_uri = cache_uri if cache_uri is not None else os.environ.get("CLHEAR_OLLAMA_MODEL_CACHE_S3", "")
-    dest = dest or os.environ.get("OLLAMA_MODELS") or DATA_DIR_DEFAULT
-    os.environ.setdefault("OLLAMA_MODELS", dest)
+    # Ollama home is ~/.ollama; models live in ~/.ollama/models. Do not set
+    # OLLAMA_MODELS to the home dir or restores from S3 (models/manifests/...) miss.
+    dest = dest or os.environ.get("OLLAMA_HOME") or DATA_DIR_DEFAULT
+    os.environ.setdefault("OLLAMA_MODELS", os.path.join(dest, "models"))
     restored = (restorer or restore_cpu_cache)(cache_uri, dest) if cache_uri else {"restored": False, "reason": "no cache"}
     proc = (server or (lambda: subprocess.Popen(serve_command())))()
     base = sidecar_base_url()
