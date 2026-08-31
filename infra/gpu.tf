@@ -62,7 +62,7 @@ resource "aws_security_group" "gpu" {
   count       = local.have_network ? 1 : 0
   name        = "${var.name_prefix}-gpu"
   vpc_id      = var.existing_vpc_id
-  description = "Ollama GPU — no public ingress; workers may reach :11434"
+  description = "Ollama GPU - no public ingress; workers may reach :11434"
 
   ingress {
     description     = "Ollama from workers"
