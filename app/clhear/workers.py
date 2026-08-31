@@ -82,6 +82,7 @@ def run_adapter_fleet(
     gateway: Gateway | None = None,
     *,
     force_nightly: bool = False,
+    nightly_only: bool = False,
 ) -> dict:
     """One scheduled fleet run: every source owned by `adapter_key` goes through
     the full ingest pipeline (fetch -> gate/repair -> persist -> annotate ->
@@ -103,7 +104,7 @@ def run_adapter_fleet(
 
     from app.clhear.l1.fleet import fleet_plan
 
-    plan = fleet_plan(adapter_key)
+    plan = [] if nightly_only else fleet_plan(adapter_key)
     statuses: dict[str, int] = {}
     failures: list[str] = []
     for entry, adapter in plan:
@@ -191,11 +192,13 @@ def _put_schedule_metric(missed_count: int) -> None:
 def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
     payload = envelope.payload or {}
     force = bool(payload.get("force_nightly") or payload.get("force"))
+    nightly_only = bool(payload.get("nightly_only"))
     return run_adapter_fleet(
         engine,
         payload.get("adapter", envelope.subject_ref),
         gateway,
         force_nightly=force,
+        nightly_only=nightly_only,
     )
 
 

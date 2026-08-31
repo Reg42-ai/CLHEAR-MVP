@@ -21,6 +21,7 @@ def main() -> int:
         ),
     )
     parser.add_argument("--adapter", default="uk_legislation")
+    parser.add_argument("--nightly-only", action="store_true", help="Skip L1 ingest; run GPU+fleets only")
     args = parser.parse_args()
     import boto3
 
@@ -30,7 +31,12 @@ def main() -> int:
         "layer": "l1",
         "kind": "AdapterRunRequested",
         "subject_ref": args.adapter,
-        "payload": {"adapter": args.adapter, "force_nightly": True, "force": True},
+        "payload": {
+            "adapter": args.adapter,
+            "force_nightly": True,
+            "force": True,
+            "nightly_only": bool(args.nightly_only),
+        },
         "schema_version": 1,
         "producer": "force_live_nightly",
         "ts": now,
