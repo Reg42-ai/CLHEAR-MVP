@@ -16,6 +16,7 @@ from sqlalchemy.engine import Engine
 from app.clhear.derived_models import activities as activities_t
 from app.clhear.derived_models import attribute_schema as attribute_schema_t
 from app.clhear.derived_models import obligations
+from app.clhear.platform.gateway import parse_json_object
 from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l5.map")
@@ -76,7 +77,7 @@ def map_activities(engine: Engine, llm, limit: int = MAX_MAP) -> dict:
                 required_keys=["activity_name", "when"],
                 max_tokens=400,
             )
-            parsed = json.loads(result.text)
+            parsed = parse_json_object(result.text)
         except Exception:
             log.exception("L5 map failed for %s", ob["id"])
             rejected += 1

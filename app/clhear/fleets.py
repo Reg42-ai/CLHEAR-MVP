@@ -22,8 +22,12 @@ def _already_ran_today(engine: Engine) -> bool:
             sa.select(runs).where(runs.c.fleet == FLEET_RUN).order_by(runs.c.id.desc()).limit(8)
         ):
             ts = str(row.created_at)
-            if ts.startswith(today):
-                return True
+            if not ts.startswith(today):
+                continue
+            # Safe FakeProvider rehearsals must not block a live GPU night.
+            if (row.trigger or "") == "rehearsal":
+                continue
+            return True
     return False
 
 
@@ -127,14 +131,40 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     return outputs
 
 
-def run_nightly_if_due(engine: Engine, llm, *, force: bool = False) -> dict | None:
+def run_nightly_if_due(
+    engine: Engine,
+    llm,
+    *,
+    force: bool = False,
+    client_factory=None,
+    sleeper=None,
+    http_get=None,
+) -> dict | None:
     if not force and _already_ran_today(engine):
         return None
-    from app.clhear.platform.gpu import launch_nightly_gpu, orphan_guard, terminate_gpu
+    from app.clhear.platform import gpu as gpu_mod
 
-    orphan_guard(engine)
-    gpu = launch_nightly_gpu(engine)
+    gpu_mod.orphan_guard(engine, client_factory=client_factory)
+    gpu = gpu_mod.launch_nightly_gpu(engine, client_factory=client_factory, sleeper=sleeper)
+    previous = None
+    gpu_ready = {"ready": False}
     try:
-        return {**run_nightly_stack(engine, llm, force=force), "gpu": gpu}
+        url = (gpu.get("detail") or {}).get("ollama_url") if isinstance(gpu, dict) else None
+        if url and gpu.get("status") in ("launching", "running"):
+            gpu_ready = gpu_mod.wait_for_ollama(
+                engine,
+                gpu.get("id"),
+                http_get=http_get,
+                sleeper=sleeper,
+            )
+            if gpu_ready.get("ready"):
+                previous = gpu_mod.attach_router(llm, gpu_ready.get("url") or url)
+        outputs = run_nightly_stack(engine, llm, force=force)
+        return {**outputs, "gpu": gpu, "gpu_ready": bool(gpu_ready.get("ready"))}
     finally:
-        terminate_gpu(engine, gpu.get("id") if isinstance(gpu, dict) else None)
+        gpu_mod.detach_router(llm, previous)
+        gpu_mod.terminate_gpu(
+            engine,
+            gpu.get("id") if isinstance(gpu, dict) else None,
+            client_factory=client_factory,
+        )

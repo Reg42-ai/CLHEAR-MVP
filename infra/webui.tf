@@ -87,6 +87,12 @@ resource "aws_iam_role_policy" "webui_db" {
         Effect   = "Allow"
         Action   = ["ses:SendEmail"]
         Resource = "*"
+      },
+      {
+        # Runtime valueFrom equivalent: hydrate OLLAMA_API_KEY (and leftover vendor keys) from SSM.
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:GetParameters"]
+        Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/clhear/*"
       }
     ]
   })
@@ -120,20 +126,21 @@ resource "aws_lambda_function" "webui" {
   s3_key           = var.webui_zip_key
   source_code_hash = var.webui_zip_sha256
   memory_size      = 512
-  timeout          = 30
+  timeout          = 60
 
   environment {
     variables = {
-      CLHEAR_DB_S3_URI           = var.webui_db_key != "" ? "s3://${aws_s3_bucket.deploy.bucket}/${var.webui_db_key}" : ""
-      CLHEAR_RELEASES_S3_PREFIX  = "s3://${aws_s3_bucket.deploy.bucket}/releases"
-      CLHEAR_APP_KEYS            = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key"
-      REG42_CLHEAR_ENABLED       = "true"
-      CLHEAR_EVENTS_QUEUE_URL    = aws_sqs_queue.events.url
-      CLHEAR_SESSION_SECRET      = data.aws_ssm_parameter.session_secret[0].value
-      GOOGLE_OAUTH_CLIENT_ID     = data.aws_ssm_parameter.google_oauth_client_id[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.google_oauth_client_id[0].value
-      GOOGLE_OAUTH_CLIENT_SECRET = data.aws_ssm_parameter.google_oauth_client_secret[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.google_oauth_client_secret[0].value
-      CLHEAR_SES_SENDER          = "CLHEAR <noreply@${var.clhear_hostname}>"
-      CLHEAR_PUBLIC_BASE_URL     = "https://${var.clhear_hostname}"
+      CLHEAR_DB_S3_URI                = var.webui_db_key != "" ? "s3://${aws_s3_bucket.deploy.bucket}/${var.webui_db_key}" : ""
+      CLHEAR_RELEASES_S3_PREFIX       = "s3://${aws_s3_bucket.deploy.bucket}/releases"
+      CLHEAR_APP_KEYS                 = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key"
+      REG42_CLHEAR_ENABLED            = "true"
+      CLHEAR_EVENTS_QUEUE_URL         = aws_sqs_queue.events.url
+      CLHEAR_SESSION_SECRET           = data.aws_ssm_parameter.session_secret[0].value
+      GOOGLE_OAUTH_CLIENT_ID          = data.aws_ssm_parameter.google_oauth_client_id[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.google_oauth_client_id[0].value
+      GOOGLE_OAUTH_CLIENT_SECRET      = data.aws_ssm_parameter.google_oauth_client_secret[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.google_oauth_client_secret[0].value
+      CLHEAR_SES_SENDER               = "CLHEAR <noreply@${var.clhear_hostname}>"
+      CLHEAR_PUBLIC_BASE_URL          = "https://${var.clhear_hostname}"
+      CLHEAR_FRONTIER_MONTHLY_CAP_USD = "50"
     }
   }
 }

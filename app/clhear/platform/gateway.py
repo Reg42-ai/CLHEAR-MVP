@@ -8,8 +8,9 @@ are hard stops.
 import hashlib
 import json
 import logging
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
@@ -70,14 +71,39 @@ XAI_PRICING = {
 }
 LOCAL_PRICING = {
     "qwen3.5:4b": (0.0, 0.0),
-    "qwen3.5:14b": (0.02, 0.02),
+    "qwen3.5:9b": (0.01, 0.01),
     "qwen3.6:27b": (0.08, 0.08),
 }
+# Ollama Cloud is subscription-billed; these are ledger stand-ins for the $50 cap.
+CLOUD_PRICING = {
+    "gpt-oss:120b": (0.15, 0.60),
+}
 _DEFAULT_PRICING = (3.00, 15.00)
+_THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
+_THINK_OPEN_RE = re.compile(r"<think>.*", re.S | re.I)
+_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.I)
+
+
+def parse_json_object(text: str) -> dict:
+    """Parse a JSON object out of model text (think tags, fences, leading prose)."""
+    raw = (text or "").strip()
+    raw = _THINK_RE.sub("", raw)
+    raw = _THINK_OPEN_RE.sub("", raw)
+    raw = _FENCE_RE.sub("", raw.strip()).strip()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        parsed = json.loads(raw[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise StructuredOutputError("response is not a JSON object")
+    return parsed
 
 
 def price_for(model: str) -> tuple[float, float]:
-    for table in (ANTHROPIC_PRICING, OPENAI_PRICING, XAI_PRICING, LOCAL_PRICING):
+    for table in (ANTHROPIC_PRICING, OPENAI_PRICING, XAI_PRICING, LOCAL_PRICING, CLOUD_PRICING):
         if model in table:
             return table[model]
     return _DEFAULT_PRICING
@@ -218,12 +244,19 @@ class XAIProvider(OpenAICompatProvider):
 
 
 class OllamaProvider:
-    """Local Ollama with JSON-schema `format` enforcement."""
+    """Local or cloud Ollama. Same /api/generate; cloud adds a Bearer token."""
 
     name = "ollama"
 
-    def __init__(self, base_url: str | None = None):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        name: str = "ollama",
+    ):
+        self.name = name
         self._base_url = (base_url or get_settings().ollama_base_url or "http://127.0.0.1:11434").rstrip("/")
+        self._api_key = "" if api_key == "" else (api_key if api_key is not None else get_settings().ollama_api_key)
 
     def complete(
         self,
@@ -241,15 +274,27 @@ class OllamaProvider:
             "model": model,
             "prompt": prompt,
             "stream": False,
+            "think": False,  # Qwen3.5 otherwise fills `thinking` and leaves response empty
             "options": {"temperature": temperature, "num_predict": max_tokens},
         }
         if system:
             body["system"] = system
-        body["format"] = json_schema if json_schema else "json"
-        resp = httpx.post(f"{self._base_url}/api/generate", json=body, timeout=300)
+        # Bare format=json makes some Qwen3.5 tags return an empty body.
+        # Prefer a schema when we have one; otherwise parse free text.
+        if json_schema:
+            body["format"] = json_schema
+        headers = {}
+        if self._api_key and self._api_key != "CHANGEME":
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        resp = httpx.post(
+            f"{self._base_url}/api/generate",
+            json=body,
+            headers=headers or None,
+            timeout=300,
+        )
         resp.raise_for_status()
         data = resp.json()
-        text = data.get("response") or ""
+        text = (data.get("response") or data.get("thinking") or "").strip()
         in_tok = int(data.get("prompt_eval_count") or max(1, len(prompt) // 4))
         out_tok = int(data.get("eval_count") or max(1, len(text) // 4))
         price_in, price_out = price_for(model)
@@ -387,12 +432,11 @@ class Gateway:
                     temperature=temperature, json_schema=json_schema,
                 )
                 if required_keys is not None:
-                    parsed = json.loads(result.text)
-                    if not isinstance(parsed, dict):
-                        raise StructuredOutputError("response is not a JSON object")
+                    parsed = parse_json_object(result.text)
                     missing = [k for k in required_keys if k not in parsed]
                     if missing:
                         raise StructuredOutputError(f"missing keys: {missing}")
+                    result = replace(result, text=json.dumps(parsed))
                 break
             except (json.JSONDecodeError, StructuredOutputError, ConnectionError, TimeoutError) as exc:
                 last_error = exc

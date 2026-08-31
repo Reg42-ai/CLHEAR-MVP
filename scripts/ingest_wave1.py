@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.clhear.db import get_engine, run_migrations  # noqa: E402
 from app.clhear.l1 import pipeline, registry_etoro  # noqa: E402
-from app.clhear.platform.gateway import AnthropicProvider, Gateway  # noqa: E402
+from app.clhear.platform.router import live_llm  # noqa: E402
 from app.clhear.settings import get_settings  # noqa: E402
 
 log = logging.getLogger("clhear.wave1")
@@ -51,7 +51,7 @@ def main() -> int:
         store: pipeline.ArtifactStore = pipeline.S3Store(settings.clhear_datalake_bucket, settings.aws_region)
     else:
         store = pipeline.LocalStore(settings.clhear_artifacts_dir)
-    gateway = Gateway(engine, AnthropicProvider()) if settings.anthropic_api_key else None
+    gateway = live_llm(engine)
 
     job_id = f"job-wave1-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     plan = registry_etoro.wave1_adapters(args.adapter)

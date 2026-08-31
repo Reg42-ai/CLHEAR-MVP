@@ -18,7 +18,7 @@ from app.clhear.db import get_engine, run_migrations
 from app.clhear.l1 import families, pipeline
 from app.clhear.l1.adapters import ADAPTER_KEYS, CITATOR_KEYS, get_adapter
 from app.clhear.platform.events import InMemoryTransport, SqsTransport, relay_once
-from app.clhear.platform.gateway import AnthropicProvider, Gateway
+from app.clhear.platform.router import live_llm
 from app.clhear.settings import get_settings
 
 
@@ -35,7 +35,7 @@ def main() -> int:
     else:
         store = pipeline.LocalStore(settings.clhear_artifacts_dir)
 
-    gateway = Gateway(engine, AnthropicProvider()) if settings.anthropic_api_key else None
+    gateway = live_llm(engine)
 
     from datetime import datetime, timezone
 

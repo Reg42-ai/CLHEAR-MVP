@@ -26,7 +26,8 @@ from app.clhear.l1.adapters import ADAPTER_KEYS, CITATOR_KEYS, get_adapter  # no
 from app.clhear.l1.adapters.eur_lex import EurLexAdapter  # noqa: E402
 from app.clhear.l1.adapters.uk_legislation import UkLegislationAdapter  # noqa: E402
 from app.clhear.platform.events import SqsTransport, relay_once  # noqa: E402
-from app.clhear.platform.gateway import AnthropicProvider, FakeProvider, Gateway  # noqa: E402
+from app.clhear.platform.gateway import FakeProvider, Gateway  # noqa: E402
+from app.clhear.platform.router import live_llm  # noqa: E402
 from app.clhear.settings import get_settings  # noqa: E402
 from app.clhear.workers import handle_envelope  # noqa: E402
 
@@ -46,9 +47,9 @@ def main() -> int:
     else:
         store = pipeline.LocalStore(settings.clhear_artifacts_dir)
 
-    # LLM repair tier is available only when a key is configured; daily runs
-    # stay LLM-free whenever the deterministic tiers pass.
-    gateway = Gateway(engine, AnthropicProvider()) if settings.anthropic_api_key else None
+    # LLM repair uses local Ollama when the sidecar is up; daily runs stay
+    # LLM-free whenever the deterministic tiers pass.
+    gateway = live_llm(engine)
 
     # One job id groups every run of this fleet execution (Fleet job canvas).
     from datetime import datetime, timezone

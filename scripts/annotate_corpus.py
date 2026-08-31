@@ -1,11 +1,10 @@
 """Generate plain-language clause explainers for the corpus (Tier 2).
 
 Batches every un-annotated public clause of the in-force versions through the
-L0 gateway (fleet `l1.annotate`, structured output, spend-capped, all calls in
+router (fleet `l1.annotate`, structured output, spend-capped, all calls in
 the llm_calls ledger). Idempotent: re-runs only touch new/changed clauses.
 
-Requires ANTHROPIC_API_KEY (env or settings). ~2,100 clauses ≈ $2 at
-Haiku-class pricing, well inside the $20/day fleet cap.
+Uses local Ollama (qwen3.5:9b) when OLLAMA_BASE_URL is set. No vendor key.
 
 Usage:
     DATABASE_URL=sqlite:///deploy/clhear.db python scripts/annotate_corpus.py [max_clauses]
@@ -19,24 +18,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.clhear.db import get_engine, run_migrations  # noqa: E402
 from app.clhear.l1 import annotate  # noqa: E402
-from app.clhear.platform.gateway import AnthropicProvider, Gateway  # noqa: E402
-from app.clhear.settings import get_settings  # noqa: E402
+from app.clhear.platform.router import live_llm  # noqa: E402
 
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
-    settings = get_settings()
-    if not settings.anthropic_api_key:
+    engine = get_engine()
+    run_migrations(engine)
+    gateway = live_llm(engine)
+    if gateway is None:
         print(
-            "ANTHROPIC_API_KEY is not configured — the explainer job needs it.\n"
-            "Add it as a Cloud Agent secret or set SSM /clhear/ANTHROPIC_API_KEY, then re-run.",
+            "No Ollama endpoint configured — set OLLAMA_BASE_URL "
+            "(local sidecar, no key) or OLLAMA_API_KEY for ollama.com.",
             file=sys.stderr,
         )
         return 2
     max_clauses = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    engine = get_engine()
-    run_migrations(engine)
-    gateway = Gateway(engine, AnthropicProvider())
     summary = annotate.annotate_llm(engine, gateway, max_clauses=max_clauses)
     print(json.dumps(summary, indent=2))
     return 0

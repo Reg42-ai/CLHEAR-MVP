@@ -11,7 +11,10 @@ daily fleet's snapshot updates reach the public UI without a redeploy.
 """
 import os
 
+from app.clhear.secrets import hydrate_ssm_env
 from app.clhear.snapshot_sync import DB_LOCAL_PATH, sync_snapshot
+
+hydrate_ssm_env()
 
 _state = {"etag": "", "checked": 0.0}
 

@@ -43,6 +43,7 @@ from app.clhear.l1.models import (
 from app.clhear.models import runs
 from app.clhear.platform import events as l0_events
 from app.clhear.platform import proposals as l0_proposals
+from app.clhear.platform.gateway import parse_json_object
 from app.clhear.settings import get_settings
 
 log = logging.getLogger("clhear.l1.pipeline")
@@ -281,7 +282,7 @@ def _llm_propose_hints(gateway, artifacts, missing_spans: list[str]) -> list[dic
         required_keys=["hints"],
         model=settings.clhear_model_repair,
     )
-    hints = json.loads(result.text).get("hints", [])
+    hints = parse_json_object(result.text).get("hints", [])
     return [h for h in hints if isinstance(h, dict) and h.get("match") and h.get("node_type")]
 
 

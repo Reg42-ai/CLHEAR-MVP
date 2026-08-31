@@ -20,6 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection, Engine
 
 from app.clhear.l1.models import ANNOTATION_CATEGORIES, clause_annotations, clauses, source_versions, sources
+from app.clhear.platform.gateway import parse_json_object
 
 log = logging.getLogger("clhear.l1.annotate")
 
@@ -127,7 +128,7 @@ def explain_batch(gateway, model: str, batch) -> list[dict]:
         required_keys=["annotations"],
         model=model,
     )
-    parsed = json.loads(result.text).get("annotations", [])
+    parsed = parse_json_object(result.text).get("annotations", [])
     out = []
     for entry in parsed:
         if not isinstance(entry, dict) or not entry.get("ref") or not entry.get("summary"):
@@ -150,7 +151,7 @@ def annotate_llm(engine: Engine, gateway, *, model: str | None = None, max_claus
     """Batch the un-annotated corpus through the gateway. Idempotent."""
     import hashlib
 
-    model = model or "claude-3-5-haiku-latest"
+    model = model or "qwen3.5:9b"
     done = 0
     batches = 0
     while True:
