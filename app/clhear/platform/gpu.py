@@ -247,7 +247,21 @@ def launch_nightly_gpu(
             }
             if settings.clhear_gpu_instance_profile:
                 params["IamInstanceProfile"] = {"Name": settings.clhear_gpu_instance_profile}
-            resp = ec2.run_instances(**params)
+            try:
+                resp = ec2.run_instances(**params)
+            except Exception as spot_exc:
+                # Spot needs AWSServiceRoleForEC2Spot; on-demand still works.
+                if "InstanceMarketOptions" in params and (
+                    "Spot" in str(spot_exc) or "spot" in str(spot_exc).lower()
+                    or "ServiceLinkedRole" in str(spot_exc)
+                ):
+                    log.warning("spot launch failed (%s); retrying on-demand", spot_exc)
+                    detail["spot_error"] = str(spot_exc)[:300]
+                    params.pop("InstanceMarketOptions", None)
+                    resp = ec2.run_instances(**params)
+                    detail["market"] = "on-demand"
+                else:
+                    raise
             instance_id = resp["Instances"][0]["InstanceId"]
             inst = wait_instance_ip(ec2, instance_id, sleeper=sleeper)
             private_ip = inst.get("PrivateIpAddress") or ""

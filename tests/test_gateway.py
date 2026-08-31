@@ -48,6 +48,34 @@ def test_structured_output_validation(engine):
     assert ok.text
 
 
+def test_ollama_omits_bare_json_format(monkeypatch):
+    from app.clhear.platform.gateway import OllamaProvider
+
+    seen = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"response": '{"ok": true}', "prompt_eval_count": 1, "eval_count": 1}
+
+    def fake_post(url, json=None, timeout=None):
+        seen["body"] = json
+        return _Resp()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+    OllamaProvider("http://127.0.0.1:11434").complete(
+        model="qwen3.5:4b", prompt="hi", system=None, max_tokens=16,
+    )
+    assert "format" not in seen["body"]
+    OllamaProvider("http://127.0.0.1:11434").complete(
+        model="qwen3.5:4b", prompt="hi", system=None, max_tokens=16,
+        json_schema={"type": "object"},
+    )
+    assert seen["body"]["format"] == {"type": "object"}
+
+
 def test_parse_json_object_strips_think_and_fences():
     body = {"is_duty": True, "evidence_span": "keep records"}
     wrapped = "<think>hmm</think>\n```json\n" + json.dumps(body) + "\n```"

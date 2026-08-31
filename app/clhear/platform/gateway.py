@@ -267,7 +267,10 @@ class OllamaProvider:
         }
         if system:
             body["system"] = system
-        body["format"] = json_schema if json_schema else "json"
+        # Bare format=json makes some Qwen3.5 tags return an empty body.
+        # Prefer a schema when we have one; otherwise parse free text.
+        if json_schema:
+            body["format"] = json_schema
         resp = httpx.post(f"{self._base_url}/api/generate", json=body, timeout=300)
         resp.raise_for_status()
         data = resp.json()
