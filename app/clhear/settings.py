@@ -25,8 +25,22 @@ class Settings(BaseSettings):
 
     # LLM gateway (HLD §5): hard caps, alarm handled by CloudWatch on llm spend metric.
     anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    xai_api_key: str = ""
+    ollama_base_url: str = ""  # e.g. http://127.0.0.1:11434 — empty = local tiers unavailable
+    clhear_llm_provider: str = ""  # "", "fake", "anthropic", "ollama", "openai", "xai"
     clhear_gateway_fleet_daily_cap_usd: float = 20.0
     clhear_gateway_global_daily_cap_usd: float = 100.0
+    clhear_frontier_monthly_cap_usd: float = 50.0
+
+    # Nightly ephemeral GPU (g6.xlarge spot) + Ollama model cache.
+    clhear_gpu_instance_type: str = "g6.xlarge"
+    clhear_gpu_max_hours: float = 4.0
+    clhear_gpu_ami_id: str = ""  # empty = resolve Amazon Linux 2023 GPU AMI at launch
+    clhear_gpu_subnet_id: str = ""
+    clhear_gpu_security_group_id: str = ""
+    clhear_gpu_instance_profile: str = ""
+    clhear_ollama_model_cache_s3: str = ""  # s3://bucket/ollama-models
 
     # Fidelity gate + repair loop (evals are gates, not reports).
     clhear_fidelity_threshold: float = 0.995
