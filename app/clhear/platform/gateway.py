@@ -263,6 +263,7 @@ class OllamaProvider:
             "model": model,
             "prompt": prompt,
             "stream": False,
+            "think": False,  # Qwen3.5 otherwise fills `thinking` and leaves response empty
             "options": {"temperature": temperature, "num_predict": max_tokens},
         }
         if system:
@@ -274,7 +275,7 @@ class OllamaProvider:
         resp = httpx.post(f"{self._base_url}/api/generate", json=body, timeout=300)
         resp.raise_for_status()
         data = resp.json()
-        text = data.get("response") or ""
+        text = (data.get("response") or data.get("thinking") or "").strip()
         in_tok = int(data.get("prompt_eval_count") or max(1, len(prompt) // 4))
         out_tok = int(data.get("eval_count") or max(1, len(text) // 4))
         price_in, price_out = price_for(model)

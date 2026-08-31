@@ -58,7 +58,7 @@ def test_ollama_omits_bare_json_format(monkeypatch):
             return None
 
         def json(self):
-            return {"response": '{"ok": true}', "prompt_eval_count": 1, "eval_count": 1}
+            return {"response": '{"ok": true}', "thinking": "", "prompt_eval_count": 1, "eval_count": 1}
 
     def fake_post(url, json=None, timeout=None):
         seen["body"] = json
@@ -68,6 +68,7 @@ def test_ollama_omits_bare_json_format(monkeypatch):
     OllamaProvider("http://127.0.0.1:11434").complete(
         model="qwen3.5:4b", prompt="hi", system=None, max_tokens=16,
     )
+    assert seen["body"]["think"] is False
     assert "format" not in seen["body"]
     OllamaProvider("http://127.0.0.1:11434").complete(
         model="qwen3.5:4b", prompt="hi", system=None, max_tokens=16,
