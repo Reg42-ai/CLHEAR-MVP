@@ -8,6 +8,7 @@ are hard stops.
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -74,6 +75,27 @@ LOCAL_PRICING = {
     "qwen3.6:27b": (0.08, 0.08),
 }
 _DEFAULT_PRICING = (3.00, 15.00)
+_THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
+_THINK_OPEN_RE = re.compile(r"<think>.*", re.S | re.I)
+_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.I)
+
+
+def parse_json_object(text: str) -> dict:
+    """Parse a JSON object out of model text (think tags, fences, leading prose)."""
+    raw = (text or "").strip()
+    raw = _THINK_RE.sub("", raw)
+    raw = _THINK_OPEN_RE.sub("", raw)
+    raw = _FENCE_RE.sub("", raw.strip()).strip()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        parsed = json.loads(raw[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise StructuredOutputError("response is not a JSON object")
+    return parsed
 
 
 def price_for(model: str) -> tuple[float, float]:
@@ -387,9 +409,7 @@ class Gateway:
                     temperature=temperature, json_schema=json_schema,
                 )
                 if required_keys is not None:
-                    parsed = json.loads(result.text)
-                    if not isinstance(parsed, dict):
-                        raise StructuredOutputError("response is not a JSON object")
+                    parsed = parse_json_object(result.text)
                     missing = [k for k in required_keys if k not in parsed]
                     if missing:
                         raise StructuredOutputError(f"missing keys: {missing}")

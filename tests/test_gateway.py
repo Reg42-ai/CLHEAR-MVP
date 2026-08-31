@@ -1,8 +1,16 @@
+import json
+
 import pytest
 import sqlalchemy as sa
 
 from app.clhear.models import llm_calls
-from app.clhear.platform.gateway import FakeProvider, Gateway, SpendCapExceeded, StructuredOutputError
+from app.clhear.platform.gateway import (
+    FakeProvider,
+    Gateway,
+    SpendCapExceeded,
+    StructuredOutputError,
+    parse_json_object,
+)
 
 
 def test_every_call_logged_with_hash_and_cost(engine):
@@ -38,3 +46,10 @@ def test_structured_output_validation(engine):
         fleet="dummy", model="m", prompt="p", required_keys=["classification", "confidence"]
     )
     assert ok.text
+
+
+def test_parse_json_object_strips_think_and_fences():
+    body = {"is_duty": True, "evidence_span": "keep records"}
+    wrapped = "<think>hmm</think>\n```json\n" + json.dumps(body) + "\n```"
+    assert parse_json_object(wrapped) == body
+    assert parse_json_object("prefix " + json.dumps(body) + " trailing") == body
