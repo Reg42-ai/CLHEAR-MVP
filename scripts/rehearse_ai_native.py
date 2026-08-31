@@ -136,7 +136,7 @@ def main() -> int:
     fake = FakeProvider(script=_grounded_script)
     llm = Router(
         engine,
-        providers={"ollama": fake, "anthropic": fake, "openai": fake, "xai": fake, "fake": fake},
+        providers={"ollama": fake, "ollama_cloud": fake, "fake": fake},
         gpu_open=True,
     )
     if safe:

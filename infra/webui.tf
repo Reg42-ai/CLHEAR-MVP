@@ -89,7 +89,7 @@ resource "aws_iam_role_policy" "webui_db" {
         Resource = "*"
       },
       {
-        # Runtime valueFrom equivalent: hydrate ANTHROPIC/OPENAI/XAI from SSM.
+        # Runtime valueFrom equivalent: hydrate OLLAMA_API_KEY (and leftover vendor keys) from SSM.
         Effect   = "Allow"
         Action   = ["ssm:GetParameter", "ssm:GetParameters"]
         Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/clhear/*"

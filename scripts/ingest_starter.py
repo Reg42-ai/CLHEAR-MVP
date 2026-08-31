@@ -17,7 +17,7 @@ from app.clhear.l1 import families, pipeline  # noqa: E402
 from app.clhear.l1.adapters import ADAPTER_KEYS, CITATOR_KEYS, get_adapter  # noqa: E402
 from app.clhear.l1.adapters.eur_lex import EurLexAdapter  # noqa: E402
 from app.clhear.l1.adapters.uk_legislation import UkLegislationAdapter  # noqa: E402
-from app.clhear.platform.gateway import AnthropicProvider, Gateway  # noqa: E402
+from app.clhear.platform.router import live_llm  # noqa: E402
 from app.clhear.settings import get_settings  # noqa: E402
 
 MLR_HISTORICAL_SNAPSHOT = "2020-01-09"
@@ -33,7 +33,7 @@ def main() -> int:
         store: pipeline.ArtifactStore = pipeline.S3Store(settings.clhear_datalake_bucket, settings.aws_region)
     else:
         store = pipeline.LocalStore(settings.clhear_artifacts_dir)
-    gateway = Gateway(engine, AnthropicProvider()) if settings.anthropic_api_key else None
+    gateway = live_llm(engine)
     job_id = f"job-starter-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     adapters = [
         UkLegislationAdapter(as_made=True),

@@ -68,8 +68,10 @@ def test_ollama_omits_bare_json_format(monkeypatch):
         def json(self):
             return {"response": '{"ok": true}', "thinking": "", "prompt_eval_count": 1, "eval_count": 1}
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, headers=None):
         seen["body"] = json
+        seen["headers"] = headers
+        seen["url"] = url
         return _Resp()
 
     monkeypatch.setattr("httpx.post", fake_post)
@@ -83,6 +85,32 @@ def test_ollama_omits_bare_json_format(monkeypatch):
         json_schema={"type": "object"},
     )
     assert seen["body"]["format"] == {"type": "object"}
+    assert not seen.get("headers")
+
+
+def test_ollama_cloud_sends_bearer(monkeypatch):
+    from app.clhear.platform.gateway import OllamaProvider
+
+    seen = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"response": '{"ok": true}', "thinking": "", "prompt_eval_count": 1, "eval_count": 1}
+
+    def fake_post(url, json=None, timeout=None, headers=None):
+        seen["url"] = url
+        seen["headers"] = headers
+        return _Resp()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+    OllamaProvider("https://ollama.com", api_key="ollama-test", name="ollama_cloud").complete(
+        model="gpt-oss:120b", prompt="hi", system=None, max_tokens=16,
+    )
+    assert seen["url"] == "https://ollama.com/api/generate"
+    assert seen["headers"]["Authorization"] == "Bearer ollama-test"
 
 
 def test_parse_json_object_strips_think_and_fences():

@@ -12,14 +12,14 @@ from app.clhear.secrets import hydrate_ssm_env
 
 
 def test_hydrate_ssm_fills_changeme_and_skips_fake():
-    env = {"ANTHROPIC_API_KEY": "CHANGEME", "CLHEAR_LLM_PROVIDER": ""}
-    filled = hydrate_ssm_env(environ=env, getter=lambda name: "sk-ant-test" if "ANTHROPIC" in name else "")
-    assert env["ANTHROPIC_API_KEY"] == "sk-ant-test"
-    assert filled["ANTHROPIC_API_KEY"] == "/clhear/ANTHROPIC_API_KEY"
+    env = {"OLLAMA_API_KEY": "CHANGEME", "CLHEAR_LLM_PROVIDER": ""}
+    filled = hydrate_ssm_env(environ=env, getter=lambda name: "ollama-test" if "OLLAMA" in name else "")
+    assert env["OLLAMA_API_KEY"] == "ollama-test"
+    assert filled["OLLAMA_API_KEY"] == "/clhear/OLLAMA_API_KEY"
 
-    fake_env = {"ANTHROPIC_API_KEY": "CHANGEME", "CLHEAR_LLM_PROVIDER": "fake"}
-    assert hydrate_ssm_env(environ=fake_env, getter=lambda _n: "sk-ant-test") == {}
-    assert fake_env["ANTHROPIC_API_KEY"] == "CHANGEME"
+    fake_env = {"OLLAMA_API_KEY": "CHANGEME", "CLHEAR_LLM_PROVIDER": "fake"}
+    assert hydrate_ssm_env(environ=fake_env, getter=lambda _n: "ollama-test") == {}
+    assert fake_env["OLLAMA_API_KEY"] == "CHANGEME"
 
 
 def test_rehearsal_does_not_count_as_already_ran(engine):

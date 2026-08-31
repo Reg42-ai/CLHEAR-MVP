@@ -13,6 +13,7 @@ from typing import Callable
 log = logging.getLogger("clhear.secrets")
 
 SSM_ENV = {
+    "OLLAMA_API_KEY": "/clhear/OLLAMA_API_KEY",
     "ANTHROPIC_API_KEY": "/clhear/ANTHROPIC_API_KEY",
     "OPENAI_API_KEY": "/clhear/OPENAI_API_KEY",
     "XAI_API_KEY": "/clhear/XAI_API_KEY",

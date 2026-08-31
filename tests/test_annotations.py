@@ -107,7 +107,7 @@ def test_llm_explainer_job_offline(engine, client, tmp_path):
             sa.select(clause_annotations).where(clause_annotations.c.origin == "llm")
         ).all()
         assert len(llm_rows) == 3
-        assert all(r.model == "claude-3-5-haiku-latest" and r.prompt_hash for r in llm_rows)
+        assert all(r.model == "qwen3.5:9b" and r.prompt_hash for r in llm_rows)
         call = conn.execute(sa.select(llm_calls)).one()
         assert call.fleet == "l1.annotate"
 

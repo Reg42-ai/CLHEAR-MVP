@@ -151,7 +151,7 @@ def annotate_llm(engine: Engine, gateway, *, model: str | None = None, max_claus
     """Batch the un-annotated corpus through the gateway. Idempotent."""
     import hashlib
 
-    model = model or "claude-3-5-haiku-latest"
+    model = model or "qwen3.5:9b"
     done = 0
     batches = 0
     while True:

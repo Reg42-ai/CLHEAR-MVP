@@ -74,6 +74,10 @@ LOCAL_PRICING = {
     "qwen3.5:9b": (0.01, 0.01),
     "qwen3.6:27b": (0.08, 0.08),
 }
+# Ollama Cloud is subscription-billed; these are ledger stand-ins for the $50 cap.
+CLOUD_PRICING = {
+    "gpt-oss:120b": (0.15, 0.60),
+}
 _DEFAULT_PRICING = (3.00, 15.00)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
 _THINK_OPEN_RE = re.compile(r"<think>.*", re.S | re.I)
@@ -99,7 +103,7 @@ def parse_json_object(text: str) -> dict:
 
 
 def price_for(model: str) -> tuple[float, float]:
-    for table in (ANTHROPIC_PRICING, OPENAI_PRICING, XAI_PRICING, LOCAL_PRICING):
+    for table in (ANTHROPIC_PRICING, OPENAI_PRICING, XAI_PRICING, LOCAL_PRICING, CLOUD_PRICING):
         if model in table:
             return table[model]
     return _DEFAULT_PRICING
@@ -240,12 +244,19 @@ class XAIProvider(OpenAICompatProvider):
 
 
 class OllamaProvider:
-    """Local Ollama with JSON-schema `format` enforcement."""
+    """Local or cloud Ollama. Same /api/generate; cloud adds a Bearer token."""
 
     name = "ollama"
 
-    def __init__(self, base_url: str | None = None):
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        name: str = "ollama",
+    ):
+        self.name = name
         self._base_url = (base_url or get_settings().ollama_base_url or "http://127.0.0.1:11434").rstrip("/")
+        self._api_key = "" if api_key == "" else (api_key if api_key is not None else get_settings().ollama_api_key)
 
     def complete(
         self,
@@ -272,7 +283,15 @@ class OllamaProvider:
         # Prefer a schema when we have one; otherwise parse free text.
         if json_schema:
             body["format"] = json_schema
-        resp = httpx.post(f"{self._base_url}/api/generate", json=body, timeout=300)
+        headers = {}
+        if self._api_key and self._api_key != "CHANGEME":
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        resp = httpx.post(
+            f"{self._base_url}/api/generate",
+            json=body,
+            headers=headers or None,
+            timeout=300,
+        )
         resp.raise_for_status()
         data = resp.json()
         text = (data.get("response") or data.get("thinking") or "").strip()

@@ -157,7 +157,7 @@ def run_adapter_fleet(
         if not is_router(gateway):
             from app.clhear.platform.router import build_providers
 
-            llm = Router(engine, providers={"ollama": gateway._provider, "anthropic": gateway._provider,
+            llm = Router(engine, providers={"ollama": gateway._provider, "ollama_cloud": gateway._provider,
                                             "fake": gateway._provider})
         nightly = run_nightly_if_due(engine, llm, force=force_nightly)
         if nightly is None:

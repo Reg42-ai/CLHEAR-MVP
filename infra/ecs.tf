@@ -51,9 +51,7 @@ locals {
     )
     secrets = [
       { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
-      { name = "ANTHROPIC_API_KEY", valueFrom = aws_ssm_parameter.anthropic_api_key.arn },
-      { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.openai_api_key.arn },
-      { name = "XAI_API_KEY", valueFrom = aws_ssm_parameter.xai_api_key.arn },
+      { name = "OLLAMA_API_KEY", valueFrom = aws_ssm_parameter.ollama_api_key.arn },
     ]
     logConfiguration = {
       logDriver = "awslogs"

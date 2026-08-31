@@ -24,11 +24,13 @@ class Settings(BaseSettings):
     clhear_datalake_bucket: str = "reg42-clhear-datalake"
 
     # LLM gateway (HLD §5): hard caps, alarm handled by CloudWatch on llm spend metric.
-    anthropic_api_key: str = ""
+    anthropic_api_key: str = ""  # unused by the router (Ollama-only)
     openai_api_key: str = ""
     xai_api_key: str = ""
     ollama_base_url: str = ""  # e.g. http://127.0.0.1:11434 — empty = local tiers unavailable
-    clhear_llm_provider: str = ""  # "", "fake", "anthropic", "ollama", "openai", "xai"
+    ollama_api_key: str = ""  # ollama.com cloud frontier; not needed for local 4b/9b/27b
+    ollama_cloud_base_url: str = "https://ollama.com"
+    clhear_llm_provider: str = ""  # "", "fake", "ollama"
     clhear_gateway_fleet_daily_cap_usd: float = 20.0
     clhear_gateway_global_daily_cap_usd: float = 100.0
     clhear_frontier_monthly_cap_usd: float = 50.0
@@ -48,7 +50,7 @@ class Settings(BaseSettings):
     # Max share of tokens dumb salvage may recover as unstructured notes;
     # bigger gaps need typed hints (learned or LLM-proposed) or the run fails.
     clhear_salvage_cap: float = 0.02
-    clhear_model_repair: str = "claude-sonnet-4-20250514"
+    clhear_model_repair: str = "qwen3.5:9b"
 
     # ARCH: stand-in for reg42-os auth; comma-separated identities with the
     # `maintainer` role. Replace with the existing session/role dependency on merge.

@@ -28,8 +28,8 @@ from app.clhear.settings import get_settings
 log = logging.getLogger("clhear.router")
 
 NO_PROVIDER_REASON = (
-    "No real LLM provider configured. Set OLLAMA_BASE_URL and/or a frontier "
-    "API key (ANTHROPIC_API_KEY / OPENAI_API_KEY / XAI_API_KEY). "
+    "No real LLM provider configured. Set OLLAMA_BASE_URL for local 4b/9b/27b "
+    "(no key) and optionally OLLAMA_API_KEY for Ollama Cloud frontier. "
     "FakeProvider is only used when CLHEAR_LLM_PROVIDER=fake."
 )
 
@@ -50,7 +50,7 @@ TIER_ORDER = ("local-small", "local-mid", "local-large", "frontier")
 class ModelTier:
     id: str
     model: str
-    provider: str  # ollama | frontier
+    provider: str  # ollama | ollama_cloud
     requires_gpu: bool = False
     cpu_ok: bool = True
     nightly_only: bool = False
@@ -60,14 +60,12 @@ TIERS: dict[str, ModelTier] = {
     "local-small": ModelTier("local-small", "qwen3.5:4b", "ollama", requires_gpu=False, cpu_ok=True),
     "local-mid": ModelTier("local-mid", "qwen3.5:9b", "ollama", requires_gpu=False, cpu_ok=True),
     "local-large": ModelTier("local-large", "qwen3.6:27b", "ollama", requires_gpu=True, cpu_ok=False, nightly_only=True),
-    "frontier": ModelTier("frontier", "claude-3-5-haiku-latest", "frontier", requires_gpu=False, cpu_ok=True),
+    "frontier": ModelTier("frontier", "gpt-oss:120b", "ollama", requires_gpu=False, cpu_ok=True),
 }
 
-FRONTIER_MODELS = {
-    "anthropic": "claude-3-5-haiku-latest",
-    "openai": "gpt-4o-mini",
-    "xai": "grok-3-mini",
-}
+# One protocol: local Ollama for 4b/9b/27b; ollama.com for the capped frontier.
+FRONTIER_PROVIDER = "ollama_cloud"
+FRONTIER_MODEL = "gpt-oss:120b"
 
 
 @dataclass(frozen=True)
@@ -152,20 +150,20 @@ SEED_QUALITY: dict[tuple[str, str], float] = {
     ("dummy.triage", "qwen3.5:9b"): 0.95,
     ("l1.parse_repair", "qwen3.5:9b"): 0.88,
     ("l1.parse_repair", "qwen3.6:27b"): 0.93,
-    ("l1.parse_repair", "claude-3-5-haiku-latest"): 0.96,
+    ("l1.parse_repair", "gpt-oss:120b"): 0.96,
     ("l1.annotate", "qwen3.5:4b"): 0.80,
     ("l1.annotate", "qwen3.5:9b"): 0.88,
     ("l2.duty_triage", "qwen3.5:4b"): 0.88,
     ("l2.duty_triage", "qwen3.5:9b"): 0.92,
     ("l2.consolidate", "qwen3.5:9b"): 0.86,
     ("l2.consolidate", "qwen3.6:27b"): 0.89,
-    ("l2.consolidate", "claude-3-5-haiku-latest"): 0.94,
+    ("l2.consolidate", "gpt-oss:120b"): 0.94,
     ("l3.block_generate", "qwen3.5:9b"): 0.80,
     ("l3.block_generate", "qwen3.6:27b"): 0.87,
-    ("l3.block_generate", "claude-3-5-haiku-latest"): 0.93,
+    ("l3.block_generate", "gpt-oss:120b"): 0.93,
     ("l4.license_extract", "qwen3.5:9b"): 0.84,
     ("l4.license_extract", "qwen3.6:27b"): 0.91,
-    ("l4.license_extract", "claude-3-5-haiku-latest"): 0.96,
+    ("l4.license_extract", "gpt-oss:120b"): 0.96,
     ("l5.activity_map", "qwen3.5:9b"): 0.85,
     ("l5.activity_map", "qwen3.6:27b"): 0.90,
     ("l6.rationale", "qwen3.5:9b"): 0.82,
@@ -173,9 +171,9 @@ SEED_QUALITY: dict[tuple[str, str], float] = {
     ("l7.narrative", "qwen3.5:9b"): 0.83,
     ("l7.narrative", "qwen3.6:27b"): 0.89,
     ("l0.revalidate", "qwen3.6:27b"): 0.86,
-    ("l0.revalidate", "claude-3-5-haiku-latest"): 0.95,
+    ("l0.revalidate", "gpt-oss:120b"): 0.95,
     ("eval.judge", "qwen3.5:9b"): 0.84,
-    ("eval.judge", "claude-3-5-haiku-latest"): 0.94,
+    ("eval.judge", "gpt-oss:120b"): 0.94,
 }
 
 TIER_DEFAULT_QUALITY = {
@@ -202,41 +200,38 @@ class RoutingDecision:
         return asdict(self)
 
 
+def _configured_secret(value: str | None) -> bool:
+    return bool(value) and value != "CHANGEME"
+
+
 def build_providers(settings=None) -> dict[str, Provider]:
-    """Construct whatever providers the environment actually has."""
+    """Ollama only: local sidecar/GPU, plus optional ollama.com cloud frontier."""
     settings = settings or get_settings()
     out: dict[str, Provider] = {}
     if (settings.clhear_llm_provider or "").lower() == "fake":
         fake = FakeProvider()
-        return {"ollama": fake, "fake": fake, "anthropic": fake, "openai": fake, "xai": fake}
+        return {"ollama": fake, "ollama_cloud": fake, "fake": fake}
+    from app.clhear.platform.gateway import OllamaProvider
+
     if settings.ollama_base_url:
-        from app.clhear.platform.gateway import OllamaProvider
-
-        out["ollama"] = OllamaProvider(settings.ollama_base_url)
-    if settings.anthropic_api_key and settings.anthropic_api_key != "CHANGEME":
-        from app.clhear.platform.gateway import AnthropicProvider
-
-        try:
-            out["anthropic"] = AnthropicProvider(settings.anthropic_api_key)
-        except Exception:
-            log.exception("anthropic provider unavailable")
-    if settings.openai_api_key and settings.openai_api_key != "CHANGEME":
-        from app.clhear.platform.gateway import OpenAIProvider
-
-        try:
-            out["openai"] = OpenAIProvider(settings.openai_api_key)
-        except Exception:
-            log.exception("openai provider unavailable")
-    if settings.xai_api_key and settings.xai_api_key != "CHANGEME":
-        from app.clhear.platform.gateway import XAIProvider
-
-        try:
-            out["xai"] = XAIProvider(settings.xai_api_key)
-        except Exception:
-            log.exception("xai provider unavailable")
+        out["ollama"] = OllamaProvider(settings.ollama_base_url, api_key="")
+    if _configured_secret(settings.ollama_api_key):
+        out[FRONTIER_PROVIDER] = OllamaProvider(
+            settings.ollama_cloud_base_url or "https://ollama.com",
+            api_key=settings.ollama_api_key,
+            name=FRONTIER_PROVIDER,
+        )
     if not out:
         log.error(NO_PROVIDER_REASON)
     return out
+
+
+def live_llm(engine: Engine) -> Router | None:
+    """CLI/worker helper: Router over whatever Ollama endpoints exist."""
+    providers = build_providers()
+    if not providers:
+        return None
+    return Router(engine, providers=providers)
 
 
 def record_missing_providers(engine: Engine | None) -> None:
@@ -355,9 +350,8 @@ class Router:
             return False
 
     def _frontier_provider(self) -> tuple[str, Provider, str] | None:
-        for name in ("anthropic", "openai", "xai"):
-            if name in self.providers:
-                return name, self.providers[name], FRONTIER_MODELS[name]
+        if FRONTIER_PROVIDER in self.providers:
+            return FRONTIER_PROVIDER, self.providers[FRONTIER_PROVIDER], FRONTIER_MODEL
         return None
 
     def _tier_available(self, tier: ModelTier, task: TaskSpec) -> tuple[bool, str]:
@@ -395,8 +389,8 @@ class Router:
             tier = TIERS[tier_id]
             ok, why = self._tier_available(tier, task)
             if tier_id == "frontier":
-                model = FRONTIER_MODELS["anthropic"]
-                provider_name = "frontier"
+                model = FRONTIER_MODEL
+                provider_name = FRONTIER_PROVIDER
                 if self._frontier_provider():
                     provider_name, _, model = self._frontier_provider()
             else:
@@ -521,7 +515,7 @@ def complete(llm: Any, task_id: str, **kwargs) -> LlmResult:
         return llm.run(task_id, **allowed)
     task = TASKS.get(task_id)
     fleet = task.fleet if task else "unknown"
-    model = model or (TIERS["local-small"].model if task else "claude-3-5-haiku-latest")
+    model = model or (TIERS["local-small"].model if task else FRONTIER_MODEL)
     return llm.call(fleet=fleet, model=model, **kwargs)
 
 

@@ -11,7 +11,7 @@ from app.clhear.platform.router import Router, TASKS, complete, last_decisions, 
 
 def _router(engine, quality=None, gpu_open=False, canned=None):
     fake = FakeProvider(canned_text=canned or json.dumps({"ok": True, "classification": "relevant", "confidence": 0.9}))
-    providers = {"ollama": fake, "anthropic": fake, "fake": fake}
+    providers = {"ollama": fake, "ollama_cloud": fake, "fake": fake}
     return Router(engine, providers=providers, quality=quality, gpu_open=gpu_open), fake
 
 
@@ -30,7 +30,7 @@ def test_classification_never_leaves_cpu(engine):
         ("l2.duty_triage", "qwen3.5:4b"): 0.40,
         ("l2.duty_triage", "qwen3.5:9b"): 0.40,
         ("l2.duty_triage", "qwen3.6:27b"): 0.99,
-        ("l2.duty_triage", "claude-3-5-haiku-latest"): 0.99,
+        ("l2.duty_triage", "gpt-oss:120b"): 0.99,
     }
     r, _ = _router(engine, quality=quality, gpu_open=True)
     d = r.decide("l2.duty_triage")
@@ -48,13 +48,13 @@ def test_frontier_only_when_high_criticality_and_local_below_threshold(engine):
         ("l0.revalidate", "qwen3.5:4b"): 0.50,
         ("l0.revalidate", "qwen3.5:9b"): 0.50,
         ("l0.revalidate", "qwen3.6:27b"): 0.50,
-        ("l0.revalidate", "claude-3-5-haiku-latest"): 0.95,
+        ("l0.revalidate", "gpt-oss:120b"): 0.95,
     }
     r, _ = _router(engine, quality=quality, gpu_open=True)
     d = r.decide("l0.revalidate")
     assert TASKS["l0.revalidate"].criticality == "high"
     assert d.chosen_tier == "frontier"
-    assert d.chosen_model == "claude-3-5-haiku-latest"
+    assert d.chosen_model == "gpt-oss:120b"
     assert any("quality" in x["reason"] for x in d.rejected)
 
 
@@ -63,7 +63,7 @@ def test_medium_criticality_never_frontiers(engine):
         ("l2.consolidate", "qwen3.5:4b"): 0.10,
         ("l2.consolidate", "qwen3.5:9b"): 0.10,
         ("l2.consolidate", "qwen3.6:27b"): 0.10,
-        ("l2.consolidate", "claude-3-5-haiku-latest"): 0.99,
+        ("l2.consolidate", "gpt-oss:120b"): 0.99,
     }
     r, _ = _router(engine, quality=quality, gpu_open=True)
     d = r.decide("l2.consolidate")
@@ -76,7 +76,7 @@ def test_gpu_tier_when_window_open(engine):
         ("l3.block_generate", "qwen3.5:4b"): 0.50,
         ("l3.block_generate", "qwen3.5:9b"): 0.50,
         ("l3.block_generate", "qwen3.6:27b"): 0.87,
-        ("l3.block_generate", "claude-3-5-haiku-latest"): 0.99,
+        ("l3.block_generate", "gpt-oss:120b"): 0.99,
     }
     r, _ = _router(engine, quality=quality, gpu_open=True)
     d = r.decide("l3.block_generate")
@@ -89,7 +89,7 @@ def test_gpu_tier_deferred_when_window_closed(engine):
         ("l3.block_generate", "qwen3.5:4b"): 0.50,
         ("l3.block_generate", "qwen3.5:9b"): 0.50,
         ("l3.block_generate", "qwen3.6:27b"): 0.87,
-        ("l3.block_generate", "claude-3-5-haiku-latest"): 0.99,
+        ("l3.block_generate", "gpt-oss:120b"): 0.99,
     }
     r, _ = _router(engine, quality=quality, gpu_open=False)
     d = r.decide("l3.block_generate")
@@ -117,12 +117,12 @@ def test_frontier_monthly_cap_is_hard_stop(engine):
         ("l0.revalidate", "qwen3.5:4b"): 0.1,
         ("l0.revalidate", "qwen3.5:9b"): 0.1,
         ("l0.revalidate", "qwen3.6:27b"): 0.1,
-        ("l0.revalidate", "claude-3-5-haiku-latest"): 0.99,
+        ("l0.revalidate", "gpt-oss:120b"): 0.99,
     }
     with engine.begin() as conn:
         conn.execute(
             llm_calls.insert().values(
-                fleet="prior", provider="anthropic", model="claude-3-5-haiku-latest",
+                fleet="prior", provider="ollama_cloud", model="gpt-oss:120b",
                 prompt_hash="x" * 64, input_tokens=1, output_tokens=1, cost_usd=50.0,
                 task_id="l0.revalidate", tier="frontier",
             )
@@ -167,7 +167,7 @@ def test_build_providers_fake_only_when_requested(monkeypatch):
     get_settings.cache_clear()
     providers = build_providers()
     assert providers["ollama"].name == "fake"
-    assert providers["anthropic"].name == "fake"
+    assert providers["ollama_cloud"].name == "fake"
     get_settings.cache_clear()
 
 
@@ -177,13 +177,33 @@ def test_build_providers_no_silent_fake(engine, monkeypatch):
 
     monkeypatch.setenv("CLHEAR_LLM_PROVIDER", "")
     monkeypatch.setenv("OLLAMA_BASE_URL", "")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "CHANGEME")
-    monkeypatch.setenv("OPENAI_API_KEY", "")
-    monkeypatch.setenv("XAI_API_KEY", "")
+    monkeypatch.setenv("OLLAMA_API_KEY", "CHANGEME")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-used")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-not-used")
+    monkeypatch.setenv("XAI_API_KEY", "xai-not-used")
     get_settings.cache_clear()
     assert build_providers() == {}
     r = Router(engine, providers={})
     with pytest.raises(SpendCapExceeded):
         r.decide("l2.duty_triage")
     assert "FakeProvider" in NO_PROVIDER_REASON or "fake" in NO_PROVIDER_REASON.lower()
+    get_settings.cache_clear()
+
+
+def test_build_providers_ollama_only_ignores_vendor_keys(monkeypatch):
+    from app.clhear.platform.router import FRONTIER_MODEL, FRONTIER_PROVIDER, TIERS, build_providers
+    from app.clhear.settings import get_settings
+
+    monkeypatch.setenv("CLHEAR_LLM_PROVIDER", "")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    monkeypatch.setenv("OLLAMA_API_KEY", "ollama-cloud-test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-used")
+    get_settings.cache_clear()
+    providers = build_providers()
+    assert set(providers) == {"ollama", FRONTIER_PROVIDER}
+    assert "anthropic" not in providers
+    assert providers["ollama"].name == "ollama"
+    assert providers[FRONTIER_PROVIDER].name == FRONTIER_PROVIDER
+    assert providers[FRONTIER_PROVIDER]._base_url == "https://ollama.com"
+    assert TIERS["frontier"].model == FRONTIER_MODEL
     get_settings.cache_clear()
