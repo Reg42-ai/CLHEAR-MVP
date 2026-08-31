@@ -59,9 +59,9 @@ resource "aws_iam_instance_profile" "gpu" {
 }
 
 resource "aws_security_group" "gpu" {
-  count  = local.have_network ? 1 : 0
-  name   = "${var.name_prefix}-gpu"
-  vpc_id = var.existing_vpc_id
+  count       = local.have_network ? 1 : 0
+  name        = "${var.name_prefix}-gpu"
+  vpc_id      = var.existing_vpc_id
   description = "Ollama GPU — no public ingress; workers may reach :11434"
 
   ingress {

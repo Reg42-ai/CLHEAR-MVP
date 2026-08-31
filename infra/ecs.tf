@@ -65,9 +65,9 @@ locals {
     }
   }
   ollama_sidecar = {
-    name      = "ollama"
-    image     = "ollama/ollama:latest"
-    essential = false
+    name         = "ollama"
+    image        = "ollama/ollama:latest"
+    essential    = false
     portMappings = [{ containerPort = 11434, protocol = "tcp" }]
     environment = [
       { name = "OLLAMA_HOST", value = "0.0.0.0:11434" },
@@ -92,9 +92,9 @@ resource "aws_ecs_task_definition" "workers" {
   memory                   = local.worker_memory
   execution_role_arn       = aws_iam_role.worker_execution.arn
   task_role_arn            = aws_iam_role.worker_task.arn
-  container_definitions = jsonencode(
-    var.ollama_sidecar_enabled ? [local.worker_container, local.ollama_sidecar] : [local.worker_container]
-  )
+  # jsonencode each branch so the ternary stays string/string (object
+  # tuples of different length are not a legal terraform type).
+  container_definitions = var.ollama_sidecar_enabled ? jsonencode([local.worker_container, local.ollama_sidecar]) : jsonencode([local.worker_container])
 }
 
 resource "aws_security_group" "workers" {
