@@ -142,7 +142,7 @@ def test_candidates_are_cross_jurisdiction_only(engine, client):
     assert len({g["jurisdiction"] for g in top}) >= 2
 
 
-def test_draft_propose_approve_flow(engine, client):
+def test_draft_auto_applies_as_ai_generated(engine, client):
     _seed(engine)
     canned = json.dumps({
         "name": "Apply customer due diligence before doing business",
@@ -151,27 +151,27 @@ def test_draft_propose_approve_flow(engine, client):
     })
     gateway = Gateway(engine, FakeProvider(canned_text=canned))
     summary = draft_and_propose(engine, gateway)
-    assert summary["proposed"] >= 1 and summary["llm_drafted"] >= 1
+    assert summary["applied"] >= 1 and summary["llm_drafted"] >= 1
+    assert summary["concept_ids"]
 
-    # Re-running does not duplicate pending proposals.
-    assert draft_and_propose(engine, gateway)["proposed"] == 0
+    # Live immediately — no human gate.
+    concept = get_concept(engine, summary["concept_ids"][0])
+    assert concept is not None
+    assert concept["status"] == "curated"
+    assert concept["approved_by"] == "ai-auto-apply"
+    assert concept["drafted_by"] == "gateway"
+    assert len(concept["members"]) >= 2
+    from app.clhear.governance import get_lifecycle
+
+    life = get_lifecycle(engine, "L2", concept["id"])
+    assert life and life["status"] == "ai_generated"
+
+    # Re-running does not duplicate.
+    assert draft_and_propose(engine, gateway)["applied"] == 0
 
     with engine.connect() as conn:
         prop = conn.execute(sa.select(proposals_t).where(proposals_t.c.kind == "l2_concept")).first()
-    assert prop is not None and prop.status == "proposed"
-
-    # Not live before approval.
-    draft = prop.draft if isinstance(prop.draft, dict) else json.loads(prop.draft)
-    assert get_concept(engine, draft["id"]) is None
-
-    resp = client.post(f"/api/clhear/proposals/{prop.id}/approve", headers={"X-Reg42-User": "avner@reg42.ai"})
-    assert resp.status_code == 200, resp.text
-    concept = get_concept(engine, draft["id"])
-    assert concept is not None
-    assert concept["status"] == "curated"
-    assert concept["approved_by"] == "avner@reg42.ai"
-    assert concept["drafted_by"] == "gateway"
-    assert len(concept["members"]) >= 2
+    assert prop is not None and prop.status == "approved"
 
 
 # --------------------------------------------------------------- integrity

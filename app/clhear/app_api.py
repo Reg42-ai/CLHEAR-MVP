@@ -281,6 +281,12 @@ async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dic
         union_jurisdictions: set[str] = set()
         all_sources: set[str] = set()
         for entity in entities:
+            try:
+                from app.clhear.l4.licenses import validate_authorisations
+
+                validate_authorisations(engine, entity["attributes"])
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
             bp = compose(
                 engine,
                 {"attributes": entity["attributes"], "activities": entity.get("activities")},
@@ -320,6 +326,12 @@ async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dic
     attributes = request_body.get("attributes")
     if not isinstance(attributes, dict) or not attributes:
         raise HTTPException(422, "body.attributes (profile facts) is required — see GET /v1/layers l4 schema")
+    try:
+        from app.clhear.l4.licenses import validate_authorisations
+
+        validate_authorisations(engine, attributes)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     activities = request_body.get("activities")
     if activities is not None and not isinstance(activities, list):
         raise HTTPException(422, "body.activities must be a list of activity ids or null for all")

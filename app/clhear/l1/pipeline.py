@@ -270,13 +270,16 @@ def _llm_propose_hints(gateway, artifacts, missing_spans: list[str]) -> list[dic
         '"ref": "<stable ref if inferable, else empty>"}]}\n\n'
         f"Missed spans with surrounding original markup:\n{json.dumps(samples, ensure_ascii=False, indent=1)}"
     )
-    result = gateway.call(
-        fleet=REPAIR_FLEET,
-        model=settings.clhear_model_repair,
+    from app.clhear.platform.router import complete
+
+    result = complete(
+        gateway,
+        "l1.parse_repair",
         prompt=prompt,
         system="You classify document structure. You never rewrite or invent text. JSON only.",
         max_tokens=2000,
         required_keys=["hints"],
+        model=settings.clhear_model_repair,
     )
     hints = json.loads(result.text).get("hints", [])
     return [h for h in hints if isinstance(h, dict) and h.get("match") and h.get("node_type")]

@@ -1,0 +1,154 @@
+"""L2 duty triage — LLM only for weak-modality clauses, evidence-span contract.
+
+The deterministic extractor owns high-precision must/shall. This fleet looks at
+clauses the rules left behind (should / may / ought) and asks for a verdict
+PLUS a quoted span. No span that is a literal substring of the clause → no
+verdict. The model sees only the clause text.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+
+import sqlalchemy as sa
+from sqlalchemy.engine import Engine
+
+from app.clhear.derived_models import obligations
+from app.clhear.l1.models import clauses, family_members, source_versions, sources
+from app.clhear.l2.extract import ADDRESSEE, MAX_STATEMENT, NON_DUTY_HEADINGS, _title_from, detect_duty, obligation_id
+from app.clhear.platform.router import complete
+
+log = logging.getLogger("clhear.l2.triage")
+
+WEAK_MODAL = re.compile(r"\b(?:should|ought to|may|is expected to|are expected to)\b", re.I)
+MAX_PER_RUN = 25
+
+
+def _weak_candidates(engine: Engine, limit: int = MAX_PER_RUN) -> list[dict]:
+    existing: set[str] = set()
+    with engine.connect() as conn:
+        existing = {r.id for r in conn.execute(sa.select(obligations.c.id))}
+        binding = {
+            row.source_id
+            for row in conn.execute(sa.select(family_members).where(family_members.c.tier == "binding"))
+        }
+        versions = {
+            v.source_id: v
+            for v in conn.execute(
+                sa.select(source_versions).where(source_versions.c.status == "in_force")
+            )
+        }
+        srcs = {s.id: s for s in conn.execute(sa.select(sources).where(sources.c.license == "open"))}
+        out = []
+        for sid, src in srcs.items():
+            if sid not in binding or sid not in versions:
+                continue
+            for row in conn.execute(
+                sa.select(clauses).where(clauses.c.source_version_id == versions[sid].id)
+                .where(clauses.c.public_ok.is_(True))
+            ):
+                text = row.text or ""
+                if obligation_id(src.key, row.ref) in existing:
+                    continue
+                if detect_duty(text, row.ref or "", "") is not None:
+                    continue
+                if NON_DUTY_HEADINGS.search(text[:120]):
+                    continue
+                if not WEAK_MODAL.search(text):
+                    continue
+                if len(text.strip()) < 40:
+                    continue
+                out.append({
+                    "source_key": src.key,
+                    "ref": row.ref,
+                    "text": text,
+                    "text_hash": row.text_hash,
+                    "jurisdiction": src.jurisdiction,
+                    "themes": src.topics if isinstance(src.topics, list) else [],
+                    "version_label": versions[sid].version_label,
+                })
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+def span_is_grounded(span: str, clause_text: str) -> bool:
+    needle = " ".join((span or "").split())
+    hay = " ".join((clause_text or "").split())
+    return bool(needle) and len(needle) >= 12 and needle.lower() in hay.lower()
+
+
+def triage_duties(engine: Engine, llm, limit: int = MAX_PER_RUN) -> dict:
+    inserted = rejected = 0
+    for cand in _weak_candidates(engine, limit=limit):
+        prompt = (
+            "Does this regulatory clause impose a duty (someone must/should do something)? "
+            "You MUST quote an evidence_span that is a verbatim substring of the clause. "
+            'JSON: {"is_duty": true|false, "modality": "should"|"may"|"ought"|null, '
+            '"evidence_span": "verbatim quote", "addressee": ""}.\n\nCLAUSE:\n'
+            + cand["text"][:2000]
+        )
+        try:
+            result = complete(
+                llm, "l2.duty_triage",
+                prompt=prompt,
+                system="You classify duties. Quote only. Never paraphrase the evidence_span. JSON only.",
+                required_keys=["is_duty", "evidence_span"],
+                max_tokens=400,
+            )
+            parsed = json.loads(result.text)
+        except Exception:
+            log.exception("duty triage failed for %s#%s", cand["source_key"], cand["ref"])
+            rejected += 1
+            continue
+        span = str(parsed.get("evidence_span") or "")
+        if not span_is_grounded(span, cand["text"]):
+            rejected += 1
+            continue
+        if not parsed.get("is_duty"):
+            rejected += 1
+            continue
+        oid = obligation_id(cand["source_key"], cand["ref"])
+        statement = re.sub(r"\s+", " ", cand["text"]).strip()
+        if len(statement) > MAX_STATEMENT:
+            statement = statement[: MAX_STATEMENT - 1].rsplit(" ", 1)[0] + "…"
+        addressee_match = ADDRESSEE.search(cand["text"])
+        with engine.begin() as conn:
+            conn.execute(
+                obligations.insert().values(
+                    id=oid,
+                    source_key=cand["source_key"],
+                    clause_ref=cand["ref"],
+                    title=_title_from(cand["text"], cand["ref"]),
+                    statement=statement,
+                    addressee=addressee_match.group(1).strip() if addressee_match else "",
+                    modality=str(parsed.get("modality") or "should"),
+                    jurisdiction=cand["jurisdiction"] or "",
+                    themes=cand["themes"],
+                    confidence=0.7,
+                    status="derived",
+                    method="duty-triage-v1",
+                    text_hash=cand["text_hash"],
+                    source_version_label=cand["version_label"] or "",
+                )
+            )
+        from app.clhear.governance import mark_generated
+
+        mark_generated(
+            engine, layer="L2", subject_ref=oid, generated_by=result.model,
+            routing_reason="duty-triage evidence-span contract",
+            detail={"span": span[:200]},
+        )
+        inserted += 1
+    try:
+        from app.clhear import ai_ops
+
+        ai_ops.record(
+            engine, kind="fleet_generation", layer="L2", fleet="l2.triage",
+            reasoning=f"Miner/Weaver triage: {inserted} weak-modality duties accepted, {rejected} discarded (no span or not a duty)",
+            detail={"inserted": inserted, "rejected": rejected},
+        )
+    except Exception:
+        log.exception("triage ai_ops failed")
+    return {"inserted": inserted, "rejected": rejected, "examined": inserted + rejected}

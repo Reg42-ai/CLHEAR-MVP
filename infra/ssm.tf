@@ -18,6 +18,24 @@ resource "aws_ssm_parameter" "github_deploy_token" {
   }
 }
 
+resource "aws_ssm_parameter" "openai_api_key" {
+  name  = "/clhear/OPENAI_API_KEY"
+  type  = "SecureString"
+  value = "CHANGEME"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "xai_api_key" {
+  name  = "/clhear/XAI_API_KEY"
+  type  = "SecureString"
+  value = "CHANGEME"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 resource "aws_ssm_parameter" "database_url" {
   name  = var.database_url_ssm_param
   type  = "SecureString"

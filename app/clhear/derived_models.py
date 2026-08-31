@@ -112,6 +112,22 @@ sample_profiles = sa.Table(
     schema=L4_SCHEMA,
 )
 
+# Grounded license registry: every row quotes a retrieved L1 clause. The model
+# never invents a permission type from general knowledge (L4 closed-world RAG).
+license_types = sa.Table(
+    "license_types",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # LIC:{jurisdiction}:{slug}
+    sa.Column("jurisdiction", sa.Text, nullable=False, index=True),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("issuing_regime", sa.Text, nullable=False, default=""),
+    sa.Column("clause_anchors", Json, nullable=False, default=list),  # [{source_key, ref, text_hash}]
+    sa.Column("status", sa.Text, nullable=False, default="ai_generated"),
+    sa.Column("generated_by", sa.Text, nullable=False, default=""),
+    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    schema=L4_SCHEMA,
+)
+
 # ------------------------------------------------------------------------ L6
 
 blueprints = sa.Table(
@@ -171,4 +187,7 @@ concept_members = sa.Table(
     schema=L2_SCHEMA,
 )
 
-DERIVED_TABLES = (obligations, blocks, activities, attribute_schema, sample_profiles, blueprints, concepts, concept_members)
+DERIVED_TABLES = (
+    obligations, blocks, activities, attribute_schema, sample_profiles,
+    blueprints, concepts, concept_members, license_types,
+)

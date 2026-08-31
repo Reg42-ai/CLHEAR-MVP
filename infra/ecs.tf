@@ -23,46 +23,78 @@ resource "aws_cloudwatch_log_group" "workers" {
   retention_in_days = 30
 }
 
+locals {
+  worker_cpu    = var.ollama_sidecar_enabled ? 4096 : 512
+  worker_memory = var.ollama_sidecar_enabled ? 16384 : 1024
+  worker_container = {
+    name       = "worker"
+    image      = var.worker_image
+    essential  = true
+    entryPoint = ["python", "-m", "app.clhear.workers"]
+    environment = concat(
+      [
+        { name = "AWS_REGION", value = var.aws_region },
+        { name = "CLHEAR_EVENTS_QUEUE_URL", value = aws_sqs_queue.events.url },
+        { name = "CLHEAR_DATALAKE_BUCKET", value = aws_s3_bucket.datalake.bucket },
+        { name = "REG42_CLHEAR_ENABLED", value = "true" },
+        { name = "CLHEAR_SNAPSHOT_S3_URI", value = "s3://${aws_s3_bucket.deploy.bucket}/webui/clhear-latest.db" },
+        { name = "CLHEAR_RELEASES_S3_PREFIX", value = "s3://${aws_s3_bucket.deploy.bucket}/releases" },
+        { name = "CLHEAR_HTTP_MODE", value = "live" },
+        { name = "CLHEAR_ARTIFACT_STORE", value = "s3" },
+        { name = "CLHEAR_FRONTIER_MONTHLY_CAP_USD", value = "50" },
+        { name = "CLHEAR_OLLAMA_MODEL_CACHE_S3", value = "s3://${aws_s3_bucket.deploy.bucket}/ollama-models" },
+        { name = "CLHEAR_GPU_INSTANCE_PROFILE", value = aws_iam_instance_profile.gpu.name },
+      ],
+      length(var.existing_private_subnet_ids) > 0 ? [{ name = "CLHEAR_GPU_SUBNET_ID", value = var.existing_private_subnet_ids[0] }] : [],
+      local.have_network ? [{ name = "CLHEAR_GPU_SECURITY_GROUP_ID", value = aws_security_group.gpu[0].id }] : [],
+      var.ollama_sidecar_enabled ? [{ name = "OLLAMA_BASE_URL", value = "http://127.0.0.1:11434" }] : [],
+    )
+    secrets = [
+      { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
+      { name = "ANTHROPIC_API_KEY", valueFrom = aws_ssm_parameter.anthropic_api_key.arn },
+      { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.openai_api_key.arn },
+      { name = "XAI_API_KEY", valueFrom = aws_ssm_parameter.xai_api_key.arn },
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.workers.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "worker"
+      }
+    }
+  }
+  ollama_sidecar = {
+    name         = "ollama"
+    image        = "ollama/ollama:latest"
+    essential    = false
+    portMappings = [{ containerPort = 11434, protocol = "tcp" }]
+    environment = [
+      { name = "OLLAMA_HOST", value = "0.0.0.0:11434" },
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.workers.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ollama"
+      }
+    }
+  }
+}
+
 resource "aws_ecs_task_definition" "workers" {
   count                    = var.worker_image != "" ? 1 : 0
   family                   = "${var.name_prefix}-workers"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = 512
-  memory                   = 1024
+  cpu                      = local.worker_cpu
+  memory                   = local.worker_memory
   execution_role_arn       = aws_iam_role.worker_execution.arn
   task_role_arn            = aws_iam_role.worker_task.arn
-  container_definitions = jsonencode([
-    {
-      name       = "worker"
-      image      = var.worker_image
-      essential  = true
-      entryPoint = ["python", "-m", "app.clhear.workers"]
-      environment = [
-        { name = "AWS_REGION", value = var.aws_region },
-        { name = "CLHEAR_EVENTS_QUEUE_URL", value = aws_sqs_queue.events.url },
-        { name = "CLHEAR_DATALAKE_BUCKET", value = aws_s3_bucket.datalake.bucket },
-        { name = "REG42_CLHEAR_ENABLED", value = "true" },
-        # Snapshot mode: the corpus SQLite the public explorer serves.
-        { name = "CLHEAR_SNAPSHOT_S3_URI", value = "s3://${aws_s3_bucket.deploy.bucket}/webui/clhear-latest.db" },
-        { name = "CLHEAR_RELEASES_S3_PREFIX", value = "s3://${aws_s3_bucket.deploy.bucket}/releases" },
-        { name = "CLHEAR_HTTP_MODE", value = "live" },
-        { name = "CLHEAR_ARTIFACT_STORE", value = "s3" },
-      ]
-      secrets = [
-        { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
-        { name = "ANTHROPIC_API_KEY", valueFrom = aws_ssm_parameter.anthropic_api_key.arn },
-      ]
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.workers.name
-          awslogs-region        = var.aws_region
-          awslogs-stream-prefix = "worker"
-        }
-      }
-    }
-  ])
+  # jsonencode each branch so the ternary stays string/string (object
+  # tuples of different length are not a legal terraform type).
+  container_definitions = var.ollama_sidecar_enabled ? jsonencode([local.worker_container, local.ollama_sidecar]) : jsonencode([local.worker_container])
 }
 
 resource "aws_security_group" "workers" {
