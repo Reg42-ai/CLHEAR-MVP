@@ -101,6 +101,20 @@ def test_orphan_guard_kills_stale_session(engine):
     assert row.status == "terminated"
 
 
+def test_default_ami_picks_newest():
+    class _EC2:
+        def describe_images(self, Owners=None, Filters=None):
+            names = [f["Values"][0] for f in (Filters or []) if f["Name"] == "name"]
+            assert names
+            assert any("x86_64-ebs" in n or n.endswith("-gpu-*") for n in names)
+            return {"Images": [
+                {"ImageId": "ami-old", "CreationDate": "2026-01-01T00:00:00.000Z"},
+                {"ImageId": "ami-new", "CreationDate": "2026-08-20T19:35:21.000Z"},
+            ]}
+
+    assert gpu_mod._default_ami(_EC2()) == "ami-new"
+
+
 def test_userdata_has_fuse_and_s3_cache():
     script = gpu_mod.userdata_script(cache_uri="s3://bucket/ollama-models", region="us-east-1")
     assert "shutdown -h +240" in script

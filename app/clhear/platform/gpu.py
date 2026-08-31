@@ -393,14 +393,30 @@ def _put_orphan_metric(count: int, region: str) -> None:
 
 
 def _default_ami(ec2) -> str:
-    resp = ec2.describe_images(
-        Owners=["amazon"],
-        Filters=[
-            {"Name": "name", "Values": ["al2023-ami-ecs-gpu-*-x86_64"]},
-            {"Name": "state", "Values": ["available"]},
-        ],
+    """Resolve the newest Amazon Linux 2023 ECS GPU AMI (x86_64).
+
+    Real names look like ``al2023-ami-ecs-gpu-hvm-2023.0.YYYYMMDD-kernel-6.1-x86_64-ebs``.
+    A filter that ends at ``-x86_64`` (no trailing wildcard) matches nothing.
+    """
+    patterns = (
+        "al2023-ami-ecs-gpu-hvm-*-x86_64-ebs",
+        "al2023-ami-ecs-gpu-*",
+        "amzn2-ami-ecs-gpu-hvm-*-x86_64-ebs",
     )
-    images = sorted(resp.get("Images", []), key=lambda i: i.get("CreationDate", ""), reverse=True)
+    images: list[dict] = []
+    for name in patterns:
+        resp = ec2.describe_images(
+            Owners=["amazon"],
+            Filters=[
+                {"Name": "name", "Values": [name]},
+                {"Name": "state", "Values": ["available"]},
+                {"Name": "architecture", "Values": ["x86_64"]},
+            ],
+        )
+        images = list(resp.get("Images") or [])
+        if images:
+            break
+    images = sorted(images, key=lambda i: i.get("CreationDate", ""), reverse=True)
     if not images:
         raise RuntimeError("no Amazon Linux 2023 GPU AMI found")
     return images[0]["ImageId"]
