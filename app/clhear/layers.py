@@ -30,9 +30,17 @@ LAYER_CATALOG: dict[str, dict] = {
             "outbox in the same transaction as the data change, then relayed to SQS; "
             "every fleet run is recorded in an append-only ledger; every LLM call is "
             "logged with prompt hash, tokens and cost under hard daily spend caps.",
+            "generation": {
+                "nature": "infrastructure — no generation",
+                "technique": "Inference router + spend caps + AI ops ledger",
+                "guarantee": "No LLM call except router.run; every decision logs task, model, rejected alternatives, cost, reasoning",
+                "may": ["route, cap, ledger, revalidate corrections"],
+                "must_not": ["bypass the router", "exceed the $50/month frontier cap"],
+                "gates": ["fleet/global daily caps", "frontier monthly cap", "orphan GPU alarm"],
+            },
             "gates": [
-                "Named-human approvals: no proposal takes effect without a recorded maintainer identity + timestamp",
-                "Hard LLM spend caps ($20/day per fleet, $100/day global) — hard stop, not a warning",
+                "Eval-gated publish; admin override is last resort on the correction loop",
+                "Hard LLM spend caps ($20/day per fleet, $100/day global, $50/month frontier) — hard stop, not a warning",
             ],
             "evidence": [
                 "runs ledger (replayable: same inputs => same corpus)",
@@ -56,6 +64,14 @@ LAYER_CATALOG: dict[str, dict] = {
             "govinfo/eCFR, NIST); the pipeline stores originals in WORM S3, versions the "
             "text, aligns clauses by ref and emits clause-level change events. Source "
             "text is NEVER generated, cleaned up, or summarized into the record.",
+            "generation": {
+                "nature": "reproduction, zero generation",
+                "technique": "Deterministic fetch/parse/hash; LLM only for extractive parse repair and grounded annotation",
+                "guarantee": "Parse-repair output must byte-match publisher text (fidelity oracle) or it is discarded; annotations are origin=llm and never replace text",
+                "may": ["propose parse hints", "annotate with origin=llm"],
+                "must_not": ["write or clean source text", "store generated law"],
+                "gates": ["E1 fidelity", "coverage"],
+            },
             "gates": [
                 "Fidelity checks against the fetched original before a version is accepted",
                 "Family membership changes go through the L0 proposals queue (human ratifies)",
@@ -85,10 +101,18 @@ LAYER_CATALOG: dict[str, dict] = {
             "obligation stores its basis refs so it can be re-verified against the "
             "verbatim text at any time. When L1 detects a clause change, affected "
             "obligations are flagged for re-derivation automatically.",
+            "generation": {
+                "nature": "anchored extraction + cross-jurisdiction synthesis",
+                "technique": "Deterministic duty extract; LLM duty-triage with evidence-span contract; auto-applied consolidation",
+                "guarantee": "Triage span must be a literal substring; concept members must be existing OBL: ids (closed-world) plus n-gram restricted guard",
+                "may": ["verdict + quoted span", "draft canonical statement"],
+                "must_not": ["invent obligation ids", "copy restricted 8-grams"],
+                "gates": ["l2_extraction_quality", "l2_basis_integrity", "l2_concept_integrity"],
+            },
             "gates": [
-                "Maintainer approval per obligation via the L0 proposals queue",
                 "Re-derivation flag on any L1 change event touching a basis clause",
                 "Restricted sources contribute obligation refs only, never text",
+                "Consolidation auto-applies as AI-GENERATED; Eval Studio samples for audit coverage",
             ],
             "evidence": [
                 "basis clause refs + hashes per obligation (inspect the lineage)",
@@ -111,9 +135,17 @@ LAYER_CATALOG: dict[str, dict] = {
             "Each block declares exactly which obligations it satisfies and what "
             "implementing it requires; the mapping is many-to-many and every edge "
             "is inspectable down to the underlying clauses.",
+            "generation": {
+                "nature": "genuine design synthesis — the one legitimately creative layer",
+                "technique": "Clustered generation grounded at the edges",
+                "guarantee": "Every satisfies anchor resolves to a live obligation; near-duplicates merged; free-form fields labeled AI-designed",
+                "may": ["design deliverables and evidence artifacts (labeled)"],
+                "must_not": ["cite obligations that do not exist"],
+                "gates": ["l3_l5_referential", "dedupe", "Eval Studio sampling"],
+            },
             "gates": [
-                "Block-to-obligation mappings ratified by a maintainer",
                 "A block loses its 'satisfies' edge automatically if a mapped obligation is re-derived",
+                "Ungrounded satisfies are rejected before write",
             ],
             "evidence": ["obligation mapping per block, each traceable to L1 clauses"],
         },
@@ -133,8 +165,17 @@ LAYER_CATALOG: dict[str, dict] = {
             "The profile schema itself is derived from the applicability conditions "
             "found in L2 obligations — every profile attribute exists because some "
             "obligation's scope depends on it.",
+            "generation": {
+                "nature": "grounded license registry (RAG, closed-world — no general knowledge)",
+                "technique": "Retrieve authorization-creating clauses → extract with grounding contract → store license_types",
+                "guarantee": "The model sees only retrieved clause text; any ungrounded license type is discarded; authorisations is a closed enum",
+                "may": ["name a license type that the retrieved clause creates"],
+                "must_not": ["invent a permission from model memory"],
+                "gates": ["l4_grounding (100% — one failure blocks publish)"],
+            },
             "gates": [
                 "Profile attributes added only when an obligation's applicability requires them",
+                "authorisations must be grounded license types — incomplete is honest, invented is not",
             ],
             "evidence": ["per-attribute list of the obligations whose scope reads it"],
         },
@@ -154,7 +195,15 @@ LAYER_CATALOG: dict[str, dict] = {
             "conditioned on L4 profile facts (the same activity triggers different "
             "obligations for a UK EMI vs an EU CASP). Mappings cite the applicability "
             "language in the underlying clauses.",
-            "gates": ["Activity-to-obligation mappings ratified by a maintainer"],
+            "generation": {
+                "nature": "constrained mapping, closed-world on BOTH ends",
+                "technique": "LLM maps obligations to activities; structural validation before write",
+                "guarantee": "Trigger anchors resolve to live obligations; when conditions reference only L4 schema attributes",
+                "may": ["propose a when-condition using known profile keys"],
+                "must_not": ["invent profile attributes", "point at missing obligations"],
+                "gates": ["l3_l5_referential", "condition-schema validation"],
+            },
+            "gates": ["when keys must exist on the L4 schema; unknown attributes are rejected"],
             "evidence": ["trigger mapping per activity with profile conditions + clause basis"],
         },
     },
@@ -173,6 +222,14 @@ LAYER_CATALOG: dict[str, dict] = {
             "building blocks (L3) until the obligation set is covered. The output is "
             "a coverage matrix — obligation x block — where every cell is explainable "
             "and every gap is explicit.",
+            "generation": {
+                "nature": "deterministic optimization; LLM as citing narrator only",
+                "technique": "Set-cover math (LLM-free) + citation-checked rationale",
+                "guarantee": "Every claim in the narrative references an id present in that blueprint; extras are rejected",
+                "may": ["narrate coverage, blocks, and gaps already in the blueprint"],
+                "must_not": ["cite obligations or blocks outside the blueprint"],
+                "gates": ["l6_determinism", "l6_citation"],
+            },
             "gates": [
                 "Coverage gaps are surfaced, never silently accepted",
                 "Program versions pinned to a CLHEAR release (obligations don't drift under a program)",
@@ -194,6 +251,14 @@ LAYER_CATALOG: dict[str, dict] = {
             "the count of open obligations, and the live L1 change velocity of the "
             "underlying sources (regulatory churn measured from clause-level change "
             "events). Every score publishes its formula and its inputs.",
+            "generation": {
+                "nature": "quantitative + grounded commentary",
+                "technique": "Formula-deterministic scores; number-echo narratives over a versioned facts file",
+                "guarantee": "Every figure in the narrative equals a figure in the score vector; external context only from curated facts",
+                "may": ["comment on the published input vector", "cite FACT: ids"],
+                "must_not": ["invent numbers", "recall external stats from model memory"],
+                "gates": ["formula determinism", "l7_number_echo", "facts-file provenance"],
+            },
             "gates": ["Formula and weights are versioned; a score without its inputs is invalid"],
             "evidence": ["per-score input vector including live L1 change counts"],
         },
@@ -211,6 +276,14 @@ LAYER_CATALOG: dict[str, dict] = {
             "method": "Aggregates L7 scores across participating organisations within a "
             "profile cluster. Closed by design: raw peer data never leaves the enclave; "
             "only k-anonymous aggregates are computed, and none are published today.",
+            "generation": {
+                "nature": "pure computation, zero LLM",
+                "technique": "k≥5 cohort aggregates over accumulated blueprint requests",
+                "guarantee": "Real aggregates publish only when k is met; synthetic demo is clearly labeled until then",
+                "may": ["publish k-anonymous means"],
+                "must_not": ["use an LLM", "publish a cohort smaller than k"],
+                "gates": ["l8_k_anonymity"],
+            },
             "gates": [
                 "k-anonymity threshold before any aggregate exists",
                 "Participation is opt-in and contractual",
@@ -265,13 +338,13 @@ def not_published_body(layer: str) -> dict:
 
 
 _STATUS_NOTICES = {
-    "derived": "{layer} ({name}) is MACHINE-DERIVED from L1 clauses by a deterministic, "
-    "versioned extractor. Items marked `derived` have not yet been human-validated; "
-    "per-source extraction scorecards are published with every nightly run. "
-    "Community review and maintainer approval promote items to `validated`.",
-    "curated": "{layer} ({name}) is CURATED: human-authored policy content, reviewed "
-    "before seeding and changed only through the approval queue. Every mapping is an "
-    "anchor into real L1 clauses and can be contested.",
+    "derived": "{layer} ({name}) is AI-GENERATED / MACHINE-DERIVED. Extraction is "
+    "deterministic; consolidations and triage are routed AI with structural guarantees. "
+    "Items carry audit coverage (% human-sampled) and per-item provenance (model, routing reason). "
+    "Eval Studio disagreements enter the correction → AI revalidation loop.",
+    "curated": "{layer} ({name}) is AI-GENERATED by default, eval-gated, and human-audited "
+    "by sampling. Seeded catalog rows remain human-authored; fleet-written rows are "
+    "ai_generated until sampled. Every mapping is an anchor into real L1 clauses.",
     "computed": "{layer} ({name}) is COMPUTED: a deterministic, versioned engine over the "
     "derived registry and curated catalog. Same inputs always produce the same output; "
     "every result publishes its formula and its inputs.",

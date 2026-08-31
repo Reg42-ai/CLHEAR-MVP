@@ -128,6 +128,20 @@ def _apply_create_submission(engine: Engine, op: dict) -> dict:
                 submitter_id=user_id_for(op["submitter_email"]), proposal_id=proposal_id,
             )
         )
+    if op.get("kind") == "correction" and op.get("target_id"):
+        try:
+            from app.clhear.governance import file_correction
+
+            file_correction(
+                engine,
+                layer=op.get("target_layer") or "L2",
+                subject_ref=op["target_id"],
+                filed_by=op["submitter_email"],
+                body=op.get("body") or op.get("title") or "",
+                submission_id=op["id"],
+            )
+        except Exception:
+            log.exception("file_correction from community submission failed")
     return {"id": op["id"], "status": "new", "proposal_id": proposal_id}
 
 

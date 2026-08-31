@@ -469,6 +469,16 @@ class Router:
             quality_at_decision=decision.quality,
         )
 
+    def call(self, *, fleet: str, model: str, prompt: str, **kwargs) -> LlmResult:
+        """Legacy Gateway.call surface — resolve fleet to a registered task."""
+        for spec in TASKS.values():
+            if spec.fleet == fleet:
+                kwargs.pop("model", None)
+                return self.run(spec.id, prompt=prompt, **{k: v for k, v in kwargs.items() if k in {
+                    "system", "max_tokens", "required_keys", "json_schema", "max_retries",
+                }})
+        return self.gateway.call(fleet=fleet, model=model, prompt=prompt, **kwargs)
+
 
 def is_router(llm: Any) -> bool:
     return isinstance(llm, Router)
@@ -476,11 +486,14 @@ def is_router(llm: Any) -> bool:
 
 def complete(llm: Any, task_id: str, **kwargs) -> LlmResult:
     """Call through the router when we have one; Gateway.call for legacy tests."""
+    kwargs.pop("fleet", None)
+    model = kwargs.pop("model", None)
     if is_router(llm):
-        return llm.run(task_id, **kwargs)
+        allowed = {k: kwargs[k] for k in ("prompt", "system", "max_tokens", "required_keys", "json_schema", "max_retries") if k in kwargs}
+        return llm.run(task_id, **allowed)
     task = TASKS.get(task_id)
-    fleet = task.fleet if task else kwargs.pop("fleet", "unknown")
-    model = kwargs.pop("model", None) or (TIERS["local-small"].model if task else "claude-3-5-haiku-latest")
+    fleet = task.fleet if task else "unknown"
+    model = model or (TIERS["local-small"].model if task else "claude-3-5-haiku-latest")
     return llm.call(fleet=fleet, model=model, **kwargs)
 
 

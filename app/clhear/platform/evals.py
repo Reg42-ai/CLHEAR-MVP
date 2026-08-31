@@ -623,16 +623,26 @@ def l3_l5_referential(engine: Engine, source_key: str | None) -> tuple[dict, boo
     for b in block_rows:
         for sel in b["satisfies"]:
             check_anchor(f"block:{b['id']}", {"source_key": sel["source_key"], "refs": sel.get("refs")})
+    schema_keys: set[str] = set()
+    with engine.connect() as conn:
+        from app.clhear.derived_models import attribute_schema as attribute_schema_t
+
+        schema_keys = {r.key for r in conn.execute(sa.select(attribute_schema_t.c.key))}
+    unknown_when: list[str] = []
     for a in activity_rows:
         for trig in a["triggers"]:
             check_anchor(f"activity:{a['id']}", trig["anchor"])
-    passed = not unknown_sources and not extraction_misses
+            for key in (trig.get("when") or {}):
+                if key not in schema_keys:
+                    unknown_when.append(f"{a['id']}.{key}")
+    passed = not unknown_sources and not extraction_misses and not unknown_when
     return {
         "blocks": len(block_rows),
         "activities": len(activity_rows),
         "unknown_sources": unknown_sources[:20],
         "extraction_misses": extraction_misses[:20],
         "refs_not_in_corpus": len(refs_not_in_corpus),
+        "unknown_when_attributes": unknown_when[:20],
     }, passed
 
 
@@ -695,6 +705,107 @@ def l2_concept_integrity(engine: Engine, source_key: str | None) -> tuple[dict, 
         "restricted_leaks": restricted_leaks,
         "nondeterministic": nondeterministic,
     }, passed
+
+
+@register_suite("l4_grounding")
+def l4_grounding(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """100% of license types resolve to live clause anchors. One ungrounded
+    row blocks the L4 fleet's publish — incomplete is fine, invented is not."""
+    from app.clhear.derived_models import license_types
+    from app.clhear.l1.models import clauses, source_versions, sources
+
+    checked = unresolved = 0
+    bad: list[str] = []
+    n_types = 0
+    with engine.connect() as conn:
+        rows = conn.execute(sa.select(license_types)).all()
+        n_types = len(rows)
+        for row in rows:
+            anchors = row.clause_anchors if isinstance(row.clause_anchors, list) else json.loads(row.clause_anchors or "[]")
+            if not anchors:
+                unresolved += 1
+                bad.append(row.id)
+                continue
+            for anc in anchors:
+                checked += 1
+                hit = conn.execute(
+                    sa.select(clauses.c.id)
+                    .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
+                    .join(sources, sources.c.id == source_versions.c.source_id)
+                    .where(sources.c.key == anc.get("source_key"))
+                    .where(source_versions.c.status == "in_force")
+                    .where(clauses.c.ref == anc.get("ref"))
+                    .limit(1)
+                ).first()
+                if hit is None:
+                    unresolved += 1
+                    bad.append(f"{row.id}->{anc.get('source_key')}#{anc.get('ref')}")
+    passed = unresolved == 0
+    return {
+        "license_types": n_types,
+        "anchors_checked": checked,
+        "unresolved": unresolved,
+        "failing": bad[:40],
+    }, passed
+
+
+@register_suite("l6_citation")
+def l6_citation(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Blueprints that carry a rationale must cite only ids in that blueprint."""
+    from app.clhear.derived_models import blueprints
+    from app.clhear.l6.rationale import citations_ok
+
+    checked = failed = 0
+    extras: list[str] = []
+    with engine.connect() as conn:
+        for row in conn.execute(sa.select(blueprints)):
+            result = row.result if isinstance(row.result, dict) else json.loads(row.result or "{}")
+            text = result.get("rationale")
+            if not text:
+                continue
+            checked += 1
+            # Reconstruct a minimal blueprint for the checker.
+            bp = {
+                "coverage": [{"obligation_id": oid} for oid in (result.get("obligation_ids") or [])],
+                "blocks": [{"id": bid} for bid in (result.get("blocks") or [])],
+                "activities_evaluated": result.get("activities") or [],
+            }
+            # If we only stored coverage_summary, there is nothing to over-cite.
+            if not bp["coverage"] and not bp["blocks"]:
+                continue
+            ok, extra = citations_ok(text, bp)
+            if not ok:
+                failed += 1
+                extras.extend(extra[:5])
+    return {"checked": checked, "failed": failed, "extra_ids": extras[:20]}, failed == 0
+
+
+@register_suite("l7_number_echo")
+def l7_number_echo(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    from app.clhear.l7.narrate import number_echo_ok
+    from app.clhear.models import risk_narratives
+
+    failed = []
+    checked = 0
+    with engine.connect() as conn:
+        for row in conn.execute(sa.select(risk_narratives)):
+            checked += 1
+            # Reconstruct a vector from stored echoed figures — every number in
+            # the narrative must be in that set.
+            vector = {f"n{i}": float(x) if "." in str(x) else int(x) for i, x in enumerate(row.echoed_figures or [])}
+            # Also allow the raw stored figures as strings via a dummy walk.
+            ok, extras = number_echo_ok(row.narrative, {"echoed": row.echoed_figures or [], **vector})
+            if not ok:
+                failed.append({"id": row.id, "extras": extras[:8]})
+    return {"checked": checked, "failed": failed[:20]}, not failed
+
+
+@register_suite("l8_k_anonymity")
+def l8_k_anonymity(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    from app.clhear.l8.cohorts import k_anonymity_ok
+
+    ok, detail = k_anonymity_ok(engine)
+    return detail, ok
 
 
 def run_source_evals(engine: Engine, source_key: str, release: str | None = None) -> list[dict]:

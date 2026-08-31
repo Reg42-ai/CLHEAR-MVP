@@ -113,9 +113,11 @@ def explain_batch(gateway, model: str, batch) -> list[dict]:
         '"category": "...", "topics": ["..."]}]} — one entry per input clause, same refs.\n\n'
         f"{json.dumps(items, ensure_ascii=False)}"
     )
-    result = gateway.call(
-        fleet=ANNOTATE_FLEET,
-        model=model,
+    from app.clhear.platform.router import complete
+
+    result = complete(
+        gateway,
+        "l1.annotate",
         prompt=prompt,
         system=(
             "You write neutral plain-language explainers of legal/technical clauses. "
@@ -123,6 +125,7 @@ def explain_batch(gateway, model: str, batch) -> list[dict]:
         ),
         max_tokens=2400,
         required_keys=["annotations"],
+        model=model,
     )
     parsed = json.loads(result.text).get("annotations", [])
     out = []

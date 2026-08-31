@@ -733,6 +733,12 @@ def activity(
                     "details": row.scores if isinstance(row.scores, dict) else json.loads(row.scores or "{}"),
                 }
             )
+    try:
+        from app.clhear import ai_ops
+
+        items.extend(ai_ops.activity_items(get_engine(), limit=limit))
+    except Exception:
+        pass
     if status:
         items = [i for i in items if i["status"] == status]
     if fleet:

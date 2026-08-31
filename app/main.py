@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
         from app.clhear.app_api import router as app_api_router
         from app.clhear.community import router as community_router
         from app.clhear.l1.routes import router as l1_router
+        from app.clhear.ai_routes import router as ai_router
         from app.clhear.layer_routes import router as layers_router
         from app.clhear.routes import router
 
@@ -42,6 +43,7 @@ def create_app() -> FastAPI:
         app.include_router(app_api_router)
         app.include_router(auth_router)
         app.include_router(community_router)
+        app.include_router(ai_router)
         app.include_router(layers_router)  # serves "/" — the Stack UI
 
     return app

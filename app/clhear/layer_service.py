@@ -64,9 +64,13 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
             "consolidated_obligations": _count(conn, concept_members),
         }
         out["L3"] = {"building_blocks": _count(conn, blocks_t)}
+        from app.clhear.derived_models import license_types as license_types_t
+        from app.clhear.models import cohorts as cohorts_t
+
         out["L4"] = {
             "profile_attributes": _count(conn, attribute_schema_t),
             "sample_profiles": _count(conn, sample_profiles_t),
+            "license_types": _count(conn, license_types_t),
         }
         out["L5"] = {"activities": _count(conn, activities_t)}
         out["L6"] = {
@@ -74,7 +78,19 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
             "blueprints_requested": _count(conn, blueprints),
         }
         out["L7"] = {"risk_areas": _count(conn, sample_profiles_t) * 2}
-    out["L8"] = {"benchmark_definitions": len(load_curated("l8_benchmarks")), "aggregates_published": 0}
+        out["L8"] = {
+            "benchmark_definitions": len(load_curated("l8_benchmarks")),
+            "cohorts": _count(conn, cohorts_t),
+            "aggregates_published": _count(conn, cohorts_t, cohorts_t.c.published.is_(True), cohorts_t.c.synthetic.is_(False)),
+        }
+    try:
+        from app.clhear.governance import audit_coverage as _cov
+
+        for code in ("L2", "L3", "L4", "L5", "L7"):
+            extra = _cov(engine, code)
+            out.setdefault(code, {})["audit_coverage"] = extra.get("coverage", 0)
+    except Exception:
+        pass
     return out
 
 
@@ -285,10 +301,17 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
             b["satisfies_resolved_obligations"] = resolved
         return rows
     if layer == "L4":
+        from app.clhear.l4.licenses import list_license_types
+
         with engine.connect() as conn:
             schema_rows = [dict(r) for r in conn.execute(sa.select(attribute_schema_t)).mappings()]
             profile_rows = [dict(r) for r in conn.execute(sa.select(sample_profiles_t)).mappings()]
-        return {"attribute_schema": schema_rows, "sample_profiles": profile_rows}
+        return {
+            "attribute_schema": schema_rows,
+            "sample_profiles": profile_rows,
+            "license_types": list_license_types(engine),
+            "authorisations_enum": sorted({r["name"] for r in list_license_types(engine)}),
+        }
     if layer == "L5":
         with engine.connect() as conn:
             rows = [dict(r) for r in conn.execute(sa.select(activities_t)).mappings()]
@@ -319,7 +342,9 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
     if layer == "L7":
         return risk_items(engine)
     if layer == "L8":
-        return load_curated("l8_benchmarks")
+        from app.clhear.l8.cohorts import list_cohorts
+
+        return {"definitions": load_curated("l8_benchmarks"), "cohorts": list_cohorts(engine)}
     raise KeyError(layer)
 
 

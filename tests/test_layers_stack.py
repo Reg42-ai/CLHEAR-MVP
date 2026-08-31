@@ -100,6 +100,7 @@ def test_catalog_statuses_and_contracts():
         assert LAYER_CATALOG[code]["status"] == status
         d = LAYER_CATALOG[code]["derivation"]
         assert d["method"] and d["gates"] and d["evidence"]
+        assert d.get("generation") and d["generation"].get("guarantee")
 
 
 def test_layers_index_api(client):
@@ -301,6 +302,9 @@ def test_unknown_items_404(client, engine):
 
 
 def test_ui_shells_served(client):
-    assert "the compliance stack" in client.get("/").text
+    home = client.get("/").text
+    assert "the compliance stack" in home
+    assert "Eval Studio" in home or "nav(\"/eval\")" in home
+    assert "AI Ops" in home or "nav(\"/ops\")" in home
     assert client.get("/static/theme.css").status_code == 200
     assert client.get("/sources").status_code == 200

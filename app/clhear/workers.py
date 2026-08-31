@@ -52,10 +52,12 @@ def run_dummy_fleet(engine: Engine, subject_ref: str = "dummy/rehearsal-1") -> s
 
 
 def handle_dummy_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
-    """Rehearsal consumer: one gateway call (triage-shaped) -> one proposal."""
-    result = gateway.call(
-        fleet=DUMMY_FLEET,
-        model="claude-3-5-haiku-latest",
+    """Rehearsal consumer: one routed call (triage-shaped) -> one proposal."""
+    from app.clhear.platform.router import complete
+
+    result = complete(
+        gateway,
+        "dummy.triage",
         prompt=f"Classify this candidate for {envelope.subject_ref}: {json.dumps(envelope.payload)}",
         system="Respond with JSON: {\"classification\": ..., \"confidence\": ...}",
         required_keys=["classification", "confidence"],
@@ -135,33 +137,31 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
     except Exception:
         log.exception("fleet evals failed for %s", adapter_key)
 
-    # Stack refresh: L1 changes flow into the derived layers on the same
-    # nightly job (L6/L7 are computed on read, so the stack is now current).
+    # Stack refresh: L1 changes flow into the derived layers + AI fleets.
+    # GPU + fleets run at most once per UTC day (idempotent; later adapters skip).
     stack_recorder = pipeline.RunRecorder(
         engine, "l2.extract", "schedule", {"source": f"stack-refresh-{adapter_key}", "job_id": job_id}
     )
     try:
-        from app.clhear import curated
-        from app.clhear.l2.concepts import flag_stale_concepts
-        from app.clhear.l2.consolidate import draft_and_propose
-        from app.clhear.l2.extract import run_extraction
+        from app.clhear.fleets import run_nightly_if_due
+        from app.clhear.platform.router import Router, is_router
 
-        seeded = curated.seed(engine)
-        extraction = run_extraction(engine)
-        stack_recorder.stage("extract", **{k: v for k, v in extraction.items() if isinstance(v, int)})
-        concepts_seed = curated.seed_concepts(engine)
-        flagged = flag_stale_concepts(engine)
-        consolidation = draft_and_propose(engine, gateway)
-        stack_recorder.stage("consolidate", proposed=consolidation["proposed"], flagged=len(flagged))
-        l1_evals.run_suite(engine, "l2_basis_integrity", release=job_id)
-        l1_evals.run_suite(engine, "l2_extraction_quality", release=job_id)
-        l1_evals.run_suite(engine, "l2_concept_integrity", release=job_id)
-        l1_evals.run_suite(engine, "l3_l5_referential", release=job_id)
-        stack_recorder.finish(
-            "succeeded",
-            {"extraction": extraction, "curated": seeded, "concepts": concepts_seed,
-             "consolidation": consolidation, "flagged_concepts": flagged},
-        )
+        llm = gateway
+        if not is_router(gateway):
+            from app.clhear.platform.router import build_providers
+
+            llm = Router(engine, providers={"ollama": gateway._provider, "anthropic": gateway._provider,
+                                            "fake": gateway._provider})
+        nightly = run_nightly_if_due(engine, llm)
+        if nightly is None:
+            from app.clhear import curated
+            from app.clhear.l2.extract import run_extraction
+
+            seeded = curated.seed(engine)
+            extraction = run_extraction(engine)
+            stack_recorder.finish("succeeded", {"extraction": extraction, "curated": seeded, "fleets": "already-ran"})
+        else:
+            stack_recorder.finish("succeeded", nightly)
     except Exception as exc:
         log.exception("stack refresh failed for %s", adapter_key)
         stack_recorder.finish("failed", {"error": str(exc)[:400]})
@@ -291,6 +291,7 @@ def main() -> None:
     from app.clhear.db import get_engine, run_migrations
     from app.clhear.platform.events import SqsTransport, relay_once
     from app.clhear.platform.gateway import AnthropicProvider, FakeProvider
+    from app.clhear.platform.router import Router, build_providers
 
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
@@ -309,9 +310,8 @@ def main() -> None:
     engine = get_engine()
     run_migrations(engine)
 
-    provider: Provider
-    provider = AnthropicProvider() if settings.anthropic_api_key else FakeProvider()
-    gateway = Gateway(engine, provider)
+    providers = build_providers(settings)
+    gateway = Router(engine, providers)
     transport = SqsTransport(settings.clhear_events_queue_url, settings.aws_region)
     sqs = boto3.client("sqs", region_name=settings.aws_region)
 
