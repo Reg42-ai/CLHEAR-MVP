@@ -876,13 +876,15 @@ function EvidenceIndex({ families, open }) {
 
 /* ------------------------------- activity feed ------------------------------ */
 const STATUS_FILTERS = ["all", "success", "warning", "failure", "info"];
+const TYPE_FILTERS = ["all", "run", "ai_op", "eval", "version_update", "event"];
 
 function ActivityView({ open }) {
   const [items, setItems] = useState(null);
   const [filter, setFilter] = useState("all");
+  const [kind, setKind] = useState("all");
   useEffect(() => { api("/api/clhear/activity?limit=200").then(setItems).catch(() => setItems([])); }, []);
   if (items === null) return html`<div class="spin">Loading the audit trail…</div>`;
-  const visible = items.filter((i) => filter === "all" || i.status === filter);
+  const visible = items.filter((i) => (filter === "all" || i.status === filter) && (kind === "all" || i.type === kind || i.kind === kind));
   const days = [];
   for (const item of visible) {
     const day = (item.ts || "").slice(0, 10);
@@ -892,11 +894,13 @@ function ActivityView({ open }) {
   return html`
     <div>
       <h2 style=${{ margin: "0 0 4px" }}>Activity — production audit trail</h2>
-      <div class="charter">Every automated action the system takes (ingests, version updates, repairs,
-        eval gates, human decisions) — a read-only projection of the append-only run ledger and event log.</div>
+      <div class="charter">Every automated action the system takes (ingests, fleets, router decisions, repairs,
+        eval gates, human decisions) — a read-only projection of the append-only run ledger and AI ops feed.</div>
       <div class="filters">
         ${STATUS_FILTERS.map((s) => html`
           <button key=${s} class=${filter === s ? "on" : ""} onClick=${() => setFilter(s)}>${s}</button>`)}
+        ${TYPE_FILTERS.map((s) => html`
+          <button key=${"t"+s} class=${kind === s ? "on" : ""} onClick=${() => setKind(s)}>${s}</button>`)}
       </div>
       ${visible.length === 0 && html`<div class="empty">No activity recorded${filter !== "all" ? ` with status “${filter}”` : ""}.</div>`}
       ${days.map((d) => html`

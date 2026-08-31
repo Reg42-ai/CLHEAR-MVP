@@ -95,6 +95,41 @@
   [data-theme="light"] .demobanner { color: var(--amber-600); }
   .demobanner b { letter-spacing: 0.1em; }
 
+  /* -------------------------------- AI-native visuals */
+  .funnel { display: flex; flex-direction: column; gap: 8px; }
+  .funnelrow { display: grid; grid-template-columns: 110px 1fr auto; gap: 10px; align-items: center;
+               background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 12px; }
+  .funnelrow .tier { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .funnelbar { height: 8px; border-radius: 4px; background: var(--panel); overflow: hidden; }
+  .funnelbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--mint-400), var(--ind-400));
+                 animation: grow .8s ease both; }
+  @keyframes grow { from { width: 0; } }
+  .loop { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin: 12px 0; }
+  .loopstep { border: 1px solid var(--edge); background: var(--panel-strong); border-radius: 999px;
+              padding: 6px 12px; font-size: 12px; color: var(--muted); animation: pulse 2.8s ease infinite; }
+  .loopstep:nth-child(odd) { animation-delay: .4s; }
+  .loopstep.on { border-color: var(--mint-400); color: var(--mint-400); }
+  @keyframes pulse { 0%,100% { opacity: .7; } 50% { opacity: 1; } }
+  .matrix { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .matrix th, .matrix td { border-bottom: 1px solid var(--edge); padding: 8px 10px; text-align: left; vertical-align: top; }
+  .matrix th { color: var(--faint); font-weight: 600; letter-spacing: .08em; font-size: 11px; }
+  .bench { display: flex; flex-direction: column; gap: 8px; }
+  .benchrow { display: grid; grid-template-columns: 48px 1fr 52px; gap: 10px; align-items: center; font-size: 13px; }
+  .persona { display: grid; grid-template-columns: 48px 1fr; gap: 12px; align-items: start;
+             background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; }
+  .avatar { width: 48px; height: 48px; border-radius: 14px; background: conic-gradient(from 120deg, var(--ind-400), var(--mint-400), var(--ind-500));
+            box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--canvas) 55%, transparent); }
+  .avatar.human { background: linear-gradient(135deg, #334155, #64748b); }
+  .leddot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .leddot.ok { background: var(--mint-400); box-shadow: 0 0 8px var(--mint-400); }
+  .leddot.idle { background: var(--faint); }
+  .leddot.bad { background: var(--rose-400); }
+  .teamgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+  .opsitem { border-left: 2px solid var(--ind-400); padding: 8px 12px; margin-bottom: 8px; }
+  .opsitem .why { font-size: 13.5px; color: var(--ink); }
+  .genbox { border: 1px dashed rgba(129,140,248,0.35); border-radius: 10px; padding: 10px 12px; margin: 10px 0 14px; }
+  .genbox h5 { margin: 0 0 6px; font-size: 12px; letter-spacing: .12em; color: var(--faint); }
+
   /* items */
   .card {
     background: var(--panel); border: 1px solid var(--edge); border-radius: 14px;
@@ -273,10 +308,23 @@ function Home({ layers }) {
 
 function ReasonPanel({ meta }) {
   const d = meta.derivation || {};
+  const g = d.generation || {};
   return html`
     <div class="panel reasonpanel">
       <h4>How this layer knows what it knows</h4>
       <div class="method">${d.method}</div>
+      ${g.nature && html`
+        <div class="genbox">
+          <h5>FIT-TO-PURPOSE · ${g.technique ? g.technique.split("—")[0] : "AI METHOD"}</h5>
+          <div class="sum" style=${{ fontSize: "12.5px", marginBottom: "6px" }}><b>Nature.</b> ${g.nature}</div>
+          <div class="sum" style=${{ fontSize: "12.5px", marginBottom: "6px" }}><b>Guarantee.</b> ${g.guarantee}</div>
+          <div class="kv">
+            ${(g.may || []).map((x, i) => html`<span class="chip" key=${"m"+i}>may: ${x}</span>`)}
+            ${(g.must_not || []).map((x, i) => html`<span class="chip" key=${"n"+i} style=${{ color: "var(--rose-400)" }}>never: ${x}</span>`)}
+          </div>
+          <div class="provline" style=${{ marginTop: "8px", cursor: "pointer" }}
+               onClick=${() => nav("/ops")}>see it live in AI Operations →</div>
+        </div>`}
       ${(d.inputs || []).length > 0 && html`
         <h4>Derived from</h4>
         <div class="kv">
@@ -287,7 +335,7 @@ function ReasonPanel({ meta }) {
         <h4>Derived from</h4>
         <div class="kv"><span class="chip">ground layer — nothing below</span></div>`}
       <h4>Human & eval gates</h4>
-      <ul class="gatelist">${(d.gates || []).map((g, i) => html`<li key=${i}>${g}</li>`)}</ul>
+      <ul class="gatelist">${(d.gates || []).concat(g.gates || []).map((x, i) => html`<li key=${i}>${x}</li>`)}</ul>
       <h4>Evidence you can inspect</h4>
       <ul class="gatelist evidence">${(d.evidence || []).map((e, i) => html`<li key=${i}>${e}</li>`)}</ul>
     </div>`;
@@ -517,6 +565,22 @@ function L4Panel({ items, onOpen }) {
   return html`
     <div>
       <div class="panel" style=${{ marginBottom: "14px" }}>
+        <h4>Grounded license registry — closed-world RAG, never invented</h4>
+        ${(items.license_types || []).length === 0 && html`
+          <div class="sum">No grounded license types yet — coverage gap, not a guess. The Surveyor fleet extracts only from retrieved authorization clauses.</div>`}
+        ${(items.license_types || []).map((lic) => html`
+          <div class="covrow" key=${lic.id}>
+            <span class="ob">${lic.id}</span>
+            <span class="sum" style=${{ flex: 2 }}>${lic.name} · ${lic.jurisdiction} · ${(lic.clause_anchors || []).map((a) => a.ref).join(", ")}</span>
+            <span class="chip">${lic.status}</span>
+          </div>`)}
+        ${(items.authorisations_enum || []).length > 0 && html`
+          <div class="kv" style=${{ marginTop: "8px" }}>
+            <span class="chip">closed enum for /v1/blueprint authorisations</span>
+            ${items.authorisations_enum.map((n) => html`<span class="chip" key=${n}>${n}</span>`)}
+          </div>`}
+      </div>
+      <div class="panel" style=${{ marginBottom: "14px" }}>
         <h4>Profile attribute schema — every attribute exists because an obligation's scope reads it</h4>
         ${(items.attribute_schema || []).map((a) => html`
           <div class="covrow" key=${a.key}>
@@ -717,6 +781,45 @@ function L2View({ detail, onOpen, auth }) {
     </div>`;
 }
 
+function TeamStrip({ layer }) {
+  const [team, setTeam] = useState(null);
+  useEffect(() => { jget(`/api/clhear/team?layer=${layer}`).then(setTeam).catch(() => setTeam(null)); }, [layer]);
+  if (!team) return null;
+  return html`
+    <div style=${{ marginTop: "22px" }}>
+      <h4 style=${{ letterSpacing: "0.16em", fontSize: "12px", color: "var(--faint)" }}>TEAM · ${layer}</h4>
+      <div class="teamgrid">
+        ${team.fleets.map((p) => html`<${PersonaCard} key=${p.id} p=${p} />`)}
+        ${team.humans.slice(0, 3).map((h, i) => html`<${PersonaCard} key=${"h"+i} p=${h} />`)}
+      </div>
+      ${(team.activity || []).slice(0, 6).length > 0 && html`
+        <div class="panel" style=${{ marginTop: "12px" }}>
+          <h4>Shared activity</h4>
+          ${team.activity.slice(0, 6).map((a, i) => html`
+            <div class="opsitem" key=${i}><div class="why">${a.summary}</div>
+              <div class="provline">${a.ts} · ${a.actor}</div></div>`)}
+          <div class="provline" style=${{ cursor: "pointer" }} onClick=${() => nav("/ops")}>open AI Operations →</div>
+        </div>`}
+    </div>`;
+}
+
+function PersonaCard({ p }) {
+  const fleet = p.kind === "fleet" || p.mission;
+  return html`
+    <div class="persona">
+      <div class=${"avatar" + (fleet ? "" : " human")} title=${p.name}></div>
+      <div>
+        <div><span class=${"leddot " + (p.led || "idle")}></span><b>${p.name}</b>
+          ${p.layer && html`<span class="chip">${p.layer}</span>`}
+          ${p.role && html`<span class="chip">${p.role}</span>`}</div>
+        <div class="sum" style=${{ fontSize: "12.5px", margin: "4px 0" }}>${p.mission || (p.accepted != null ? `${p.accepted} accepted contribution(s)` : "maintainer")}</div>
+        ${p.model && html`<div class="provline">running ${p.model.model || "—"} ${p.model.reason ? `— ${p.model.reason}` : ""}</div>`}
+        ${p.last_run && html`<div class="provline">last run ${String(p.last_run.ts).slice(0, 19)} · ${p.last_run.status}</div>`}
+        <div class="kv">${(p.tools || []).map((t) => html`<span class="chip" key=${t}>${t}</span>`)}</div>
+      </div>
+    </div>`;
+}
+
 function LayerPage({ slug, auth }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState(null);
@@ -747,11 +850,18 @@ function LayerPage({ slug, auth }) {
           ${code === "L4" && detail.items && html`<${L4Panel} items=${detail.items} onOpen=${(it) => setOpenItem(it)} />`}
           ${code === "L8" && html`
             <div class="demobanner" style=${{ borderColor: "rgba(251,113,133,0.4)", background: "rgba(251,113,133,0.06)", color: "var(--rose-400)" }}>
-              <b>LOCKED</b><span>Benchmarks are closed by design. Aggregate definitions are public;
-              peer data never is. No aggregates are published today.</span>
-            </div>`}
-          ${!["L0", "L1", "L2", "L4"].includes(code) && Array.isArray(detail.items) && detail.items.map((item) => html`
+              <b>LOCKED</b><span>Peer data never leaves the enclave. Real aggregates publish only at k≥5.
+              A synthetic demo cohort is labeled until then — zero LLM.</span>
+            </div>
+            ${(detail.items && detail.items.cohorts || []).map((c) => html`
+              <div class="card" key=${c.id}>
+                <div class="id">${c.id} ${c.synthetic ? html`<span class="chip">SYNTHETIC DEMO</span>` : html`<span class="chip">k=${c.k_threshold}</span>`}</div>
+                <h5>${c.label}</h5>
+                <div class="sum">n=${c.n} · published=${String(c.published)} · ${JSON.stringify(c.aggregates)}</div>
+              </div>`)}`}
+          ${!["L0", "L1", "L2", "L4", "L8"].includes(code) && Array.isArray(detail.items) && detail.items.map((item) => html`
             <${ItemCard} layer=${code} item=${item} key=${item.id} onOpen=${(it) => setOpenItem(it)} />`)}
+          <${TeamStrip} layer=${code} />
         </div>
       </div>
       ${openItem && html`<${Drawer} layer=${code} item=${openItem} onClose=${() => setOpenItem(null)} />`}
@@ -944,35 +1054,119 @@ function ContributePage({ auth, refreshAuth, prefill }) {
 /* ------------------------------------------------------------ how it works */
 
 const HOW_STEPS = [
-  ["Fetch", "Adapters pull official texts from each authority (legislation.gov.uk, EUR-Lex, govinfo/eCFR, NIST, FCA…) on the nightly 00:00 UTC schedule. Politeness built in; originals stored immutably."],
-  ["Hash", "Every artifact and every clause gets a sha256. The stored original is the proof — text is never regenerated or cleaned up."],
-  ["Diff", "New versions align clause-by-clause against the previous text; changes become clause-level change events you can watch."],
-  ["Derive", "A deterministic, versioned extractor turns duty-bearing clauses into obligations — no LLM in the loop. Anything ambiguous is left for humans, not guessed."],
-  ["Gate", "Eval suites run nightly (extraction quality, basis integrity, schedule kept, E1–E7 per source). Humans ratify: promotions and family changes are recorded maintainer decisions."],
-  ["Publish", "The corpus snapshot republishes to the public site and API; blueprints and risk scores are computed on demand from the fresh registry."],
+  ["Fetch", "Adapters pull official texts from each authority on the nightly 00:00 UTC schedule. Originals stored immutably."],
+  ["Hash / Diff", "Every artifact and clause gets a sha256. New versions emit clause-level change events."],
+  ["Route", "The inference router matches every LLM task to the cheapest sufficient model (local Qwen tiers, frontier only when needed)."],
+  ["Fleets", "Per-layer AI fleets generate L2–L8 with structural anti-hallucination guarantees — not prompt wishes."],
+  ["Gate", "Eval suites are hard gates (integrity, grounding, citation, number-echo, k-anonymity). Failures block publish."],
+  ["Audit", "Eval Studio samples humans vs AI; disagreements enter the correction → revalidation loop. Admin override is last resort."],
 ];
 
 const POLICY_CARDS = [
   ["Verbatim ground truth", "Original texts stored immutably (WORM S3); clause text always traceable to a hashed original. We never rewrite the law."],
-  ["Determinism first, LLM last", "If a step can be code, it is code. The only LLM surface is gated triage, hard-capped at $20/day per fleet, $100/day globally, every call ledgered."],
-  ["Named-human gates", "No obligation validation, family change, or community case lands without a recorded human identity and timestamp."],
+  ["Cheapest sufficient model", "Classification never leaves CPU. Frontier requires high criticality, local quality below threshold, and a $50/month hard cap."],
+  ["Structural guarantees", "Evidence-span contracts, closed-world ids, citation checks, number-echo — hallucinations fail the validator, not just the prompt."],
   ["Restricted-zone discipline", "Licensed standards (ISO, TSC, PCI, IFRS) never leave the restricted zone: refs + hashes only, enforced in code and tests."],
-  ["Evals are gates", "A failing suite blocks promotion — scores publish either way. Honest labels everywhere: LIVE, DERIVED, CURATED, COMPUTED, LOCKED."],
-  ["Everything replayable", "Every fleet run recorded (inputs, outputs, versions, cost). Same inputs, same corpus, same blueprint."],
+  ["Evals are gates", "A failing suite blocks promotion. Honest labels: LIVE, AI-GENERATED, CURATED, COMPUTED, LOCKED — plus audit coverage %."],
+  ["Everything replayable", "Every fleet run and router decision recorded (inputs, rejected alternatives, reasoning, cost)."],
+];
+
+const LOOP = [
+  ["ai_generated", "sampled agree → human_audited"],
+  ["correction_pending", "AI revalidation"],
+  ["ai_accepted / ai_rejected", "second human"],
+  ["admin_queue", "/review override"],
 ];
 
 function HowPage() {
   const [job, setJob] = useState(null);
-  useEffect(() => { jget("/api/clhear/jobs/latest").then(setJob).catch(() => setJob(null)); }, []);
+  const [live, setLive] = useState(null);
+  useEffect(() => {
+    jget("/api/clhear/jobs/latest").then(setJob).catch(() => setJob(null));
+    jget("/api/clhear/how-live").then(setLive).catch(() => setLive(null));
+  }, []);
+  const bench = live && live.benchmark && live.benchmark.by_layer || {};
+  const pipe = (live && live.pipeline) || {};
+  const stages = [
+    ["extract", (pipe.extraction && pipe.extraction.inserted) || 0],
+    ["triage", (pipe.triage && pipe.triage.inserted) || 0],
+    ["concepts", (pipe.consolidation && pipe.consolidation.applied) || 0],
+    ["blocks", (pipe.blocks && pipe.blocks.written) || 0],
+    ["licenses", (pipe.licenses && pipe.licenses.written) || 0],
+    ["activities", (pipe.activities && pipe.activities.written) || 0],
+  ];
   return html`
     <div>
       <div class="hero" style=${{ margin: "10px 0 26px" }}>
         <h1>How CLHEAR <span class="grad">knows what it knows</span></h1>
-        <p>No black boxes: every mechanism, gate and policy decision below is inspectable on this site —
-           and in the code.</p>
+        <p>Fit-to-purpose AI: every layer has a different nature, a different technique, and a structural guarantee you can inspect.</p>
       </div>
       <div class="panel" style=${{ marginBottom: "18px" }}>
-        <h4>The nightly pipeline — every day, 00:00 UTC</h4>
+        <h4>Router decision funnel — live from last night</h4>
+        <div class="funnel">
+          ${["local-small", "local-mid", "local-large", "frontier"].map((tier, i) => {
+            const n = ((live && live.dashboard && live.dashboard.calls_by_tier) || {})[tier] || 0;
+            const w = Math.min(100, 18 + n * 12 + i * 8);
+            return html`<div class="funnelrow" key=${tier}>
+              <span class="tier">${tier}</span>
+              <div class="funnelbar"><i style=${{ width: w + "%" }}></i></div>
+              <span class="chip">${n} calls</span>
+            </div>`;
+          })}
+        </div>
+        <div class="provline" style=${{ marginTop: "8px" }}>
+          ${(live && live.routing && live.routing[0] && live.routing[0].routing_reason) || "No routed calls in this snapshot yet."}
+          · <a style=${{ cursor: "pointer" }} onClick=${() => nav("/ops")}>see it live</a>
+        </div>
+      </div>
+      <div class="panel" style=${{ marginBottom: "18px" }}>
+        <h4>Correction loop</h4>
+        <div class="loop">
+          ${LOOP.map(([s, d], i) => html`<span class=${"loopstep" + (i === 0 ? " on" : "")} key=${s}>${s}<br/><span style=${{ fontSize: "10.5px" }}>${d}</span></span>`)}
+        </div>
+        <div class="sum">AI-generated by default, eval-gated, human-audited by sampling. Admin override is last resort.</div>
+      </div>
+      <div class="panel" style=${{ marginBottom: "18px" }}>
+        <h4>Nightly fleet pipeline — live counts</h4>
+        <div class="pipeline">
+          ${stages.map(([name, n], i) => html`
+            <div class="pipestep" key=${name}>
+              <div class="pipenum">${n}</div>
+              <div><b>${name}</b><div class="sum" style=${{ fontSize: "12.5px" }}>${(HOW_STEPS[i] || [])[1] || ""}</div></div>
+            </div>`)}
+        </div>
+        ${live && live.pipeline_reasoning && html`<div class="provline">${live.pipeline_reasoning}</div>`}
+      </div>
+      <div class="panel" style=${{ marginBottom: "18px" }}>
+        <h4>Fit-to-purpose matrix</h4>
+        <table class="matrix">
+          <thead><tr><th>Layer</th><th>Technique</th><th>Guarantee</th><th>Gate</th></tr></thead>
+          <tbody>
+            ${["L1","L2","L3","L4","L5","L6","L7","L8"].map((code) => html`
+              <tr key=${code} style=${{ cursor: "pointer" }} onClick=${() => nav("/layer/" + code.toLowerCase())}>
+                <td><b>${code}</b></td>
+                <td colspan="3" class="sum">open the layer — generation contract is in “How this layer knows”</td>
+              </tr>`)}
+          </tbody>
+        </table>
+        <div class="provline">Deeper prose: <a href="https://github.com/Reg42-ai/CLHEAR-MVP/blob/main/docs/MANUAL.md" target="_blank" rel="noopener">docs/MANUAL.md</a></div>
+      </div>
+      <div class="panel" style=${{ marginBottom: "18px" }}>
+        <h4>CLHEAR intelligence benchmark — AI vs human experts</h4>
+        <div class="bench">
+          ${["L2","L3","L4","L5","L7"].map((ly) => {
+            const s = bench[ly] || { score: 0, n: 0 };
+            return html`<div class="benchrow" key=${ly}>
+              <b>${ly}</b>
+              <div class="bar"><i style=${{ width: Math.round((s.score || 0) * 100) + "%" }}></i></div>
+              <span class="chip">${s.n ? Math.round(s.score * 100) + "%" : "—"}</span>
+            </div>`;
+          })}
+        </div>
+        <div class="provline" style=${{ cursor: "pointer" }} onClick=${() => nav("/eval")}>open Eval Studio →</div>
+      </div>
+      <div class="panel" style=${{ marginBottom: "18px" }}>
+        <h4>The nightly pipeline</h4>
         <div class="pipeline">
           ${HOW_STEPS.map(([name, detail], i) => html`
             <div class="pipestep" key=${name}>
@@ -983,15 +1177,11 @@ function HowPage() {
       </div>
       ${job && html`
         <div class="panel" style=${{ marginBottom: "18px" }}>
-          <h4>Latest run — live from the ledger (job ${job.job_id})</h4>
+          <h4>Latest ingest — live from the ledger (job ${job.job_id})</h4>
           <div class="tags">
             ${Object.entries(job.status_counts || {}).map(([s, n]) => html`
               <span class="chip" key=${s}>${n} ${s}</span>`)}
-            <span class="chip">${(job.total_duration_ms / 1000).toFixed(0)}s total</span>
-            <span class="chip">${(job.lanes || []).length} source lanes</span>
           </div>
-          <div class="provline" style=${{ marginTop: "8px" }}>
-            Full audit trail in the <a href="/sources">Explorer</a> (Activity + Fleet tabs).</div>
         </div>`}
       <div class="grid2" style=${{ gridTemplateColumns: "1fr 1fr" }}>
         ${POLICY_CARDS.map(([title, body]) => html`
@@ -1000,16 +1190,102 @@ function HowPage() {
             <div class="sum" style=${{ fontSize: "13px" }}>${body}</div>
           </div>`)}
       </div>
-      <div class="panel" style=${{ marginTop: "18px", textAlign: "center" }}>
-        <h4>Open by design</h4>
-        <p style=${{ color: "var(--muted)", fontSize: "14px" }}>
-          The code, the HLD, the eval scores and this corpus are public.
-          If you work in compliance, this is yours to shape.</p>
-        <a class="bigbtn" href="#/contribute">Join and contribute →</a>
-        <span style=${{ margin: "0 8px" }}></span>
-        <a class="bigbtn" style=${{ background: "var(--panel-strong)", color: "var(--ink)", border: "1px solid var(--edge)" }}
-           href="https://github.com/Reg42-ai/CLHEAR-MVP" target="_blank" rel="noopener">Source on GitHub</a>
+    </div>`;
+}
+
+function TeamPage() {
+  const [team, setTeam] = useState(null);
+  useEffect(() => { jget("/api/clhear/team").then(setTeam).catch(() => setTeam(null)); }, []);
+  if (!team) return html`<div class="spin">LOADING TEAM…</div>`;
+  return html`
+    <div>
+      <div class="hero" style=${{ margin: "10px 0 26px" }}>
+        <h1>The <span class="grad">CLHEAR team</span></h1>
+        <p>AI fleets and human contributors around one mission. Geometric marks only — no fake faces.</p>
       </div>
+      <h4>AI fleets</h4>
+      <div class="teamgrid">${team.fleets.map((p) => html`<${PersonaCard} key=${p.id} p=${p} />`)}</div>
+      <h4 style=${{ marginTop: "22px" }}>Humans</h4>
+      <div class="teamgrid">${team.humans.map((h, i) => html`<${PersonaCard} key=${i} p=${h} />`)}</div>
+      <div class="panel" style=${{ marginTop: "18px" }}>
+        <h4>Shared activity</h4>
+        ${(team.activity || []).map((a, i) => html`
+          <div class="opsitem" key=${i}><div class="why">${a.summary}</div>
+            <div class="provline">${a.ts} · ${a.actor} · ${a.kind || ""}</div></div>`)}
+      </div>
+    </div>`;
+}
+
+function OpsPage() {
+  const [data, setData] = useState(null);
+  const [kind, setKind] = useState("all");
+  useEffect(() => { jget("/api/clhear/ops").then(setData).catch(() => setData({ items: [] })); }, []);
+  if (!data) return html`<div class="spin">LOADING OPS…</div>`;
+  const kinds = ["all", ...Array.from(new Set((data.items || []).map((i) => i.kind)))];
+  const vis = (data.items || []).filter((i) => kind === "all" || i.kind === kind);
+  return html`
+    <div>
+      <div class="hero" style=${{ margin: "10px 0 26px" }}>
+        <h1>AI <span class="grad">operations</span></h1>
+        <p>Every automated decision with a reasoning field. Router, fleets, revalidation, GPU lifecycle.</p>
+      </div>
+      <div class="statgrid">
+        <div class="stat"><div class="n">${(data.dashboard && data.dashboard.llm_calls) || 0}</div><div class="lbl">llm calls</div></div>
+        <div class="stat"><div class="n">${(data.dashboard && data.dashboard.ai_ops) || 0}</div><div class="lbl">ops entries</div></div>
+        <div class="stat"><div class="n">$${(data.dashboard && data.dashboard.frontier_spend_usd) || 0}</div><div class="lbl">frontier spend</div></div>
+      </div>
+      <div class="kv" style=${{ margin: "12px 0" }}>
+        ${kinds.map((k) => html`<span class=${"chip linky" + (kind === k ? " sel" : "")} key=${k} onClick=${() => setKind(k)}>${k}</span>`)}
+      </div>
+      ${vis.map((i) => html`
+        <div class="opsitem" key=${i.id}>
+          <div class="why">${i.reasoning}</div>
+          <div class="provline">${i.ts} · ${i.kind} · ${i.layer} · ${i.fleet}</div>
+          <details><summary class="mono">detail</summary><pre class="codeblock">${JSON.stringify(i.detail, null, 2)}</pre></details>
+        </div>`)}
+    </div>`;
+}
+
+function EvalPage({ auth }) {
+  const [data, setData] = useState(null);
+  const [note, setNote] = useState("");
+  const load = () => jget("/api/clhear/eval").then(setData).catch(() => setData(null));
+  useEffect(() => { load(); }, [auth.user]);
+  const vote = async (id, agrees) => {
+    const r = await fetch(`/api/clhear/eval/${id}/vote`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agrees, comment: agrees ? "agree" : "disagree" }),
+    });
+    if (!r.ok) { setNote("Sign in to vote."); return; }
+    setNote(agrees ? "Recorded — credited as a confirmation." : "Disagreement opened a correction case.");
+    load();
+  };
+  if (!data) return html`<div class="spin">LOADING EVAL STUDIO…</div>`;
+  const bench = data.scores && data.scores.by_layer || {};
+  return html`
+    <div>
+      <div class="hero" style=${{ margin: "10px 0 26px" }}>
+        <h1>Eval <span class="grad">Studio</span></h1>
+        <p>Sampled tasks, human vs AI. Agreement scores feed the router quality table.</p>
+      </div>
+      ${note && html`<div class="demobanner">${note}</div>`}
+      <div class="bench" style=${{ marginBottom: "18px" }}>
+        ${Object.entries(bench).map(([ly, s]) => html`
+          <div class="benchrow" key=${ly}><b>${ly}</b>
+            <div class="bar"><i style=${{ width: Math.round((s.score || 0) * 100) + "%" }}></i></div>
+            <span class="chip">${Math.round((s.score || 0) * 100)}% · ${s.n}</span></div>`)}
+      </div>
+      ${(data.open || []).map((t) => html`
+        <div class="panel" key=${t.id} style=${{ marginBottom: "12px" }}>
+          <div class="id">${t.layer} · ${t.kind} · ${t.subject_ref}</div>
+          <h5>${t.prompt}</h5>
+          <pre class="codeblock">${JSON.stringify(t.ai_output, null, 2).slice(0, 800)}</pre>
+          <div class="votebtns">
+            <button class="votebtn confirm" onClick=${() => vote(t.id, true)}>Agree with AI</button>
+            <button class="votebtn dispute" onClick=${() => vote(t.id, false)}>Disagree — open correction</button>
+          </div>
+        </div>`)}
+      ${(data.open || []).length === 0 && html`<div class="sum">No open eval tasks in this snapshot — the nightly fleet seeds them.</div>`}
     </div>`;
 }
 
@@ -1080,6 +1356,9 @@ function App() {
   const page = route.startsWith("/contribute") ? "contribute"
     : route.startsWith("/how") ? "how"
     : route.startsWith("/docs") ? "docs"
+    : route.startsWith("/team") ? "team"
+    : route.startsWith("/ops") ? "ops"
+    : route.startsWith("/eval") ? "eval"
     : layerMatch ? "layer" : "home";
   let prefill = null;
   try { prefill = JSON.parse(sessionStorage.getItem("clhear_prefill") || "null"); } catch {}
@@ -1094,6 +1373,9 @@ function App() {
         <span class=${"navlink" + (page === "home" || page === "layer" ? " active" : "")} onClick=${() => nav("/")}>Stack</span>
         <a class="navlink" href="/sources">Explorer</a>
         <span class=${"navlink" + (page === "how" ? " active" : "")} onClick=${() => nav("/how")}>How it works</span>
+        <span class=${"navlink" + (page === "team" ? " active" : "")} onClick=${() => nav("/team")}>Team</span>
+        <span class=${"navlink" + (page === "ops" ? " active" : "")} onClick=${() => nav("/ops")}>AI Ops</span>
+        <span class=${"navlink" + (page === "eval" ? " active" : "")} onClick=${() => nav("/eval")}>Eval</span>
         <span class=${"navlink" + (page === "docs" ? " active" : "")} onClick=${() => nav("/docs")}>API</span>
         <span class=${"navlink" + (page === "contribute" ? " active" : "")} onClick=${() => nav("/contribute")}>
           ${auth.user ? `☺ ${auth.user.display_name}` : "Contribute"}</span>
@@ -1102,6 +1384,9 @@ function App() {
       <main>
         ${page === "contribute" && html`<${ContributePage} auth=${auth} refreshAuth=${refreshAuth} prefill=${prefill} />`}
         ${page === "how" && html`<${HowPage} />`}
+        ${page === "team" && html`<${TeamPage} />`}
+        ${page === "ops" && html`<${OpsPage} />`}
+        ${page === "eval" && html`<${EvalPage} auth=${auth} />`}
         ${page === "docs" && html`<${DocsPage} />`}
         ${page === "layer" && html`<${LayerPage} slug=${layerMatch[1]} key=${layerMatch[1]} auth=${auth} />`}
         ${page === "home" && (layers === null
