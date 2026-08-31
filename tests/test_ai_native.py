@@ -260,7 +260,7 @@ def test_l8_k_anonymity_and_synthetic_label(engine):
 def test_governance_correction_loop(engine):
     from app.clhear.governance import mark_generated
 
-    mark_generated(engine, layer="L2", subject_ref="OBL:demo", generated_by="qwen3.5:14b")
+    mark_generated(engine, layer="L2", subject_ref="OBL:demo", generated_by="qwen3.5:9b")
     case = file_correction(engine, layer="L2", subject_ref="OBL:demo", filed_by="ada@x.test", body="Wrong addressee")
     canned = json.dumps({"verdict": "reject", "rationale": "The clause names the relevant person."})
     llm, _ = _llm(engine, canned)

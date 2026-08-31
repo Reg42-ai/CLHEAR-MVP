@@ -76,7 +76,13 @@ def handle_dummy_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -
     return {"proposal_id": proposal_id, "cost_usd": result.cost_usd}
 
 
-def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None = None) -> dict:
+def run_adapter_fleet(
+    engine: Engine,
+    adapter_key: str,
+    gateway: Gateway | None = None,
+    *,
+    force_nightly: bool = False,
+) -> dict:
     """One scheduled fleet run: every source owned by `adapter_key` goes through
     the full ingest pipeline (fetch -> gate/repair -> persist -> annotate ->
     index -> diff). Unchanged sources record an 'unchanged' run; failures are
@@ -152,7 +158,7 @@ def run_adapter_fleet(engine: Engine, adapter_key: str, gateway: Gateway | None 
 
             llm = Router(engine, providers={"ollama": gateway._provider, "anthropic": gateway._provider,
                                             "fake": gateway._provider})
-        nightly = run_nightly_if_due(engine, llm)
+        nightly = run_nightly_if_due(engine, llm, force=force_nightly)
         if nightly is None:
             from app.clhear import curated
             from app.clhear.l2.extract import run_extraction
@@ -183,7 +189,14 @@ def _put_schedule_metric(missed_count: int) -> None:
 
 
 def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
-    return run_adapter_fleet(engine, envelope.payload.get("adapter", envelope.subject_ref), gateway)
+    payload = envelope.payload or {}
+    force = bool(payload.get("force_nightly") or payload.get("force"))
+    return run_adapter_fleet(
+        engine,
+        payload.get("adapter", envelope.subject_ref),
+        gateway,
+        force_nightly=force,
+    )
 
 
 SNAPSHOT_LOCAL = "/tmp/clhear.db"
@@ -290,8 +303,7 @@ def main() -> None:
     from app.clhear import db
     from app.clhear.db import get_engine, run_migrations
     from app.clhear.platform.events import SqsTransport, relay_once
-    from app.clhear.platform.gateway import AnthropicProvider, FakeProvider
-    from app.clhear.platform.router import Router, build_providers
+    from app.clhear.platform.router import Router, build_providers, record_missing_providers
 
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
@@ -310,7 +322,17 @@ def main() -> None:
     engine = get_engine()
     run_migrations(engine)
 
+    if settings.ollama_base_url:
+        from app.clhear.platform.ollama_sidecar import wait_http_tags
+
+        if wait_http_tags(settings.ollama_base_url, timeout_s=1800):
+            log.info("local Ollama ready at %s", settings.ollama_base_url)
+        else:
+            log.error("OLLAMA_BASE_URL %s never became ready", settings.ollama_base_url)
+
     providers = build_providers(settings)
+    if not providers:
+        record_missing_providers(engine)
     gateway = Router(engine, providers)
     transport = SqsTransport(settings.clhear_events_queue_url, settings.aws_region)
     sqs = boto3.client("sqs", region_name=settings.aws_region)

@@ -66,11 +66,17 @@ locals {
   }
   ollama_sidecar = {
     name         = "ollama"
-    image        = "ollama/ollama:latest"
-    essential    = false
+    image        = var.worker_image
+    essential    = true
+    entryPoint   = ["python", "-m", "app.clhear.platform.ollama_sidecar"]
     portMappings = [{ containerPort = 11434, protocol = "tcp" }]
     environment = [
       { name = "OLLAMA_HOST", value = "0.0.0.0:11434" },
+      { name = "OLLAMA_KEEP_ALIVE", value = "24h" },
+      { name = "OLLAMA_MAX_LOADED_MODELS", value = "1" },
+      { name = "AWS_REGION", value = var.aws_region },
+      { name = "CLHEAR_OLLAMA_MODEL_CACHE_S3", value = "s3://${aws_s3_bucket.deploy.bucket}/ollama-models" },
+      { name = "CLHEAR_OLLAMA_CPU_MODELS", value = "qwen3.5:4b,qwen3.5:9b" },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -92,6 +98,9 @@ resource "aws_ecs_task_definition" "workers" {
   memory                   = local.worker_memory
   execution_role_arn       = aws_iam_role.worker_execution.arn
   task_role_arn            = aws_iam_role.worker_task.arn
+  ephemeral_storage {
+    size_in_gib = var.ollama_sidecar_enabled ? 60 : 21
+  }
   # jsonencode each branch so the ternary stays string/string (object
   # tuples of different length are not a legal terraform type).
   container_definitions = var.ollama_sidecar_enabled ? jsonencode([local.worker_container, local.ollama_sidecar]) : jsonencode([local.worker_container])

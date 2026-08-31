@@ -11,12 +11,13 @@ router = APIRouter()
 
 @router.get("/api/clhear/router")
 def router_state() -> dict:
-    from app.clhear.platform.router import last_decisions, quality_table, registry_public
+    from app.clhear.platform.router import last_decisions, quality_table, registry_public, tiers_public
 
     engine = get_engine()
     table = quality_table(engine)
     return {
         "tasks": registry_public(),
+        "tiers": tiers_public(),
         "quality": {f"{k[0]}|{k[1]}": v for k, v in table.items()},
         "recent": last_decisions(engine, limit=30),
     }

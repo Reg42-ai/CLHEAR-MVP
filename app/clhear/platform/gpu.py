@@ -9,6 +9,7 @@ older than 5 hours.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -25,6 +26,9 @@ GPU_TAG = "clhear:role"
 GPU_TAG_VALUE = "gpu-nightly"
 ORPHAN_HOURS = 5.0
 SPOT_USD_PER_HOUR = 0.50  # conservative g6.xlarge spot estimate
+WAIT_INSTANCE_S = 300
+WAIT_OLLAMA_S = 1200
+OLLAMA_POLL_S = 5
 
 
 def userdata_script(*, cache_uri: str, region: str) -> str:
@@ -41,9 +45,9 @@ if [ -n "{cache_uri}" ]; then
 fi
 docker run -d --gpus all --name ollama -p 11434:11434 -v /opt/ollama:/root/.ollama ollama/ollama
 # Pull only if the cache missed (first night).
-docker exec ollama ollama list | grep -q qwen3.5:4b || docker exec ollama ollama pull qwen3.5:4b || true
-docker exec ollama ollama list | grep -q qwen3.5:14b || docker exec ollama ollama pull qwen3.5:14b || true
-docker exec ollama ollama list | grep -q qwen3.6:27b || docker exec ollama ollama pull qwen3.6:27b || true
+docker exec ollama ollama list | grep -q qwen3.5:4b || docker exec ollama ollama pull qwen3.5:4b
+docker exec ollama ollama list | grep -q qwen3.5:9b || docker exec ollama ollama pull qwen3.5:9b
+docker exec ollama ollama list | grep -q qwen3.6:27b || docker exec ollama ollama pull qwen3.6:27b
 # Persist any newly pulled weights back to the cache.
 if [ -n "{cache_uri}" ]; then
   aws s3 sync /opt/ollama s3://{bucket_key} --region {region} || true
@@ -88,11 +92,116 @@ def _ec2(region: str, client_factory: Callable | None = None):
     return boto3.client("ec2", region_name=region)
 
 
+def _http_get(url: str, timeout: float = 5) -> tuple[int, bytes]:
+    from urllib.request import Request, urlopen
+
+    req = Request(url, method="GET")
+    with urlopen(req, timeout=timeout) as resp:
+        return int(resp.status), resp.read()
+
+
+def wait_instance_ip(
+    ec2,
+    instance_id: str,
+    *,
+    timeout_s: float = WAIT_INSTANCE_S,
+    sleeper: Callable[[float], None] | None = None,
+) -> dict:
+    """Block until the instance is running and has a PrivateIpAddress."""
+    sleeper = sleeper or time.sleep
+    deadline = time.monotonic() + timeout_s
+    last: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        resp = ec2.describe_instances(InstanceIds=[instance_id])
+        for rsv in resp.get("Reservations", []):
+            for inst in rsv.get("Instances", []):
+                last = inst
+                state = (inst.get("State") or {}).get("Name")
+                ip = inst.get("PrivateIpAddress")
+                if state == "running" and ip:
+                    return inst
+        sleeper(5)
+    raise TimeoutError(f"instance {instance_id} never reported PrivateIp (last={last})")
+
+
+def _update_session(engine: Engine, session_id: str, **values: Any) -> None:
+    with engine.begin() as conn:
+        conn.execute(gpu_sessions.update().where(gpu_sessions.c.id == session_id).values(**values))
+
+
+def wait_for_ollama(
+    engine: Engine,
+    session_id: str | None,
+    *,
+    http_get: Callable[[str], tuple[int, bytes]] | None = None,
+    sleeper: Callable[[float], None] | None = None,
+    timeout_s: float = WAIT_OLLAMA_S,
+) -> dict:
+    """Poll http://<private_ip>:11434/api/tags until Ollama answers (cap ~20 min)."""
+    if not session_id:
+        return {"ready": False, "reason": "no session"}
+    session = None
+    with engine.connect() as conn:
+        row = conn.execute(sa.select(gpu_sessions).where(gpu_sessions.c.id == session_id)).first()
+    if row is None:
+        return {"ready": False, "reason": "unknown session"}
+    detail = row.detail if isinstance(row.detail, dict) else {}
+    url = detail.get("ollama_url")
+    if not url:
+        return {"ready": False, "reason": "no ollama_url"}
+    getter = http_get or _http_get
+    sleeper = sleeper or time.sleep
+    deadline = time.monotonic() + timeout_s
+    tags_endpoint = f"{str(url).rstrip('/')}/api/tags"
+    last_err = ""
+    while time.monotonic() < deadline:
+        try:
+            status, body = getter(tags_endpoint)
+            if int(status) == 200:
+                merged = {**detail, "ollama_ready": True}
+                _update_session(engine, session_id, status="running", detail=merged)
+                return {"ready": True, "url": url, "session_id": session_id, "body": body}
+        except Exception as exc:
+            last_err = str(exc)[:200]
+        sleeper(OLLAMA_POLL_S)
+    merged = {**detail, "ollama_ready": False, "wait_error": last_err or "timeout"}
+    _update_session(engine, session_id, status=row.status, detail=merged)
+    log.error("Ollama on %s not ready after %.0fs: %s", url, timeout_s, last_err or "timeout")
+    return {"ready": False, "reason": last_err or "timeout", "url": url, "session_id": session_id}
+
+
+def attach_router(llm: Any, url: str):
+    """Point the in-process Router at the GPU Ollama URL for the nightly window."""
+    from app.clhear.platform.gateway import OllamaProvider
+    from app.clhear.platform.router import Router
+
+    if not url or not isinstance(llm, Router):
+        return None
+    previous = (llm.providers.get("ollama"), llm._gpu_open)
+    llm.providers["ollama"] = OllamaProvider(url)
+    llm._gpu_open = True
+    return previous
+
+
+def detach_router(llm: Any, previous) -> None:
+    from app.clhear.platform.router import Router
+
+    if previous is None or not isinstance(llm, Router):
+        return
+    provider, gpu_open = previous
+    if provider is None:
+        llm.providers.pop("ollama", None)
+    else:
+        llm.providers["ollama"] = provider
+    llm._gpu_open = gpu_open
+
+
 def launch_nightly_gpu(
     engine: Engine,
     *,
     client_factory: Callable | None = None,
     now: datetime | None = None,
+    sleeper: Callable[[float], None] | None = None,
 ) -> dict:
     """Launch a g6.xlarge spot (or record a dry-run when infra vars are empty)."""
     settings = get_settings()
@@ -112,9 +221,15 @@ def launch_nightly_gpu(
                 "InstanceType": settings.clhear_gpu_instance_type,
                 "MinCount": 1,
                 "MaxCount": 1,
-                "SubnetId": settings.clhear_gpu_subnet_id,
-                "SecurityGroupIds": [settings.clhear_gpu_security_group_id],
                 "UserData": user_data,
+                "NetworkInterfaces": [
+                    {
+                        "DeviceIndex": 0,
+                        "SubnetId": settings.clhear_gpu_subnet_id,
+                        "Groups": [settings.clhear_gpu_security_group_id],
+                        "AssociatePublicIpAddress": True,
+                    }
+                ],
                 "InstanceMarketOptions": {
                     "MarketType": "spot",
                     "SpotOptions": {"SpotInstanceType": "one-time", "InstanceInterruptionBehavior": "terminate"},
@@ -134,8 +249,13 @@ def launch_nightly_gpu(
                 params["IamInstanceProfile"] = {"Name": settings.clhear_gpu_instance_profile}
             resp = ec2.run_instances(**params)
             instance_id = resp["Instances"][0]["InstanceId"]
-            status = "running"
+            inst = wait_instance_ip(ec2, instance_id, sleeper=sleeper)
+            private_ip = inst.get("PrivateIpAddress") or ""
+            ollama_url = f"http://{private_ip}:11434" if private_ip else ""
+            status = "launching"
             detail["run_instances"] = {"instance_id": instance_id}
+            detail["private_ip"] = private_ip
+            detail["ollama_url"] = ollama_url
         except Exception as exc:
             log.exception("GPU launch failed")
             status = "failed"
@@ -162,7 +282,7 @@ def launch_nightly_gpu(
             layer="L0",
             fleet="gpu",
             reasoning=f"nightly GPU {status} {started.strftime('%H:%M')} ({settings.clhear_gpu_instance_type} spot)",
-            detail={"session_id": session_id, "instance_id": instance_id, "status": status},
+            detail={"session_id": session_id, "instance_id": instance_id, "status": status, **{k: detail.get(k) for k in ("private_ip", "ollama_url")}},
         )
     except Exception:
         log.exception("gpu ai_ops failed")

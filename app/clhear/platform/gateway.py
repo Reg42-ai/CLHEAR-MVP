@@ -70,7 +70,7 @@ XAI_PRICING = {
 }
 LOCAL_PRICING = {
     "qwen3.5:4b": (0.0, 0.0),
-    "qwen3.5:14b": (0.02, 0.02),
+    "qwen3.5:9b": (0.01, 0.01),
     "qwen3.6:27b": (0.08, 0.08),
 }
 _DEFAULT_PRICING = (3.00, 15.00)

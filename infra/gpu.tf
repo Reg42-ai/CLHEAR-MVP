@@ -10,7 +10,7 @@ variable "gpu_enabled" {
 variable "ollama_sidecar_enabled" {
   type        = bool
   default     = false
-  description = "Attach an Ollama CPU sidecar to the worker task (needs 4 vCPU / 16 GB)."
+  description = "Attach an Ollama CPU sidecar to the worker task (needs 4 vCPU / 16 GB). Restores 4b/9b from S3; never pulls 27b."
 }
 
 resource "aws_s3_object" "ollama_cache_prefix" {

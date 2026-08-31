@@ -27,6 +27,12 @@ from app.clhear.settings import get_settings
 
 log = logging.getLogger("clhear.router")
 
+NO_PROVIDER_REASON = (
+    "No real LLM provider configured. Set OLLAMA_BASE_URL and/or a frontier "
+    "API key (ANTHROPIC_API_KEY / OPENAI_API_KEY / XAI_API_KEY). "
+    "FakeProvider is only used when CLHEAR_LLM_PROVIDER=fake."
+)
+
 SHAPES = (
     "classification",
     "extraction",
@@ -52,7 +58,7 @@ class ModelTier:
 
 TIERS: dict[str, ModelTier] = {
     "local-small": ModelTier("local-small", "qwen3.5:4b", "ollama", requires_gpu=False, cpu_ok=True),
-    "local-mid": ModelTier("local-mid", "qwen3.5:14b", "ollama", requires_gpu=False, cpu_ok=True),
+    "local-mid": ModelTier("local-mid", "qwen3.5:9b", "ollama", requires_gpu=False, cpu_ok=True),
     "local-large": ModelTier("local-large", "qwen3.6:27b", "ollama", requires_gpu=True, cpu_ok=False, nightly_only=True),
     "frontier": ModelTier("frontier", "claude-3-5-haiku-latest", "frontier", requires_gpu=False, cpu_ok=True),
 }
@@ -143,32 +149,32 @@ TASKS: dict[str, TaskSpec] = {
 # Seeded from published-style benches; Eval Studio overwrites with agreement scores.
 SEED_QUALITY: dict[tuple[str, str], float] = {
     ("dummy.triage", "qwen3.5:4b"): 0.93,
-    ("dummy.triage", "qwen3.5:14b"): 0.95,
-    ("l1.parse_repair", "qwen3.5:14b"): 0.88,
+    ("dummy.triage", "qwen3.5:9b"): 0.95,
+    ("l1.parse_repair", "qwen3.5:9b"): 0.88,
     ("l1.parse_repair", "qwen3.6:27b"): 0.93,
     ("l1.parse_repair", "claude-3-5-haiku-latest"): 0.96,
     ("l1.annotate", "qwen3.5:4b"): 0.80,
-    ("l1.annotate", "qwen3.5:14b"): 0.88,
+    ("l1.annotate", "qwen3.5:9b"): 0.88,
     ("l2.duty_triage", "qwen3.5:4b"): 0.88,
-    ("l2.duty_triage", "qwen3.5:14b"): 0.92,
-    ("l2.consolidate", "qwen3.5:14b"): 0.86,
+    ("l2.duty_triage", "qwen3.5:9b"): 0.92,
+    ("l2.consolidate", "qwen3.5:9b"): 0.86,
     ("l2.consolidate", "qwen3.6:27b"): 0.89,
     ("l2.consolidate", "claude-3-5-haiku-latest"): 0.94,
-    ("l3.block_generate", "qwen3.5:14b"): 0.80,
+    ("l3.block_generate", "qwen3.5:9b"): 0.80,
     ("l3.block_generate", "qwen3.6:27b"): 0.87,
     ("l3.block_generate", "claude-3-5-haiku-latest"): 0.93,
-    ("l4.license_extract", "qwen3.5:14b"): 0.84,
+    ("l4.license_extract", "qwen3.5:9b"): 0.84,
     ("l4.license_extract", "qwen3.6:27b"): 0.91,
     ("l4.license_extract", "claude-3-5-haiku-latest"): 0.96,
-    ("l5.activity_map", "qwen3.5:14b"): 0.85,
+    ("l5.activity_map", "qwen3.5:9b"): 0.85,
     ("l5.activity_map", "qwen3.6:27b"): 0.90,
-    ("l6.rationale", "qwen3.5:14b"): 0.82,
+    ("l6.rationale", "qwen3.5:9b"): 0.82,
     ("l6.rationale", "qwen3.6:27b"): 0.88,
-    ("l7.narrative", "qwen3.5:14b"): 0.83,
+    ("l7.narrative", "qwen3.5:9b"): 0.83,
     ("l7.narrative", "qwen3.6:27b"): 0.89,
     ("l0.revalidate", "qwen3.6:27b"): 0.86,
     ("l0.revalidate", "claude-3-5-haiku-latest"): 0.95,
-    ("eval.judge", "qwen3.5:14b"): 0.84,
+    ("eval.judge", "qwen3.5:9b"): 0.84,
     ("eval.judge", "claude-3-5-haiku-latest"): 0.94,
 }
 
@@ -229,9 +235,27 @@ def build_providers(settings=None) -> dict[str, Provider]:
         except Exception:
             log.exception("xai provider unavailable")
     if not out:
-        fake = FakeProvider()
-        out = {"fake": fake, "ollama": fake}
+        log.error(NO_PROVIDER_REASON)
     return out
+
+
+def record_missing_providers(engine: Engine | None) -> None:
+    """Persist a loud ai_ops row when production has no real provider."""
+    if engine is None:
+        return
+    try:
+        from app.clhear import ai_ops
+
+        ai_ops.record(
+            engine,
+            kind="provider_missing",
+            layer="L0",
+            fleet="router",
+            reasoning=NO_PROVIDER_REASON,
+            detail={"providers": []},
+        )
+    except Exception:
+        log.exception("ai_ops provider_missing write failed")
 
 
 def seed_quality(engine: Engine) -> int:
@@ -305,7 +329,11 @@ class Router:
         self.engine = engine
         self.providers = providers if providers is not None else build_providers()
         # A ledger gateway; per-call provider is overridden.
-        lead = next(iter(self.providers.values()))
+        if self.providers:
+            lead = next(iter(self.providers.values()))
+        else:
+            record_missing_providers(engine)
+            lead = _UnconfiguredProvider()
         self.gateway = gateway or Gateway(engine, lead)
         self._quality_override = quality
         self._gpu_open = gpu_open
@@ -373,7 +401,7 @@ class Router:
                     provider_name, _, model = self._frontier_provider()
             else:
                 model = tier.model
-                provider_name = "ollama" if "ollama" in self.providers else next(iter(self.providers))
+                provider_name = "ollama" if "ollama" in self.providers else next(iter(self.providers), "unconfigured")
             quality = self._quality(task_id, model, tier_id)
             if not ok:
                 rejected.append({"tier": tier_id, "model": model, "quality": quality, "reason": why})
@@ -410,7 +438,7 @@ class Router:
                 )
                 provider_name = (
                     self._frontier_provider()[0] if tier_id == "frontier" and self._frontier_provider()
-                    else ("ollama" if "ollama" in self.providers else next(iter(self.providers)))
+                    else ("ollama" if "ollama" in self.providers else next(iter(self.providers), "unconfigured"))
                 )
                 quality = self._quality(task_id, model, tier_id)
                 return RoutingDecision(
@@ -527,3 +555,26 @@ def registry_public() -> list[dict]:
         }
         for t in TASKS.values()
     ]
+
+
+def tiers_public() -> list[dict]:
+    return [
+        {
+            "id": t.id,
+            "model": t.model,
+            "provider": t.provider,
+            "requires_gpu": t.requires_gpu,
+            "cpu_ok": t.cpu_ok,
+            "nightly_only": t.nightly_only,
+        }
+        for t in TIERS.values()
+    ]
+
+
+class _UnconfiguredProvider:
+    """Ledger stub so the worker can ingest L1 without pretending to be Ollama."""
+
+    name = "unconfigured"
+
+    def complete(self, **kwargs):
+        raise RuntimeError(NO_PROVIDER_REASON)
