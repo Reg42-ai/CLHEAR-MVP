@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 
@@ -16,6 +15,7 @@ from sqlalchemy.engine import Engine
 
 from app.clhear.derived_models import license_types
 from app.clhear.l1.models import clauses, source_versions, sources
+from app.clhear.platform.gateway import parse_json_object
 from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l4.licenses")
@@ -119,7 +119,7 @@ def extract_licenses(engine: Engine, llm) -> dict:
                 required_keys=["license_types"],
                 max_tokens=800,
             )
-            parsed = json.loads(result.text)
+            parsed = parse_json_object(result.text)
         except Exception:
             log.exception("license extract failed for %s", query)
             discarded += 1

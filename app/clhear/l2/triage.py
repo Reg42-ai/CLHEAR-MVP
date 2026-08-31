@@ -7,7 +7,6 @@ verdict. The model sees only the clause text.
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 
@@ -17,6 +16,7 @@ from sqlalchemy.engine import Engine
 from app.clhear.derived_models import obligations
 from app.clhear.l1.models import clauses, family_members, source_versions, sources
 from app.clhear.l2.extract import ADDRESSEE, MAX_STATEMENT, NON_DUTY_HEADINGS, _title_from, detect_duty, obligation_id
+from app.clhear.platform.gateway import parse_json_object
 from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l2.triage")
@@ -97,7 +97,7 @@ def triage_duties(engine: Engine, llm, limit: int = MAX_PER_RUN) -> dict:
                 required_keys=["is_duty", "evidence_span"],
                 max_tokens=400,
             )
-            parsed = json.loads(result.text)
+            parsed = parse_json_object(result.text)
         except Exception:
             log.exception("duty triage failed for %s#%s", cand["source_key"], cand["ref"])
             rejected += 1

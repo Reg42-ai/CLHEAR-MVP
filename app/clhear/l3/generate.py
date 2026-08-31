@@ -6,7 +6,6 @@ AI-designed and prioritized for Eval Studio sampling.
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 from collections import defaultdict
@@ -17,6 +16,7 @@ from sqlalchemy.engine import Engine
 from app.clhear.derived_models import blocks as blocks_t
 from app.clhear.derived_models import obligations
 from app.clhear.l2.consolidate import _jaccard, _tokens
+from app.clhear.platform.gateway import parse_json_object
 from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l3.generate")
@@ -88,7 +88,7 @@ def generate_blocks(engine: Engine, llm, limit: int = MAX_BLOCKS) -> dict:
                 required_keys=["name", "description", "satisfies"],
                 max_tokens=800,
             )
-            parsed = json.loads(result.text)
+            parsed = parse_json_object(result.text)
         except Exception:
             log.exception("L3 generation failed")
             blocked += 1

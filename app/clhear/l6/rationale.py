@@ -5,10 +5,10 @@ blocks, gaps). Narratives citing anything outside the blueprint are rejected.
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 
+from app.clhear.platform.gateway import parse_json_object
 from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l6.rationale")
@@ -57,7 +57,7 @@ def narrate_blueprint(engine, llm, blueprint: dict) -> dict:
             required_keys=["rationale"],
             max_tokens=700,
         )
-        parsed = json.loads(result.text)
+        parsed = parse_json_object(result.text)
     except Exception as exc:
         log.exception("L6 rationale failed")
         return {"written": False, "reason": str(exc)[:200]}

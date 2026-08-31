@@ -19,7 +19,7 @@ from app.clhear.models import runs
 from app.clhear.platform import events as l0_events
 from app.clhear.platform import proposals as l0_proposals
 from app.clhear.platform.events import Envelope
-from app.clhear.platform.gateway import Gateway, Provider
+from app.clhear.platform.gateway import Gateway, Provider, parse_json_object
 from app.clhear.settings import get_settings
 
 log = logging.getLogger("clhear.workers")
@@ -62,7 +62,7 @@ def handle_dummy_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -
         system="Respond with JSON: {\"classification\": ..., \"confidence\": ...}",
         required_keys=["classification", "confidence"],
     )
-    triage = json.loads(result.text)
+    triage = parse_json_object(result.text)
     with engine.begin() as conn:
         proposal_id = l0_proposals.create_proposal(
             conn,

@@ -20,6 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection, Engine
 
 from app.clhear.l1.models import ANNOTATION_CATEGORIES, clause_annotations, clauses, source_versions, sources
+from app.clhear.platform.gateway import parse_json_object
 
 log = logging.getLogger("clhear.l1.annotate")
 
@@ -127,7 +128,7 @@ def explain_batch(gateway, model: str, batch) -> list[dict]:
         required_keys=["annotations"],
         model=model,
     )
-    parsed = json.loads(result.text).get("annotations", [])
+    parsed = parse_json_object(result.text).get("annotations", [])
     out = []
     for entry in parsed:
         if not isinstance(entry, dict) or not entry.get("ref") or not entry.get("summary"):

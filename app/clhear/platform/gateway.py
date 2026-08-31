@@ -10,7 +10,7 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
@@ -417,6 +417,7 @@ class Gateway:
                     missing = [k for k in required_keys if k not in parsed]
                     if missing:
                         raise StructuredOutputError(f"missing keys: {missing}")
+                    result = replace(result, text=json.dumps(parsed))
                 break
             except (json.JSONDecodeError, StructuredOutputError, ConnectionError, TimeoutError) as exc:
                 last_error = exc

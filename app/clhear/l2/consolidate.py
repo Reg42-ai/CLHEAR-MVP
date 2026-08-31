@@ -18,6 +18,7 @@ from app.clhear.derived_models import obligations
 from app.clhear.l2.concepts import consolidated_ids, upsert_concept
 from app.clhear.models import proposals as proposals_t
 from app.clhear.platform import proposals as l0_proposals
+from app.clhear.platform.gateway import parse_json_object
 from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l2.consolidate")
@@ -154,7 +155,7 @@ def draft_and_propose(engine: Engine, llm, limit: int = MAX_CANDIDATES_PER_RUN) 
                     required_keys=["name", "canonical_statement", "member_notes"],
                     max_tokens=700,
                 )
-                parsed = json.loads(result.text)
+                parsed = parse_json_object(result.text)
                 name = str(parsed["name"])[:120]
                 canonical = str(parsed["canonical_statement"])[:500]
                 raw_notes = {str(k): str(v)[:120] for k, v in dict(parsed.get("member_notes", {})).items()}

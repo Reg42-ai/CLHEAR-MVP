@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from app.clhear.models import risk_narratives
+from app.clhear.platform.gateway import parse_json_object
 from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l7.narrate")
@@ -83,7 +84,7 @@ def narrate_risk(engine, llm, item: dict) -> dict:
             required_keys=["narrative"],
             max_tokens=500,
         )
-        parsed = json.loads(result.text)
+        parsed = parse_json_object(result.text)
     except Exception as exc:
         log.exception("L7 narrative failed")
         return {"written": False, "reason": str(exc)[:200]}

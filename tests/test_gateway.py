@@ -45,7 +45,15 @@ def test_structured_output_validation(engine):
     ok = Gateway(engine, FakeProvider()).call(
         fleet="dummy", model="m", prompt="p", required_keys=["classification", "confidence"]
     )
-    assert ok.text
+    assert json.loads(ok.text) == {"classification": "relevant", "confidence": 0.9}
+
+    messy = Gateway(
+        engine,
+        FakeProvider(canned_text='<think>hmm</think>\n```json\n{"classification": "x", "confidence": 0.5}\n```'),
+    ).call(
+        fleet="dummy", model="m", prompt="p", required_keys=["classification", "confidence"]
+    )
+    assert json.loads(messy.text) == {"classification": "x", "confidence": 0.5}
 
 
 def test_ollama_omits_bare_json_format(monkeypatch):

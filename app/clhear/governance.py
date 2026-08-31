@@ -10,7 +10,6 @@ admin_queue --admin decides--> admin_override
 """
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -18,6 +17,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
 from app.clhear.models import corrections, item_lifecycle
+from app.clhear.platform.gateway import parse_json_object
 
 log = logging.getLogger("clhear.governance")
 
@@ -208,7 +208,7 @@ def revalidate(engine: Engine, llm, correction_id: str) -> dict:
         required_keys=["verdict", "rationale"],
         max_tokens=500,
     )
-    parsed = json.loads(result.text)
+    parsed = parse_json_object(result.text)
     verdict = "accept" if str(parsed.get("verdict", "")).lower().startswith("accept") else "reject"
     rationale = str(parsed.get("rationale", ""))[:500]
     new_status = AI_ACCEPTED if verdict == "accept" else AI_REJECTED
