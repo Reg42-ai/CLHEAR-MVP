@@ -144,6 +144,26 @@ def test_l4_discards_ungrounded_and_validates_enum(engine):
         pass
 
 
+def test_l4_discards_anchors_not_in_force(engine):
+    """Retrieval hits that are not live in-force clauses must never persist."""
+    _seed_corpus(engine)
+    canned = json.dumps({
+        "license_types": [{
+            "name": "Recital-only invention",
+            "issuing_regime": "x",
+            "source_key": "uksi/2017/692",
+            "ref": "rct_999",
+        }]
+    })
+    llm, _ = _llm(engine, canned)
+    extract_licenses(engine, llm)
+    assert run_suite(engine, "l4_grounding")["passed"] is True
+    with engine.connect() as conn:
+        for row in conn.execute(sa.select(license_types)):
+            anchors = row.clause_anchors if isinstance(row.clause_anchors, list) else json.loads(row.clause_anchors or "[]")
+            assert all(a.get("ref") != "rct_999" for a in anchors)
+
+
 def test_l5_rejects_unknown_when_attribute(engine):
     _seed_corpus(engine)
     run_extraction(engine)

@@ -73,12 +73,29 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:50]
 
 
+def anchor_is_live(engine: Engine, source_key: str, ref: str) -> bool:
+    """Same resolution the l4_grounding eval uses — in-force clause or discard."""
+    if not source_key or not ref:
+        return False
+    with engine.connect() as conn:
+        hit = conn.execute(
+            sa.select(clauses.c.id)
+            .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
+            .join(sources, sources.c.id == source_versions.c.source_id)
+            .where(sources.c.key == source_key)
+            .where(source_versions.c.status == "in_force")
+            .where(clauses.c.ref == ref)
+            .limit(1)
+        ).first()
+    return hit is not None
+
+
 def extract_licenses(engine: Engine, llm) -> dict:
     written = discarded = 0
     ids: list[str] = []
     coverage_gaps: list[str] = []
     for jur, query in LICENSE_QUERIES:
-        retrieved = _retrieve(engine, query)
+        retrieved = [h for h in _retrieve(engine, query) if anchor_is_live(engine, h["source_key"], h["ref"])]
         if not retrieved:
             coverage_gaps.append(f"{jur}:{query}")
             continue
