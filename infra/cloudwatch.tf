@@ -62,7 +62,14 @@ resource "aws_cloudwatch_dashboard" "clhear" {
           metrics = [["CLHEAR", "DailyLlmSpendUsd"]]
         }
       },
-      # P1+: crawl freshness per source, eval trend.
+      {
+        type = "metric", x = 0, y = 6, width = 12, height = 6
+        properties = {
+          title   = "GPU orphans (must stay 0)"
+          region  = var.aws_region
+          metrics = [["CLHEAR", "GpuOrphanCount"]]
+        }
+      },
     ]
   })
 }
