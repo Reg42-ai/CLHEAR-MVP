@@ -122,3 +122,9 @@ def test_userdata_has_fuse_and_s3_cache():
     assert "ollama pull qwen3.5:9b" in script
     assert "ollama pull qwen3.6:27b" in script
     assert "qwen3.5:14b" not in script
+    assert "--cpus=3.5" in script
+    assert "--memory=14g" in script
+    assert "--memory-reservation=12g" in script
+    assert "OllamaCpuThrottled" in script
+    assert "Role,Value=gpu" in script
+    assert "{{.Id}}" in script

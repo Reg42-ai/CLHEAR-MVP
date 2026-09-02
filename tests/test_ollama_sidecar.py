@@ -1,5 +1,6 @@
 """CPU sidecar restores 4b/9b only and never pulls 27b."""
 import json
+import threading
 
 from app.clhear.platform import ollama_sidecar as sidecar
 
@@ -125,7 +126,77 @@ def test_run_sidecar_order(tmp_path):
         waiter=waiter,
         puller=puller,
         wait_forever=True,
+        metrics=False,
     )
     assert [s[0] for s in steps] == ["restore", "serve", "ready", "pull", "wait"]
     assert out["ready"] is True
     assert out["models"]["pulled"] == ["qwen3.5:4b"]
+
+
+def test_parse_cpu_stat_and_deltas(tmp_path):
+    first = (
+        "usage_usec 1000\nuser_usec 800\nsystem_usec 200\n"
+        "nr_periods 10\nnr_throttled 2\nthrottled_usec 400\n"
+    )
+    second = (
+        "usage_usec 5000\nuser_usec 4000\nsystem_usec 1000\n"
+        "nr_periods 20\nnr_throttled 5\nthrottled_usec 900\n"
+    )
+    parsed = sidecar.parse_cpu_stat(first)
+    assert parsed["nr_throttled"] == 2
+    assert parsed["throttled_usec"] == 400
+    path = tmp_path / "cpu.stat"
+    path.write_text(second)
+    assert sidecar.read_cpu_stat(str(path))["nr_throttled"] == 5
+    deltas = sidecar.throttle_deltas(parsed, sidecar.parse_cpu_stat(second))
+    assert deltas["nr_throttled"] == 3
+    assert deltas["throttled_usec"] == 500
+    reset = sidecar.throttle_deltas({"nr_throttled": 9}, {"nr_throttled": 1})
+    assert reset["nr_throttled"] == 0
+
+
+def test_put_throttle_metrics_dimensions():
+    seen = {}
+
+    def putter(**kwargs):
+        seen.update(kwargs)
+
+    sidecar.put_throttle_metrics(
+        {"nr_throttled": 2, "throttled_usec": 150},
+        role="sidecar",
+        putter=putter,
+    )
+    names = {item["MetricName"]: item for item in seen["MetricData"]}
+    assert seen["Namespace"] == "CLHEAR"
+    assert names["OllamaCpuThrottled"]["Value"] == 2
+    assert names["OllamaCpuThrottled"]["Dimensions"] == [{"Name": "Role", "Value": "sidecar"}]
+    assert names["OllamaCpuThrottledUsec"]["Value"] == 150
+
+
+def test_publish_cpu_loop_emits_delta(tmp_path):
+    path = tmp_path / "cpu.stat"
+    path.write_text("nr_throttled 1\nthrottled_usec 10\nusage_usec 1\nnr_periods 1\n")
+    puts = []
+    stop = threading.Event()
+    ticks = {"n": 0}
+
+    def sleeper(seconds):
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            path.write_text("nr_throttled 4\nthrottled_usec 40\nusage_usec 9\nnr_periods 3\n")
+            return False
+        stop.set()
+        return True
+
+    sidecar.publish_cpu_loop(
+        stop,
+        path=str(path),
+        interval_s=0,
+        role="gpu",
+        putter=lambda **kw: puts.append(kw),
+        sleeper=sleeper,
+    )
+    assert puts
+    throttled = next(m for m in puts[0]["MetricData"] if m["MetricName"] == "OllamaCpuThrottled")
+    assert throttled["Value"] == 3
+    assert throttled["Dimensions"][0]["Value"] == "gpu"
