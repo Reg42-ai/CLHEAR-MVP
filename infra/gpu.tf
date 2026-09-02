@@ -48,6 +48,15 @@ resource "aws_iam_role_policy" "gpu_instance" {
           aws_s3_bucket.deploy.arn,
           "${aws_s3_bucket.deploy.arn}/ollama-models/*",
         ]
+      },
+      {
+        Sid      = "ThrottleMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+        Condition = {
+          StringEquals = { "cloudwatch:namespace" = "CLHEAR" }
+        }
       }
     ]
   })

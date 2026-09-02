@@ -27,6 +27,21 @@ resource "aws_cloudwatch_metric_alarm" "schedule_missed" {
 }
 
 # Workers publish CLHEAR/DailyLlmSpendUsd from the llm_calls ledger.
+# Sidecar/GPU Ollama hit their CPU limit (cgroup nr_throttled delta).
+# Missing is normal: GPU is dark most of the day; sidecar publishes only when up.
+resource "aws_cloudwatch_metric_alarm" "ollama_cpu_throttled" {
+  alarm_name          = "${var.name_prefix}-ollama-cpu-throttled"
+  namespace           = "CLHEAR"
+  metric_name         = "OllamaCpuThrottled"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 2
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Ollama sidecar or GPU container is CPU-throttled (noisy neighbor / undersized limit)."
+}
+
 resource "aws_cloudwatch_metric_alarm" "llm_spend_over_cap" {
   alarm_name          = "${var.name_prefix}-llm-spend-over-cap"
   namespace           = "CLHEAR"
@@ -68,6 +83,17 @@ resource "aws_cloudwatch_dashboard" "clhear" {
           title   = "GPU orphans (must stay 0)"
           region  = var.aws_region
           metrics = [["CLHEAR", "GpuOrphanCount"]]
+        }
+      },
+      {
+        type = "metric", x = 12, y = 6, width = 12, height = 6
+        properties = {
+          title  = "Ollama CPU throttle (sidecar / GPU)"
+          region = var.aws_region
+          metrics = [
+            ["CLHEAR", "OllamaCpuThrottled", "Role", "sidecar"],
+            ["CLHEAR", "OllamaCpuThrottled", "Role", "gpu"],
+          ]
         }
       },
     ]

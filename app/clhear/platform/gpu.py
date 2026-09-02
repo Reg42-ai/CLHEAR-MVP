@@ -34,7 +34,7 @@ OLLAMA_POLL_S = 5
 def userdata_script(*, cache_uri: str, region: str) -> str:
     """Instance user-data: restore Ollama models from S3, start serve, 4h fuse."""
     bucket_key = cache_uri[len("s3://"):] if cache_uri.startswith("s3://") else cache_uri
-    return f"""#!/bin/bash
+    boot = f"""#!/bin/bash
 set -euxo pipefail
 shutdown -h +240 || true
 dnf install -y docker awscli || yum install -y docker awscli || true
@@ -43,7 +43,8 @@ mkdir -p /opt/ollama
 if [ -n "{cache_uri}" ]; then
   aws s3 sync s3://{bucket_key} /opt/ollama --region {region} || true
 fi
-docker run -d --gpus all --name ollama -p 11434:11434 -v /opt/ollama:/root/.ollama ollama/ollama
+docker run -d --gpus all --cpus=3.5 --memory=14g --memory-reservation=12g \\
+  --name ollama -p 11434:11434 -v /opt/ollama:/root/.ollama ollama/ollama
 # Pull only if the cache missed (first night).
 docker exec ollama ollama list | grep -q qwen3.5:4b || docker exec ollama ollama pull qwen3.5:4b
 docker exec ollama ollama list | grep -q qwen3.5:9b || docker exec ollama ollama pull qwen3.5:9b
@@ -53,6 +54,32 @@ if [ -n "{cache_uri}" ]; then
   aws s3 sync /opt/ollama s3://{bucket_key} --region {region} || true
 fi
 """
+    # Regular string: docker Go templates and awk braces must stay literal.
+    metrics = r"""
+# Publish cgroup throttle deltas so a 27b generate cannot hide as a silent stall.
+nohup bash -c 'prev=0
+while true; do
+  cid=$(docker inspect -f "{{.Id}}" ollama 2>/dev/null || true)
+  stat=""
+  for p in \
+    /sys/fs/cgroup/system.slice/docker-${cid}.scope/cpu.stat \
+    /sys/fs/cgroup/docker/${cid}/cpu.stat; do
+    if [ -n "$cid" ] && [ -f "$p" ]; then stat="$p"; break; fi
+  done
+  cur=0
+  if [ -n "$stat" ]; then
+    cur=$(awk "/^nr_throttled / {print \$2}" "$stat" 2>/dev/null || echo 0)
+  fi
+  case "$cur" in ""|*[!0-9]*) cur=0 ;; esac
+  delta=0
+  if [ "$cur" -ge "$prev" ]; then delta=$((cur - prev)); fi
+  prev=$cur
+  aws cloudwatch put-metric-data --region REGION_PLACEHOLDER --namespace CLHEAR \
+    --metric-data MetricName=OllamaCpuThrottled,Value=$delta,Unit=Count,Dimensions={Name=Role,Value=gpu} || true
+  sleep 30
+done' >/var/log/ollama-throttle.log 2>&1 &
+"""
+    return boot + metrics.replace("REGION_PLACEHOLDER", region)
 
 
 def is_gpu_open(engine: Engine) -> bool:

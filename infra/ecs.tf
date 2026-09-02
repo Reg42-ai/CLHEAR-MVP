@@ -26,11 +26,20 @@ resource "aws_cloudwatch_log_group" "workers" {
 locals {
   worker_cpu    = var.ollama_sidecar_enabled ? 4096 : 512
   worker_memory = var.ollama_sidecar_enabled ? 16384 : 1024
+  # k8s request/limit → Fargate: container cpu + memoryReservation (request),
+  # cpu + memory (hard limit). Sums must fit the task 4 vCPU / 16 GB.
+  worker_container_cpu     = var.ollama_sidecar_enabled ? 1024 : 512
+  worker_container_memory  = var.ollama_sidecar_enabled ? 2048 : 1024
+  ollama_container_cpu     = 3072
+  ollama_container_memory  = 14336
   worker_container = {
-    name       = "worker"
-    image      = var.worker_image
-    essential  = true
-    entryPoint = ["python", "-m", "app.clhear.workers"]
+    name              = "worker"
+    image             = var.worker_image
+    essential         = true
+    cpu               = local.worker_container_cpu
+    memory            = local.worker_container_memory
+    memoryReservation = var.ollama_sidecar_enabled ? 512 : 256
+    entryPoint        = ["python", "-m", "app.clhear.workers"]
     environment = concat(
       [
         { name = "AWS_REGION", value = var.aws_region },
@@ -63,10 +72,13 @@ locals {
     }
   }
   ollama_sidecar = {
-    name         = "ollama"
-    image        = var.worker_image
-    essential    = true
-    entryPoint   = ["python", "-m", "app.clhear.platform.ollama_sidecar"]
+    name              = "ollama"
+    image             = var.worker_image
+    essential         = true
+    cpu               = local.ollama_container_cpu
+    memory            = local.ollama_container_memory
+    memoryReservation = 12288
+    entryPoint        = ["python", "-m", "app.clhear.platform.ollama_sidecar"]
     portMappings = [{ containerPort = 11434, protocol = "tcp" }]
     environment = [
       { name = "OLLAMA_HOST", value = "0.0.0.0:11434" },
@@ -75,6 +87,7 @@ locals {
       { name = "AWS_REGION", value = var.aws_region },
       { name = "CLHEAR_OLLAMA_MODEL_CACHE_S3", value = "s3://${aws_s3_bucket.deploy.bucket}/ollama-models" },
       { name = "CLHEAR_OLLAMA_CPU_MODELS", value = "qwen3.5:4b,qwen3.5:9b" },
+      { name = "CLHEAR_OLLAMA_METRIC_ROLE", value = "sidecar" },
     ]
     logConfiguration = {
       logDriver = "awslogs"

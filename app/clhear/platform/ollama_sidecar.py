@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from typing import Any, Callable, Iterable
 from urllib.error import URLError
@@ -21,6 +22,13 @@ GPU_ONLY_MODELS = ("qwen3.6:27b",)
 OLLAMA_HOST_DEFAULT = "0.0.0.0:11434"
 DATA_DIR_DEFAULT = "/root/.ollama"
 MANIFEST_PREFIX = "manifests/registry.ollama.ai/library/"
+CPU_STAT_PATH = "/sys/fs/cgroup/cpu.stat"
+CPU_STAT_CANDIDATES = (
+    "/sys/fs/cgroup/cpu.stat",
+    "/sys/fs/cgroup/cpu,cpuacct/cpu.stat",
+    "/sys/fs/cgroup/cpu/cpu.stat",
+)
+METRIC_INTERVAL_S = 30.0
 
 
 def cpu_models() -> tuple[str, ...]:
@@ -240,6 +248,105 @@ def serve_command() -> list[str]:
     return ["ollama", "serve"]
 
 
+def parse_cpu_stat(text: str) -> dict[str, int]:
+    """Parse cgroup v2 cpu.stat (usage_usec, nr_throttled, throttled_usec)."""
+    out: dict[str, int] = {}
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        key, raw = parts
+        try:
+            out[key] = int(raw)
+        except ValueError:
+            continue
+    return out
+
+
+def read_cpu_stat(path: str | None = None) -> dict[str, int]:
+    paths = (path,) if path else CPU_STAT_CANDIDATES
+    for candidate in paths:
+        try:
+            with open(candidate, encoding="utf-8") as fh:
+                parsed = parse_cpu_stat(fh.read())
+        except OSError:
+            continue
+        if parsed:
+            return parsed
+    return {}
+
+
+def throttle_deltas(previous: dict[str, int], current: dict[str, int]) -> dict[str, int]:
+    """Non-negative deltas so a counter reset cannot look like a flood."""
+    keys = ("nr_throttled", "throttled_usec", "usage_usec", "nr_periods")
+    out: dict[str, int] = {}
+    for key in keys:
+        cur = int(current.get(key) or 0)
+        prev = int(previous.get(key) or 0)
+        out[key] = max(0, cur - prev) if cur >= prev else 0
+    return out
+
+
+def put_throttle_metrics(
+    deltas: dict[str, int],
+    *,
+    role: str = "sidecar",
+    putter: Callable[..., Any] | None = None,
+    region: str | None = None,
+) -> list[dict]:
+    role = (role or os.environ.get("CLHEAR_OLLAMA_METRIC_ROLE") or "sidecar").strip() or "sidecar"
+    data = [
+        {"MetricName": "OllamaCpuThrottled", "Value": float(deltas.get("nr_throttled") or 0),
+         "Unit": "Count", "Dimensions": [{"Name": "Role", "Value": role}]},
+        {"MetricName": "OllamaCpuThrottledUsec", "Value": float(deltas.get("throttled_usec") or 0),
+         "Unit": "Microseconds", "Dimensions": [{"Name": "Role", "Value": role}]},
+    ]
+    if putter is None:
+        import boto3
+
+        boto3.client("cloudwatch", region_name=region or os.environ.get("AWS_REGION") or "us-east-1").put_metric_data(
+            Namespace="CLHEAR", MetricData=data,
+        )
+    else:
+        putter(Namespace="CLHEAR", MetricData=data)
+    return data
+
+
+def publish_cpu_loop(
+    stop: threading.Event,
+    *,
+    path: str = CPU_STAT_PATH,
+    interval_s: float = METRIC_INTERVAL_S,
+    role: str | None = None,
+    putter: Callable[..., Any] | None = None,
+    sleeper=None,
+) -> None:
+    """Watch cgroup throttle counters and publish deltas until `stop` is set."""
+    sleep = sleeper or stop.wait
+    resolved = path or next((p for p in CPU_STAT_CANDIDATES if os.path.exists(p)), path or CPU_STAT_PATH)
+    log.info("cpu throttle watch started path=%s role=%s", resolved, role or os.environ.get("CLHEAR_OLLAMA_METRIC_ROLE") or "sidecar")
+    previous = read_cpu_stat(resolved)
+    while not stop.is_set():
+        if sleep(interval_s):
+            break
+        current = read_cpu_stat(resolved)
+        deltas = throttle_deltas(previous, current) if current else {
+            "nr_throttled": 0, "throttled_usec": 0, "usage_usec": 0, "nr_periods": 0,
+        }
+        if current:
+            previous = current
+        if deltas.get("nr_throttled"):
+            log.warning(
+                "ollama cpu throttled delta_periods=%s delta_usec=%s role=%s",
+                deltas["nr_throttled"], deltas.get("throttled_usec") or 0,
+                role or os.environ.get("CLHEAR_OLLAMA_METRIC_ROLE") or "sidecar",
+            )
+        try:
+            put_throttle_metrics(deltas, role=role or "", putter=putter)
+        except Exception:
+            log.exception("could not publish OllamaCpuThrottled")
+
+
 def sidecar_base_url() -> str:
     host = os.environ.get("OLLAMA_HOST") or OLLAMA_HOST_DEFAULT
     if "://" in host:
@@ -256,6 +363,7 @@ def run_sidecar(
     waiter: Callable[..., bool] | None = None,
     puller: Callable[..., dict] | None = None,
     wait_forever: bool = True,
+    metrics: bool | Callable[..., Any] = True,
 ) -> dict:
     """Restore → serve → pull 4b/9b. Injected callables keep this unit-testable."""
     cache_uri = cache_uri if cache_uri is not None else os.environ.get("CLHEAR_OLLAMA_MODEL_CACHE_S3", "")
@@ -265,6 +373,10 @@ def run_sidecar(
     os.environ.setdefault("OLLAMA_MODELS", os.path.join(dest, "models"))
     restored = (restorer or restore_cpu_cache)(cache_uri, dest) if cache_uri else {"restored": False, "reason": "no cache"}
     proc = (server or (lambda: subprocess.Popen(serve_command())))()
+    stop = threading.Event()
+    if metrics:
+        target = metrics if callable(metrics) else publish_cpu_loop
+        threading.Thread(target=target, args=(stop,), daemon=True).start()
     base = sidecar_base_url()
     ready = (waiter or wait_http_tags)(base)
     pulled = {"pulled": [], "already": [], "refused": []}
@@ -272,8 +384,11 @@ def run_sidecar(
         pulled = (puller or pull_cpu_models)(base)
     else:
         log.error("ollama serve did not become ready; CPU models not pulled")
-    if wait_forever and proc is not None and hasattr(proc, "wait"):
-        proc.wait()
+    try:
+        if wait_forever and proc is not None and hasattr(proc, "wait"):
+            proc.wait()
+    finally:
+        stop.set()
     return {"restored": restored, "ready": ready, "models": pulled}
 
 
