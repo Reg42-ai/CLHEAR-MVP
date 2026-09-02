@@ -23,6 +23,11 @@ OLLAMA_HOST_DEFAULT = "0.0.0.0:11434"
 DATA_DIR_DEFAULT = "/root/.ollama"
 MANIFEST_PREFIX = "manifests/registry.ollama.ai/library/"
 CPU_STAT_PATH = "/sys/fs/cgroup/cpu.stat"
+CPU_STAT_CANDIDATES = (
+    "/sys/fs/cgroup/cpu.stat",
+    "/sys/fs/cgroup/cpu,cpuacct/cpu.stat",
+    "/sys/fs/cgroup/cpu/cpu.stat",
+)
 METRIC_INTERVAL_S = 30.0
 
 
@@ -258,12 +263,17 @@ def parse_cpu_stat(text: str) -> dict[str, int]:
     return out
 
 
-def read_cpu_stat(path: str = CPU_STAT_PATH) -> dict[str, int]:
-    try:
-        with open(path, encoding="utf-8") as fh:
-            return parse_cpu_stat(fh.read())
-    except OSError:
-        return {}
+def read_cpu_stat(path: str | None = None) -> dict[str, int]:
+    paths = (path,) if path else CPU_STAT_CANDIDATES
+    for candidate in paths:
+        try:
+            with open(candidate, encoding="utf-8") as fh:
+                parsed = parse_cpu_stat(fh.read())
+        except OSError:
+            continue
+        if parsed:
+            return parsed
+    return {}
 
 
 def throttle_deltas(previous: dict[str, int], current: dict[str, int]) -> dict[str, int]:
@@ -313,16 +323,18 @@ def publish_cpu_loop(
 ) -> None:
     """Watch cgroup throttle counters and publish deltas until `stop` is set."""
     sleep = sleeper or stop.wait
-    previous = read_cpu_stat(path)
+    resolved = path or next((p for p in CPU_STAT_CANDIDATES if os.path.exists(p)), path or CPU_STAT_PATH)
+    log.info("cpu throttle watch started path=%s role=%s", resolved, role or os.environ.get("CLHEAR_OLLAMA_METRIC_ROLE") or "sidecar")
+    previous = read_cpu_stat(resolved)
     while not stop.is_set():
         if sleep(interval_s):
             break
-        current = read_cpu_stat(path)
-        if not current:
+        current = read_cpu_stat(resolved)
+        deltas = throttle_deltas(previous, current) if current else {
+            "nr_throttled": 0, "throttled_usec": 0, "usage_usec": 0, "nr_periods": 0,
+        }
+        if current:
             previous = current
-            continue
-        deltas = throttle_deltas(previous, current)
-        previous = current
         if deltas.get("nr_throttled"):
             log.warning(
                 "ollama cpu throttled delta_periods=%s delta_usec=%s role=%s",
@@ -361,6 +373,10 @@ def run_sidecar(
     os.environ.setdefault("OLLAMA_MODELS", os.path.join(dest, "models"))
     restored = (restorer or restore_cpu_cache)(cache_uri, dest) if cache_uri else {"restored": False, "reason": "no cache"}
     proc = (server or (lambda: subprocess.Popen(serve_command())))()
+    stop = threading.Event()
+    if metrics:
+        target = metrics if callable(metrics) else publish_cpu_loop
+        threading.Thread(target=target, args=(stop,), daemon=True).start()
     base = sidecar_base_url()
     ready = (waiter or wait_http_tags)(base)
     pulled = {"pulled": [], "already": [], "refused": []}
@@ -368,10 +384,6 @@ def run_sidecar(
         pulled = (puller or pull_cpu_models)(base)
     else:
         log.error("ollama serve did not become ready; CPU models not pulled")
-    stop = threading.Event()
-    if metrics:
-        target = metrics if callable(metrics) else publish_cpu_loop
-        threading.Thread(target=target, args=(stop,), daemon=True).start()
     try:
         if wait_forever and proc is not None and hasattr(proc, "wait"):
             proc.wait()
