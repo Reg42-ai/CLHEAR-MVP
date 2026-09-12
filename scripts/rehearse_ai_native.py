@@ -2,8 +2,8 @@
 """Offline nightly rehearsal against a corpus snapshot.
 
 Uses a grounded FakeProvider (quotes only ids/spans present in the prompt)
-so fleets, eval gates, GPU dry-run, and Eval Studio sampling run without
-frontier keys or a real GPU. Intended for deploy: migrate the live
+so fleets, eval gates, and Eval Studio sampling run without
+an Infer token. Intended for deploy: migrate the live
 snapshot, populate AI-native tables, then upload via deploy_webui.sh.
 """
 from __future__ import annotations
@@ -111,8 +111,8 @@ def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     flags = {a for a in sys.argv[1:] if a.startswith("-")}
     # --full runs FakeProvider through every fleet (dev). Default --safe
-    # migrates, GPU-dry-runs, L6/L7/L8, and samples Eval Studio without
-    # writing junk L3/L4/L5 names onto a production snapshot.
+    # migrates, runs L6/L7/L8, and samples Eval Studio without writing junk
+    # L3/L4/L5 names onto a production snapshot.
     safe = "--full" not in flags
     db = Path(os.environ.get("CLHEAR_REHEARSE_DB") or (args[0] if args else DEFAULT_DB))
     if not db.exists():
@@ -120,9 +120,6 @@ def main() -> int:
         return 2
     os.environ["DATABASE_URL"] = f"sqlite:///{db.resolve()}"
     os.environ.setdefault("CLHEAR_LLM_PROVIDER", "fake")
-    # No GPU subnet → launch_nightly_gpu records a dry-run (no EC2 spend).
-    os.environ.pop("CLHEAR_GPU_SUBNET_ID", None)
-    os.environ.pop("CLHEAR_GPU_SECURITY_GROUP_ID", None)
 
     from app.clhear.db import get_engine, run_migrations
     from app.clhear.eval_studio import sample_tasks
@@ -134,14 +131,8 @@ def main() -> int:
     print(f"migrations applied: {applied or 'none (already current)'}")
 
     fake = FakeProvider(script=_grounded_script)
-    llm = Router(
-        engine,
-        providers={"ollama": fake, "ollama_cloud": fake, "fake": fake},
-        gpu_open=True,
-    )
+    llm = Router(engine, providers={"fake": fake})
     if safe:
-        from app.clhear.fleets import run_nightly_stack
-        from app.clhear.platform.gpu import launch_nightly_gpu, orphan_guard, terminate_gpu
         from app.clhear import curated
         from app.clhear.l2.extract import run_extraction
         from app.clhear.l8.cohorts import refresh_cohorts
@@ -153,8 +144,6 @@ def main() -> int:
         from datetime import datetime, timezone
         import sqlalchemy as sa
 
-        orphan_guard(engine)
-        gpu = launch_nightly_gpu(engine)
         started = datetime.now(timezone.utc)
         seeded = curated.seed(engine)
         extraction = run_extraction(engine)
@@ -174,14 +163,13 @@ def main() -> int:
             "rationales": rationales,
             "narratives": [{"written": n.get("written"), "id": n.get("id")} for n in narratives],
             "cohorts": cohorts,
-            "gpu": gpu,
             "mode": "safe",
         }
         reasoning = (
             f"Safe rehearsal: extraction unchanged={extraction.get('unchanged', 0)}, "
             f"{sum(1 for r in rationales if r.get('written'))} L6 rationales, "
             f"{sum(1 for n in narratives if n.get('written'))} L7 narratives, "
-            f"L8 synthetic={cohorts.get('synthetic', 0)}; GPU {gpu.get('status')}"
+            f"L8 synthetic={cohorts.get('synthetic', 0)}"
         )
         ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
         with engine.begin() as conn:
@@ -194,7 +182,6 @@ def main() -> int:
         ai_ops.record(engine, kind="fleet_generation", layer="L0", fleet="ai.nightly",
                       reasoning=reasoning, detail={"mode": "safe"})
         out = outputs
-        terminate_gpu(engine, gpu.get("id") if isinstance(gpu, dict) else None)
     else:
         from app.clhear.fleets import run_nightly_if_due
 

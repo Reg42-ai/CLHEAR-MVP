@@ -1,0 +1,159 @@
+# CLHEAR task classes for Reg42 Infer — generated from
+# app/clhear/platform/task_classes.py (CLHEAR-MVP). Do not hand-edit.
+# Derivation classes: procurement-clean (US/EU origin) Bedrock models only.
+employee_prefix: clhear-
+tasks:
+  l1_parse:
+    layer: L1
+    shape: extraction
+    derivation: true
+    quality_threshold: 0.9
+    data_class_default: public
+    description: 'Extractive parse repair hints; output must byte-match publisher text'
+    ladder:
+      - amazon.nova-lite-v1:0  # origin=US
+      - amazon.nova-pro-v1:0  # origin=US
+      - openai.gpt-oss-120b-1:0  # origin=US
+  l1_change:
+    layer: L1
+    shape: extraction
+    derivation: true
+    quality_threshold: 0.9
+    data_class_default: public
+    description: 'Effective-date extraction and clause-level change classification'
+    ladder:
+      - openai.gpt-oss-120b-1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+  l2_extract:
+    layer: L2
+    shape: extraction
+    derivation: true
+    quality_threshold: 0.9
+    data_class_default: public
+    description: 'Clause -> candidate obligations with span offsets'
+    ladder:
+      - openai.gpt-oss-120b-1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+  l2_consolidate:
+    layer: L2
+    shape: structured_drafting
+    derivation: true
+    quality_threshold: 0.88
+    data_class_default: public
+    description: 'Dedupe/merge into canonical obligations; equivalence detection'
+    ladder:
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+  l2_change:
+    layer: L2
+    shape: extraction
+    derivation: true
+    quality_threshold: 0.9
+    data_class_default: public
+    description: 'L1 clause change -> which obligations change how'
+    ladder:
+      - openai.gpt-oss-120b-1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+  l3_decompose:
+    layer: L3
+    shape: structured_drafting
+    derivation: true
+    quality_threshold: 0.85
+    data_class_default: public
+    description: 'Obligation -> building blocks (8 kinds)'
+    ladder:
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+  l3_characterize:
+    layer: L3
+    shape: extraction
+    derivation: true
+    quality_threshold: 0.88
+    data_class_default: public
+    description: 'Fill fixed characteristic schema from obligation text'
+    ladder:
+      - openai.gpt-oss-120b-1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+  l4_enumerate:
+    layer: L4
+    shape: extraction
+    derivation: true
+    quality_threshold: 0.9
+    data_class_default: public
+    description: 'Licences, products, client types, channels from regulator registers'
+    ladder:
+      - openai.gpt-oss-120b-1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+  l5_map:
+    layer: L5
+    shape: mapping
+    derivation: true
+    quality_threshold: 0.85
+    data_class_default: public
+    description: 'Activities <-> blocks / products with obligation refs'
+    ladder:
+      - openai.gpt-oss-120b-1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+  l6_explain:
+    layer: L6
+    shape: long_reasoning
+    derivation: true
+    quality_threshold: 0.9
+    data_class_default: public
+    description: 'Per-item explanation citing blueprint ids only'
+    ladder:
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+  l7_score:
+    layer: L7
+    shape: extraction
+    derivation: true
+    quality_threshold: 0.85
+    data_class_default: public
+    description: 'Enforcement case -> breached obligations; dimension inputs'
+    ladder:
+      - openai.gpt-oss-120b-1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+  l8_fill:
+    layer: L8
+    shape: structured_drafting
+    derivation: true
+    quality_threshold: 0.85
+    data_class_default: members
+    description: 'Best-practice fills for blocks'
+    ladder:
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+  judge:
+    layer: L0
+    shape: judging
+    derivation: false
+    quality_threshold: 0.85
+    data_class_default: public
+    description: 'Second-model review / rubric judging (non-derivation)'
+    ladder:
+      - amazon.nova-lite-v1:0  # origin=US
+      - meta.llama3-3-70b-instruct-v1:0  # origin=US
+      - openai.gpt-oss-120b-1:0  # origin=US
+policy:
+  derivation_classes_forbid_origins: [CN]
+  hosting: aws-bedrock
+  frozen_per_release: true

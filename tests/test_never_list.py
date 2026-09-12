@@ -26,6 +26,57 @@ def test_no_self_hosted_model_runtime_in_infrastructure():
     assert not (INFRA / "gpu.tf").exists()
 
 
+def test_only_infer_provider_in_prod(monkeypatch):
+    """§9: no inference outside Reg42 Infer. Production settings can only yield
+    the Infer provider; the gateway module defines no other real provider; and
+    no module outside the gateway talks HTTP to a model endpoint."""
+    import inspect
+
+    from app.clhear.platform import gateway
+    from app.clhear.platform.router import build_providers
+    from app.clhear.settings import get_settings
+
+    monkeypatch.setenv("CLHEAR_LLM_PROVIDER", "")
+    monkeypatch.setenv("INFER_BASE_URL", "https://infer.reg42.ai/v1")
+    monkeypatch.setenv("INFER_TOKEN", "tok")
+    get_settings.cache_clear()
+    try:
+        assert set(build_providers()) == {"infer"}
+    finally:
+        get_settings.cache_clear()
+    real = [
+        n for n, obj in inspect.getmembers(gateway, inspect.isclass)
+        if n.endswith("Provider") and obj.__module__ == gateway.__name__ and n not in ("Provider", "FakeProvider")
+    ]
+    assert real == ["InferProvider"]
+    vendor_hosts = ("api.anthropic.com", "api.openai.com", "api.x.ai", "ollama.com", "generativelanguage.googleapis.com", "bedrock-runtime")
+    offenders = []
+    for path in (REPO / "app").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for host in vendor_hosts:
+            if host in text:
+                offenders.append(f"{path.relative_to(REPO)}: {host}")
+    assert offenders == []
+
+
+def test_no_gateway_calls_outside_router():
+    """§9: every LLM call goes through router.run — nothing else constructs a
+    Gateway call or invokes a provider's complete() directly."""
+    import re
+
+    pattern = re.compile(r"gateway\.call\(|\.complete\(\s*\n?\s*\*?\s*model=|Gateway\(")
+    allowed = {"app/clhear/platform/router.py", "app/clhear/platform/gateway.py"}
+    offenders = []
+    for path in (REPO / "app").rglob("*.py"):
+        rel = str(path.relative_to(REPO))
+        if rel in allowed:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if pattern.search(line) and "Gateway | None" not in line and "-> " not in line:
+                offenders.append(f"{rel}:{lineno}: {line.strip()}")
+    assert offenders == []
+
+
 def test_derivation_ladders_are_procurement_clean():
     for name in tc.DERIVATION_CLASSES:
         for rung in tc.default_ladder(name):

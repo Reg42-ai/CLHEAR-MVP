@@ -36,7 +36,7 @@ LAYER_CATALOG: dict[str, dict] = {
                 "guarantee": "No LLM call except router.run; every decision logs task, model, rejected alternatives, cost, reasoning",
                 "may": ["route, cap, ledger, revalidate corrections"],
                 "must_not": ["bypass the router", "exceed the $50/month frontier cap"],
-                "gates": ["fleet/global daily caps", "frontier monthly cap", "orphan GPU alarm"],
+                "gates": ["fleet/global daily caps", "premium monthly cap", "procurement-clean ladders"],
             },
             "gates": [
                 "Eval-gated publish; admin override is last resort on the correction loop",

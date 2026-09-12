@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enqueue AdapterRunRequested with force_nightly=true (one live GPU night)."""
+"""Enqueue AdapterRunRequested with force_nightly=true (one forced nightly fleet run)."""
 from __future__ import annotations
 
 import argparse
@@ -21,7 +21,7 @@ def main() -> int:
         ),
     )
     parser.add_argument("--adapter", default="uk_legislation")
-    parser.add_argument("--nightly-only", action="store_true", help="Skip L1 ingest; run GPU+fleets only")
+    parser.add_argument("--nightly-only", action="store_true", help="Skip L1 ingest; run the derivation fleets only")
     args = parser.parse_args()
     import boto3
 

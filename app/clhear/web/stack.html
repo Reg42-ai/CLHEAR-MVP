@@ -1056,7 +1056,7 @@ function ContributePage({ auth, refreshAuth, prefill }) {
 const HOW_STEPS = [
   ["Fetch", "Adapters pull official texts from each authority on the nightly 00:00 UTC schedule. Originals stored immutably."],
   ["Hash / Diff", "Every artifact and clause gets a sha256. New versions emit clause-level change events."],
-  ["Route", "The inference router matches every LLM task to the cheapest sufficient model (local Qwen tiers, frontier only when needed)."],
+  ["Route", "The inference router matches every LLM task to the cheapest sufficient rung of its task-class ladder on Reg42 Infer (Bedrock, procurement-clean models only)."],
   ["Fleets", "Per-layer AI fleets generate L2–L8 with structural anti-hallucination guarantees — not prompt wishes."],
   ["Gate", "Eval suites are hard gates (integrity, grounding, citation, number-echo, k-anonymity). Failures block publish."],
   ["Audit", "Eval Studio samples humans vs AI; disagreements enter the correction → revalidation loop. Admin override is last resort."],
@@ -1064,7 +1064,7 @@ const HOW_STEPS = [
 
 const POLICY_CARDS = [
   ["Verbatim ground truth", "Original texts stored immutably (WORM S3); clause text always traceable to a hashed original. We never rewrite the law."],
-  ["Cheapest sufficient model", "Classification never leaves CPU. Frontier requires high criticality, local quality below threshold, and a $50/month hard cap."],
+  ["Cheapest sufficient model", "Derivation classes only ever run on US/EU-origin Bedrock models. Premium rungs require high criticality and sit under a $50/month hard cap."],
   ["Structural guarantees", "Evidence-span contracts, closed-world ids, citation checks, number-echo — hallucinations fail the validator, not just the prompt."],
   ["Restricted-zone discipline", "Licensed standards (ISO, TSC, PCI, IFRS) never leave the restricted zone: refs + hashes only, enforced in code and tests."],
   ["Evals are gates", "A failing suite blocks promotion. Honest labels: LIVE, AI-GENERATED, CURATED, COMPUTED, LOCKED — plus audit coverage %."],
@@ -1104,8 +1104,7 @@ function HowPage() {
       <div class="panel" style=${{ marginBottom: "18px" }}>
         <h4>Router decision funnel — live from last night</h4>
         <div class="funnel">
-          ${["local-small", "local-mid", "local-large", "frontier"].map((tier, i) => {
-            const n = ((live && live.dashboard && live.dashboard.calls_by_tier) || {})[tier] || 0;
+          ${Object.entries((live && live.dashboard && live.dashboard.calls_by_task_class) || {}).map(([tier, n], i) => {
             const w = Math.min(100, 18 + n * 12 + i * 8);
             return html`<div class="funnelrow" key=${tier}>
               <span class="tier">${tier}</span>
@@ -1227,12 +1226,12 @@ function OpsPage() {
     <div>
       <div class="hero" style=${{ margin: "10px 0 26px" }}>
         <h1>AI <span class="grad">operations</span></h1>
-        <p>Every automated decision with a reasoning field. Router, fleets, revalidation, GPU lifecycle.</p>
+        <p>Every automated decision with a reasoning field. Router, fleets, revalidation, gates.</p>
       </div>
       <div class="statgrid">
         <div class="stat"><div class="n">${(data.dashboard && data.dashboard.llm_calls) || 0}</div><div class="lbl">llm calls</div></div>
         <div class="stat"><div class="n">${(data.dashboard && data.dashboard.ai_ops) || 0}</div><div class="lbl">ops entries</div></div>
-        <div class="stat"><div class="n">$${(data.dashboard && data.dashboard.frontier_spend_usd) || 0}</div><div class="lbl">frontier spend</div></div>
+        <div class="stat"><div class="n">$${(data.dashboard && data.dashboard.frontier_spend_usd) || 0}</div><div class="lbl">premium spend</div></div>
       </div>
       <div class="kv" style=${{ margin: "12px 0" }}>
         ${kinds.map((k) => html`<span class=${"chip linky" + (kind === k ? " sel" : "")} key=${k} onClick=${() => setKind(k)}>${k}</span>`)}

@@ -47,7 +47,7 @@ def main() -> int:
     else:
         store = pipeline.LocalStore(settings.clhear_artifacts_dir)
 
-    # LLM repair uses local Ollama when the sidecar is up; daily runs stay
+    # LLM repair goes through Reg42 Infer when configured; daily runs stay
     # LLM-free whenever the deterministic tiers pass.
     gateway = live_llm(engine)
 

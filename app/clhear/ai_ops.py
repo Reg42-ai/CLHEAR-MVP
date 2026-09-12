@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
-from app.clhear.models import ai_ops, gpu_sessions, llm_calls, runs
+from app.clhear.models import ai_ops, llm_calls, runs
 
 
 def record(
@@ -91,10 +91,12 @@ def dashboard(engine: Engine) -> dict:
         calls = int(conn.execute(sa.select(sa.func.count()).select_from(llm_calls)).scalar() or 0)
         ops_n = int(conn.execute(sa.select(sa.func.count()).select_from(ai_ops)).scalar() or 0)
         run_n = int(conn.execute(sa.select(sa.func.count()).select_from(runs)).scalar() or 0)
+        from app.clhear.platform.gateway import PREMIUM_MODELS
+
         frontier = float(
             conn.execute(
                 sa.select(sa.func.coalesce(sa.func.sum(llm_calls.c.cost_usd), 0)).where(
-                    llm_calls.c.tier == "frontier"
+                    sa.or_(llm_calls.c.model.in_(sorted(PREMIUM_MODELS)), llm_calls.c.tier == "frontier")
                 )
             ).scalar()
             or 0
@@ -105,16 +107,11 @@ def dashboard(engine: Engine) -> dict:
                 sa.select(llm_calls.c.tier, sa.func.count().label("n")).group_by(llm_calls.c.tier)
             )
         }
-        last_gpu = conn.execute(sa.select(gpu_sessions).order_by(gpu_sessions.c.started_at.desc()).limit(1)).first()
-    gpu = None
-    if last_gpu:
-        gpu = {
-            "id": last_gpu.id,
-            "instance_id": last_gpu.instance_id,
-            "status": last_gpu.status,
-            "started_at": str(last_gpu.started_at),
-            "ended_at": str(last_gpu.ended_at) if last_gpu.ended_at else None,
-            "est_cost_usd": float(last_gpu.est_cost_usd) if last_gpu.est_cost_usd is not None else None,
+        by_model = {
+            row.model: row.n
+            for row in conn.execute(
+                sa.select(llm_calls.c.model, sa.func.count().label("n")).group_by(llm_calls.c.model)
+            )
         }
     return {
         "as_of": now.isoformat(),
@@ -122,6 +119,9 @@ def dashboard(engine: Engine) -> dict:
         "ai_ops": ops_n,
         "runs": run_n,
         "frontier_spend_usd": round(frontier, 4),
+        "premium_spend_usd": round(frontier, 4),
         "calls_by_tier": by_tier,
-        "gpu": gpu,
+        "calls_by_task_class": by_tier,
+        "calls_by_model": by_model,
+        "inference": {"provider": "reg42-infer", "hosting": "aws-bedrock"},
     }

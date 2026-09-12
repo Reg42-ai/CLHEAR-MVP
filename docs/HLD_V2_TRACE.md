@@ -18,7 +18,7 @@ row references a code path or test that does not exist.
 | CLHEAR-0.3 | I3 every determination has a why-trail; no trail, no write | `app/clhear/platform/record.py` (`write` raises `WhyTrailRequired`, `why_trails` table) | `tests/test_record.py::test_write_requires_why_trail`, `tests/test_record.py::test_write_populates_shared_columns_and_why_trail` | done |
 | CLHEAR-0.4 | I4 full AI determination, HITL by exception (confidence < threshold, modification requests, re-derive with human edits) | `app/clhear/platform/console.py`, `app/clhear/platform/record.py` (`LOW_CONFIDENCE_THRESHOLDS`) | `tests/test_console.py` | todo |
 | CLHEAR-0.5 | I5 agnostic store contains no organization data; automated scan per release | `app/clhear/platform/agnostic_scan.py`, `.github/workflows/release.yml` | `tests/test_never_list.py::test_agnostic_scan_flags_pii_and_org_identifiers`, `tests/test_never_list.py::test_agnostic_scan_of_store_is_clean` | partial |
-| CLHEAR-0.6 | I6 Bedrock-only inference via Reg42 Infer; frozen model ids; manifest per release | `app/clhear/platform/gateway.py` (`InferProvider`), `app/clhear/platform/manifest.py`, `app/clhear/platform/task_classes.py` | `tests/test_infer_provider.py`, `tests/test_release_verify.py::test_model_manifest_complete_and_clean` | partial |
+| CLHEAR-0.6 | I6 Bedrock-only inference via Reg42 Infer; frozen model ids; manifest per release | `app/clhear/platform/gateway.py` (`InferProvider`), `app/clhear/platform/manifest.py`, `app/clhear/platform/task_classes.py` | `tests/test_infer_provider.py`, `tests/test_release_verify.py::test_model_manifest_complete_and_clean` | done |
 | CLHEAR-0.7 | I7 Postgres record, Neo4j query graph, vectors an index; all rebuildable from Postgres | `infra/rds.tf`, `app/clhear/db.py` (`all_schemas`, pgvector extension), `scripts/migrate_snapshot_to_postgres.py`, `infra/neo4j.tf`, `app/clhear/platform/graph.py` | `tests/test_graph.py` | partial |
 | CLHEAR-0.8 | I8 rights before text | `app/clhear/l1/rights.py`, `sources.rights_basis` | `tests/test_rights.py` | todo |
 | CLHEAR-0.9 | I9 open by mode not by layer | `app/clhear/platform/mode.py` | `tests/test_mode.py` | todo |
@@ -36,7 +36,7 @@ row references a code path or test that does not exist.
 | CLHEAR-0.23 | Object store: S3 Object Lock, cross-region replica | `infra/s3.tf` (`aws_s3_bucket_replication_configuration.datalake`) | terraform validate | done |
 | CLHEAR-0.24 | Events: EventBridge bus `clhear.<layer>.<event>` (`derived`, `changed`, `invalidated`, `below_gate`) | `app/clhear/platform/events.py` (`publish_layer_event`, `EventBridgeTransport`), `infra/eventbridge.tf` (`aws_cloudwatch_event_bus.clhear`, fan-out rules, archive) | `tests/test_events_bus.py::test_publish_layer_event_relays_to_bus_and_queue` | done |
 | CLHEAR-0.25 | Workers: one task definition per layer fleet, scale 0 → N | `infra/ecs.tf` (`aws_ecs_task_definition.fleet`, `aws_ecs_service.fleet`), `infra/sqs.tf` (`aws_sqs_queue.fleet`), `app/clhear/workers.py` | terraform validate | done |
-| CLHEAR-0.26 | Inference: Reg42 Infer with CLHEAR task classes | `app/clhear/platform/router.py`, `handoff/reg42-infra/tasks.clhear.yaml` | `tests/test_infer_route_explain.py` | todo |
+| CLHEAR-0.26 | Inference: Reg42 Infer with CLHEAR task classes | `app/clhear/platform/router.py`, `handoff/reg42-infra/tasks.clhear.yaml` | `tests/test_infer_route_explain.py` | done |
 | CLHEAR-0.27 | Evals: Langfuse self-hosted + per-layer golden sets; public dashboard reads summary table | `infra/langfuse.tf`, `app/clhear/platform/evals.py` (`publish_summary`), `clhear-evals/` | `tests/test_gates.py::test_summary_table_published` | todo |
 | CLHEAR-0.28 | Approval console at `/console` | `app/clhear/platform/console.py`, `app/clhear/web/console.html` | `tests/test_console.py` | todo |
 | CLHEAR-0.29 | Release pipeline: nightly derive → evals → snapshot → Sigstore → publish; `YYYY.MM.DD`; daily deltas | `.github/workflows/release.yml`, `app/clhear/releases.py` (`release_id_for`, `build_manifest`, `_delta`), `app/clhear/fleets.py` (`main`), `scripts/verify_release.py` | `tests/test_release_verify.py::test_publish_and_verify_release`, `tests/test_release_verify.py::test_delta_against_previous` | done |
@@ -119,8 +119,8 @@ row references a code path or test that does not exist.
 | Req | Rule | Test | Status |
 |---|---|---|---|
 | CLHEAR-12.1 | No deletion of nodes/edges | `tests/test_record.py::test_no_delete_anywhere` | done |
-| CLHEAR-12.2 | No inference outside Reg42 Infer | `tests/test_never_list.py::test_only_infer_provider_in_prod` | todo |
-| CLHEAR-12.3 | No LLM call outside `router.run` | `tests/test_never_list.py::test_no_gateway_calls_outside_router` | todo |
+| CLHEAR-12.2 | No inference outside Reg42 Infer | `tests/test_never_list.py::test_only_infer_provider_in_prod` | done |
+| CLHEAR-12.3 | No LLM call outside `router.run` | `tests/test_never_list.py::test_no_gateway_calls_outside_router` | done |
 | CLHEAR-12.4 | Offense/defense never schema terms | `tests/test_never_list.py::test_no_offense_defense_schema_terms` | todo |
 | CLHEAR-12.5 | No Chinese-origin weights in derivation classes | `tests/test_never_list.py::test_derivation_ladders_are_procurement_clean` | done |
 | CLHEAR-12.6 | No public disclosure before filing confirmed | `tests/test_never_list.py::test_disclosure_gate` | todo |

@@ -1,9 +1,12 @@
-"""Inference Optimization Engine — the only LLM entry point.
+"""Inference router — the only LLM entry point (HLD v2 §3, I6, §9).
 
-Every production call is `router.run(task_id, …)`. The router picks the
-cheapest tier whose measured quality meets the task threshold, logs the
-decision (chosen model, rejected alternatives, reason, cost), and only then
-invokes the gateway.
+Every production call is `router.run(task_id, …)`. Each task belongs to a CLHEAR
+task class; the class has a procurement-clean ladder of Bedrock models served by
+Reg42 Infer. The router picks the cheapest rung whose measured quality meets the
+task threshold, records the decision (chosen model, rejected rungs, reason, cost)
+and only then invokes the gateway. Derivation classes never route to a
+non-procurement-clean model; nothing here can talk to any provider but Infer
+(or the FakeProvider under CLHEAR_LLM_PROVIDER=fake).
 """
 from __future__ import annotations
 
@@ -17,20 +20,33 @@ from sqlalchemy.engine import Engine
 
 from app.clhear.models import llm_calls, router_quality
 from app.clhear.platform.gateway import (
+    PREMIUM_MODELS,
     FakeProvider,
     Gateway,
     LlmResult,
     Provider,
     SpendCapExceeded,
 )
+from app.clhear.platform.task_classes import (
+    CLAUDE_OPUS_5,
+    CLAUDE_SONNET_5,
+    DERIVATION_CLASSES,
+    GPT_OSS_120B,
+    MISTRAL_LARGE_3,
+    NOVA_LITE,
+    NOVA_PRO,
+    TASK_CLASSES,
+    default_ladder,
+    is_procurement_clean,
+    origin_of,
+)
 from app.clhear.settings import get_settings
 
 log = logging.getLogger("clhear.router")
 
 NO_PROVIDER_REASON = (
-    "No real LLM provider configured. Set OLLAMA_BASE_URL for local 4b/9b/27b "
-    "(no key) and optionally OLLAMA_API_KEY for Ollama Cloud frontier. "
-    "FakeProvider is only used when CLHEAR_LLM_PROVIDER=fake."
+    "No inference provider configured. Set INFER_BASE_URL and INFER_TOKEN for Reg42 Infer "
+    "(Bedrock). FakeProvider is only used when CLHEAR_LLM_PROVIDER=fake."
 )
 
 SHAPES = (
@@ -43,29 +59,9 @@ SHAPES = (
     "judging",
 )
 
-TIER_ORDER = ("local-small", "local-mid", "local-large", "frontier")
 
-
-@dataclass(frozen=True)
-class ModelTier:
-    id: str
-    model: str
-    provider: str  # ollama | ollama_cloud
-    requires_gpu: bool = False
-    cpu_ok: bool = True
-    nightly_only: bool = False
-
-
-TIERS: dict[str, ModelTier] = {
-    "local-small": ModelTier("local-small", "qwen3.5:4b", "ollama", requires_gpu=False, cpu_ok=True),
-    "local-mid": ModelTier("local-mid", "qwen3.5:9b", "ollama", requires_gpu=False, cpu_ok=True),
-    "local-large": ModelTier("local-large", "qwen3.6:27b", "ollama", requires_gpu=True, cpu_ok=False, nightly_only=True),
-    "frontier": ModelTier("frontier", "gpt-oss:120b", "ollama", requires_gpu=False, cpu_ok=True),
-}
-
-# One protocol: local Ollama for 4b/9b/27b; ollama.com for the capped frontier.
-FRONTIER_PROVIDER = "ollama_cloud"
-FRONTIER_MODEL = "gpt-oss:120b"
+class ProcurementViolation(RuntimeError):
+    """A derivation class ladder contains a model that is not procurement-clean."""
 
 
 @dataclass(frozen=True)
@@ -77,6 +73,7 @@ class TaskSpec:
     quality_threshold: float
     fleet: str
     layer: str
+    task_class: str = "judge"  # Infer task class (app.clhear.platform.task_classes)
     latency_tolerance: str = "nightly"  # interactive | hours | nightly
     domain: str = ""
     context_size: str = "small"
@@ -87,107 +84,122 @@ class TaskSpec:
 
 TASKS: dict[str, TaskSpec] = {
     "dummy.triage": TaskSpec(
-        "dummy.triage", "classification", "low", "low", 0.80, "dummy", "L0",
+        "dummy.triage", "classification", "low", "low", 0.80, "dummy", "L0", task_class="judge",
         latency_tolerance="interactive", description="P0 rehearsal classification",
     ),
     "l1.parse_repair": TaskSpec(
-        "l1.parse_repair", "extraction", "medium", "high", 0.90, "l1.repair", "L1",
+        "l1.parse_repair", "extraction", "medium", "high", 0.90, "l1.repair", "L1", task_class="l1_parse",
         latency_tolerance="hours", domain="web-structure",
         description="Extractive parse hints — output must byte-match publisher text",
     ),
     "l1.annotate": TaskSpec(
-        "l1.annotate", "structured_drafting", "low", "low", 0.75, "l1.annotate", "L1",
+        "l1.annotate", "structured_drafting", "low", "low", 0.75, "l1.annotate", "L1", task_class="l1_parse",
         latency_tolerance="nightly", description="Grounded clause annotation; origin=llm",
     ),
+    "l1.change": TaskSpec(
+        "l1.change", "classification", "medium", "high", 0.90, "l1.change", "L1", task_class="l1_change",
+        latency_tolerance="hours", domain="legal", description="Classify a version diff: substantive vs editorial",
+    ),
     "l2.duty_triage": TaskSpec(
-        "l2.duty_triage", "classification", "low", "medium", 0.85, "l2.triage", "L2",
+        "l2.duty_triage", "classification", "low", "medium", 0.85, "l2.triage", "L2", task_class="l2_extract",
         latency_tolerance="nightly", domain="legal",
         description="Weak-modality duty verdict + evidence-span contract",
     ),
+    "l2.extract": TaskSpec(
+        "l2.extract", "extraction", "high", "high", 0.90, "l2.extract", "L2", task_class="l2_extract",
+        latency_tolerance="nightly", domain="legal", description="Atomic obligation extraction from spans",
+    ),
     "l2.consolidate": TaskSpec(
         "l2.consolidate", "structured_drafting", "medium", "medium", 0.85, "l2.consolidate", "L2",
-        latency_tolerance="nightly", domain="legal",
+        task_class="l2_consolidate", latency_tolerance="nightly", domain="legal",
         description="Cross-jurisdiction concept draft; closed-world OBL: members",
+    ),
+    "l2.change": TaskSpec(
+        "l2.change", "classification", "medium", "high", 0.90, "l2.change", "L2", task_class="l2_change",
+        latency_tolerance="hours", domain="legal", description="Infer obligation change from an L1 change",
     ),
     "l3.block_generate": TaskSpec(
         "l3.block_generate", "structured_drafting", "high", "medium", 0.82, "l3.generate", "L3",
-        latency_tolerance="nightly", domain="legal",
+        task_class="l3_decompose", latency_tolerance="nightly", domain="legal",
         description="Building-block synthesis grounded on live obligation ids",
     ),
+    "l3.characterize": TaskSpec(
+        "l3.characterize", "structured_drafting", "medium", "medium", 0.85, "l3.characterize", "L3",
+        task_class="l3_characterize", latency_tolerance="nightly", domain="legal",
+        description="Fill the per-kind characteristics schema of a block",
+    ),
     "l4.license_extract": TaskSpec(
-        "l4.license_extract", "extraction", "medium", "high", 0.92, "l4.licenses", "L4",
+        "l4.license_extract", "extraction", "medium", "high", 0.92, "l4.licenses", "L4", task_class="l4_enumerate",
         latency_tolerance="nightly", domain="legal", context_size="large",
         description="Extract license types only from retrieved clause text",
     ),
     "l5.activity_map": TaskSpec(
-        "l5.activity_map", "graph_mapping", "medium", "medium", 0.84, "l5.map", "L5",
+        "l5.activity_map", "graph_mapping", "medium", "medium", 0.84, "l5.map", "L5", task_class="l5_map",
         latency_tolerance="nightly", domain="legal",
         description="Closed-world obligation↔activity mapping",
     ),
     "l6.rationale": TaskSpec(
-        "l6.rationale", "long_reasoning", "medium", "medium", 0.80, "l6.narrate", "L6",
+        "l6.rationale", "long_reasoning", "medium", "medium", 0.80, "l6.narrate", "L6", task_class="l6_explain",
         latency_tolerance="interactive", description="Citation-checked program rationale",
     ),
     "l7.narrative": TaskSpec(
-        "l7.narrative", "long_reasoning", "medium", "medium", 0.82, "l7.narrate", "L7",
+        "l7.narrative", "long_reasoning", "medium", "medium", 0.82, "l7.narrate", "L7", task_class="l7_score",
         latency_tolerance="nightly", domain="risk-quant",
         description="Number-echo risk commentary over formula outputs",
     ),
+    "l8.fill": TaskSpec(
+        "l8.fill", "structured_drafting", "medium", "medium", 0.85, "l8.fill", "L8", task_class="l8_fill",
+        latency_tolerance="nightly", description="Endorsed fill drafting against a blueprint item",
+    ),
     "l0.revalidate": TaskSpec(
-        "l0.revalidate", "judging", "high", "high", 0.90, "l0.referee", "L0",
+        "l0.revalidate", "judging", "high", "high", 0.90, "l0.referee", "L0", task_class="judge",
         latency_tolerance="hours", domain="legal",
-        description="Correction revalidation judge — frontier-eligible",
+        description="Correction revalidation judge — premium-eligible",
     ),
     "eval.judge": TaskSpec(
-        "eval.judge", "judging", "medium", "medium", 0.85, "eval.studio", "L0",
+        "eval.judge", "judging", "medium", "medium", 0.85, "eval.studio", "L0", task_class="judge",
         latency_tolerance="interactive", description="Eval Studio disagreement judge",
     ),
 }
 
+for _spec in TASKS.values():
+    if _spec.task_class not in TASK_CLASSES:
+        raise RuntimeError(f"task {_spec.id} references unknown task class {_spec.task_class}")
+
 # Seeded from published-style benches; Eval Studio overwrites with agreement scores.
 SEED_QUALITY: dict[tuple[str, str], float] = {
-    ("dummy.triage", "qwen3.5:4b"): 0.93,
-    ("dummy.triage", "qwen3.5:9b"): 0.95,
-    ("l1.parse_repair", "qwen3.5:9b"): 0.88,
-    ("l1.parse_repair", "qwen3.6:27b"): 0.93,
-    ("l1.parse_repair", "gpt-oss:120b"): 0.96,
-    ("l1.annotate", "qwen3.5:4b"): 0.80,
-    ("l1.annotate", "qwen3.5:9b"): 0.88,
-    ("l2.duty_triage", "qwen3.5:4b"): 0.88,
-    ("l2.duty_triage", "qwen3.5:9b"): 0.92,
-    ("l2.consolidate", "qwen3.5:9b"): 0.86,
-    ("l2.consolidate", "qwen3.6:27b"): 0.89,
-    ("l2.consolidate", "gpt-oss:120b"): 0.94,
-    ("l3.block_generate", "qwen3.5:9b"): 0.80,
-    ("l3.block_generate", "qwen3.6:27b"): 0.87,
-    ("l3.block_generate", "gpt-oss:120b"): 0.93,
-    ("l4.license_extract", "qwen3.5:9b"): 0.84,
-    ("l4.license_extract", "qwen3.6:27b"): 0.91,
-    ("l4.license_extract", "gpt-oss:120b"): 0.96,
-    ("l5.activity_map", "qwen3.5:9b"): 0.85,
-    ("l5.activity_map", "qwen3.6:27b"): 0.90,
-    ("l6.rationale", "qwen3.5:9b"): 0.82,
-    ("l6.rationale", "qwen3.6:27b"): 0.88,
-    ("l7.narrative", "qwen3.5:9b"): 0.83,
-    ("l7.narrative", "qwen3.6:27b"): 0.89,
-    ("l0.revalidate", "qwen3.6:27b"): 0.86,
-    ("l0.revalidate", "gpt-oss:120b"): 0.95,
-    ("eval.judge", "qwen3.5:9b"): 0.84,
-    ("eval.judge", "gpt-oss:120b"): 0.94,
+    ("dummy.triage", NOVA_LITE): 0.93,
+    ("l1.parse_repair", NOVA_LITE): 0.86,
+    ("l1.parse_repair", NOVA_PRO): 0.91,
+    ("l1.parse_repair", GPT_OSS_120B): 0.95,
+    ("l1.annotate", NOVA_LITE): 0.84,
+    ("l1.change", GPT_OSS_120B): 0.92,
+    ("l2.duty_triage", GPT_OSS_120B): 0.92,
+    ("l2.extract", GPT_OSS_120B): 0.90,
+    ("l2.extract", MISTRAL_LARGE_3): 0.93,
+    ("l2.consolidate", CLAUDE_SONNET_5): 0.94,
+    ("l2.change", GPT_OSS_120B): 0.91,
+    ("l3.block_generate", CLAUDE_SONNET_5): 0.93,
+    ("l3.characterize", GPT_OSS_120B): 0.88,
+    ("l4.license_extract", GPT_OSS_120B): 0.93,
+    ("l5.activity_map", GPT_OSS_120B): 0.90,
+    ("l6.rationale", CLAUDE_SONNET_5): 0.92,
+    ("l7.narrative", GPT_OSS_120B): 0.89,
+    ("l8.fill", CLAUDE_SONNET_5): 0.90,
+    ("l0.revalidate", CLAUDE_SONNET_5): 0.93,
+    ("l0.revalidate", CLAUDE_OPUS_5): 0.97,
+    ("eval.judge", NOVA_LITE): 0.86,
 }
 
-TIER_DEFAULT_QUALITY = {
-    "local-small": 0.70,
-    "local-mid": 0.82,
-    "local-large": 0.89,
-    "frontier": 0.95,
-}
+# Default quality by ladder position when neither seed nor Eval Studio has a figure:
+# the ladder is ordered cheapest → most capable.
+RUNG_DEFAULT_QUALITY = (0.86, 0.90, 0.94, 0.97)
 
 
 @dataclass
 class RoutingDecision:
     task_id: str
-    chosen_tier: str
+    chosen_tier: str  # the task class (ledger column `tier`)
     chosen_model: str
     provider_name: str
     quality: float
@@ -195,6 +207,9 @@ class RoutingDecision:
     rejected: list[dict]
     reason: str
     deferred: bool = False
+    task_class: str = ""
+    ladder: list[str] = field(default_factory=list)
+    ladder_source: str = "default"  # default | frozen (release model manifest)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -205,29 +220,23 @@ def _configured_secret(value: str | None) -> bool:
 
 
 def build_providers(settings=None) -> dict[str, Provider]:
-    """Ollama only: local sidecar/GPU, plus optional ollama.com cloud frontier."""
+    """Infer only. `fake` is the offline stand-in for tests, CI replay and rehearsals."""
     settings = settings or get_settings()
+    mode = (settings.clhear_llm_provider or "").lower()
+    if mode == "fake":
+        return {"fake": FakeProvider()}
     out: dict[str, Provider] = {}
-    if (settings.clhear_llm_provider or "").lower() == "fake":
-        fake = FakeProvider()
-        return {"ollama": fake, "ollama_cloud": fake, "fake": fake}
-    from app.clhear.platform.gateway import OllamaProvider
+    if settings.infer_base_url and _configured_secret(settings.infer_token):
+        from app.clhear.platform.gateway import InferProvider
 
-    if settings.ollama_base_url:
-        out["ollama"] = OllamaProvider(settings.ollama_base_url, api_key="")
-    if _configured_secret(settings.ollama_api_key):
-        out[FRONTIER_PROVIDER] = OllamaProvider(
-            settings.ollama_cloud_base_url or "https://ollama.com",
-            api_key=settings.ollama_api_key,
-            name=FRONTIER_PROVIDER,
-        )
+        out["infer"] = InferProvider(settings.infer_base_url, settings.infer_token)
     if not out:
         log.error(NO_PROVIDER_REASON)
     return out
 
 
 def live_llm(engine: Engine) -> Router | None:
-    """CLI/worker helper: Router over whatever Ollama endpoints exist."""
+    """CLI/worker helper: Router over Infer when configured."""
     providers = build_providers()
     if not providers:
         return None
@@ -310,20 +319,22 @@ def quality_table(engine: Engine) -> dict[tuple[str, str], float]:
 
 
 class Router:
-    """Cheapest sufficient model. Classification never leaves CPU. Frontier is
-    high-criticality + local-below-threshold + monthly budget remaining."""
+    """Cheapest sufficient rung of the task class ladder, on Infer.
+
+    ``model_manifest`` (the release-frozen manifest from
+    :mod:`app.clhear.platform.manifest`) pins the ladder per task class so a
+    replay of a release routes exactly as the release did (I3, I6)."""
 
     def __init__(
         self,
         engine: Engine,
         providers: dict[str, Provider] | None = None,
         quality: dict[tuple[str, str], float] | None = None,
-        gpu_open: bool | None = None,
         gateway: Gateway | None = None,
+        model_manifest: dict | None = None,
     ):
         self.engine = engine
         self.providers = providers if providers is not None else build_providers()
-        # A ledger gateway; per-call provider is overridden.
         if self.providers:
             lead = next(iter(self.providers.values()))
         else:
@@ -331,120 +342,127 @@ class Router:
             lead = _UnconfiguredProvider()
         self.gateway = gateway or Gateway(engine, lead)
         self._quality_override = quality
-        self._gpu_open = gpu_open
+        self.model_manifest = model_manifest
 
-    def _quality(self, task_id: str, model: str, tier_id: str) -> float:
+    # ---------------------------------------------------------------- ladders
+    def ladder_for(self, task_class: str) -> tuple[list[str], str]:
+        classes = (self.model_manifest or {}).get("task_classes") or {}
+        entry = classes.get(task_class)
+        if entry and entry.get("ladder"):
+            ladder = list(entry["ladder"])
+            # the frozen model is the rung the release actually used; try it first
+            frozen = entry.get("model_id")
+            if frozen in ladder:
+                ladder.remove(frozen)
+                ladder.insert(0, frozen)
+            return ladder, "frozen"
+        return list(default_ladder(task_class)), "default"
+
+    def _provider_name(self) -> str:
+        if "infer" in self.providers:
+            return "infer"
+        return next(iter(self.providers), "unconfigured")
+
+    def _quality(self, task_id: str, model: str, rung: int) -> float:
         table = self._quality_override if self._quality_override is not None else quality_table(self.engine)
         if (task_id, model) in table:
             return table[(task_id, model)]
-        return TIER_DEFAULT_QUALITY.get(tier_id, 0.70)
+        return RUNG_DEFAULT_QUALITY[min(rung, len(RUNG_DEFAULT_QUALITY) - 1)]
 
-    def _gpu_available(self) -> bool:
-        if self._gpu_open is not None:
-            return self._gpu_open
+    def _premium_ok(self, task: TaskSpec) -> tuple[bool, str]:
+        if task.criticality != "high":
+            return False, f"criticality {task.criticality} — premium rung reserved for high"
         try:
-            from app.clhear.platform.gpu import is_gpu_open
-
-            return is_gpu_open(self.engine)
+            spent = self.gateway.premium_spend_month()
         except Exception:
-            return False
+            spent = 0.0
+        cap = get_settings().clhear_frontier_monthly_cap_usd
+        if spent >= cap:
+            return False, f"premium monthly cap ${cap} exhausted (${spent:.2f} spent)"
+        return True, "premium eligible"
 
-    def _frontier_provider(self) -> tuple[str, Provider, str] | None:
-        if FRONTIER_PROVIDER in self.providers:
-            return FRONTIER_PROVIDER, self.providers[FRONTIER_PROVIDER], FRONTIER_MODEL
-        return None
-
-    def _tier_available(self, tier: ModelTier, task: TaskSpec) -> tuple[bool, str]:
-        if task.shape == "classification" and (tier.requires_gpu or tier.id == "frontier"):
-            return False, "classification never leaves CPU"
-        if tier.id == "frontier":
-            if task.criticality != "high":
-                return False, f"criticality {task.criticality} — frontier reserved for high"
-            if self._frontier_provider() is None:
-                return False, "no frontier provider configured"
-            try:
-                spent = self.gateway.frontier_spend_month()
-            except Exception:
-                spent = 0.0
-            cap = get_settings().clhear_frontier_monthly_cap_usd
-            if spent >= cap:
-                return False, f"frontier monthly cap ${cap} exhausted (${spent:.2f} spent)"
-            return True, "frontier eligible"
-        if "ollama" not in self.providers and "fake" not in self.providers:
-            return False, "no local provider"
-        if tier.requires_gpu and not self._gpu_available():
-            if task.latency_tolerance == "nightly":
-                return False, "GPU window closed — queued for nightly"
-            return False, "GPU window closed — step down"
-        return True, "local available"
-
+    # ---------------------------------------------------------------- decide
     def decide(self, task_id: str) -> RoutingDecision:
         if task_id not in TASKS:
             raise KeyError(f"unknown task {task_id}")
         task = TASKS[task_id]
+        if not self.providers:
+            raise SpendCapExceeded(f"no provider available for task {task_id}: {NO_PROVIDER_REASON}")
+        ladder, source = self.ladder_for(task.task_class)
+        if task.task_class in DERIVATION_CLASSES:
+            dirty = [m for m in ladder if not is_procurement_clean(m)]
+            if dirty:
+                raise ProcurementViolation(
+                    f"{task.task_class} ladder contains non-procurement-clean model(s) {dirty} ({[origin_of(m) for m in dirty]})"
+                )
+        provider_name = self._provider_name()
         rejected: list[dict] = []
+        eligible: list[tuple[str, float]] = []
         chosen: RoutingDecision | None = None
-        deferred = False
-        for tier_id in TIER_ORDER:
-            tier = TIERS[tier_id]
-            ok, why = self._tier_available(tier, task)
-            if tier_id == "frontier":
-                model = FRONTIER_MODEL
-                provider_name = FRONTIER_PROVIDER
-                if self._frontier_provider():
-                    provider_name, _, model = self._frontier_provider()
-            else:
-                model = tier.model
-                provider_name = "ollama" if "ollama" in self.providers else next(iter(self.providers), "unconfigured")
-            quality = self._quality(task_id, model, tier_id)
-            if not ok:
-                rejected.append({"tier": tier_id, "model": model, "quality": quality, "reason": why})
-                if "queued for nightly" in why:
-                    deferred = True
-                continue
+        for rung, model in enumerate(ladder):
+            quality = self._quality(task_id, model, rung)
+            if model in PREMIUM_MODELS:
+                ok, why = self._premium_ok(task)
+                if not ok:
+                    rejected.append({"tier": task.task_class, "rung": rung, "model": model, "quality": quality, "reason": why})
+                    continue
+            eligible.append((model, quality))
             if quality + 1e-9 < task.quality_threshold:
                 rejected.append({
-                    "tier": tier_id, "model": model, "quality": quality,
+                    "tier": task.task_class, "rung": rung, "model": model, "quality": quality,
                     "reason": f"quality {quality:.2f} < {task.quality_threshold:.2f} threshold",
                 })
                 continue
             reason = (
-                f"{task.id} → {model} ({tier_id}): measured quality {quality:.2f} ≥ "
-                f"{task.quality_threshold:.2f} threshold"
+                f"{task.id} → {model} ({task.task_class} rung {rung}, {source} ladder): measured quality "
+                f"{quality:.2f} ≥ {task.quality_threshold:.2f} threshold"
             )
-            if tier_id != "frontier":
-                reason += "; frontier skipped (cheaper sufficient tier)"
+            if rung + 1 < len(ladder):
+                reason += "; higher rungs skipped (cheaper sufficient rung)"
             chosen = RoutingDecision(
-                task_id=task_id, chosen_tier=tier_id, chosen_model=model,
+                task_id=task_id, chosen_tier=task.task_class, chosen_model=model,
                 provider_name=provider_name, quality=quality, threshold=task.quality_threshold,
-                rejected=rejected, reason=reason, deferred=False,
+                rejected=rejected, reason=reason, task_class=task.task_class, ladder=ladder,
+                ladder_source=source,
             )
             break
         if chosen is None:
-            # Fall back to the best available local even if below threshold (never silent fail).
-            for tier_id in TIER_ORDER:
-                tier = TIERS[tier_id]
-                ok, why = self._tier_available(tier, task)
-                if not ok:
-                    continue
-                model = tier.model if tier_id != "frontier" else (
-                    self._frontier_provider()[2] if self._frontier_provider() else tier.model
-                )
-                provider_name = (
-                    self._frontier_provider()[0] if tier_id == "frontier" and self._frontier_provider()
-                    else ("ollama" if "ollama" in self.providers else next(iter(self.providers), "unconfigured"))
-                )
-                quality = self._quality(task_id, model, tier_id)
-                return RoutingDecision(
-                    task_id=task_id, chosen_tier=tier_id, chosen_model=model,
-                    provider_name=provider_name, quality=quality, threshold=task.quality_threshold,
-                    rejected=rejected,
-                    reason=f"{task.id} → {model} ({tier_id}): no tier met threshold; using best available (quality {quality:.2f})",
-                    deferred=deferred,
-                )
-            raise SpendCapExceeded(f"no provider available for task {task_id}")
+            if not eligible:
+                raise SpendCapExceeded(f"no eligible rung for task {task_id}: {[r['reason'] for r in rejected]}")
+            # Never fail silently: use the most capable eligible rung and say so.
+            model, quality = eligible[-1]
+            chosen = RoutingDecision(
+                task_id=task_id, chosen_tier=task.task_class, chosen_model=model,
+                provider_name=provider_name, quality=quality, threshold=task.quality_threshold,
+                rejected=rejected, task_class=task.task_class, ladder=ladder, ladder_source=source,
+                reason=(
+                    f"{task.id} → {model} ({task.task_class}): no rung met the {task.quality_threshold:.2f} "
+                    f"threshold; using the most capable eligible rung (quality {quality:.2f})"
+                ),
+            )
         return chosen
 
+    def explain(self, task_id: str) -> dict:
+        """Route/explain contract: what would run, on which ladder, and why."""
+        d = self.decide(task_id)
+        task = TASKS[task_id]
+        return {
+            "task_id": task_id,
+            "task_class": task.task_class,
+            "derivation_class": task.task_class in DERIVATION_CLASSES,
+            "ladder": d.ladder,
+            "ladder_source": d.ladder_source,
+            "selected": d.chosen_model,
+            "origin": origin_of(d.chosen_model),
+            "procurement_clean": is_procurement_clean(d.chosen_model),
+            "provider": d.provider_name,
+            "quality": d.quality,
+            "threshold": d.threshold,
+            "rejected": d.rejected,
+            "reason": d.reason,
+        }
+
+    # ---------------------------------------------------------------- run
     def run(
         self,
         task_id: str,
@@ -458,7 +476,7 @@ class Router:
     ) -> LlmResult:
         task = TASKS[task_id]
         decision = self.decide(task_id)
-        provider = self.providers.get(decision.provider_name) or self.providers.get("ollama") or next(iter(self.providers.values()))
+        provider = self.providers.get(decision.provider_name) or next(iter(self.providers.values()))
         temperature = float((task.determinism or {}).get("temperature", 0.0))
         try:
             from app.clhear import ai_ops
@@ -489,6 +507,7 @@ class Router:
             rejected_alternatives=decision.rejected,
             routing_reason=decision.reason,
             quality_at_decision=decision.quality,
+            task_class=decision.task_class,
         )
 
     def call(self, *, fleet: str, model: str, prompt: str, **kwargs) -> LlmResult:
@@ -515,7 +534,7 @@ def complete(llm: Any, task_id: str, **kwargs) -> LlmResult:
         return llm.run(task_id, **allowed)
     task = TASKS.get(task_id)
     fleet = task.fleet if task else "unknown"
-    model = model or (TIERS["local-small"].model if task else FRONTIER_MODEL)
+    model = model or default_ladder(task.task_class if task else "judge")[0]
     return llm.call(fleet=fleet, model=model, **kwargs)
 
 
@@ -530,6 +549,7 @@ def last_decisions(engine: Engine, limit: int = 40) -> list[dict]:
             "task_id": row.task_id,
             "model": row.model,
             "tier": row.tier,
+            "task_class": row.tier,
             "provider": row.provider,
             "cost_usd": float(row.cost_usd),
             "routing_reason": row.routing_reason,
@@ -545,28 +565,31 @@ def registry_public() -> list[dict]:
         {
             "id": t.id, "shape": t.shape, "complexity": t.complexity, "criticality": t.criticality,
             "quality_threshold": t.quality_threshold, "fleet": t.fleet, "layer": t.layer,
-            "latency_tolerance": t.latency_tolerance, "domain": t.domain, "description": t.description,
+            "task_class": t.task_class, "latency_tolerance": t.latency_tolerance, "domain": t.domain,
+            "description": t.description,
         }
         for t in TASKS.values()
     ]
 
 
 def tiers_public() -> list[dict]:
+    """Task classes with their default ladders (what the public /ai page shows)."""
     return [
         {
-            "id": t.id,
-            "model": t.model,
-            "provider": t.provider,
-            "requires_gpu": t.requires_gpu,
-            "cpu_ok": t.cpu_ok,
-            "nightly_only": t.nightly_only,
+            "id": name,
+            "ladder": default_ladder(name),
+            "model": default_ladder(name)[0],
+            "provider": "infer",
+            "hosting": "aws-bedrock",
+            "derivation_class": name in DERIVATION_CLASSES,
+            "origins": [origin_of(m) for m in default_ladder(name)],
         }
-        for t in TIERS.values()
+        for name in TASK_CLASSES
     ]
 
 
 class _UnconfiguredProvider:
-    """Ledger stub so the worker can ingest L1 without pretending to be Ollama."""
+    """Ledger stub so the worker can ingest L1 without pretending to have a model."""
 
     name = "unconfigured"
 

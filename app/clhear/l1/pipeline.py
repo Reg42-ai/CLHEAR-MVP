@@ -281,7 +281,7 @@ def _llm_propose_hints(gateway, artifacts, missing_spans: list[str]) -> list[dic
         system="You classify document structure. You never rewrite or invent text. JSON only.",
         max_tokens=2000,
         required_keys=["hints"],
-        model=settings.clhear_model_repair,
+        model=settings.clhear_model_repair or None,
     )
     hints = parse_json_object(result.text).get("hints", [])
     return [h for h in hints if isinstance(h, dict) and h.get("match") and h.get("node_type")]

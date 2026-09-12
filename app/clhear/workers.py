@@ -145,7 +145,7 @@ def run_adapter_fleet(
         log.exception("fleet evals failed for %s", adapter_key)
 
     # Stack refresh: L1 changes flow into the derived layers + AI fleets.
-    # GPU + fleets run at most once per UTC day (idempotent; later adapters skip).
+    # Fleets run at most once per UTC day (idempotent; later adapters skip).
     stack_recorder = pipeline.RunRecorder(
         engine, "l2.extract", "schedule", {"source": f"stack-refresh-{adapter_key}", "job_id": job_id}
     )
@@ -155,10 +155,7 @@ def run_adapter_fleet(
 
         llm = gateway
         if not is_router(gateway):
-            from app.clhear.platform.router import build_providers
-
-            llm = Router(engine, providers={"ollama": gateway._provider, "ollama_cloud": gateway._provider,
-                                            "fake": gateway._provider})
+            llm = Router(engine, providers={getattr(gateway._provider, "name", "fake"): gateway._provider})
         nightly = run_nightly_if_due(engine, llm, force=force_nightly)
         if nightly is None:
             from app.clhear import curated
@@ -324,14 +321,6 @@ def main() -> None:
 
     engine = get_engine()
     run_migrations(engine)
-
-    if settings.ollama_base_url:
-        from app.clhear.platform.ollama_sidecar import wait_http_tags
-
-        if wait_http_tags(settings.ollama_base_url, timeout_s=1800):
-            log.info("local Ollama ready at %s", settings.ollama_base_url)
-        else:
-            log.error("OLLAMA_BASE_URL %s never became ready", settings.ollama_base_url)
 
     providers = build_providers(settings)
     if not providers:

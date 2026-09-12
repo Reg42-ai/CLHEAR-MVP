@@ -1,4 +1,4 @@
-"""Resolve frontier keys from SSM at runtime (Lambda has no ECS valueFrom).
+"""Resolve the Infer token from SSM at runtime (Lambda has no ECS valueFrom).
 
 Terraform ignores SSM value changes, so baking `aws_ssm_parameter.*.value`
 into Lambda env would leave CHANGEME forever. This is the runtime equivalent
@@ -13,10 +13,7 @@ from typing import Callable
 log = logging.getLogger("clhear.secrets")
 
 SSM_ENV = {
-    "OLLAMA_API_KEY": "/clhear/OLLAMA_API_KEY",
-    "ANTHROPIC_API_KEY": "/clhear/ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY": "/clhear/OPENAI_API_KEY",
-    "XAI_API_KEY": "/clhear/XAI_API_KEY",
+    "INFER_TOKEN": "/clhear/INFER_TOKEN",
 }
 
 
@@ -34,7 +31,7 @@ def hydrate_ssm_env(
     environ: dict | None = None,
     getter: Callable[[str], str] | None = None,
 ) -> dict[str, str]:
-    """Fill empty/CHANGEME frontier env vars from SSM. No-op under CLHEAR_LLM_PROVIDER=fake."""
+    """Fill empty/CHANGEME inference env vars from SSM. No-op under CLHEAR_LLM_PROVIDER=fake."""
     env = environ if environ is not None else os.environ
     if str(env.get("CLHEAR_LLM_PROVIDER") or "").lower() == "fake":
         return {}
@@ -53,5 +50,5 @@ def hydrate_ssm_env(
             env[env_name] = value
             filled[env_name] = param
     if filled:
-        log.info("hydrated frontier secrets from SSM: %s", ",".join(sorted(filled)))
+        log.info("hydrated inference secrets from SSM: %s", ",".join(sorted(filled)))
     return filled

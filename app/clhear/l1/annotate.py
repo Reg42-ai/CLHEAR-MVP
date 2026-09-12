@@ -151,7 +151,7 @@ def annotate_llm(engine: Engine, gateway, *, model: str | None = None, max_claus
     """Batch the un-annotated corpus through the gateway. Idempotent."""
     import hashlib
 
-    model = model or "qwen3.5:9b"
+    # No default model: the router (or the legacy gateway fallback) picks the rung.
     done = 0
     batches = 0
     while True:

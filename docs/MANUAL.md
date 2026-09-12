@@ -19,7 +19,7 @@ Live at **https://clhear.reg42.ai**.
 - **Team ( #/team )** — AI fleet personas (Scout, Miner, Weaver, Mason, Surveyor…)
   plus human contributors, with live model/run stats.
 - **AI Ops ( #/ops )** — chronological feed of router decisions, fleet writes,
-  revalidation verdicts, GPU lifecycle — each with a reasoning field.
+  revalidation verdicts, gate outcomes — each with a reasoning field.
 - **Eval Studio ( #/eval )** — sampled human-vs-AI tasks; agreement scores
   publish on /how and feed the router quality table.
 - **Lineage** — click any item, anywhere: the drawer walks its derivation
@@ -96,13 +96,13 @@ attributions + disclaimer). Same profile + same release ⇒ same blueprint.
 
 The whole stack refreshes nightly at **00:00 UTC**: L1 adapters fetch every
 scheduled source (per-source status on the fleet board — a promised run that
-did not happen shows as `schedule-missed` and trips an alarm). An ephemeral
-g6.xlarge spot GPU (4h fuse, 5h orphan alarm) may come up for local-large
-Qwen. Then the AI fleets run: L2 duty-triage (evidence-span contract) and
+did not happen shows as `schedule-missed` and trips an alarm). Inference is
+remote — Reg42 Infer on Amazon Bedrock, procurement-clean ladders per task
+class, model ids frozen per release. Then the AI fleets run: L2 duty-triage (evidence-span contract) and
 auto-applied consolidation, L3 block generation, L4 grounded license RAG,
 L5 activity mapping, L6 citation-checked rationale, L7 number-echo narratives,
 L8 k≥5 cohorts (no LLM). Every LLM call goes through `router.run(task_id)` —
-cheapest sufficient tier; classification never leaves CPU; frontier is capped
+cheapest sufficient rung of the task-class ladder; premium rungs are capped
 at $50/month. Eval suites are gates (including `l4_grounding`, `l6_citation`,
 `l7_number_echo`, `l8_k_anonymity`). The public snapshot is republished.
 

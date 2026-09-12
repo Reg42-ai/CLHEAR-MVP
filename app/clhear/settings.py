@@ -23,26 +23,17 @@ class Settings(BaseSettings):
     clhear_events_dlq_url: str = ""
     clhear_datalake_bucket: str = "reg42-clhear-datalake"
 
-    # LLM gateway (HLD §5): hard caps, alarm handled by CloudWatch on llm spend metric.
-    anthropic_api_key: str = ""  # unused by the router (Ollama-only)
-    openai_api_key: str = ""
-    xai_api_key: str = ""
-    ollama_base_url: str = ""  # e.g. http://127.0.0.1:11434 — empty = local tiers unavailable
-    ollama_api_key: str = ""  # ollama.com cloud frontier; not needed for local 4b/9b/27b
-    ollama_cloud_base_url: str = "https://ollama.com"
-    clhear_llm_provider: str = ""  # "", "fake", "ollama"
+    # Inference (HLD v2 I6): only Reg42 Infer on Bedrock. No vendor keys, no
+    # self-hosted runtime. Empty INFER_* = no production provider (loud, not fake).
+    infer_base_url: str = ""  # https://infer.reg42.ai/v1
+    infer_token: str = ""
+    infer_employee_id: str = "clhear"  # X-Employee-Id; fleets override with clhear-l<n>
+    infer_data_class: str = "public"  # X-Data-Class for the agnostic store
+    clhear_llm_provider: str = ""  # "", "fake", "infer"
+    # Hard caps (§5): alarm handled by CloudWatch on the llm spend metric.
     clhear_gateway_fleet_daily_cap_usd: float = 20.0
     clhear_gateway_global_daily_cap_usd: float = 100.0
-    clhear_frontier_monthly_cap_usd: float = 50.0
-
-    # Nightly ephemeral GPU (g6.xlarge spot) + Ollama model cache.
-    clhear_gpu_instance_type: str = "g6.xlarge"
-    clhear_gpu_max_hours: float = 4.0
-    clhear_gpu_ami_id: str = ""  # empty = resolve Amazon Linux 2023 GPU AMI at launch
-    clhear_gpu_subnet_id: str = ""
-    clhear_gpu_security_group_id: str = ""
-    clhear_gpu_instance_profile: str = ""
-    clhear_ollama_model_cache_s3: str = ""  # s3://bucket/ollama-models
+    clhear_frontier_monthly_cap_usd: float = 50.0  # premium rungs (Opus-class) per month
 
     # Fidelity gate + repair loop (evals are gates, not reports).
     clhear_fidelity_threshold: float = 0.995
@@ -50,7 +41,7 @@ class Settings(BaseSettings):
     # Max share of tokens dumb salvage may recover as unstructured notes;
     # bigger gaps need typed hints (learned or LLM-proposed) or the run fails.
     clhear_salvage_cap: float = 0.02
-    clhear_model_repair: str = "qwen3.5:9b"
+    clhear_model_repair: str = ""  # empty = the router's l1_parse ladder decides
 
     # ARCH: stand-in for reg42-os auth; comma-separated identities with the
     # `maintainer` role. Replace with the existing session/role dependency on merge.

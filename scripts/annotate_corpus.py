@@ -4,7 +4,7 @@ Batches every un-annotated public clause of the in-force versions through the
 router (fleet `l1.annotate`, structured output, spend-capped, all calls in
 the llm_calls ledger). Idempotent: re-runs only touch new/changed clauses.
 
-Uses local Ollama (qwen3.5:9b) when OLLAMA_BASE_URL is set. No vendor key.
+Inference goes through Reg42 Infer (INFER_BASE_URL / INFER_TOKEN). No vendor key.
 
 Usage:
     DATABASE_URL=sqlite:///deploy/clhear.db python scripts/annotate_corpus.py [max_clauses]
@@ -28,8 +28,8 @@ def main() -> int:
     gateway = live_llm(engine)
     if gateway is None:
         print(
-            "No Ollama endpoint configured — set OLLAMA_BASE_URL "
-            "(local sidecar, no key) or OLLAMA_API_KEY for ollama.com.",
+            "No inference provider configured — set INFER_BASE_URL and INFER_TOKEN "
+            "(Reg42 Infer on Bedrock), or CLHEAR_LLM_PROVIDER=fake for a rehearsal.",
             file=sys.stderr,
         )
         return 2
