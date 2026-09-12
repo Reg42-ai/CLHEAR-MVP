@@ -1242,6 +1242,92 @@ def l4_applicability(engine: Engine, source_key: str | None) -> tuple[dict, bool
     return stats, passed
 
 
+# ----------------------------------------------------------------- L5 (HLD v2 §4.5)
+
+L5_GOLDEN = Path(__file__).resolve().parents[3] / "clhear-evals" / "l5"
+
+
+def _l5_cases(folder: str, key: str = "cases") -> list[dict]:
+    cases: list[dict] = []
+    for path in sorted((L5_GOLDEN / folder).glob("*.json")):
+        data = json.loads(path.read_text())
+        for item in data.get(key, []) if isinstance(data, dict) else data:
+            item.setdefault("file", path.name)
+            cases.append(item)
+    return cases
+
+
+@register_suite("l5_completeness")
+def l5_completeness(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Junction completeness 100 %: no orphan activity (every business activity
+    implied by a product / service, every compliance activity operating a block
+    and anchored to an obligation), no dangling edge endpoint, vocabulary and
+    when-conditions closed-world; every live obligation mapped to an activity."""
+    from app.clhear.l5.check import check_junction
+    from app.clhear.l5.map import coverage
+
+    junction = check_junction(engine)
+    cov = coverage(engine)
+    stats = {
+        "activities": junction["activities"], "business": junction["business"], "compliance": junction["compliance"],
+        "edges": junction["edges"], "orphans": junction["orphans"][:20], "dangling": junction["dangling"][:20],
+        "vocabulary_violations": junction["vocabulary_violations"][:20], "when_violations": junction["when_violations"][:20],
+        "anchors_not_in_corpus": len(junction["anchors_not_in_corpus"]), "unlit_mitigates": len(junction["unlit_mitigates"]),
+        "junction_completeness": junction["completeness"], "obligations": cov["obligations"], "obligations_mapped": cov["mapped"],
+        "obligation_coverage": cov["ratio"], "threshold": 1.0,
+    }
+    passed = bool(junction["ok"]) and cov["unmapped"] == 0
+    return stats, passed
+
+
+@register_suite("l5_mapping")
+def l5_mapping(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Golden obligations -> (side, action type, activity) through the deterministic
+    mapper (clhear-evals/l5/mapping): accuracy >= 0.92; plus golden activity maps
+    (products -> business activities -> governing compliance activities) against
+    the live junction."""
+    from app.clhear.l5.map import activity_map, classify
+
+    cases = _l5_cases("mapping")
+    hits = 0
+    failures: list[dict] = []
+    for case in cases:
+        got = classify({"id": case["id"], **case["obligation"]})
+        want = case["expected"]
+        ok = (got is not None and got[0] == want["action_type"] and got[1] == want["activity"]) if want.get("activity") else got is None
+        hits += int(ok)
+        if not ok:
+            failures.append({"id": case["id"], "expected": want, "got": {"action_type": got[0], "activity": got[1], "cue": got[2]} if got else None})
+    accuracy = hits / len(cases) if cases else 0.0
+
+    map_checks: list[dict] = []
+    for exp in _l5_cases("mapping", key="expected_maps"):
+        with engine.connect() as conn:
+            amap = activity_map(conn, exp["attributes"])
+        business = {a["id"] for a in amap["business"]}
+        compliance = {a["id"] for a in amap["compliance"]}
+        missing_b = [a for a in exp.get("business", []) if a not in business]
+        missing_c = [a for a in exp.get("compliance", []) if a not in compliance]
+        extra_b = [a for a in exp.get("not_business", []) if a in business]
+        map_checks.append({"id": exp["id"], "passed": not (missing_b or missing_c or extra_b),
+                           "missing_business": missing_b, "missing_compliance": missing_c, "unexpected_business": extra_b})
+    stats = {"cases": len(cases), "correct": hits, "accuracy": round(accuracy, 4), "threshold": 0.92,
+             "failures": failures[:20], "map_checks": map_checks}
+    passed = len(cases) > 0 and accuracy >= 0.92 and all(c["passed"] for c in map_checks)
+    return stats, passed
+
+
+@register_suite("l5_precision")
+def l5_precision(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Expert sample precision >= 92 % from Eval Studio votes on L5 items
+    (activity mappings and junction edges). No votes => fail."""
+    from app.clhear.eval_studio import agreement_scores
+
+    layer = agreement_scores(engine)["by_layer"].get("L5", {"n": 0, "agree": 0, "score": None})
+    stats = {"votes": layer["n"], "agree": layer["agree"], "precision": layer.get("score"), "threshold": 0.92}
+    return stats, layer["n"] > 0 and (layer.get("score") or 0.0) >= 0.92
+
+
 @register_suite("l6_citation")
 def l6_citation(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     """Blueprints that carry a rationale must cite only ids in that blueprint."""

@@ -77,7 +77,11 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     ontology = build_ontology(engine)
     predicates = extract_predicates(engine, llm)
     profile_revalidation = revalidate_profiles(engine)
+    # L5 (HLD v2 §4.5): deterministic mapping of every obligation, router refinement, junction build, orphan check.
+    from app.clhear.l5.check import check_junction
+
     activities = map_activities(engine, llm)
+    junction = check_junction(engine)
     # L6 rationale: narrate the latest sample-profile blueprints (computed).
     from app.clhear import layer_service
     from app.clhear.l6.rationale import narrate_blueprint
@@ -102,7 +106,8 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "l2_basis_integrity", "l2_extraction_quality", "l2_concept_integrity",
         "l2_coverage", "l2_precision", "l2_dedupe", "l2_change_inference",
         "l3_completeness", "l3_characteristics", "l3_reuse", "l3_precision",
-        "l3_l5_referential", "l4_validity", "l4_applicability", "l4_grounding", "l6_citation", "l7_number_echo", "l8_k_anonymity",
+        "l3_l5_referential", "l4_validity", "l4_applicability", "l4_grounding",
+        "l5_completeness", "l5_mapping", "l5_precision", "l6_citation", "l7_number_echo", "l8_k_anonymity",
     ):
         try:
             gates[suite] = ev.run_suite(engine, suite, release=started.strftime("%Y%m%dT%H%M%SZ"))
@@ -130,6 +135,8 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "predicates": predicates,
         "profile_revalidation": profile_revalidation,
         "activities": activities,
+        "junction": {"activities": junction["activities"], "edges": junction["edges"], "orphans": len(junction["orphans"]),
+                     "dangling": len(junction["dangling"]), "ok": junction["ok"]},
         "rationales": rationales,
         "narratives": [{"written": n.get("written"), "id": n.get("id")} for n in narratives],
         "cohorts": cohorts,
@@ -145,7 +152,8 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         f"{characterisation.get('backed', 0)} characteristics backed, {licenses.get('written', 0)} licenses, "
         f"ontology {ontology['version']} ({sum(c['added'] + c['updated'] for c in ontology['counts'].values())} rows changed), "
         f"{predicates.get('added', 0)} applicability edges added, {profile_revalidation.get('changed', 0)} profiles flipped, "
-        f"{activities.get('written', 0)} activities; "
+        f"{activities.get('written', 0)} obligations mapped to activities, junction "
+        f"{'consistent' if junction['ok'] else str(len(junction['orphans'])) + ' orphan(s)'}; "
         f"{sum(1 for g in gates.values() if g.get('passed'))}/{len(gates)} eval gates green"
     )
     import time

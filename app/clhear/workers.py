@@ -236,21 +236,28 @@ def handle_l1_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> d
 
 
 def handle_l2_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
-    """HLD v2 §4.3 / §4.4: an L2 obligation change -> L3 requires / characteristics
-    propagation and L4 applicability-edge re-stamping (I1: derive downward)."""
+    """HLD v2 §4.3 / §4.4 / §4.5: an L2 obligation change -> L3 requires / characteristics
+    propagation, L4 applicability-edge re-stamping and L5 junction re-derivation
+    (I1: derive downward)."""
     from app.clhear.l3.decompose import on_l2_changed
     from app.clhear.l4.predicates import on_l2_changed as l4_on_l2_changed
+    from app.clhear.l5.map import on_l2_changed as l5_on_l2_changed
 
     out = on_l2_changed(engine, envelope.payload or {})
     out["l4"] = l4_on_l2_changed(engine, envelope.payload or {})
+    out["l5"] = l5_on_l2_changed(engine, envelope.payload or {})
     return out
 
 
 def handle_l4_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
-    """HLD v2 §4.4: an ontology change re-judges every stored profile (never deletes)."""
+    """HLD v2 §4.4 / §4.5: an ontology change re-judges every stored profile (never
+    deletes) and re-derives the L5 implies edges (products may have come or gone)."""
     from app.clhear.l4.validate import revalidate_profiles
+    from app.clhear.l5.map import on_l4_changed
 
-    return revalidate_profiles(engine)
+    out = revalidate_profiles(engine)
+    out["l5"] = on_l4_changed(engine, envelope.payload or {})
+    return out
 
 
 HANDLERS = {
