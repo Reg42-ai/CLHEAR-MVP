@@ -47,7 +47,11 @@ def test_l1_resources_and_reserved_layers(client, engine):
     assert derived_l3.status_code == 200
     assert derived_l3.json()["layer_status"] == "derived"  # HLD v2 §4.3: blocks are derived from L2
 
-    curated_resp = client.get("/v1/releases/clhear-v20260826/l4/profiles", headers=AUTH)
+    derived_l4 = client.get("/v1/releases/clhear-v20260826/l4/profiles", headers=AUTH)
+    assert derived_l4.status_code == 200
+    assert derived_l4.json()["layer_status"] == "derived"  # HLD v2 §4.4: register-backed ontology + validated profiles
+
+    curated_resp = client.get("/v1/releases/clhear-v20260826/l5/activities", headers=AUTH)
     assert curated_resp.status_code == 200
     assert curated_resp.json()["layer_status"] == "curated"
 

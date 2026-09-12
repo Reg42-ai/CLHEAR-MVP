@@ -33,7 +33,8 @@ def test_write_populates_shared_columns_and_why_trail(engine):
         _seed_concept(conn)
         values = record.write(conn, concept_members, {"concept_id": "CON:test", "obligation_id": "OBL-000001"}, why=why)
         row = conn.execute(sa.select(concept_members)).mappings().one()
-        trail = conn.execute(sa.select(record.why_trails)).mappings().one()
+        # the migrations already wrote L4 ontology trails (m0012); look at ours only
+        trail = conn.execute(sa.select(record.why_trails).where(record.why_trails.c.id == values["why_trail_id"])).mappings().one()
     assert values["why_trail_id"].startswith("WHY-")
     assert row["why_trail_id"] == trail["id"]
     assert row["version"] == 1 and row["valid_to"] is None

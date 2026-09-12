@@ -94,7 +94,7 @@ def _seed_corpus(engine):
 
 def test_catalog_statuses_and_contracts():
     assert LAYER_ORDER == ("L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8")
-    expected = {"L0": "live", "L1": "live", "L2": "derived", "L3": "derived", "L4": "curated",
+    expected = {"L0": "live", "L1": "live", "L2": "derived", "L3": "derived", "L4": "derived",
                 "L5": "curated", "L6": "computed", "L7": "computed", "L8": "locked"}
     for code, status in expected.items():
         assert LAYER_CATALOG[code]["status"] == status
@@ -108,7 +108,7 @@ def test_layers_index_api(client):
     assert len(layers) == 9
     assert layers["L2"]["banner"]["data_status"] == "derived"
     assert layers["L3"]["banner"]["data_status"] == "derived"
-    assert layers["L4"]["banner"]["data_status"] == "curated"
+    assert layers["L4"]["banner"]["data_status"] == "derived"
     assert layers["L6"]["banner"]["data_status"] == "computed"
     assert layers["L8"]["status"] == "locked"
 
