@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · L5 Activities</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* L5 browser (HLD v2 §4.5): activity map — a profile's business activities on one
+     side, the compliance activities that govern them on the other, edges lit by
+     obligation; activity catalogue with facets; activity page; scorecard. */
+  main { position: relative; z-index: 1; max-width: 1500px; margin: 22px auto; padding: 0 20px 70px; }
+  .layout { display: grid; grid-template-columns: 300px 1fr; gap: 18px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .side { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 16px; align-self: start; position: sticky; top: 74px; }
+  .side h4, .panelx h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .side h4:first-child { margin-top: 0; }
+  input, select { border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); box-sizing: border-box; }
+  .side input, .side select { width: 100%; }
+  .chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--edge); font-size: 12px; cursor: pointer; color: var(--muted); background: var(--panel-strong); }
+  .chip.on { color: var(--ink); border-color: var(--edge-bright); background: rgba(129,140,248,0.18); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-color: var(--edge-bright); background: var(--panel-strong); }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .name { color: var(--accent); font-weight: 600; cursor: pointer; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; border: 1px solid transparent; }
+  .badge.jur { background: var(--ind-800); color: var(--ind-100); border-color: var(--edge); }
+  .badge.side-business { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.side-compliance { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.st-curated, .badge.st-validated { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.st-derived, .badge.st-ai_generated { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.st-invalidated { background: rgba(251,113,133,0.14); color: var(--bad); }
+  .badge.act { background: var(--panel-strong); color: var(--muted); border-color: var(--edge); }
+  .badge.m-curated { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.m-deterministic, .badge.m-cue, .badge.m-block { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.m-llm { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .panelx { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+  .panelx h2 { margin: 0 0 6px; font-size: 17px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .map { display: grid; grid-template-columns: 1fr 90px 1fr; gap: 0; align-items: start; }
+  .col h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .node { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; font-size: 13.5px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+  .node:hover, .node.hi { border-color: var(--edge-bright); box-shadow: 0 0 0 3px rgba(129,140,248,0.16); }
+  .node.dim { opacity: 0.45; }
+  .node .t { font-weight: 600; }
+  .node .d { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .node .o { font-size: 11.5px; color: var(--faint); margin-top: 4px; font-family: var(--mono); }
+  .mid { display: flex; flex-direction: column; align-items: center; justify-content: center; padding-top: 28px; color: var(--faint); font-size: 12px; text-align: center; }
+  .mid b { display: block; font-size: 22px; color: var(--ink); }
+  .edges { margin-top: 10px; }
+  .edge { display: flex; gap: 10px; align-items: baseline; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--edge); }
+  .edge .arrow { color: var(--faint); }
+  .edge.lit .arrow { color: var(--ok); }
+  .edge.unlit { opacity: 0.6; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .score .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
+  .score .kpi b { display: block; font-size: 20px; }
+  .score .kpi span { font-size: 11.5px; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .crumbs a { cursor: pointer; }
+  .spin { color: var(--muted); padding: 30px; text-align: center; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .timeline { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 2px solid var(--edge); }
+  .timeline li { position: relative; margin: 0 0 14px; font-size: 13.5px; }
+  .timeline li::before { content: ""; position: absolute; left: -24px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .timeline .when { font-size: 12px; color: var(--muted); }
+  .why { font-size: 13px; } .why code { font-family: var(--mono); font-size: 12px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .card { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 12px; padding: 12px 14px; }
+  .card h5 { margin: 0 0 4px; font-size: 14px; }
+  .card p { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); }
+  textarea { width: 100%; min-height: 110px; border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 12px; background: var(--panel-strong); color: var(--ink); box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect, useMemo } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = (p, opts = {}) =>
+  fetch(p, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers || {}) } }).then(async (r) => {
+    if (!r.ok) { const t = await r.text(); let d = t; try { d = JSON.parse(t).detail; } catch (e) {} throw new Error(typeof d === "string" ? d : (d && d.message) || r.statusText); }
+    return r.json();
+  });
+const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(body) });
+const qs = (o) => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+const fmt = (d) => (d ? String(d).slice(0, 10) : "—");
+const pct = (v) => (v == null ? "—" : `${Math.round(v * 1000) / 10}%`);
+const show = (v) => (Array.isArray(v) ? v.join(", ") : v === true ? "yes" : v === false ? "no" : v == null || v === "" ? "—" : String(v));
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const Side = ({ s }) => html`<span class=${"badge side-" + s}>${s}</span>`;
+const Status = ({ s }) => html`<span class=${"badge st-" + s}>${s}</span>`;
+const Method = ({ m }) => html`<span class=${"badge m-" + (m || "curated")}>${m || "curated"}</span>`;
+const Act = ({ a }) => html`<span class="badge act">${a}</span>`;
+
+// ------------------------------------------------------------------ activity map
+
+const SAMPLES = [
+  { label: "UK e-money institution", attrs: { jurisdictions: ["UK"], authorisations: ["E-money institution (Electronic Money Regulations 2011)"], products: ["e-money issuance", "payment accounts", "card programmes"], customer_base: ["retail", "SME"], data_footprint: "large-scale personal data" } },
+  { label: "EU crypto-asset service provider", attrs: { jurisdictions: ["EU"], authorisations: ["CASP (MiCA)"], products: ["crypto custody", "crypto exchange"], customer_base: ["retail", "professional"], data_footprint: "large-scale personal data", crypto_services: true, financial_entity_dora: true } },
+  { label: "UK retail broker", attrs: { jurisdictions: ["UK"], authorisations: ["UK MiFID investment firm (Part 4A permission)", "Client money permission (CASS)"], products: ["equities brokerage", "client money holding"], customer_base: ["retail"] } },
+];
+
+function ActivityMap({ openActivity }) {
+  const [profiles, setProfiles] = useState([]);
+  const [pick, setPick] = useState("");
+  const [text, setText] = useState(JSON.stringify(SAMPLES[0].attrs, null, 2));
+  const [map, setMap] = useState(null);
+  const [err, setErr] = useState("");
+  const [focus, setFocus] = useState(null);
+  useEffect(() => { api("/l4/profiles?limit=100").then((r) => setProfiles(r.items || [])).catch(() => {}); }, []);
+  const run = (attrs) => {
+    setErr(""); setMap(null); setFocus(null);
+    post("/l5/activity-map", { attributes: attrs }).then(setMap).catch((e) => setErr(e.message));
+  };
+  const runProfile = (id) => {
+    setPick(id); if (!id) return;
+    setErr(""); setMap(null); setFocus(null);
+    api("/l5/profiles/" + id + "/activities").then((r) => { setMap(r); setText(JSON.stringify(r.attributes, null, 2)); history.replaceState(null, "", "#" + id); }).catch((e) => setErr(e.message));
+  };
+  useEffect(() => { const h = decodeURIComponent(location.hash.slice(1)); if (/^PRF-/.test(h)) runProfile(h); else run(SAMPLES[0].attrs); }, []);
+  const linked = useMemo(() => {
+    if (!map || !focus) return null;
+    const s = new Set();
+    map.edges.forEach((e) => { if (e.compliance_activity_id === focus || e.business_activity_id === focus) { s.add(e.compliance_activity_id); s.add(e.business_activity_id); } });
+    return s;
+  }, [map, focus]);
+  const cls = (id) => "node" + (focus ? (id === focus ? " hi" : linked && linked.has(id) ? "" : " dim") : "");
+  const edges = map ? (focus ? map.edges.filter((e) => e.compliance_activity_id === focus || e.business_activity_id === focus) : map.edges) : [];
+  const names = map ? Object.fromEntries([...map.business, ...map.compliance].map((a) => [a.id, a.name])) : {};
+  return html`<div class="layout">
+    <aside class="side">
+      <h4>Stored profile</h4>
+      <select value=${pick} onChange=${(e) => runProfile(e.target.value)}><option value="">— pick an L4 profile —</option>${profiles.map((p) => html`<option key=${p.id} value=${p.id}>${p.id} · ${p.name}</option>`)}</select>
+      <h4>Or describe the organisation</h4>
+      ${SAMPLES.map((s) => html`<span key=${s.label} class="chip" onClick=${() => { setPick(""); setText(JSON.stringify(s.attrs, null, 2)); run(s.attrs); history.replaceState(null, "", "#map"); }}>${s.label}</span>`)}
+      <textarea value=${text} onInput=${(e) => setText(e.target.value)} style=${{ marginTop: 8 }} />
+      <button class="btn" style=${{ marginTop: 8 }} onClick=${() => { try { setPick(""); run(JSON.parse(text)); } catch (e) { setErr("attributes must be JSON: " + e.message); } }}>Map activities</button>
+      <div class="mono" style=${{ marginTop: 10 }}>Attributes are the L4 schema. Business activities come from the products the organisation offers (implies); compliance activities from the mitigates edges those business activities carry; an edge is lit when one of its obligations applies to this profile through L4.</div>
+    </aside>
+    <section>
+      ${err ? html`<div class="empty">${err}</div>` : ""}
+      ${!map && !err ? html`<div class="spin">mapping…</div>` : ""}
+      ${map ? html`<div class="panelx">
+        <h2>Activity map ${map.profile_id ? html`<span class="mono">${map.profile_id} · ${map.name}</span>` : ""}</h2>
+        <div class="meta"><span>products <b>${map.products.length}</b></span><span>business activities <b>${map.counts.business}</b></span><span>compliance activities <b>${map.counts.compliance}</b></span>
+          <span>edges <b>${map.counts.edges}</b> (${map.counts.lit_edges} lit)</span><span>obligations lighting them <b>${map.counts.obligations}</b></span><span>L4-applicable obligations <b>${map.l4_applicable_obligations}</b></span></div>
+        ${focus ? html`<div class="mono" style=${{ marginBottom: 8 }}>focused on ${names[focus]} — <a class="name" onClick=${() => setFocus(null)}>show all</a></div>` : ""}
+        <div class="map">
+          <div class="col"><h4>What the organisation does</h4>
+            ${map.business.map((a) => html`<div key=${a.id} class=${cls(a.id)} onClick=${() => setFocus(focus === a.id ? null : a.id)}>
+              <div class="t">${a.name} <span class="mono">${a.action_type}</span></div>
+              <div class="d">${a.implied_by.length ? "implied by " + a.implied_by.map((p) => p.product).join(", ") : "triggered by profile facts"}</div>
+              ${a.obligations.length ? html`<div class="o">${a.obligations.slice(0, 6).join(" ")}${a.obligations.length > 6 ? " …" : ""}</div>` : ""}
+              <div class="o"><a class="name" onClick=${(e) => { e.stopPropagation(); openActivity(a.id); }}>${a.id}</a></div></div>`)}
+            ${!map.business.length ? html`<div class="empty">no product on this profile implies a business activity</div>` : ""}
+          </div>
+          <div class="mid"><b>${map.counts.lit_edges}</b>edges lit by obligation<div style=${{ marginTop: 10 }}>◀ mitigates</div></div>
+          <div class="col"><h4>What governs it</h4>
+            ${map.compliance.map((a) => html`<div key=${a.id} class=${cls(a.id)} onClick=${() => setFocus(focus === a.id ? null : a.id)}>
+              <div class="t">${a.name} <span class="mono">${a.action_type}</span></div>
+              <div class="d">governs ${a.governs.map((g) => names[g] || g).join(", ")}${a.operates.length ? " · operates " + a.operates.map((o) => o.block_id).join(", ") : ""}</div>
+              ${a.obligations.length ? html`<div class="o">${a.obligations.slice(0, 6).join(" ")}${a.obligations.length > 6 ? " …" : ""}</div>` : ""}
+              <div class="o"><a class="name" onClick=${(e) => { e.stopPropagation(); openActivity(a.id); }}>${a.id}</a></div></div>`)}
+            ${!map.compliance.length ? html`<div class="empty">no compliance activity governs these yet</div>` : ""}
+          </div>
+        </div>
+        <h3>Edges</h3>
+        <div class="edges">${edges.map((e) => html`<div key=${e.id} class=${"edge " + (e.lit ? "lit" : "unlit")}>
+          <span class="mono">${e.id}</span><span>${names[e.compliance_activity_id]}</span><span class="arrow">▶ governs ▶</span><span>${names[e.business_activity_id]}</span>
+          <span class="mono">${e.lit ? "lit by " + e.obligation_refs.map((r) => html`<a key=${r} class="name" href=${"/l2#" + r}>${r} </a>`) : "no applicable obligation lights this edge for this profile"}</span><${Method} m=${e.method} /></div>`)}
+          ${!edges.length ? html`<div class="mono">no edges</div>` : ""}</div>
+      </div>` : ""}
+    </section>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ catalogue
+
+function Catalogue({ open }) {
+  const [f, setF] = useState({ side: "", action_type: "", status: "", q: "" });
+  const [data, setData] = useState(null);
+  const [vocab, setVocab] = useState(null);
+  useEffect(() => { api("/l5/vocabulary").then(setVocab).catch(() => {}); }, []);
+  useEffect(() => { setData(null); api("/l5/activities?" + qs(f)).then(setData).catch(() => setData({ items: [], count: 0, facets: {} })); }, [f]);
+  const facet = (k) => Object.entries((data && data.facets && data.facets[k]) || {});
+  return html`<div class="layout">
+    <aside class="side">
+      <h4>Search</h4><input placeholder="name, owner, description…" value=${f.q} onInput=${(e) => setF({ ...f, q: e.target.value })} />
+      <h4>Side</h4>${facet("side").map(([k, n]) => html`<span key=${k} class=${"chip" + (f.side === k ? " on" : "")} onClick=${() => setF({ ...f, side: f.side === k ? "" : k, action_type: "" })}>${k} · ${n}</span>`)}
+      <h4>Action type</h4>${facet("action_type").map(([k, n]) => html`<span key=${k} class=${"chip" + (f.action_type === k ? " on" : "")} onClick=${() => setF({ ...f, action_type: f.action_type === k ? "" : k })}>${k} · ${n}</span>`)}
+      <h4>Status</h4>${facet("status").map(([k, n]) => html`<span key=${k} class=${"chip" + (f.status === k ? " on" : "")} onClick=${() => setF({ ...f, status: f.status === k ? "" : k })}>${k} · ${n}</span>`)}
+      ${vocab ? html`<h4>Vocabulary</h4><div class="mono">${Object.entries(vocab.edges).map(([k, v]) => html`<div key=${k}><b>${k}</b> ${v}</div>`)}</div>` : ""}
+    </aside>
+    <section>
+      ${!data ? html`<div class="spin">loading…</div>` : html`<div class="panelx">
+        <h2>Activities <span class="mono">${data.count}</span></h2>
+        <table class="reg"><thead><tr><th>activity</th><th>side</th><th>action</th><th>owner</th><th>triggers</th><th>implied by</th><th>operates</th><th>governs / governed by</th><th>status</th></tr></thead>
+        <tbody>${data.items.map((a) => html`<tr key=${a.id}><td><a class="name" onClick=${() => open(a.id)}>${a.name}</a><div class="mono">${a.id}</div></td>
+          <td><${Side} s=${a.side} /></td><td class="mono">${a.action_type}</td><td>${a.business_owner}</td><td class="mono">${a.triggers}</td>
+          <td class="mono">${a.side === "business" ? a.implied_by + " products" : "—"}</td><td class="mono">${a.side === "compliance" ? a.operates + " blocks" : "—"}</td>
+          <td class="mono">${a.side === "compliance" ? a.governs + " business activities" : a.governed_by + " compliance activities"}</td><td><${Status} s=${a.status} /></td></tr>`)}</tbody></table>
+        ${!data.items.length ? html`<div class="empty">no activity matches</div>` : ""}
+      </div>`}
+    </section>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ activity page
+
+function ActivityPage({ id, back, open }) {
+  const [a, setA] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { setA(null); setErr(""); api("/l5/activities/" + id).then(setA).catch((e) => setErr(e.message)); }, [id]);
+  if (err) return html`<div class="empty">${err}</div>`;
+  if (!a) return html`<div class="spin">loading…</div>`;
+  return html`<div>
+    <div class="crumbs"><a onClick=${back}>activities</a> › ${a.id}</div>
+    <div class="panelx">
+      <h2>${a.name} <${Side} s=${a.side} /> <span class="badge act">${a.action_type}</span> <${Status} s=${a.status} /></h2>
+      <div class="meta"><span>id <b class="mono">${a.id}</b></span><span>owner <b>${a.business_owner}</b></span><span>version <b>${a.version || 1}</b></span><span>obligations <b>${a.obligations.length}</b></span>${a.needs_human ? html`<span class="warn">needs human review</span>` : ""}</div>
+      <p style=${{ fontSize: 13.5 }}>${a.description}</p>
+      <h3>Triggers <span class="mono">${a.triggers.length}</span></h3>
+      <table class="reg"><thead><tr><th>anchor</th><th>when</th><th>method · cue</th><th>obligations</th></tr></thead>
+      <tbody>${a.triggers.map((t, i) => html`<tr key=${i}><td class="mono">${t.anchor.source_key} § ${(t.anchor.refs || []).join(", ")}</td><td><code class="mono">${JSON.stringify(t.when || {})}</code></td>
+        <td><${Method} m=${t.method} /> ${t.cue ? html`<span class="mono">${t.cue}</span>` : ""}${t.superseded_by ? html`<div class="mono">superseded by ${t.superseded_by}</div>` : ""}</td>
+        <td>${t.resolved ? t.obligations.map((o) => html`<div key=${o.derivation_key}><a class="name" href=${"/l2#" + o.obligation_id}>${o.obligation_id}</a> <span class="mono">${o.title}</span></div>`) : html`<span class="mono">not in corpus yet</span>`}</td></tr>`)}</tbody></table>
+      ${a.side === "business" ? html`<h3>Implied by products <span class="mono">${a.implied_by.length}</span></h3>
+        <div>${a.implied_by.map((e) => html`<span key=${e.id} class="chip" title=${e.rationale}>${e.product}</span>`)}${!a.implied_by.length ? html`<span class="mono bad">orphan: no product implies this activity</span>` : ""}</div>
+        <h3>Governed by <span class="mono">${a.governed_by.length}</span></h3>
+        ${a.governed_by.map((e) => html`<div key=${e.id} class="edge lit"><span class="mono">${e.id}</span><a class="name" onClick=${() => open(e.compliance_activity_id)}>${e.activity}</a><span class="arrow">▶ governs this</span>
+          <span class="mono">${e.obligation_refs.length ? "lit by " + e.obligation_refs.join(", ") : "no live obligation lights this edge yet"}</span><${Method} m=${e.method} /></div>`)}` :
+      html`<h3>Operates blocks <span class="mono">${a.operates.length}</span></h3>
+        <div class="cards">${a.operates.map((e) => html`<div key=${e.id} class="card"><h5><a class="name" href=${"/l3#" + e.block_id}>${e.block}</a> <span class="mono">${e.block_kind || ""}</span></h5><p>${e.rationale}</p><div class="mono">${e.obligation_refs.length ? e.obligation_refs.join(", ") : "curated anchor"} · <${Method} m=${e.method} /></div></div>`)}
+          ${!a.operates.length ? html`<span class="mono bad">orphan: operates no block</span>` : ""}</div>
+        <h3>Governs <span class="mono">${a.governs.length}</span></h3>
+        ${a.governs.map((e) => html`<div key=${e.id} class="edge lit"><span class="mono">${e.id}</span><span class="arrow">governs ▶</span><a class="name" onClick=${() => open(e.business_activity_id)}>${e.activity}</a>
+          <span class="mono">${e.obligation_refs.length ? "lit by " + e.obligation_refs.join(", ") : "no live obligation lights this edge yet"}</span><${Method} m=${e.method} /></div>`)}`}
+      <h3>History</h3>
+      <ul class="timeline"><li><div>${a.status === "curated" ? "curated" : "derived"} · version ${a.version || 1}</div><div class="when">${fmt(a.history.valid_from)}</div></li>
+        ${a.history.events.map((e, i) => html`<li key=${i}><div>${e.event}${e.reason ? ` — ${e.reason}` : ""}</div><div class="when">${fmt(e.at)} · <code class="mono">${e.why_trail_id}</code></div></li>`)}</ul>
+      <h3>Why</h3>
+      ${a.why.map((w) => html`<div key=${w.id} class="why"><code>${w.id}</code> ${w.reasoning_summary} <span class="mono">${w.agent_id} · ${fmt(w.created_at)}</span></div>`)}
+      ${!a.why.length ? html`<div class="mono">curated entry — the junction edges above carry their own why-trails</div>` : ""}
+    </div>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ scorecard
+
+function Scorecard() {
+  const [card, setCard] = useState(null);
+  useEffect(() => { api("/l5/scorecard").then(setCard).catch(() => setCard({ error: true })); }, []);
+  if (!card) return html`<div class="spin">loading…</div>`;
+  if (card.error) return html`<div class="empty">scorecard unavailable</div>`;
+  const g = card.gate, j = card.junction, c = card.coverage;
+  return html`<div class="panelx">
+    <h2>L5 scorecard <span class=${"badge " + (g.passed ? "st-curated" : "st-invalidated")}>${g.passed ? "gate passed" : "below gate"}</span></h2>
+    <div class="meta">${Object.entries(card.thresholds).map(([k, v]) => html`<span key=${k}>${k.replace(/_/g, " ")} <b>${v}</b></span>`)}</div>
+    <div class="score">
+      <div class="kpi"><b>${j.business}</b><span>business activities</span></div>
+      <div class="kpi"><b>${j.compliance}</b><span>compliance activities</span></div>
+      <div class="kpi"><b>${j.edges.implies}</b><span>implies (product → activity)</span></div>
+      <div class="kpi"><b>${j.edges.operates}</b><span>operates (activity → block)</span></div>
+      <div class="kpi"><b>${j.edges.mitigates}</b><span>mitigates (compliance → business)</span></div>
+      <div class="kpi"><b class=${j.ok ? "ok" : "bad"}>${pct(j.completeness)}</b><span>junction completeness (${j.orphans.length} orphans, ${j.dangling.length} dangling)</span></div>
+      <div class="kpi"><b class=${c.unmapped === 0 ? "ok" : "warn"}>${c.obligations ? pct(c.ratio) : "—"}</b><span>live obligations mapped (${c.mapped}/${c.obligations})</span></div>
+      <div class="kpi"><b>${j.anchors_not_in_corpus.length}</b><span>anchors not in corpus yet (L1 concern)</span></div>
+    </div>
+    <h3>Gate suites</h3>
+    <div class="meta">${Object.entries(g.suites || {}).map(([k, v]) => html`<span key=${k}>${k} <b class=${v && v.passed ? "ok" : "bad"}>${v && v.passed ? "pass" : "fail"}</b>${v && v.scores && v.scores.accuracy != null ? html` <span class="mono">${pct(v.scores.accuracy)}</span>` : ""}</span>`)}
+      ${(g.missing || []).length ? html`<span class="warn">not yet run: ${g.missing.join(", ")}</span>` : ""}</div>
+    ${j.orphans.length ? html`<h3>Orphans</h3>${j.orphans.map((o, i) => html`<div key=${i} class="mono bad">${o.activity} — ${o.reason}</div>`)}` : ""}
+    <h3>Triggers by method</h3><div class="meta">${Object.entries(c.triggers_by_method).map(([k, v]) => html`<span key=${k}><${Method} m=${k} /> <b>${v}</b></span>`)}</div>
+    <h3>Activities by action type</h3>
+    <div class="cards">${Object.entries(card.activities_by_action_type).map(([side, types]) => html`<div key=${side} class="card"><h5><${Side} s=${side} /></h5>${card.vocabulary[side].map((t) => html`<div key=${t} style=${{ fontSize: 13 }}><span class="mono">${t}</span> <b>${types[t] || 0}</b></div>`)}</div>`)}</div>
+  </div>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [tab, setTab] = useState("map");
+  const [view, setView] = useState({ page: "list" });
+  const openActivity = (id) => { setTab("activities"); setView({ page: "activity", id }); history.replaceState(null, "", "#" + id); };
+  const back = () => { setView({ page: "list" }); history.replaceState(null, "", "#" + tab); };
+  // Deep links: /l5#ACT-... opens an activity; #PRF-000001 maps a stored profile; #map / #activities / #scorecard a tab.
+  useEffect(() => {
+    const apply = () => {
+      const h = decodeURIComponent(location.hash.slice(1));
+      if (/^ACT-/.test(h)) { setTab("activities"); setView({ page: "activity", id: h }); }
+      else if (/^PRF-/.test(h)) { setTab("map"); setView({ page: "list" }); }
+      else if (["map", "activities", "scorecard"].includes(h)) { setTab(h); setView({ page: "list" }); }
+    };
+    apply(); window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  let body;
+  if (view.page === "activity") body = html`<${ActivityPage} id=${view.id} back=${back} open=${openActivity} />`;
+  else if (tab === "activities") body = html`<${Catalogue} open=${openActivity} />`;
+  else if (tab === "scorecard") body = html`<${Scorecard} />`;
+  else body = html`<${ActivityMap} openActivity=${openActivity} />`;
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L5 · activities</span></div>
+      <div class="spacer"></div>
+      <a class="navlink" href="/">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink active" href="/l5">L5</a>
+      <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main>
+      <div class="tabs">
+        ${[["map", "Activity map"], ["activities", "Activities"], ["scorecard", "Scorecard"]].map(([k, label]) =>
+          html`<button key=${k} class=${tab === k && view.page === "list" ? "on" : ""} onClick=${() => { setTab(k); setView({ page: "list" }); history.replaceState(null, "", "#" + k); }}>${label}</button>`)}
+      </div>
+      ${body}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

@@ -87,6 +87,20 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
         except sa.exc.OperationalError:  # pre-m0012 database
             pass
         out["L5"] = {"activities": _count(conn, activities_t)}
+        try:
+            from app.clhear.derived_models import implies as implies_t
+            from app.clhear.derived_models import mitigates as mitigates_t
+            from app.clhear.derived_models import operates as operates_t
+
+            out["L5"].update({
+                "business_activities": _count(conn, activities_t, activities_t.c.side == "business", activities_t.c.valid_to.is_(None)),
+                "compliance_activities": _count(conn, activities_t, activities_t.c.side == "compliance", activities_t.c.valid_to.is_(None)),
+                "implies_edges": _count(conn, implies_t, implies_t.c.valid_to.is_(None)),
+                "operates_edges": _count(conn, operates_t, operates_t.c.valid_to.is_(None)),
+                "mitigates_edges": _count(conn, mitigates_t, mitigates_t.c.valid_to.is_(None)),
+            })
+        except sa.exc.OperationalError:  # pre-m0013 database
+            pass
         out["L6"] = {
             "sample_programs": _count(conn, sample_profiles_t),
             "blueprints_requested": _count(conn, blueprints),
@@ -341,6 +355,11 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
             rows = [dict(r) for r in conn.execute(sa.select(activities_t)).mappings()]
         for a in rows:
             a["updated_at"] = str(a.get("updated_at"))
+            for k in ("valid_from", "valid_to", "derived_at"):
+                if a.get(k) is not None:
+                    a[k] = str(a[k])
+            if a.get("confidence") is not None:
+                a["confidence"] = float(a["confidence"])
         return rows
     if layer == "L6":
         with engine.connect() as conn:
