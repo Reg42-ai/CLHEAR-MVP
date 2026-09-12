@@ -216,6 +216,11 @@ def run_extraction(engine: Engine, source_key: str | None = None) -> dict:
             continue
         scoped_keys.append(s.key)
         all_candidates.extend(extract_source(engine, s, versions[s.id]))
+    if source_key and not scoped_keys:
+        # A scoped run whose source is not binding / has no in-force version must
+        # not fall through to the unscoped path and stale every other source (I2).
+        return {"extractor": EXTRACTOR_VERSION, "sources_scanned": 0, "candidates": 0, "inserted": 0,
+                "re_derived": 0, "unchanged": 0, "stale": 0, "skipped": source_key}
 
     jurisdictions = {s.key: s.jurisdiction for s in source_rows}
     regulators = {s.key: s.issuer for s in source_rows}
