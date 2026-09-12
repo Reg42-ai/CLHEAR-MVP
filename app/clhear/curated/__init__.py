@@ -24,6 +24,10 @@ def load(name: str) -> list[dict]:
     return json.loads((CURATED_DIR / f"{name}.json").read_text())
 
 
+def load_object(name: str) -> dict:
+    return json.loads((CURATED_DIR / f"{name}.json").read_text())
+
+
 def seed(engine: Engine) -> dict:
     """Idempotent upsert of the curated catalog into the DB."""
     counts = {"blocks": 0, "activities": 0, "attributes": 0, "profiles": 0}

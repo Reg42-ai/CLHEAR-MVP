@@ -301,6 +301,116 @@ license_types = sa.Table(
     schema=L4_SCHEMA,
 )
 
+# HLD v2 §4.4 — the profile permutation space. Ontology rows are built from
+# regulator registers / permission taxonomies (with register provenance);
+# profiles are validated attribute sets; permits / applies_to / validity_rules
+# are the edges that make "no impossible permutation" checkable.
+
+licences = sa.Table(
+    "licences",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # LIC:<jurisdiction>:<slug>
+    sa.Column("jurisdiction", sa.Text, nullable=False, index=True),
+    sa.Column("regulator", sa.Text, nullable=False, default=""),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("regime", sa.Text, nullable=False, default=""),  # instrument creating the authorisation
+    sa.Column("register", sa.Text, nullable=False, default=""),  # register key (fca_register, esma_registers, sec_finra)
+    sa.Column("register_url", sa.Text, nullable=False, default=""),
+    sa.Column("register_ref", sa.Text, nullable=False, default=""),  # permission / activity code in the register
+    sa.Column("aliases", Json, nullable=False, default=list),
+    sa.Column("clause_anchors", Json, nullable=False, default=list),  # [{source_key, ref}]
+    sa.Column("status", sa.Text, nullable=False, default="derived"),
+    sa.Column("canonical_id", sa.Text, nullable=True),
+    schema=L4_SCHEMA,
+)
+
+products_services = sa.Table(
+    "products_services",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # PRD:<slug>
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("category", sa.Text, nullable=False, default="service"),  # product | service
+    sa.Column("description", sa.Text, nullable=False, default=""),
+    sa.Column("aliases", Json, nullable=False, default=list),
+    sa.Column("status", sa.Text, nullable=False, default="derived"),
+    schema=L4_SCHEMA,
+)
+
+client_types = sa.Table(
+    "client_types",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # CLT:<slug>
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text, nullable=False, default=""),
+    sa.Column("aliases", Json, nullable=False, default=list),
+    sa.Column("clause_anchors", Json, nullable=False, default=list),
+    sa.Column("status", sa.Text, nullable=False, default="derived"),
+    schema=L4_SCHEMA,
+)
+
+channels = sa.Table(
+    "channels",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # CHN:<slug>
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text, nullable=False, default=""),
+    sa.Column("aliases", Json, nullable=False, default=list),
+    sa.Column("status", sa.Text, nullable=False, default="derived"),
+    schema=L4_SCHEMA,
+)
+
+profiles = sa.Table(
+    "profiles",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # PRF-000001
+    sa.Column("name", sa.Text, nullable=False, default=""),
+    sa.Column("attributes", Json, nullable=False, default=dict),
+    sa.Column("fingerprint", sa.Text, nullable=False, index=True),  # sha256 of the normalised attribute set
+    sa.Column("validity", Json, nullable=False, default=dict),  # {valid, errors, warnings, checked_at, ontology_version}
+    sa.Column("source", sa.Text, nullable=False, default="builder"),  # builder | sample | golden | api
+    sa.Column("status", sa.Text, nullable=False, default="valid"),  # valid | invalid
+    schema=L4_SCHEMA,
+)
+
+permits = sa.Table(
+    "permits",
+    metadata,
+    sa.Column("id", BigId, primary_key=True, autoincrement=True),
+    sa.Column("licence_id", sa.Text, nullable=False, index=True),
+    sa.Column("product_id", sa.Text, nullable=False, index=True),
+    sa.Column("basis", sa.Text, nullable=False, default=""),
+    sa.Column("clause_anchors", Json, nullable=False, default=list),
+    schema=L4_SCHEMA,
+)
+
+applies_to = sa.Table(
+    "applies_to",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # APL-000001
+    sa.Column("obligation_id", sa.Text, nullable=False, index=True),
+    sa.Column("predicate", Json, nullable=False, default=dict),  # {attribute: requirement} in the when_matches language
+    sa.Column("basis", sa.Text, nullable=False, default=""),  # jurisdiction | subject | condition | llm
+    sa.Column("rationale", sa.Text, nullable=False, default=""),
+    sa.Column("method", sa.Text, nullable=False, default=""),
+    sa.Column("obligation_text_hash", sa.Text, nullable=False, default=""),
+    schema=L4_SCHEMA,
+)
+
+validity_rules = sa.Table(
+    "validity_rules",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # VR:<slug>
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("jurisdiction", sa.Text, nullable=False, default="*"),
+    # {"if": {attr: requirement}, "requires": {attr: requirement}} or {"if": ..., "forbids": {...}}
+    sa.Column("rule", Json, nullable=False, default=dict),
+    sa.Column("severity", sa.Text, nullable=False, default="error"),  # error | warning
+    sa.Column("basis", sa.Text, nullable=False, default=""),
+    sa.Column("clause_anchors", Json, nullable=False, default=list),
+    sa.Column("status", sa.Text, nullable=False, default="derived"),
+    schema=L4_SCHEMA,
+)
+
 # ------------------------------------------------------------------------ L6
 
 blueprints = sa.Table(
@@ -365,6 +475,7 @@ DERIVED_TABLES = (
     blueprints, concepts, concept_members, license_types,
     asserts, equivalences, supersessions, l2_change_events, obligation_reviews,
     requires, characteristics,
+    licences, products_services, client_types, channels, profiles, permits, applies_to, validity_rules,
 )
 
 from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402
