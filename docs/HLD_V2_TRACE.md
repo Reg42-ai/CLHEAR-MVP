@@ -1,0 +1,138 @@
+# HLD v2 requirement trace
+
+Every mechanism in [`CLHEAR_HLD_v2.md`](CLHEAR_HLD_v2.md) §1.1, §2, §3, §4, §8 and §9
+gets a stable requirement id `CLHEAR-<layer>.<n>` (invariant I11), the code path that
+implements it, the test that proves it, and a status. Status values: `done`, `partial`,
+`todo`, `blocked` (needs something outside this repo — see the "Blocked" section).
+
+This file is acceptance evidence. A build item in §8 is not complete until every row it
+owns is `done` or `blocked` with a named blocker. `scripts/trace_check.py` fails CI if a
+row references a code path or test that does not exist.
+
+## §2 Invariants
+
+| Req | Invariant | Code | Test | Status |
+|---|---|---|---|---|
+| CLHEAR-0.1 | I1 layers derived strictly in order; L(n) reads only ≤ L(n−1) | `app/clhear/layers.py` (`LAYER_CATALOG[*].derivation.inputs`), `app/clhear/platform/record.py` (`assert_layer_inputs`) | `tests/test_record.py::test_layer_input_guard` | todo |
+| CLHEAR-0.2 | I2 every node/edge versioned and dated; nothing deleted, only invalidated | `app/clhear/platform/record.py` (`SHARED_COLUMNS`, `invalidate`), `migrations/m0008_shared_schema.py` | `tests/test_record.py::test_no_delete_anywhere`, `tests/test_record.py::test_invalidate_sets_valid_to` | todo |
+| CLHEAR-0.3 | I3 every determination has a why-trail; no trail, no write | `app/clhear/platform/record.py` (`write` raises `WhyTrailRequired`), `why_trails` table | `tests/test_record.py::test_write_requires_why_trail` | todo |
+| CLHEAR-0.4 | I4 full AI determination, HITL by exception (confidence < threshold, modification requests, re-derive with human edits) | `app/clhear/platform/console.py`, `app/clhear/platform/record.py` (`LOW_CONFIDENCE_THRESHOLDS`) | `tests/test_console.py` | todo |
+| CLHEAR-0.5 | I5 agnostic store contains no organization data; automated scan per release | `app/clhear/platform/agnostic_scan.py` | `tests/test_agnostic_scan.py` | todo |
+| CLHEAR-0.6 | I6 Bedrock-only inference via Reg42 Infer; frozen model ids; manifest per release | `app/clhear/platform/gateway.py` (`InferProvider`), `app/clhear/platform/manifest.py` | `tests/test_infer_provider.py`, `tests/test_release_verify.py` | todo |
+| CLHEAR-0.7 | I7 Postgres record, Neo4j query graph, vectors an index; all rebuildable from Postgres | `infra/rds.tf`, `infra/neo4j.tf`, `app/clhear/platform/graph.py`, `app/clhear/l1/retrieval.py` | `tests/test_graph.py` | todo |
+| CLHEAR-0.8 | I8 rights before text | `app/clhear/l1/rights.py`, `sources.rights_basis` | `tests/test_rights.py` | todo |
+| CLHEAR-0.9 | I9 open by mode not by layer | `app/clhear/platform/mode.py` | `tests/test_mode.py` | todo |
+| CLHEAR-0.10 | I10 evals gate publication; drift below gate freezes layer + alarms | `app/clhear/platform/gates.py`, `app/clhear/releases.py` | `tests/test_gates.py` | todo |
+| CLHEAR-0.11 | I11 stable identifiers `CLHEAR-<layer>.<n>`, `OBL-/BLK-/PRF-/ACT-/BLU-/RSK-/FIL-`, never reused | `app/clhear/platform/ids.py` | `tests/test_ids.py` | todo |
+| CLHEAR-0.12 | I12 contributions never write directly | `app/clhear/community.py` (proposal path), `app/clhear/platform/contributions.py` | `tests/test_contributions.py` | todo |
+
+## §3 L0 platform plane
+
+| Req | Component | Code | Test | Status |
+|---|---|---|---|---|
+| CLHEAR-0.20 | Record store: Postgres, one schema per layer, bi-temporal columns | `infra/rds.tf`, `migrations/m0008_shared_schema.py` | `tests/test_record.py::test_all_tables_have_shared_columns` | todo |
+| CLHEAR-0.21 | Query graph: Neo4j Community projection, rebuilt nightly | `infra/neo4j.tf`, `app/clhear/platform/graph.py` | `tests/test_graph.py` | todo |
+| CLHEAR-0.22 | Retrieval index: pgvector | `migrations/m0016_pgvector.py`, `app/clhear/l1/retrieval.py` | `tests/test_retrieval.py` | todo |
+| CLHEAR-0.23 | Object store: S3 Object Lock, cross-region replica | `infra/s3.tf` | terraform validate | todo |
+| CLHEAR-0.24 | Events: EventBridge bus `clhear.<layer>.<event>` (`derived`, `changed`, `invalidated`, `below_gate`) | `app/clhear/platform/events.py`, `infra/eventbridge.tf` | `tests/test_events_bus.py` | todo |
+| CLHEAR-0.25 | Workers: one task definition per layer fleet, scale 0 → N | `infra/ecs.tf`, `app/clhear/workers.py` | terraform validate | todo |
+| CLHEAR-0.26 | Inference: Reg42 Infer with CLHEAR task classes | `app/clhear/platform/router.py`, `handoff/reg42-infra/tasks.clhear.yaml` | `tests/test_infer_route_explain.py` | todo |
+| CLHEAR-0.27 | Evals: Langfuse self-hosted + per-layer golden sets; public dashboard reads summary table | `infra/langfuse.tf`, `app/clhear/platform/evals.py` (`publish_summary`), `clhear-evals/` | `tests/test_gates.py::test_summary_table_published` | todo |
+| CLHEAR-0.28 | Approval console at `/console` | `app/clhear/platform/console.py`, `app/clhear/web/console.html` | `tests/test_console.py` | todo |
+| CLHEAR-0.29 | Release pipeline: nightly derive → evals → snapshot → Sigstore → publish; `YYYY.MM.DD`; daily deltas | `.github/workflows/release.yml`, `app/clhear/releases.py`, `scripts/verify_release.py` | `tests/test_release_verify.py` | todo |
+| CLHEAR-0.30 | Identity: Cognito public users, Google SSO Reg42, API keys per org, SAML enterprise | `infra/cognito.tf`, `app/clhear/app_auth.py`, `app/clhear/api_keys.py` | `tests/test_api_keys.py` | todo |
+| CLHEAR-0.31 | Observability: Prometheus + Grafana, GlitchTip, CloudWatch, status page; freshness and gate status public | `infra/observability.tf`, `app/clhear/platform/metrics.py`, `status/` | `tests/test_metrics.py` | todo |
+| CLHEAR-0.32 | Public repo `clhear`: standard, schema, vault packs, evals harness, SDKs | `export/clhear/`, `app/clhear/platform/exporter.py` | `tests/test_exporter_public.py` | todo |
+| CLHEAR-0.33 | Shared schema columns on every layer table | `app/clhear/platform/record.py::SHARED_COLUMNS` | `tests/test_record.py::test_all_tables_have_shared_columns` | todo |
+
+## §4 Layers
+
+| Req | Layer / mechanism | Code | Test | Status |
+|---|---|---|---|---|
+| CLHEAR-1.1 | L1 schema: sources (rights basis, family root), source_versions, clauses (span offsets, normative), families, citations | `app/clhear/l1/models.py`, `migrations/m0008_shared_schema.py` | `tests/test_l1_pipeline.py` | todo |
+| CLHEAR-1.2 | L1 fleet: fetchers per publisher, family completeness, change detectors with effective dates, rights recorder; `clhear.l1.changed` | `app/clhear/l1/adapters/*`, `app/clhear/l1/families.py`, `app/clhear/l1/pipeline.py`, `app/clhear/l1/rights.py` | `tests/test_l1_synthetic_amendment.py` | todo |
+| CLHEAR-1.3 | L1 gates: byte fidelity 100 %, family completeness ≥ 99 %, currency ≤ 24 h, clause boundary F1 ≥ 0.98 | `app/clhear/platform/evals.py` (`e1_fidelity`, `e7_closure`, `l1_currency`, `l1_boundary_f1`) | `tests/test_l1_evals.py` | todo |
+| CLHEAR-1.4 | L1 API `/l1/sources`, `/l1/sources/{id}/versions`, `/l1/clauses/{id}`, `/l1/changes` | `app/clhear/v1/l1.py` | `tests/test_v1_api.py` | todo |
+| CLHEAR-1.5 | L1 starter corpus adapters (MiFIR/MiFID II, MAR, MLRs, FCA Handbook, SEC/FINRA via EDGAR, FATCA, GDPR, NIST) | `app/clhear/l1/adapters/{fca_handbook,sec_edgar,esma,fatf,bis_basel,iosco,mas,asic,isa}.py`, `app/clhear/l1/starter_corpus.py` | `tests/test_starter_corpus.py` | todo |
+| CLHEAR-2.1 | L2 schema: obligations, asserts (span, strength), equivalences, supersessions, change_events | `app/clhear/l2/models.py`, `migrations/m0009_l2.py` | `tests/test_l2_registry.py` | todo |
+| CLHEAR-2.2 | L2 fleet: extractors, consolidators, change inferencers, second-model reviewers | `app/clhear/l2/{extract,consolidate,change,review}.py` | `tests/test_l2_registry.py` | todo |
+| CLHEAR-2.3 | L2 gates: coverage ≥ 99 %, precision ≥ 95 %, dedupe < 1 %, change inference ≥ 95 % | `app/clhear/platform/evals.py` (`l2_coverage`, `l2_precision`, `l2_dedupe`, `l2_change_inference`) | `tests/test_l2_registry.py` | todo |
+| CLHEAR-2.4 | L2 API | `app/clhear/v1/l2.py` | `tests/test_v1_api.py` | todo |
+| CLHEAR-3.1 | L3 schema: blocks (8 kinds), requires, characteristics (fixed schema per kind) | `app/clhear/l3/models.py`, `app/clhear/l3/kinds.py`, `migrations/m0010_l3.py` | `tests/test_l3_blocks.py` | todo |
+| CLHEAR-3.2 | L3 fleet: decomposers, characterizers, harmonizers, propagators | `app/clhear/l3/{decompose,characterize,harmonize}.py` | `tests/test_l3_blocks.py` | todo |
+| CLHEAR-3.3 | L3 gates: 100 % obligation → block, characteristic completeness ≥ 95 %, precision ≥ 92 %, reuse ratio | `app/clhear/platform/evals.py` (`l3_completeness`, `l3_characteristics`, `l3_reuse`) | `tests/test_l3_blocks.py` | todo |
+| CLHEAR-3.4 | L3 API | `app/clhear/v1/l3.py` | `tests/test_v1_api.py` | todo |
+| CLHEAR-4.1 | L4 schema: licences, products_services, client_types, channels, profiles, permits, applies_to, validity rules | `app/clhear/l4/models.py`, `migrations/m0011_l4.py` | `tests/test_l4_ontology.py` | todo |
+| CLHEAR-4.2 | L4 fleet: ontology builders, predicate extractors, validators | `app/clhear/l4/{ontology,predicates,validate}.py` | `tests/test_l4_ontology.py` | todo |
+| CLHEAR-4.3 | L4 gates: validity ≥ 99 %, applicability P/R ≥ 95 % | `app/clhear/platform/evals.py` (`l4_validity`, `l4_applicability`) | `tests/test_l4_ontology.py` | todo |
+| CLHEAR-4.4 | L4 API | `app/clhear/v1/l4.py` | `tests/test_v1_api.py` | todo |
+| CLHEAR-5.1 | L5 schema: activities (side), implies, operates, mitigates | `app/clhear/l5/models.py`, `migrations/m0012_l5.py` | `tests/test_l5_junction.py` | todo |
+| CLHEAR-5.2 | L5 fleet: mappers, consistency checkers | `app/clhear/l5/{map,check}.py` | `tests/test_l5_junction.py` | todo |
+| CLHEAR-5.3 | L5 gate: junction completeness 100 %, precision ≥ 92 % | `app/clhear/platform/evals.py` (`l5_completeness`) | `tests/test_l5_junction.py` | todo |
+| CLHEAR-5.4 | L5 API | `app/clhear/v1/l5.py` | `tests/test_v1_api.py` | todo |
+| CLHEAR-6.1 | L6 schema: blueprints, blueprint_items, minimality_proof | `app/clhear/l6/models.py`, `migrations/m0013_l6.py` | `tests/test_l6_blueprints.py` | todo |
+| CLHEAR-6.2 | L6 fleet: set-cover composer, explainers, diff engine | `app/clhear/l6/{composer,rationale,diff}.py` | `tests/test_l6_blueprints.py` | todo |
+| CLHEAR-6.3 | L6 gates: completeness 100 %, minimality, reference agreement ≥ 90 %, explanation ≥ 90 % | `app/clhear/platform/evals.py` (`l6_completeness`, `l6_minimality`, `l6_reference`) | `tests/test_l6_blueprints.py` | todo |
+| CLHEAR-6.4 | L6 API incl. OSCAL export | `app/clhear/v1/l6.py`, `app/clhear/interop/oscal.py` | `tests/test_interop.py` | todo |
+| CLHEAR-7.1 | L7 schema: risk_scores, enforcement_events | `app/clhear/l7/models.py`, `migrations/m0014_l7.py` | `tests/test_l7_risk.py` | todo |
+| CLHEAR-7.2 | L7 fleet: enforcement ingestors/linkers, calibrated scorer with published weights | `app/clhear/l7/{enforcement,score}.py` | `tests/test_l7_risk.py` | todo |
+| CLHEAR-7.3 | L7 gate: Brier on held-out year, linker precision ≥ 90 % | `app/clhear/platform/evals.py` (`l7_brier`, `l7_linker`) | `tests/test_l7_risk.py` | todo |
+| CLHEAR-7.4 | L7 API | `app/clhear/v1/l7.py` | `tests/test_v1_api.py` | todo |
+| CLHEAR-8.1 | L8 schema: fills, benchmark_aggregates (k ≥ 5, DP noise) | `app/clhear/l8/models.py`, `migrations/m0015_l8.py` | `tests/test_l8_fills.py` | todo |
+| CLHEAR-8.2 | L8 fleet: fill generators, aggregators, reviewers, drift detectors | `app/clhear/l8/{fills,aggregate}.py` | `tests/test_l8_fills.py` | todo |
+| CLHEAR-8.3 | L8 gates: rubric ≥ 85 %, traceability, re-identification test | `app/clhear/platform/evals.py` (`l8_reidentification`, `l8_traceability`) | `tests/test_l8_fills.py` | todo |
+| CLHEAR-8.4 | L8 members-only API; public metadata only | `app/clhear/v1/l8.py`, `app/clhear/platform/mode.py` | `tests/test_l8_fills.py` | todo |
+
+## §5 Interface
+
+| Req | Mechanism | Code | Test | Status |
+|---|---|---|---|---|
+| CLHEAR-9.1 | Solon front door → blueprint < 60 s with progress narrative | `app/clhear/web/front_door.html`, `app/clhear/solon.py` | `tests/test_front_door.py` | todo |
+| CLHEAR-9.2 | Explore: graph + list per layer; why, history, who else, request a change; cross-jurisdiction compare | `app/clhear/web/explore.html`, `app/clhear/v1/explore.py` | `tests/test_v1_api.py` | todo |
+| CLHEAR-9.3 | Learn: tours, obligation of the week, playgrounds, learning path + badge, quizzes | `app/clhear/learn.py`, `app/clhear/web/learn.html` | `tests/test_learn.py` | todo |
+| CLHEAR-9.4 | Watch: digest, public change feed, watchlists | `app/clhear/watch.py` | `tests/test_watch.py` | todo |
+| CLHEAR-9.5 | Build on it: API keys, SDKs, OSCAL/JSON-LD, sandbox, public evals | `app/clhear/api_keys.py`, `export/clhear/sdks/`, `app/clhear/interop/` | `tests/test_api_keys.py`, `tests/test_interop.py` | todo |
+| CLHEAR-9.6 | Design rules: evidence one click, WCAG 2.2 AA, dark/light, no paywall on agnostic blueprint | `app/clhear/web/theme.css`, `scripts/a11y_check.py` | `tests/test_front_door.py::test_no_paywall` | todo |
+
+## §6 Community
+
+| Req | Mechanism | Code | Test | Status |
+|---|---|---|---|---|
+| CLHEAR-10.1 | Roles: Reader, Contributor (CLA), Reviewer (two accept), Maintainer, Steering | `app/clhear/community_models.py`, `app/clhear/platform/contributions.py` | `tests/test_contributions.py` | todo |
+| CLHEAR-10.2 | Contribution flow with automated checks, re-derivation, attribution, impact count | `app/clhear/platform/contributions.py` | `tests/test_contributions.py` | todo |
+| CLHEAR-10.3 | Governance artefacts, CLA, CoC, licences, trademark policy | `export/clhear/governance/` | `tests/test_exporter_public.py` | todo |
+| CLHEAR-10.4 | Conformance program CL1–CL4 | `export/clhear/conformance/`, `app/clhear/conformance.py` | `tests/test_conformance.py` | todo |
+
+## §7 Trust
+
+| Req | Mechanism | Code | Test | Status |
+|---|---|---|---|---|
+| CLHEAR-11.1 | Audit log of licensed-text reads and every write | `app/clhear/platform/audit.py` | `tests/test_audit.py` | todo |
+| CLHEAR-11.2 | Signed releases (Sigstore), SBOM, pinning | `.github/workflows/release.yml`, `requirements.lock` | `tests/test_release_verify.py` | todo |
+| CLHEAR-11.3 | Status page with SLOs; DR drills | `status/`, `.github/workflows/dr_drill.yml` | — | todo |
+| CLHEAR-11.4 | Rights and sourcing (7.3), similarity guard in CI | `app/clhear/l1/rights.py`, `app/clhear/l1/guard.py`, `.github/workflows/ci.yml` | `tests/test_rights.py` | todo |
+| CLHEAR-11.5 | Model governance: frozen ids, manifest, second-model review, low-confidence human review | `app/clhear/platform/manifest.py`, `app/clhear/l2/review.py`, `app/clhear/platform/console.py` | `tests/test_release_verify.py` | todo |
+| CLHEAR-11.6 | Instance-mode contract with Reg42 OS | `docs/INSTANCE_MODE_CONTRACT.md`, `app/clhear/instance_contract.py` | `tests/test_agnostic_scan.py` | todo |
+
+## §9 Never-list (CI lint)
+
+| Req | Rule | Test | Status |
+|---|---|---|---|
+| CLHEAR-12.1 | No deletion of nodes/edges | `tests/test_never_list.py::test_no_delete_anywhere` | todo |
+| CLHEAR-12.2 | No inference outside Reg42 Infer | `tests/test_never_list.py::test_only_infer_provider_in_prod` | todo |
+| CLHEAR-12.3 | No LLM call outside `router.run` | `tests/test_never_list.py::test_no_gateway_calls_outside_router` | todo |
+| CLHEAR-12.4 | Offense/defense never schema terms | `tests/test_never_list.py::test_no_offense_defense_schema_terms` | todo |
+| CLHEAR-12.5 | No Chinese-origin weights in derivation classes | `tests/test_infer_route_explain.py` | todo |
+| CLHEAR-12.6 | No public disclosure before filing confirmed | `tests/test_never_list.py::test_disclosure_gate` | todo |
+| CLHEAR-12.7 | No verbatim text without rights basis | `tests/test_rights.py` | todo |
+| CLHEAR-12.8 | No layer reads a higher layer | `tests/test_record.py::test_layer_input_guard` | todo |
+
+## Blocked (needs action outside this repo)
+
+| Item | Blocker | Delivered here instead |
+|---|---|---|
+| Infer `tasks.yaml` in `reg42-infra` | repo not readable by the build agent | `handoff/reg42-infra/tasks.clhear.yaml` + contract test |
+| Public `clhear` GitHub repo | must be created by an org owner | `export/clhear/` ready to push once `CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED=true` |
+| Solon entity behaviour | `SOLON_PLAN.md` not accessible | `app/clhear/solon.py` guided front door on Reg42 UI tokens |
+| Meridian Markets Annex G + three anonymized profiles | not provided | `clhear-evals/l4/golden_profiles.json`, `clhear-evals/l6/reference_programs.json` seeded with placeholders marked `golden=false` |
+| Discourse, beehiiv, pen test vendor, Cognito SAML IdP metadata | accounts / vendors | Terraform + docs prepared; values in `infra/variables.tf` |

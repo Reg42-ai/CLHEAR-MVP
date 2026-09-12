@@ -1,6 +1,11 @@
 # CLHEAR — High-Level Design (HLD)
 ### Chief Architect's finalized build document · v1.0 · August 2026
 
+> **SUPERSEDED.** This v1.0 document (L0+L1 scope) is superseded by
+> [`CLHEAR_HLD_v2.md`](CLHEAR_HLD_v2.md) (11 September 2026). Where the two
+> disagree, v2 wins. Requirement-to-code traceability lives in
+> [`HLD_V2_TRACE.md`](HLD_V2_TRACE.md). Kept for history only.
+
 **Owner:** Avner Yoffe, Reg42 · **Builder:** Cursor, in `reg42-os` and `reg42-infra`
 **Build scope of this HLD:** Layer 0 (platform plane) + Layer 1 (verbatim source layer), production-grade, on the existing AWS environment. Layers 2–8 are context here and get their own HLDs later.
 **This document supersedes and consolidates** `CLHEAR_SYSTEM_ARCHITECTURE.md` and `CLHEAR_L1_BUILD_MANUAL.md` for build purposes. When in doubt, this file wins.
