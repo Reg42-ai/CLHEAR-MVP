@@ -757,6 +757,145 @@ def l2_extraction_quality(engine: Engine, source_key: str | None) -> tuple[dict,
     }, passed
 
 
+def _l2_binding_normative(conn) -> list[dict]:
+    """Normative clauses of in-force, open-rights, binding-or-guidance sources —
+    the L2 coverage denominator (HLD v2 §4.2: 'every normative clause of every
+    in-force source maps to at least one obligation')."""
+    from app.clhear.l1.models import clauses, source_versions, sources
+    from app.clhear.l2.extract import container_clause_ids
+
+    latest = (
+        sa.select(source_versions.c.source_id, sa.func.max(source_versions.c.id).label("vid"))
+        .where(source_versions.c.status == "in_force")
+        .group_by(source_versions.c.source_id)
+        .subquery()
+    )
+    rows = conn.execute(
+        sa.select(clauses.c.id, clauses.c.ref, clauses.c.source_version_id, sources.c.key.label("source_key"))
+        .join(latest, latest.c.vid == clauses.c.source_version_id)
+        .join(sources, sources.c.id == latest.c.source_id)
+        .where(clauses.c.normative.is_(True))
+        .where(clauses.c.public_ok.is_(True))
+    ).mappings().all()
+    containers: set[int] = set()
+    for vid in {r["source_version_id"] for r in rows}:
+        containers |= container_clause_ids(conn, vid)
+    return [dict(r) for r in rows if r["id"] not in containers]
+
+
+@register_suite("l2_coverage")
+def l2_coverage(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """>= 99 % of normative clauses in in-force sources are asserted by at least
+    one live obligation (via `asserts` or the obligation's clause_ref). An empty
+    corpus fails honestly: coverage of nothing is not coverage."""
+    from app.clhear.derived_models import asserts, obligations
+
+    with engine.connect() as conn:
+        normative = _l2_binding_normative(conn)
+        if source_key:
+            normative = [n for n in normative if n["source_key"] == source_key]
+        live = obligations.c.status.in_(("derived", "validated"))
+        asserted_ids = {
+            r[0]
+            for r in conn.execute(
+                sa.select(asserts.c.clause_id)
+                .join(obligations, obligations.c.id == asserts.c.obligation_id)
+                .where(live, asserts.c.valid_to.is_(None), asserts.c.clause_id.isnot(None))
+            )
+        }
+        asserted_refs = {
+            (r.source_key, r.clause_ref)
+            for r in conn.execute(sa.select(obligations.c.source_key, obligations.c.clause_ref).where(live))
+        }
+    covered = [n for n in normative if n["id"] in asserted_ids or (n["source_key"], n["ref"]) in asserted_refs]
+    missing = [f"{n['source_key']}#{n['ref']}" for n in normative if n not in covered]
+    total = len(normative)
+    coverage = len(covered) / total if total else 0.0
+    return {
+        "normative_clauses": total,
+        "covered": len(covered),
+        "coverage": round(coverage, 4),
+        "threshold": 0.99,
+        "missing": missing[:40],
+        "missing_count": len(missing),
+    }, total > 0 and coverage >= 0.99
+
+
+@register_suite("l2_precision")
+def l2_precision(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Second-model / expert review precision over live obligations at their
+    current text hash (l2.review). Gate >= 0.95; nothing reviewed => fail."""
+    from app.clhear.l2 import review as l2_review
+
+    stats = l2_review.precision(engine, current_only=True)
+    precision = stats.get("precision")
+    stats["threshold"] = 0.95
+    return stats, precision is not None and precision >= 0.95
+
+
+@register_suite("l2_dedupe")
+def l2_dedupe(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Unmerged near-duplicate rate across live obligations within one
+    jurisdiction (l2.dedupe) must stay below 1 %."""
+    from app.clhear.l2 import dedupe as l2_dedupe
+
+    stats = l2_dedupe.duplicate_rate(engine)
+    stats["threshold"] = 0.01
+    return stats, stats["canonical"] > 0 and stats["rate"] < 0.01
+
+
+L2_CHANGE_GOLDEN = Path(__file__).resolve().parents[3] / "clhear-evals" / "l2" / "change_events"
+
+
+def _l2_change_cases() -> list[dict]:
+    import json as _json
+
+    cases: list[dict] = []
+    for path in sorted(L2_CHANGE_GOLDEN.glob("*.json")):
+        data = _json.loads(path.read_text())
+        items = data if isinstance(data, list) else data.get("cases", [])
+        for item in items:
+            item.setdefault("file", path.name)
+            cases.append(item)
+    return cases
+
+
+@register_suite("l2_change_inference")
+def l2_change_inference(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Golden L1 clause changes (clhear-evals/l2/change_events) replayed through
+    l2.change.infer_clause_change: expected kind (added / updated / revoked /
+    none), materiality and effective-date handling. Gate >= 95 % correct."""
+    from app.clhear.l1.change_detect import extract_effective_dates
+    from app.clhear.l2.change import infer_clause_change
+
+    cases = _l2_change_cases()
+    correct = 0
+    failures: list[dict] = []
+    for case in cases:
+        got = infer_clause_change(case.get("old_text"), case.get("new_text"), case.get("ref", ""))
+        ok = got.kind == case["expected_kind"]
+        if ok and case.get("expected_materiality"):
+            ok = got.materiality == case["expected_materiality"]
+        if ok and "expected_effective_date" in case:
+            dates = extract_effective_dates(case.get("new_text") or "")
+            found = dates[0][0].isoformat() if dates else None
+            ok = found == case["expected_effective_date"]
+        if ok:
+            correct += 1
+        else:
+            failures.append({"id": case.get("id"), "file": case.get("file"), "expected": case["expected_kind"],
+                             "got": got.as_dict()})
+    total = len(cases)
+    accuracy = correct / total if total else 0.0
+    return {
+        "cases": total,
+        "correct": correct,
+        "accuracy": round(accuracy, 4),
+        "threshold": 0.95,
+        "failures": failures[:20],
+    }, total > 0 and accuracy >= 0.95
+
+
 @register_suite("l3_l5_referential")
 def l3_l5_referential(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     """Curated anchors must point at real registry sources, and any anchored

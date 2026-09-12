@@ -107,9 +107,11 @@ LAYER_CATALOG: dict[str, dict] = {
                 "guarantee": "Triage span must be a literal substring; concept members must be existing OBL: ids (closed-world) plus n-gram restricted guard",
                 "may": ["verdict + quoted span", "draft canonical statement"],
                 "must_not": ["invent obligation ids", "copy restricted 8-grams"],
-                "gates": ["l2_extraction_quality", "l2_basis_integrity", "l2_concept_integrity"],
+                "gates": ["l2_coverage", "l2_precision", "l2_dedupe", "l2_change_inference",
+                          "l2_extraction_quality", "l2_basis_integrity", "l2_concept_integrity"],
             },
             "gates": [
+                "Coverage >= 99% of normative clauses, second-model precision >= 95%, unmerged duplicates < 1%, change inference >= 95% (HLD v2 §4.2)",
                 "Re-derivation flag on any L1 change event touching a basis clause",
                 "Restricted sources contribute obligation refs only, never text",
                 "Consolidation auto-applies as AI-GENERATED; Eval Studio samples for audit coverage",

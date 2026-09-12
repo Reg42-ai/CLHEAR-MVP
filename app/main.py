@@ -38,10 +38,12 @@ def create_app() -> FastAPI:
         from app.clhear.layer_routes import router as layers_router
         from app.clhear.routes import router
         from app.clhear.v1.l1 import router as v1_l1_router
+        from app.clhear.v1.l2 import router as v1_l2_router
 
         app.include_router(router)
         app.include_router(l1_router)
         app.include_router(v1_l1_router)
+        app.include_router(v1_l2_router)
         app.include_router(app_api_router)
         app.include_router(auth_router)
         app.include_router(community_router)
