@@ -474,6 +474,55 @@ blueprints = sa.Table(
     sa.Column("result", Json, nullable=False, default=dict),
     sa.Column("engine_version", sa.Text, nullable=False, default=""),
     sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    # HLD v2 §4.6: public stable id, the L4 profile it was composed for, the
+    # fingerprint of (attributes, activities), the full composition and whether
+    # a later composition for the same profile superseded it (never deleted).
+    sa.Column("stable_id", sa.Text, nullable=True, index=True),  # BLU-000001
+    sa.Column("profile_id", sa.Text, nullable=True, index=True),  # PRF-000001 when composed for a stored profile
+    sa.Column("fingerprint", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("composition", Json, nullable=True),
+    sa.Column("status", sa.Text, nullable=False, default="current", server_default="current"),  # current | superseded
+    schema=L6_SCHEMA,
+)
+
+# blueprint_items: one block instance in one blueprint — characteristics
+# resolved for that profile, the obligations it satisfies there, the
+# compliance activities that operate it, and whether it is load-bearing.
+blueprint_items = sa.Table(
+    "blueprint_items",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # ITM-000001
+    sa.Column("blueprint_id", sa.Text, nullable=False, index=True),  # BLU-
+    sa.Column("block_id", sa.Text, nullable=False, index=True),
+    sa.Column("kind", sa.Text, nullable=False, default=""),
+    sa.Column("name", sa.Text, nullable=False, default=""),
+    sa.Column(
+        "basis",
+        sa.Text,
+        sa.CheckConstraint("basis in ('required','selected')", name="blueprint_items_basis_check"),
+        nullable=False,
+        default="selected",
+    ),
+    sa.Column("characteristics", Json, nullable=False, default=list),
+    sa.Column("obligations_satisfied", Json, nullable=False, default=list),
+    sa.Column("activities_operated", Json, nullable=False, default=list),
+    sa.Column("load_bearing_for", Json, nullable=False, default=list),
+    sa.Column("explanation", sa.Text, nullable=False, default=""),
+    schema=L6_SCHEMA,
+)
+
+# minimality_proofs: per item — the obligations only it satisfies in the
+# program, and the removal impact (what becomes a gap without it).
+minimality_proofs = sa.Table(
+    "minimality_proofs",
+    metadata,
+    sa.Column("id", BigId, primary_key=True, autoincrement=True),
+    sa.Column("blueprint_id", sa.Text, nullable=False, index=True),
+    sa.Column("item_id", sa.Text, nullable=False, index=True),
+    sa.Column("block_id", sa.Text, nullable=False, default=""),
+    sa.Column("load_bearing_for", Json, nullable=False, default=list),
+    sa.Column("removal_impact", Json, nullable=False, default=dict),
+    sa.Column("redundant", sa.Boolean, nullable=False, default=False),
     schema=L6_SCHEMA,
 )
 
@@ -528,6 +577,7 @@ DERIVED_TABLES = (
     requires, characteristics,
     licences, products_services, client_types, channels, profiles, permits, applies_to, validity_rules,
     implies, operates, mitigates,
+    blueprint_items, minimality_proofs,
 )
 
 from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402
