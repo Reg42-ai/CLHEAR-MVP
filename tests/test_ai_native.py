@@ -165,10 +165,16 @@ def test_l4_discards_anchors_not_in_force(engine):
 
 
 def test_l5_rejects_unknown_when_attribute(engine):
+    """Closed-world mapper: a router answer may only pick an activity and quote
+    the obligation; the trigger's ``when`` is derived from L4 predicates, so an
+    invented attribute never reaches the store and an unquoted answer is
+    discarded."""
     _seed_corpus(engine)
     run_extraction(engine)
     from app.clhear import curated
+    from app.clhear.derived_models import activities as activities_t
     from app.clhear.l1.models import clauses, source_versions
+    from app.clhear.l5.map import _json, llm_refine
 
     curated.seed(engine)
     with engine.begin() as conn:
@@ -176,20 +182,27 @@ def test_l5_rejects_unknown_when_attribute(engine):
         conn.execute(
             clauses.insert().values(
                 source_version_id=vid, ref="regulation-77", path="part/regulation-77", ordering=77,
-                text="A relevant person must file a unique unmapped report within ten days.",
+                text="A relevant person must undertake a unique unmapped duty within ten days.",
                 text_hash="h77", public_ok=True,
             )
         )
     run_extraction(engine)
-    canned = json.dumps({
-        "activity_name": "Invented when",
-        "description": "x",
-        "when": {"not_a_real_attribute": "UK"},
-    })
-    llm, _ = _llm(engine, canned)
-    out = map_activities(engine, llm)
-    assert out["rejected"] >= 1
-    assert out["written"] == 0
+    with engine.connect() as conn:
+        ob = dict(conn.execute(sa.select(obligations).where(obligations.c.clause_ref == "regulation-77")).mappings().one())
+    # no verbatim quote -> discarded, whatever else the answer contains
+    llm, _ = _llm(engine, json.dumps({"activity_id": "ACT-KEEP-RECORDS", "when": {"not_a_real_attribute": "UK"}}))
+    assert llm_refine(engine, llm, ob)["outcome"] in ("discarded", "error")
+    # a grounded answer is accepted, but its invented ``when`` is ignored (L4-derived only)
+    llm, _ = _llm(engine, json.dumps({"activity_id": "ACT-KEEP-RECORDS", "quote": "unique unmapped duty",
+                                      "when": {"not_a_real_attribute": "UK"}}))
+    assert llm_refine(engine, llm, ob)["outcome"] == "mapped"
+    with engine.connect() as conn:
+        triggers = [t for row in conn.execute(sa.select(activities_t.c.triggers)) for t in _json(row[0], [])]
+    mine = [t for t in triggers if t["anchor"]["refs"] == ["regulation-77"]]
+    assert mine and all("not_a_real_attribute" not in (t.get("when") or {}) for t in triggers)
+    # the nightly mapper reports router discards as rejections and never writes an unquoted answer
+    out = map_activities(engine, _llm(engine, json.dumps({"activity_id": "ACT-KEEP-RECORDS"}))[0])
+    assert out["rejected"] == len(out["llm"])
 
 
 def test_l6_citation_check():

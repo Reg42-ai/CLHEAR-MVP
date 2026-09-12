@@ -51,9 +51,9 @@ def test_l1_resources_and_reserved_layers(client, engine):
     assert derived_l4.status_code == 200
     assert derived_l4.json()["layer_status"] == "derived"  # HLD v2 §4.4: register-backed ontology + validated profiles
 
-    curated_resp = client.get("/v1/releases/clhear-v20260826/l5/activities", headers=AUTH)
-    assert curated_resp.status_code == 200
-    assert curated_resp.json()["layer_status"] == "curated"
+    derived_l5 = client.get("/v1/releases/clhear-v20260826/l5/activities", headers=AUTH)
+    assert derived_l5.status_code == 200
+    assert derived_l5.json()["layer_status"] == "derived"  # HLD v2 §4.5: junction derived from L2-L4
 
     # Wrong resource name for the layer still feature-detects as not_published.
     wrong = client.get("/v1/releases/clhear-v20260826/l2/profiles", headers=AUTH)
