@@ -25,7 +25,7 @@ LAYER_GATES: dict[str, tuple[str, ...]] = {
     "L0": ("l0_smoke",),
     "L1": ("e1_fidelity", "e2_completeness", "e5_provenance", "e7_closure", "l1_family_completeness", "l1_currency", "l1_boundary_f1"),
     "L2": ("l2_coverage", "l2_precision", "l2_dedupe", "l2_change_inference", "l2_basis_integrity"),
-    "L3": ("l3_completeness", "l3_characteristics", "l3_reuse", "l3_l5_referential"),
+    "L3": ("l3_completeness", "l3_characteristics", "l3_reuse", "l3_precision", "l3_l5_referential"),
     "L4": ("l4_validity", "l4_applicability", "l4_grounding"),
     "L5": ("l5_completeness", "l3_l5_referential"),
     "L6": ("l6_completeness", "l6_minimality", "l6_reference", "l6_citation"),

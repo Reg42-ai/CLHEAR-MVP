@@ -127,29 +127,33 @@ LAYER_CATALOG: dict[str, dict] = {
         "name": "Building blocks",
         "schema": "l3_building_blocks",
         "published": False,
-        "status": "curated",
-        "purpose": "Reusable compliance capabilities (a CDD programme, a breach-response "
-        "process, an access-control regime) that satisfy sets of L2 obligations.",
+        "status": "derived",
+        "purpose": "What an organisation must have — the eight kinds of building block "
+        "(System, Document, Role, Configuration, Process, Workflow, Asset, Body) that "
+        "L2 obligations require, each with a fixed characteristic schema.",
         "derivation": {
             "inputs": ["L2"],
-            "method": "Blocks are composed by clustering L2 obligations that share a "
-            "control surface: same operational capability, same evidence artifacts. "
-            "Each block declares exactly which obligations it satisfies and what "
-            "implementing it requires; the mapping is many-to-many and every edge "
-            "is inspectable down to the underlying clauses.",
+            "method": "Every live obligation is decomposed into the block(s) it requires: "
+            "curated anchors first, then a deterministic reading of the duty sentence "
+            "(kind cue + harmonised noun phrase) that reuses an existing canonical block "
+            "of the same kind when the name matches. Each obligation -> block link is a "
+            "'requires' edge carrying its rationale span and why-trail; characteristics "
+            "are filled only from backing obligation text (or marked 'not specified by "
+            "source'); near-duplicate blocks are harmonised into one canonical block.",
             "generation": {
-                "nature": "genuine design synthesis — the one legitimately creative layer",
-                "technique": "Clustered generation grounded at the edges",
-                "guarantee": "Every satisfies anchor resolves to a live obligation; near-duplicates merged; free-form fields labeled AI-designed",
-                "may": ["design deliverables and evidence artifacts (labeled)"],
-                "must_not": ["cite obligations that do not exist"],
-                "gates": ["l3_l5_referential", "dedupe", "Eval Studio sampling"],
+                "nature": "deterministic decomposition; LLM confined to gap-filling characteristics under a grounding contract",
+                "technique": "Duty-sentence kind cues + name harmonisation; characteristic regexes; grounded LLM fill",
+                "guarantee": "Every requires edge cites a live obligation and a rationale span; every characteristic value is backed by a span or explicitly not specified; merges keep the dropped block invalidated, never deleted",
+                "may": ["propose block names and purposes from the duty sentence", "fill a characteristic from a literal span"],
+                "must_not": ["cite obligations that do not exist", "invent a characteristic value"],
+                "gates": ["l3_completeness", "l3_characteristics", "l3_reuse", "l3_precision", "l3_l5_referential"],
             },
             "gates": [
-                "A block loses its 'satisfies' edge automatically if a mapped obligation is re-derived",
-                "Ungrounded satisfies are rejected before write",
+                "100% of live obligations link to >= 1 block; characteristic completeness >= 95%; expert precision >= 92%; reuse ratio published with an explosion check (HLD v2 §4.3)",
+                "L2 'revoked' invalidates the obligation's requires edges; 'updated' re-stamps them and reopens characteristics it backed",
+                "Ungrounded requires edges and characteristic values are rejected before write",
             ],
-            "evidence": ["obligation mapping per block, each traceable to L1 clauses"],
+            "evidence": ["requires edges with rationale spans per block, each traceable to L2 -> L1", "characteristic backing spans"],
         },
     },
     "L4": {

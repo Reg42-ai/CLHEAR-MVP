@@ -896,6 +896,49 @@ def l2_change_inference(engine: Engine, source_key: str | None) -> tuple[dict, b
     }, total > 0 and accuracy >= 0.95
 
 
+@register_suite("l3_completeness")
+def l3_completeness(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Every in-force obligation -> >= 1 live requires edge to a block (100 %).
+    An empty registry fails honestly."""
+    from app.clhear.l3.decompose import completeness
+
+    stats = completeness(engine)
+    stats["threshold"] = 1.0
+    return stats, stats["obligations"] > 0 and stats["missing_count"] == 0
+
+
+@register_suite("l3_characteristics")
+def l3_characteristics(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """>= 95 % of required characteristics (over canonical blocks) filled with
+    a backing span or an explicit 'not specified by source'."""
+    from app.clhear.l3.characterize import completeness
+
+    stats = completeness(engine)
+    stats["threshold"] = 0.95
+    return stats, stats["required"] > 0 and stats["rate"] >= 0.95
+
+
+@register_suite("l3_reuse")
+def l3_reuse(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Block reuse ratio is published; the gate fails on block explosion
+    (more machine-derived canonical blocks than obligations they serve)."""
+    from app.clhear.l3.harmonize import reuse_ratio
+
+    stats = reuse_ratio(engine)
+    return stats, stats["live_edges"] > 0 and not stats["explosion"]
+
+
+@register_suite("l3_precision")
+def l3_precision(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Expert sample precision >= 92 % from Eval Studio votes on L3 items
+    (blocks, requires, characteristics). No votes => fail."""
+    from app.clhear.eval_studio import agreement_scores
+
+    layer = agreement_scores(engine)["by_layer"].get("L3", {"n": 0, "agree": 0, "score": None})
+    stats = {"votes": layer["n"], "agree": layer["agree"], "precision": layer.get("score"), "threshold": 0.92}
+    return stats, layer["n"] > 0 and (layer.get("score") or 0.0) >= 0.92
+
+
 @register_suite("l3_l5_referential")
 def l3_l5_referential(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     """Curated anchors must point at real registry sources, and any anchored
