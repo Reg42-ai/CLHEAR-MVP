@@ -1118,6 +1118,130 @@ def l4_grounding(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     }, passed
 
 
+L4_GOLDEN = Path(__file__).resolve().parents[3] / "clhear-evals" / "l4"
+
+
+def _l4_cases(folder: str, key: str = "cases") -> list[dict]:
+    cases: list[dict] = []
+    for path in sorted((L4_GOLDEN / folder).glob("*.json")):
+        data = json.loads(path.read_text())
+        for item in data.get(key, []) if isinstance(data, dict) else data:
+            item.setdefault("file", path.name)
+            cases.append(item)
+    return cases
+
+
+@register_suite("l4_validity")
+def l4_validity(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Golden profiles (clhear-evals/l4/profiles): every real permutation
+    validates, every listed impossible permutation is rejected with the
+    expected error code, and each licence the golden set names carries register
+    provenance. Accuracy >= 99 % (HLD v2 §4.4 profile validity)."""
+    from app.clhear.l4.validate import Ontology, validate_with
+
+    with engine.connect() as conn:
+        onto = Ontology(conn)
+    cases = _l4_cases("profiles")
+    checks = correct = 0
+    failures: list[dict] = []
+    licences_named: set[str] = set()
+    for case in cases:
+        res = validate_with(onto, case["attributes"])
+        checks += 1
+        ok = res["valid"] == case["expected_valid"]
+        if ok and not case["expected_valid"] and case.get("expect_code"):
+            ok = any(e["code"] == case["expect_code"] for e in res["errors"])
+        if ok and case.get("expected_warning"):
+            ok = any(w.get("rule_id") == case["expected_warning"] for w in res["warnings"])
+        if ok:
+            correct += 1
+        else:
+            failures.append({"id": case["id"], "expected_valid": case["expected_valid"], "errors": [e["code"] for e in res["errors"]]})
+        if case["expected_valid"]:
+            licences_named |= set(case["attributes"].get("authorisations") or [])
+        for perm in case.get("invalid_permutations", []):
+            checks += 1
+            mutated = {**case["attributes"], **perm["set"]}
+            r2 = validate_with(onto, mutated)
+            good = not r2["valid"] and (not perm.get("expect_code") or any(e["code"] == perm["expect_code"] for e in r2["errors"]))
+            if good:
+                correct += 1
+            else:
+                failures.append({"id": case["id"], "permutation": perm["set"], "valid": r2["valid"], "errors": [e["code"] for e in r2["errors"]]})
+    provenance_missing = sorted(
+        name for name in licences_named
+        if (row := onto.licences.resolve(name)) is None or not (row.get("register") and row.get("register_url"))
+    )
+    accuracy = correct / checks if checks else 0.0
+    stats = {
+        "cases": len(cases), "checks": checks, "correct": correct, "accuracy": round(accuracy, 4), "threshold": 0.99,
+        "licences_named": len(licences_named), "provenance_missing": provenance_missing,
+        "ontology_version": onto.version, "ontology_empty": onto.empty(), "failures": failures[:20],
+    }
+    return stats, checks > 0 and not onto.empty() and accuracy >= 0.99 and not provenance_missing
+
+
+def _pkey(predicate: dict) -> str:
+    return json.dumps(predicate, sort_keys=True)
+
+
+@register_suite("l4_applicability")
+def l4_applicability(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Golden obligations -> applies_to predicates (clhear-evals/l4/applicability):
+    precision and recall over predicates >= 0.95. Profile-level expectations
+    (must include / exclude source keys) are checked when those obligations are
+    in the store. Every stored edge must also point at a live obligation and use
+    only schema attributes (referential integrity)."""
+    from app.clhear.derived_models import applies_to as applies_to_t
+    from app.clhear.derived_models import obligations as obligations_t
+    from app.clhear.l4 import predicates as l4_predicates
+
+    with engine.connect() as conn:
+        onto = l4_predicates._Onto(conn)
+        schema_keys = l4_predicates.schema_keys(conn)
+        live_ids = {r[0] for r in conn.execute(sa.select(obligations_t.c.id).where(obligations_t.c.status.in_(("derived", "validated"))))}
+        edges = [dict(r) for r in conn.execute(sa.select(applies_to_t).where(applies_to_t.c.valid_to.is_(None))).mappings()]
+    tp = fp = fn = 0
+    failures: list[dict] = []
+    cases = _l4_cases("applicability")
+    for case in cases:
+        ob = {"id": case["id"], "text_hash": "", "title": "", **case["obligation"]}
+        got = {_pkey(e["predicate"]) for e in l4_predicates.deterministic_predicates(ob, onto)}
+        want = {_pkey(p) for p in case["expected_predicates"]}
+        tp += len(got & want)
+        fp += len(got - want)
+        fn += len(want - got)
+        if got != want:
+            failures.append({"id": case["id"], "missing": sorted(want - got), "extra": sorted(got - want)})
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+
+    profile_checks: list[dict] = []
+    for exp in _l4_cases("applicability", key="expected_obligations"):
+        with engine.connect() as conn:
+            present = {r[0] for r in conn.execute(sa.select(obligations_t.c.source_key).where(
+                obligations_t.c.source_key.in_(exp.get("must_include_sources", []) + exp.get("must_exclude_sources", []))))}
+            if not present:
+                profile_checks.append({"id": exp["id"], "skipped": "sources not in store"})
+                continue
+            items = l4_predicates.obligations_for_attributes(conn, exp["attributes"])
+        got_sources = {i["source_key"] for i in items}
+        ok = all(s in got_sources for s in exp.get("must_include_sources", []) if s in present) and \
+            not any(s in got_sources for s in exp.get("must_exclude_sources", []))
+        profile_checks.append({"id": exp["id"], "passed": ok, "sources": sorted(got_sources)[:20]})
+
+    dangling = [e["id"] for e in edges if e["obligation_id"] not in live_ids]
+    bad_keys = [e["id"] for e in edges if any(k not in schema_keys for k in (e["predicate"] or {}))]
+    stats = {
+        "cases": len(cases), "tp": tp, "fp": fp, "fn": fn, "precision": round(precision, 4), "recall": round(recall, 4),
+        "threshold": 0.95, "edges": len(edges), "dangling_edges": dangling[:20], "non_schema_edges": bad_keys[:20],
+        "profile_checks": profile_checks, "failures": failures[:20],
+    }
+    passed = (len(cases) > 0 and precision >= 0.95 and recall >= 0.95 and not dangling and not bad_keys
+              and all(c.get("passed", True) for c in profile_checks))
+    return stats, passed
+
+
 @register_suite("l6_citation")
 def l6_citation(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     """Blueprints that carry a rationale must cite only ids in that blueprint."""

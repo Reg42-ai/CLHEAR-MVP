@@ -1,0 +1,222 @@
+{
+  "suite": "l4_validity",
+  "description": "Golden L4 profiles (HLD v2 §4.4). Each case is an attribute set the validator must judge: expected_valid says whether it is a real, register-consistent permutation; invalid_permutations lists single-attribute mutations that must each be rejected (with the error code expected). Provenance: every authorisation named here is a row of curated/l4_ontology.json, which cites the register it was read from (FCA Financial Services Register / RAO, ESMA and EBA registers under MiFID II / MiCA / PSD2 / EMD2, SEC BrokerCheck / IAPD, FinCEN MSB registry).",
+  "cases": [
+    {
+      "id": "uk-emi-sample",
+      "attributes": {
+        "jurisdictions": ["UK"],
+        "authorisations": ["E-money institution (Electronic Money Regulations 2011)"],
+        "products": ["e-money issuance", "payment accounts", "card programmes"],
+        "customer_base": ["retail", "SME"],
+        "channels": ["online and mobile app"],
+        "data_footprint": "large-scale personal data",
+        "crypto_services": false,
+        "financial_entity_dora": false
+      },
+      "expected_valid": true,
+      "register": "fca_register",
+      "invalid_permutations": [
+        {"set": {"products": ["e-money issuance", "custody of client assets"]}, "expect_code": "product_not_permitted"},
+        {"set": {"jurisdictions": ["EU"]}, "expect_code": "authorisation_jurisdiction"},
+        {"set": {"authorisations": ["Cryptoasset business registration (MLRs 2017)"]}, "expect_code": "product_not_permitted"},
+        {"set": {"crypto_services": true}, "expect_code": "validity_rule"}
+      ]
+    },
+    {
+      "id": "eu-casp-sample",
+      "attributes": {
+        "jurisdictions": ["EU"],
+        "authorisations": ["CASP (MiCA)"],
+        "products": ["crypto custody", "crypto exchange"],
+        "customer_base": ["retail", "professional"],
+        "data_footprint": "large-scale personal data",
+        "crypto_services": true,
+        "financial_entity_dora": true
+      },
+      "expected_valid": true,
+      "register": "esma_registers",
+      "invalid_permutations": [
+        {"set": {"crypto_services": false}, "expect_code": "validity_rule"},
+        {"set": {"financial_entity_dora": false}, "expect_code": "validity_rule"},
+        {"set": {"products": ["crypto custody", "equities brokerage"]}, "expect_code": "product_not_permitted"}
+      ]
+    },
+    {
+      "id": "uk-full-service-broker",
+      "attributes": {
+        "jurisdictions": ["UK"],
+        "authorisations": [
+          "UK MiFID investment firm (Part 4A permission)",
+          "Dealing in investments as agent",
+          "Dealing in investments as principal",
+          "Safeguarding and administering investments (custody)",
+          "Client money permission (CASS)"
+        ],
+        "products": ["equities brokerage", "CFDs and leveraged derivatives", "custody of client assets", "client money holding"],
+        "customer_base": ["retail", "professional"],
+        "channels": ["online and mobile app", "telephone"],
+        "data_footprint": "large-scale personal data",
+        "crypto_services": false,
+        "financial_entity_dora": false
+      },
+      "expected_valid": true,
+      "register": "fca_register",
+      "invalid_permutations": [
+        {"set": {"authorisations": ["Dealing in investments as agent", "Client money permission (CASS)", "Safeguarding and administering investments (custody)", "Dealing in investments as principal"]}, "expect_code": "validity_rule"},
+        {"set": {"authorisations": ["UK MiFID investment firm (Part 4A permission)", "Dealing in investments as agent", "Dealing in investments as principal", "Safeguarding and administering investments (custody)"]}, "expect_code": "product_not_permitted"},
+        {"set": {"products": ["equities brokerage", "CFDs and leveraged derivatives", "custody of client assets", "client money holding", "e-money issuance"]}, "expect_code": "product_not_permitted"}
+      ]
+    },
+    {
+      "id": "uk-agency-only-broker",
+      "attributes": {
+        "jurisdictions": ["UK"],
+        "authorisations": ["UK MiFID investment firm (Part 4A permission)", "Dealing in investments as agent"],
+        "products": ["equities brokerage"],
+        "customer_base": ["retail"],
+        "channels": ["online and mobile app"]
+      },
+      "expected_valid": true,
+      "register": "fca_register",
+      "invalid_permutations": [
+        {"set": {"products": ["equities brokerage", "CFDs and leveraged derivatives"]}, "expect_code": "product_not_permitted"},
+        {"set": {"products": ["equities brokerage", "client money holding"]}, "expect_code": "product_not_permitted"}
+      ]
+    },
+    {
+      "id": "eu-mifid-execution-broker",
+      "attributes": {
+        "jurisdictions": ["EU"],
+        "authorisations": ["MiFID II investment firm authorisation", "MiFID II A(1) Reception and transmission of orders", "MiFID II A(2) Execution of orders on behalf of clients"],
+        "products": ["equities brokerage"],
+        "customer_base": ["retail", "professional", "eligible counterparty"],
+        "channels": ["online and mobile app", "introducing brokers and intermediaries"],
+        "data_footprint": "large-scale personal data",
+        "crypto_services": false,
+        "financial_entity_dora": true
+      },
+      "expected_valid": true,
+      "register": "esma_registers",
+      "invalid_permutations": [
+        {"set": {"financial_entity_dora": false}, "expect_code": "validity_rule"},
+        {"set": {"authorisations": ["MiFID II A(1) Reception and transmission of orders", "MiFID II A(2) Execution of orders on behalf of clients"]}, "expect_code": "validity_rule"},
+        {"set": {"products": ["equities brokerage", "portfolio management"]}, "expect_code": "product_not_permitted"},
+        {"set": {"jurisdictions": ["US"]}, "expect_code": "authorisation_jurisdiction"}
+      ]
+    },
+    {
+      "id": "eu-retail-cfd-provider-warning",
+      "attributes": {
+        "jurisdictions": ["EU"],
+        "authorisations": ["MiFID II investment firm authorisation", "MiFID II A(3) Dealing on own account"],
+        "products": ["CFDs and leveraged derivatives"],
+        "customer_base": ["retail"],
+        "channels": ["online and mobile app"],
+        "financial_entity_dora": true
+      },
+      "expected_valid": true,
+      "expected_warning": "VR:eu-retail-cfds-intervention",
+      "register": "esma_registers",
+      "invalid_permutations": [
+        {"set": {"products": ["CFDs and leveraged derivatives", "custody of client assets"]}, "expect_code": "product_not_permitted"}
+      ]
+    },
+    {
+      "id": "us-introducing-broker-dealer",
+      "attributes": {
+        "jurisdictions": ["US"],
+        "authorisations": ["SEC-registered broker-dealer (Exchange Act s.15(b))", "FINRA member firm"],
+        "products": ["equities brokerage", "listed options and futures"],
+        "customer_base": ["retail", "accredited investor"],
+        "channels": ["online and mobile app", "telephone"],
+        "data_footprint": "large-scale personal data"
+      },
+      "expected_valid": true,
+      "register": "sec_finra",
+      "invalid_permutations": [
+        {"set": {"authorisations": ["SEC-registered broker-dealer (Exchange Act s.15(b))"]}, "expect_code": "validity_rule"},
+        {"set": {"products": ["equities brokerage", "custody of client assets"]}, "expect_code": "product_not_permitted"},
+        {"set": {"products": ["equities brokerage", "crypto exchange"]}, "expect_code": "product_not_permitted"}
+      ]
+    },
+    {
+      "id": "us-carrying-broker-dealer",
+      "attributes": {
+        "jurisdictions": ["US"],
+        "authorisations": ["SEC-registered broker-dealer (Exchange Act s.15(b))", "FINRA member firm", "Carrying / clearing broker-dealer (Rule 15c3-3)"],
+        "products": ["equities brokerage", "custody of client assets", "client money holding", "margin lending"],
+        "customer_base": ["retail", "institutional"],
+        "channels": ["API and white-label"]
+      },
+      "expected_valid": true,
+      "register": "sec_finra",
+      "invalid_permutations": [
+        {"set": {"authorisations": ["SEC-registered broker-dealer (Exchange Act s.15(b))", "FINRA member firm"]}, "expect_code": "product_not_permitted"}
+      ]
+    },
+    {
+      "id": "us-crypto-msb",
+      "attributes": {
+        "jurisdictions": ["US"],
+        "authorisations": ["FinCEN-registered money services business", "State money transmitter licence(s)"],
+        "products": ["crypto exchange", "crypto brokerage"],
+        "customer_base": ["retail"],
+        "channels": ["online and mobile app"],
+        "crypto_services": true
+      },
+      "expected_valid": true,
+      "register": "fincen_msb",
+      "invalid_permutations": [
+        {"set": {"crypto_services": false}, "expect_code": "validity_rule"},
+        {"set": {"products": ["crypto exchange", "equities brokerage"]}, "expect_code": "product_not_permitted"}
+      ]
+    },
+    {
+      "id": "unknown-authorisation-invented",
+      "note": "An authorisation that exists in no register must be rejected, however plausible it sounds (closed world, no invented permissions).",
+      "attributes": {
+        "jurisdictions": ["UK"],
+        "authorisations": ["Universal financial services licence"],
+        "products": ["equities brokerage"]
+      },
+      "expected_valid": false,
+      "expect_code": "unknown_value"
+    },
+    {
+      "id": "unknown-jurisdiction",
+      "attributes": {"jurisdictions": ["Atlantis"], "products": ["equities brokerage"]},
+      "expected_valid": false,
+      "expect_code": "unknown_value"
+    },
+    {
+      "id": "unknown-attribute",
+      "attributes": {"jurisdictions": ["UK"], "headcount": 400},
+      "expected_valid": false,
+      "expect_code": "unknown_attribute"
+    },
+    {
+      "id": "wrong-type",
+      "attributes": {"jurisdictions": "UK"},
+      "expected_valid": false,
+      "expect_code": "type"
+    },
+    {
+      "id": "cross-border-uk-eu-emi",
+      "note": "A group holding both a UK and an EU e-money authorisation and serving both markets is a real permutation.",
+      "attributes": {
+        "jurisdictions": ["UK", "EU"],
+        "authorisations": ["E-money institution (Electronic Money Regulations 2011)", "E-money institution (EMD2)"],
+        "products": ["e-money issuance", "payment accounts"],
+        "customer_base": ["retail"],
+        "channels": ["online and mobile app"],
+        "financial_entity_dora": true
+      },
+      "expected_valid": true,
+      "register": "fca_register",
+      "invalid_permutations": [
+        {"set": {"jurisdictions": ["UK"]}, "expect_code": "authorisation_jurisdiction"}
+      ]
+    }
+  ]
+}
