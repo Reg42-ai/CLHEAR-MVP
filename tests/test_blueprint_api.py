@@ -33,7 +33,7 @@ def test_blueprint_tailored_to_profile(client, engine):
     bp = resp.json()
     assert bp["obligations_triggered"] == 2
     assert bp["release"] == "clhear-v20260830"
-    assert bp["engine_version"] == "composer-v1"
+    assert bp["engine_version"] == "composer-v2"
     assert bp["coverage_summary"]["total"] == 2
     assert bp["layer_status"]["L2"] == "derived"
     # Legal block travels with the blueprint, attribution per involved source.
