@@ -42,6 +42,7 @@ def create_app() -> FastAPI:
         from app.clhear.v1.l3 import router as v1_l3_router
         from app.clhear.v1.l4 import router as v1_l4_router
         from app.clhear.v1.l5 import router as v1_l5_router
+        from app.clhear.v1.l6 import router as v1_l6_router
 
         app.include_router(router)
         app.include_router(l1_router)
@@ -50,6 +51,7 @@ def create_app() -> FastAPI:
         app.include_router(v1_l3_router)
         app.include_router(v1_l4_router)
         app.include_router(v1_l5_router)
+        app.include_router(v1_l6_router)
         app.include_router(app_api_router)
         app.include_router(auth_router)
         app.include_router(community_router)

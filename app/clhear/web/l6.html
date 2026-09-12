@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · L6 Blueprint</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* L6 browser (HLD v2 §4.6): the blueprint view — program tree by kind, each item
+     with "why" (obligations -> registry), "what changed since", compare with another
+     profile, OSCAL export; blueprint list; scorecard. */
+  main { position: relative; z-index: 1; max-width: 1500px; margin: 22px auto; padding: 0 20px 70px; }
+  .layout { display: grid; grid-template-columns: 320px 1fr; gap: 18px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .side { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 16px; align-self: start; position: sticky; top: 74px; }
+  .side h4, .panelx h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .side h4:first-child { margin-top: 0; }
+  input, select { border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); box-sizing: border-box; }
+  .side input, .side select { width: 100%; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-color: var(--edge-bright); background: var(--panel-strong); }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .name { color: var(--accent); font-weight: 600; cursor: pointer; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; border: 1px solid transparent; }
+  .badge.kind { background: var(--ind-800); color: var(--ind-100); border-color: var(--edge); }
+  .badge.b-required { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .badge.b-selected { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.st-current, .badge.st-covered { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.st-superseded { background: var(--panel-strong); color: var(--muted); border-color: var(--edge); }
+  .badge.st-gap { background: rgba(251,113,133,0.14); color: var(--bad); }
+  .badge.lb { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .panelx { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+  .panelx h2 { margin: 0 0 6px; font-size: 17px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .tree .kind { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .item { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; font-size: 13.5px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+  .item:hover, .item.hi { border-color: var(--edge-bright); box-shadow: 0 0 0 3px rgba(129,140,248,0.16); }
+  .item .t { font-weight: 600; }
+  .item .d { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .item .o { font-size: 11.5px; color: var(--faint); margin-top: 4px; font-family: var(--mono); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .score .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
+  .score .kpi b { display: block; font-size: 20px; }
+  .score .kpi span { font-size: 11.5px; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .crumbs a { cursor: pointer; }
+  .spin { color: var(--muted); padding: 30px; text-align: center; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .timeline { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 2px solid var(--edge); }
+  .timeline li { position: relative; margin: 0 0 14px; font-size: 13.5px; }
+  .timeline li::before { content: ""; position: absolute; left: -24px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .timeline .when { font-size: 12px; color: var(--muted); }
+  .why { font-size: 13px; } .why code { font-family: var(--mono); font-size: 12px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .card { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 12px; padding: 12px 14px; }
+  .card h5 { margin: 0 0 4px; font-size: 14px; }
+  .card p { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); }
+  textarea { width: 100%; min-height: 110px; border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 12px; background: var(--panel-strong); color: var(--ink); box-sizing: border-box; }
+  .explain { font-size: 13.5px; line-height: 1.5; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
+  .diff .add { color: var(--ok); } .diff .rem { color: var(--bad); } .diff .chg { color: var(--warn); }
+  pre.export { max-height: 420px; overflow: auto; font-size: 11.5px; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect, useMemo } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = (p, opts = {}) =>
+  fetch(p, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers || {}) } }).then(async (r) => {
+    if (!r.ok) { const t = await r.text(); let d = t; try { d = JSON.parse(t).detail; } catch (e) {} throw new Error(typeof d === "string" ? d : (d && d.message) || r.statusText); }
+    return r.json();
+  });
+const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(body) });
+const fmt = (d) => (d ? String(d).slice(0, 10) : "—");
+const pct = (v) => (v == null ? "—" : `${Math.round(v * 1000) / 10}%`);
+const show = (v) => (Array.isArray(v) ? v.join(", ") : v === true ? "yes" : v === false ? "no" : v == null || v === "" ? "—" : String(v));
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const Kind = ({ k }) => html`<span class="badge kind">${k}</span>`;
+const Basis = ({ b }) => html`<span class=${"badge b-" + b}>${b}</span>`;
+const Status = ({ s }) => html`<span class=${"badge st-" + s}>${s}</span>`;
+
+const SAMPLES = [
+  { label: "UK e-money institution", attrs: { jurisdictions: ["UK"], authorisations: ["E-money institution (Electronic Money Regulations 2011)"], products: ["e-money issuance", "payment accounts", "card programmes"], customer_base: ["retail", "SME"], data_footprint: "large-scale personal data" } },
+  { label: "EU crypto-asset service provider", attrs: { jurisdictions: ["EU"], authorisations: ["CASP (MiCA)"], products: ["crypto custody", "crypto exchange"], customer_base: ["retail", "professional"], data_footprint: "large-scale personal data", crypto_services: true, financial_entity_dora: true } },
+  { label: "UK retail broker", attrs: { jurisdictions: ["UK"], authorisations: ["UK MiFID investment firm (Part 4A permission)", "Client money permission (CASS)"], products: ["equities brokerage", "client money holding"], customer_base: ["retail"] } },
+];
+
+// ------------------------------------------------------------------ blueprint view
+
+function Blueprint({ openItem }) {
+  const [profiles, setProfiles] = useState([]);
+  const [pick, setPick] = useState("");
+  const [text, setText] = useState(JSON.stringify(SAMPLES[0].attrs, null, 2));
+  const [bp, setBp] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [focus, setFocus] = useState(null);
+  const [since, setSince] = useState(null);
+  const [exp, setExp] = useState(null);
+  useEffect(() => { api("/l4/profiles?limit=100").then((r) => setProfiles(r.items || [])).catch(() => {}); }, []);
+  const load = (p) => { setErr(""); setBp(null); setSince(null); setExp(null); setFocus(null); setBusy(true); return p.then((r) => { setBp(r); if (r.blueprint_id) history.replaceState(null, "", "#" + r.blueprint_id); }).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
+  const compose = (attrs) => load(post("/l6/blueprints", { attributes: attrs, requested_by: "l6-browser" }));
+  const runProfile = (id) => { setPick(id); if (!id) return; load(api("/l6/profiles/" + id + "/blueprint")).then(() => api("/l4/profiles/" + id).then((r) => setText(JSON.stringify(r.attributes, null, 2))).catch(() => {})); };
+  const open = (id) => load(api("/l6/blueprints/" + id));
+  useEffect(() => {
+    const h = decodeURIComponent(location.hash.slice(1));
+    if (/^BLU-/.test(h)) open(h).then(() => {});
+    else if (/^PRF-/.test(h)) runProfile(h);
+    else compose(SAMPLES[0].attrs);
+  }, []);
+  const comp = bp && (bp.composition || bp);
+  const items = comp ? comp.items || [] : [];
+  const coverage = comp ? comp.coverage || [] : [];
+  const focused = focus ? items.find((i) => i.block_id === focus) : null;
+  const litObls = new Set(focused ? focused.obligations_satisfied : []);
+  const whatChanged = () => { if (!bp || !bp.blueprint_id) return; api("/l6/blueprints/" + bp.blueprint_id + "/diff?against=now").then(setSince).catch((e) => setErr(e.message)); };
+  const exportOscal = () => { if (!bp || !bp.blueprint_id) return; api("/l6/blueprints/" + bp.blueprint_id + "/export?format=oscal").then(setExp).catch((e) => setErr(e.message)); };
+  return html`<div class="layout">
+    <aside class="side">
+      <h4>Stored profile</h4>
+      <select value=${pick} onChange=${(e) => runProfile(e.target.value)}>
+        <option value="">— pick an L4 profile —</option>
+        ${profiles.map((p) => html`<option key=${p.id} value=${p.id}>${p.id} · ${p.name}</option>`)}
+      </select>
+      <h4>Or describe the organisation</h4>
+      <div style="margin-bottom:6px">${SAMPLES.map((s) => html`<button key=${s.label} class="btn quiet" style="margin:0 4px 4px 0" onClick=${() => { setText(JSON.stringify(s.attrs, null, 2)); setPick(""); compose(s.attrs); }}>${s.label}</button>`)}</div>
+      <textarea value=${text} onInput=${(e) => setText(e.target.value)}></textarea>
+      <div style="margin-top:8px"><button class="btn" disabled=${busy} onClick=${() => { try { setPick(""); compose(JSON.parse(text)); } catch (e) { setErr("attributes must be JSON"); } }}>Compose blueprint</button></div>
+      ${bp && bp.blueprint_id && html`<div style="margin-top:14px">
+        <h4>Blueprint</h4>
+        <div class="mono">${bp.blueprint_id}</div>
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn quiet" onClick=${whatChanged}>What changed since</button>
+          <button class="btn quiet" onClick=${exportOscal}>Export OSCAL</button>
+        </div></div>`}
+      ${err && html`<p class="bad" style="font-size:13px">${err}</p>`}
+    </aside>
+    <section>
+      ${busy && html`<div class="spin">Composing — L4 profile → applicable obligations (L2) → activities (L5) → blocks (L3) → leanest complete program…</div>`}
+      ${comp && html`<div>
+        <div class="panelx">
+          <h2>Compliance program ${bp.blueprint_id ? html`<span class="mono">${bp.blueprint_id}</span>` : ""} ${bp.status ? html`<${Status} s=${bp.status} />` : ""}</h2>
+          <div class="meta">
+            <span><b>${(comp.coverage_summary || {}).covered}</b> / ${(comp.coverage_summary || {}).total} applicable obligations satisfied</span>
+            <span><b>${items.length}</b> items · ${(comp.minimality || {}).required} required · ${(comp.minimality || {}).selected} selected</span>
+            <span>minimal: <b class=${(comp.minimality || {}).minimal ? "ok" : "bad"}>${show((comp.minimality || {}).minimal)}</b></span>
+            <span>gaps: <b class=${(comp.coverage_summary || {}).gaps ? "bad" : "ok"}>${(comp.coverage_summary || {}).gaps}</b></span>
+            <span>unmapped in jurisdictions: <b>${(comp.unmapped_obligations || {}).count}</b></span>
+            <span class="mono">${comp.engine_version}</span>
+          </div>
+          ${items.length === 0 && html`<p class="empty">No applicable obligations in the store for this profile yet — the program is empty by construction, not by omission.</p>`}
+          <div class="tree">
+            ${Object.entries(comp.program || {}).map(([kind, ids]) => html`<div key=${kind}>
+              <div class="kind">${kind} · ${ids.length}</div>
+              ${ids.map((id) => { const it = items.find((i) => i.block_id === id); return html`<div key=${id} class=${"item" + (focus === id ? " hi" : "")} onClick=${() => setFocus(focus === id ? null : id)}>
+                <div class="t">${it.name} <${Basis} b=${it.basis} /> ${it.load_bearing_for.length ? html`<span class="badge lb">load-bearing ×${it.load_bearing_for.length}</span>` : html`<span class="badge st-gap">redundant</span>`}</div>
+                <div class="d">${it.explanation}</div>
+                <div class="o">${it.block_id} · satisfies ${it.obligations_satisfied.length} · ${(it.activities_operated || []).map((a) => a.name || a.activity_id || a).join(", ") || "no operating activity"}
+                  ${bp.blueprint_id && it.id ? html` · <a class="name" onClick=${(e) => { e.stopPropagation(); openItem(bp.blueprint_id, it.id); }}>why →</a>` : ""}</div>
+              </div>`; })}
+            </div>`)}
+          </div>
+        </div>
+        <div class="panelx">
+          <h3>Applicable obligations ${focused ? html`— lit by ${focused.name}` : ""}</h3>
+          <table class="reg"><thead><tr><th>Obligation</th><th>Title</th><th>State</th><th>Satisfied by</th><th>Applies through</th></tr></thead><tbody>
+            ${coverage.map((c) => html`<tr key=${c.obligation_id} style=${focused && !litObls.has(c.obligation_id) ? "opacity:.4" : ""}>
+              <td class="mono">${c.stable_id || c.obligation_id}<br/><span style="font-size:11px">${c.source_key} · ${c.clause_ref}</span></td>
+              <td>${c.title}</td>
+              <td><${Status} s=${c.state} /></td>
+              <td class="mono">${(c.satisfied_by || []).join(", ") || "—"}</td>
+              <td class="mono">${(c.triggered_by || []).join(", ")}</td>
+            </tr>`)}
+          </tbody></table>
+        </div>
+        ${since && html`<div class="panelx diff">
+          <h3>What changed since ${bp.blueprint_id}</h3>
+          ${!since.changed && html`<p class="ok">Nothing — recomposing this profile now gives the same program.</p>`}
+          ${since.changed && html`<div>
+            <div class="meta"><span class="add">+${since.summary.items_added} items</span><span class="rem">−${since.summary.items_removed} items</span><span class="chg">~${since.summary.items_changed} changed</span><span>obligations +${since.summary.obligations_added} / −${since.summary.obligations_removed}</span><span>coverage changes ${since.summary.coverage_changes}</span></div>
+            ${since.items.added.map((i) => html`<div key=${i.block_id} class="add">+ ${i.name} (${i.block_id})</div>`)}
+            ${since.items.removed.map((i) => html`<div key=${i.block_id} class="rem">− ${i.name} (${i.block_id})</div>`)}
+            ${since.items.changed.map((i) => html`<div key=${i.block_id} class="chg">~ ${i.name}: ${Object.keys(i.delta).join(", ")}</div>`)}
+            ${since.obligations.coverage_changes.map((c) => html`<div key=${c.obligation_id} class="chg">~ ${c.obligation_id}: ${c.before.state} → ${c.after.state}</div>`)}
+          </div>`}
+        </div>`}
+        ${exp && html`<div class="panelx"><h3>OSCAL system-security-plan</h3><pre class="export">${JSON.stringify(exp, null, 2)}</pre></div>`}
+        ${(comp.unresolved_anchors || []).length > 0 && html`<div class="panelx"><h3>Unresolved anchors</h3>${comp.unresolved_anchors.map((u, i) => html`<div key=${i} class="mono">${u.activity} → ${u.anchor.source_key} ${(u.anchor.refs || []).join(", ")}: ${u.reason}</div>`)}</div>`}
+      </div>`}
+    </section>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ item page (why)
+
+function ItemPage({ blueprintId, itemId, back }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { setD(null); api(`/l6/blueprints/${blueprintId}/items/${itemId}`).then(setD).catch((e) => setErr(e.message)); }, [blueprintId, itemId]);
+  if (err) return html`<p class="bad">${err}</p>`;
+  if (!d) return html`<div class="spin">Loading…</div>`;
+  const it = d.item;
+  return html`<div>
+    <div class="crumbs"><a onClick=${back}>← blueprint ${blueprintId}</a></div>
+    <div class="panelx">
+      <h2>${it.name} <${Kind} k=${it.kind} /> <${Basis} b=${it.basis} /></h2>
+      <div class="meta"><span class="mono">${it.id || ""} · ${it.block_id}</span><span>satisfies <b>${it.obligations_satisfied.length}</b></span><span>load-bearing for <b>${it.load_bearing_for.length}</b></span>
+        <span>rubric: <b class=${d.rubric.passed ? "ok" : "bad"}>${pct(d.rubric.score)}</b></span></div>
+      <div class="explain">${it.explanation}</div>
+    </div>
+    <div class="panelx">
+      <h3>Why — obligations this item satisfies</h3>
+      <table class="reg"><thead><tr><th>Obligation</th><th>Title</th><th>Applies through</th><th>Also satisfied by</th></tr></thead><tbody>
+        ${d.obligations.map((o) => html`<tr key=${o.obligation_id}>
+          <td class="mono"><a class="name" href=${"/l2#" + (o.stable_id || o.obligation_id)}>${o.stable_id || o.obligation_id}</a><br/><span style="font-size:11px">${o.source_key} · ${o.clause_ref}</span></td>
+          <td>${o.title}<div class="mono">${o.determination || ""}</div></td>
+          <td class="mono">${(o.triggered_by || []).join(", ")}<div>${(o.conditions || []).map((c) => Object.entries(c).map(([k, v]) => `${k}=${show(v)}`).join(" ")).join("; ")}</div></td>
+          <td class="mono">${o.only_here ? html`<span class="badge lb">only this item</span>` : (o.satisfied_by || []).filter((b) => b !== it.block_id).join(", ")}</td>
+        </tr>`)}
+      </tbody></table>
+    </div>
+    <div class="cards">
+      <div class="card"><h5>Characteristics resolved for this profile</h5>
+        ${(it.characteristics || []).length === 0 && html`<p>none recorded</p>`}
+        ${(it.characteristics || []).map((c) => html`<p key=${c.key}><b>${c.key}</b> = ${c.value || "—"} <span class="mono">${c.status}${c.backing_obligation_id ? " · " + c.backing_obligation_id : ""}${c.in_profile ? "" : " · outside this profile"}</span></p>`)}
+      </div>
+      <div class="card"><h5>Operated by (L5)</h5>
+        ${(it.activities_operated || []).length === 0 && html`<p>no compliance activity operates this block yet</p>`}
+        ${(it.activities_operated || []).map((a) => html`<p key=${a.activity_id}><a class="name" href=${"/l5#" + a.activity_id}>${a.name}</a> <span class="mono">${a.activity_id}</span></p>`)}
+      </div>
+      <div class="card"><h5>Removal impact</h5>
+        ${d.proof ? html`<p>Would open <b class=${d.proof.removal_impact.gaps.length ? "bad" : "ok"}>${d.proof.removal_impact.gaps.length}</b> gap(s): <span class="mono">${d.proof.removal_impact.gaps.join(", ") || "none"}</span></p>
+          <p>Still covered by others: <span class="mono">${d.proof.removal_impact.still_covered.join(", ") || "—"}</span></p>
+          <p>${d.proof.redundant ? html`<span class="badge st-gap">redundant</span>` : html`<span class="badge lb">load-bearing</span>`}</p>` : html`<p>—</p>`}
+      </div>
+      <div class="card"><h5>Why-trail</h5>
+        ${d.why.map((w) => html`<p key=${w.id} class="why"><code>${w.id}</code> ${w.reasoning_summary}<br/><span class="mono">${w.agent_id} · ${fmt(w.created_at)}</span></p>`)}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ list + compare
+
+function BlueprintList({ open }) {
+  const [rows, setRows] = useState(null);
+  const [status, setStatus] = useState("current");
+  useEffect(() => { setRows(null); api("/l6/blueprints?" + (status ? "status=" + status : "")).then((r) => setRows(r.items)).catch(() => setRows([])); }, [status]);
+  return html`<div class="panelx">
+    <div class="meta"><span>Show</span><select value=${status} onChange=${(e) => setStatus(e.target.value)}><option value="current">current</option><option value="superseded">superseded</option><option value="">all</option></select></div>
+    ${!rows && html`<div class="spin">Loading…</div>`}
+    ${rows && rows.length === 0 && html`<p class="empty">No stored blueprints yet.</p>`}
+    ${rows && rows.length > 0 && html`<table class="reg"><thead><tr><th>Blueprint</th><th>Profile</th><th>Status</th><th>Coverage</th><th>Items</th><th>Minimal</th><th>Release</th><th>Created</th></tr></thead><tbody>
+      ${rows.map((r) => html`<tr key=${r.blueprint_id}><td><a class="name" onClick=${() => open(r.blueprint_id)}>${r.blueprint_id}</a></td><td class="mono">${r.profile_id || "ad hoc"}</td><td><${Status} s=${r.status} /></td>
+        <td>${r.coverage_summary ? `${r.coverage_summary.covered}/${r.coverage_summary.total}` : "—"}</td><td>${r.blocks.length}</td><td class=${r.minimal ? "ok" : "bad"}>${show(r.minimal)}</td><td class="mono">${r.release || "—"}</td><td class="mono">${fmt(r.created_at)}</td></tr>`)}
+    </tbody></table>`}
+  </div>`;
+}
+
+function Compare() {
+  const [a, setA] = useState(JSON.stringify(SAMPLES[0].attrs, null, 2));
+  const [b, setB] = useState(JSON.stringify(SAMPLES[2].attrs, null, 2));
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+  const run = () => { try { setErr(""); setD(null); post("/l6/compare", { a: { attributes: JSON.parse(a) }, b: { attributes: JSON.parse(b) } }).then(setD).catch((e) => setErr(e.message)); } catch (e) { setErr("both sides must be JSON"); } };
+  return html`<div>
+    <div class="cards"><div class="card"><h5>Profile A</h5><textarea value=${a} onInput=${(e) => setA(e.target.value)}></textarea></div><div class="card"><h5>Profile B</h5><textarea value=${b} onInput=${(e) => setB(e.target.value)}></textarea></div></div>
+    <div style="margin:10px 0"><button class="btn" onClick=${run}>Compare programs</button> ${err && html`<span class="bad">${err}</span>`}</div>
+    ${d && html`<div class="panelx diff">
+      <div class="meta"><span>A: <b>${d.a.items.length}</b> items, ${d.a.coverage_summary.total} obligations</span><span>B: <b>${d.b.items.length}</b> items, ${d.b.coverage_summary.total} obligations</span></div>
+      <h3>Only in B</h3>${d.items.added.map((i) => html`<div key=${i.block_id} class="add">+ ${i.name} (${i.block_id}) · ${i.obligations_satisfied.length} obligations</div>`)}${d.items.added.length === 0 && html`<p class="mono">—</p>`}
+      <h3>Only in A</h3>${d.items.removed.map((i) => html`<div key=${i.block_id} class="rem">− ${i.name} (${i.block_id}) · ${i.obligations_satisfied.length} obligations</div>`)}${d.items.removed.length === 0 && html`<p class="mono">—</p>`}
+      <h3>Shared but different</h3>${d.items.changed.map((i) => html`<div key=${i.block_id} class="chg">~ ${i.name}: ${JSON.stringify(i.delta)}</div>`)}${d.items.changed.length === 0 && html`<p class="mono">—</p>`}
+    </div>`}
+  </div>`;
+}
+
+function Scorecard() {
+  const [d, setD] = useState(null);
+  useEffect(() => { api("/l6/scorecard").then(setD).catch(() => setD({ error: true })); }, []);
+  if (!d) return html`<div class="spin">Loading…</div>`;
+  if (d.error) return html`<p class="bad">scorecard unavailable</p>`;
+  const g = d.gate || {};
+  return html`<div>
+    <div class="panelx"><h2>L6 gate — ${g.status || "unknown"}</h2>
+      <div class="score">
+        <div class="kpi"><b>${d.blueprints.current}</b><span>current blueprints (${d.blueprints.total} stored, ${d.blueprints.items} items)</span></div>
+        <div class="kpi"><b class=${d.completeness.ratio === 1 ? "ok" : "bad"}>${pct(d.completeness.ratio)}</b><span>completeness (${d.completeness.covered}/${d.completeness.applicable}) · threshold ${d.thresholds.completeness}</span></div>
+        <div class="kpi"><b class=${d.minimality.minimal === d.minimality.checked ? "ok" : "bad"}>${d.minimality.minimal}/${d.minimality.checked}</b><span>minimal programs · ${d.thresholds.minimality}</span></div>
+        <div class="kpi"><b>${d.thresholds.reference_agreement}</b><span>reference agreement threshold</span></div>
+        <div class="kpi"><b>${d.thresholds.explanation_quality}</b><span>explanation rubric threshold</span></div>
+      </div>
+      <h3>Suites</h3>
+      <table class="reg"><thead><tr><th>Suite</th><th>Passed</th><th>Ran</th></tr></thead><tbody>
+        ${Object.entries(g.suites || {}).map(([k, v]) => html`<tr key=${k}><td class="mono">${k}</td><td class=${v && v.passed ? "ok" : "bad"}>${v ? show(v.passed) : "not run"}</td><td class="mono">${v ? fmt(v.ran_at) : "—"}</td></tr>`)}
+      </tbody></table>
+    </div>
+    <div class="panelx"><h3>Current blueprints</h3>
+      <table class="reg"><thead><tr><th>Blueprint</th><th>Profile</th><th>Coverage</th><th>Blocks</th><th>Minimal</th></tr></thead><tbody>
+        ${(d.by_profile || []).map((r) => html`<tr key=${r.blueprint_id}><td class="mono"><a class="name" href=${"#" + r.blueprint_id}>${r.blueprint_id}</a></td><td class="mono">${r.profile_id || "ad hoc"}</td><td>${r.coverage_summary ? `${r.coverage_summary.covered}/${r.coverage_summary.total}` : "—"}</td><td>${r.blocks}</td><td class=${r.minimal ? "ok" : "bad"}>${show(r.minimal)}</td></tr>`)}
+      </tbody></table>
+    </div>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ app
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [tab, setTab] = useState("blueprint");
+  const [view, setView] = useState({ page: "list" });
+  const openItem = (bid, iid) => { setView({ page: "item", bid, iid }); history.replaceState(null, "", "#" + bid + "/" + iid); };
+  const openBlueprint = (bid) => { setTab("blueprint"); setView({ page: "list" }); location.hash = bid; };
+  const back = () => { setView({ page: "list" }); history.replaceState(null, "", "#" + (view.bid || tab)); };
+  // Deep links: /l6#BLU-000001 opens a blueprint; #BLU-000001/ITM-000003 an item; #PRF-000001 composes a profile; tab names.
+  useEffect(() => {
+    const apply = () => {
+      const h = decodeURIComponent(location.hash.slice(1));
+      const m = h.match(/^(BLU-\d+)\/(ITM-\d+|BLK-[A-Z0-9-]+)$/);
+      if (m) { setTab("blueprint"); setView({ page: "item", bid: m[1], iid: m[2] }); }
+      else if (/^(BLU|PRF)-/.test(h)) { setTab("blueprint"); setView({ page: "list" }); }
+      else if (["blueprint", "blueprints", "compare", "scorecard"].includes(h)) { setTab(h); setView({ page: "list" }); }
+    };
+    apply(); window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  let body;
+  if (view.page === "item") body = html`<${ItemPage} blueprintId=${view.bid} itemId=${view.iid} back=${back} />`;
+  else if (tab === "blueprints") body = html`<${BlueprintList} open=${openBlueprint} />`;
+  else if (tab === "compare") body = html`<${Compare} />`;
+  else if (tab === "scorecard") body = html`<${Scorecard} />`;
+  else body = html`<${Blueprint} openItem=${openItem} />`;
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L6 · blueprint</span></div>
+      <div class="spacer"></div>
+      <a class="navlink" href="/">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink active" href="/l6">L6</a>
+      <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main>
+      <div class="tabs">
+        ${[["blueprint", "Blueprint"], ["blueprints", "Stored blueprints"], ["compare", "Compare profiles"], ["scorecard", "Scorecard"]].map(([k, label]) =>
+          html`<button key=${k} class=${tab === k && view.page === "list" ? "on" : ""} onClick=${() => { setTab(k); setView({ page: "list" }); history.replaceState(null, "", "#" + k); }}>${label}</button>`)}
+      </div>
+      ${body}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>
