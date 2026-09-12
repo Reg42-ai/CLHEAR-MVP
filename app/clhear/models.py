@@ -232,3 +232,8 @@ cohorts = sa.Table(
     sa.Column("published", sa.Boolean, nullable=False, default=False),
     sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
 )
+
+# L7/L8 product tables carry the shared schema; ledgers above stay append-only records.
+from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402
+
+_attach(risk_narratives, cohorts)

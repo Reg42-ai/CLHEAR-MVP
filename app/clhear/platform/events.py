@@ -64,6 +64,38 @@ def emit(
     return event_id
 
 
+# HLD v2 §3: every layer publishes these on the `clhear` EventBridge bus as
+# detail-type `clhear.<layer>.<event>`; rules fan them out to per-fleet queues.
+LAYER_EVENTS = ("derived", "changed", "invalidated", "below_gate")
+BUS_NAME = "clhear"
+
+
+def layer_event_kind(layer: str, event: str) -> str:
+    if event not in LAYER_EVENTS:
+        raise ValueError(f"unknown layer event {event!r}; expected one of {LAYER_EVENTS}")
+    return f"clhear.{layer.lower()}.{event}"
+
+
+def publish_layer_event(
+    conn: Connection,
+    *,
+    layer: str,
+    event: str,
+    subject_ref: str,
+    payload: dict | None = None,
+    producer: str,
+) -> str:
+    """Outbox write for `clhear.<layer>.<event>` (same transaction as the data change)."""
+    return emit(
+        conn,
+        layer=layer.lower(),
+        kind=layer_event_kind(layer, event),
+        subject_ref=subject_ref,
+        payload=payload or {},
+        producer=producer,
+    )
+
+
 class Transport(Protocol):
     def send(self, body: str) -> None: ...
 
@@ -77,6 +109,45 @@ class SqsTransport:
 
     def send(self, body: str) -> None:
         self._client.send_message(QueueUrl=self._queue_url, MessageBody=body)
+
+
+class EventBridgeTransport:
+    """Puts layer events on the `clhear` bus; non-layer kinds are skipped here
+    because they already travel on the fleet queue."""
+
+    def __init__(self, region: str, bus_name: str = BUS_NAME, source: str = "clhear"):
+        import boto3
+
+        self._client = boto3.client("events", region_name=region)
+        self._bus = bus_name
+        self._source = source
+
+    def send(self, body: str) -> None:
+        env = json.loads(body)
+        kind = env.get("kind", "")
+        if not kind.startswith("clhear."):
+            return
+        self._client.put_events(
+            Entries=[
+                {
+                    "EventBusName": self._bus,
+                    "Source": self._source,
+                    "DetailType": kind,
+                    "Detail": body,
+                }
+            ]
+        )
+
+
+class FanoutTransport:
+    """Send to every transport (SQS fleet queue + EventBridge bus)."""
+
+    def __init__(self, *transports: Transport):
+        self._transports = transports
+
+    def send(self, body: str) -> None:
+        for t in self._transports:
+            t.send(body)
 
 
 class InMemoryTransport:

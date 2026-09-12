@@ -24,6 +24,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
 from app.clhear.derived_models import concept_members, concepts, obligations
+from app.clhear.platform import record
 
 log = logging.getLogger("clhear.l2.concepts")
 
@@ -76,20 +77,65 @@ def upsert_concept(
             flag_reason="",
             updated_at=datetime.now(timezone.utc),
         )
+        kept_ids = {m["obligation_id"] for m in kept}
+        current = {
+            r.obligation_id: r
+            for r in conn.execute(
+                sa.select(concept_members).where(
+                    concept_members.c.concept_id == concept_id, record.in_force(concept_members)
+                )
+            )
+        }
+        why = record.WhyTrail(
+            layer="L2",
+            subject_ref=concept_id,
+            reasoning_summary=f"concept {concept_id} membership set by {drafted_by}",
+            evidence_refs=[{"obligation_id": oid} for oid in sorted(kept_ids)],
+            inputs=(concept_id, sorted(kept_ids)),
+            agent_id=drafted_by,
+            input_layers=("L1",),
+        )
+        trail_id = why.write(conn)
         if exists:
-            conn.execute(concepts.update().where(concepts.c.id == concept_id).values(**values))
-            conn.execute(concept_members.delete().where(concept_members.c.concept_id == concept_id))
+            conn.execute(concepts.update().where(concepts.c.id == concept_id).values(**values, why_trail_id=trail_id))
+            dropped = [oid for oid in current if oid not in kept_ids]
+            if dropped:
+                record.invalidate(
+                    conn,
+                    concept_members,
+                    sa.and_(
+                        concept_members.c.concept_id == concept_id,
+                        concept_members.c.obligation_id.in_(dropped),
+                        record.in_force(concept_members),
+                    ),
+                    why=trail_id,
+                    reason="member removed on re-consolidation",
+                )
         else:
-            conn.execute(concepts.insert().values(id=concept_id, **values))
+            conn.execute(concepts.insert().values(id=concept_id, **values, why_trail_id=trail_id))
         for m in kept:
-            conn.execute(
-                concept_members.insert().values(
+            if m["obligation_id"] in current:
+                conn.execute(
+                    concept_members.update()
+                    .where(
+                        concept_members.c.concept_id == concept_id,
+                        concept_members.c.obligation_id == m["obligation_id"],
+                        record.in_force(concept_members),
+                    )
+                    .values(jurisdiction=m["jurisdiction"], role=m.get("role", "primary"), note=m.get("note", ""))
+                )
+                continue
+            record.write(
+                conn,
+                concept_members,
+                dict(
                     concept_id=concept_id,
                     obligation_id=m["obligation_id"],
                     jurisdiction=m["jurisdiction"],
                     role=m.get("role", "primary"),
                     note=m.get("note", ""),
-                )
+                ),
+                why=trail_id,
             )
     return {"id": concept_id, "written": True, "members": len(kept), "missing_members": missing}
 
@@ -102,7 +148,7 @@ def list_concepts(engine: Engine, status: str | None = None, include_members: bo
         query = query.where(concepts.c.status != "proposed")
     with engine.connect() as conn:
         rows = [dict(r) for r in conn.execute(query).mappings()]
-        member_rows = [dict(r) for r in conn.execute(sa.select(concept_members)).mappings()]
+        member_rows = [dict(r) for r in conn.execute(sa.select(concept_members).where(record.in_force(concept_members))).mappings()]
     by_concept: dict[str, list[dict]] = {}
     for m in member_rows:
         by_concept.setdefault(m["concept_id"], []).append(m)
@@ -126,7 +172,7 @@ def get_concept(engine: Engine, concept_id: str) -> dict | None:
 
 def consolidated_ids(engine: Engine) -> set[str]:
     with engine.connect() as conn:
-        return {row.obligation_id for row in conn.execute(sa.select(concept_members.c.obligation_id))}
+        return {row.obligation_id for row in conn.execute(sa.select(concept_members.c.obligation_id).where(record.in_force(concept_members)))}
 
 
 def flag_stale_concepts(engine: Engine) -> list[str]:
@@ -137,6 +183,7 @@ def flag_stale_concepts(engine: Engine) -> list[str]:
         rows = conn.execute(
             sa.select(concept_members.c.concept_id, concept_members.c.obligation_id, obligations.c.status)
             .join(obligations, obligations.c.id == concept_members.c.obligation_id, isouter=True)
+            .where(record.in_force(concept_members))
         ).all()
         bad_by_concept: dict[str, list[str]] = {}
         for row in rows:

@@ -63,13 +63,19 @@ resource "aws_iam_role_policy" "worker_task" {
         ]
       },
       {
-        Sid    = "EventsQueue"
+        Sid    = "FleetQueues"
         Effect = "Allow"
         Action = [
           "sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage",
           "sqs:GetQueueAttributes", "sqs:GetQueueUrl",
         ]
-        Resource = [aws_sqs_queue.events.arn, aws_sqs_queue.events_dlq.arn]
+        Resource = concat([aws_sqs_queue.events_dlq.arn], [for q in local.fleet_queue : q.arn])
+      },
+      {
+        Sid      = "LayerEventsBus"
+        Effect   = "Allow"
+        Action   = ["events:PutEvents"]
+        Resource = aws_cloudwatch_event_bus.clhear.arn
       },
       {
         Sid      = "Params"
@@ -85,30 +91,6 @@ resource "aws_iam_role_policy" "worker_task" {
         Condition = {
           StringEquals = { "cloudwatch:namespace" = "CLHEAR" }
         }
-      },
-      {
-        Sid    = "NightlyGpuSpot"
-        Effect = "Allow"
-        Action = [
-          "ec2:RunInstances", "ec2:TerminateInstances", "ec2:DescribeInstances",
-          "ec2:DescribeImages", "ec2:CreateTags", "ec2:DescribeInstanceStatus",
-        ]
-        Resource = "*"
-      },
-      {
-        Sid      = "PassGpuRole"
-        Effect   = "Allow"
-        Action   = ["iam:PassRole"]
-        Resource = aws_iam_role.gpu_instance.arn
-      },
-      {
-        Sid    = "OllamaCache"
-        Effect = "Allow"
-        Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]
-        Resource = [
-          aws_s3_bucket.deploy.arn,
-          "${aws_s3_bucket.deploy.arn}/ollama-models/*",
-        ]
       },
     ]
   })

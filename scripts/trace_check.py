@@ -28,6 +28,13 @@ def _expand_braces(path: str) -> list[str]:
     return out
 
 
+PATH_SUFFIXES = (".py", ".tf", ".md", ".yml", ".yaml", ".json", ".html", ".css", ".txt", ".lock")
+
+
+def _is_path(token: str) -> bool:
+    return "/" in token or token.endswith(PATH_SUFFIXES)
+
+
 def _check_ref(ref: str) -> str | None:
     ref = ref.strip()
     if ref in {"—", "-", "terraform validate"} or ref.startswith("CLHEAR_"):
@@ -52,6 +59,22 @@ def _check_ref(ref: str) -> str | None:
     return None
 
 
+def _check_symbol(symbol: str, path_ref: str | None) -> str | None:
+    """A backticked symbol following a file path must appear in that file."""
+    if path_ref is None or any(ch in symbol for ch in "<>*[") or " " in symbol:
+        return None
+    base = re.sub(r"\s*\(.*\)$", "", path_ref).split("::", 1)[0]
+    candidates = [ROOT / c for c in _expand_braces(base)]
+    files = [c for c in candidates if c.is_file()]
+    if not files:
+        return None
+    needle = symbol.split(".")[0].rstrip("-")
+    for f in files:
+        if needle in f.read_text(encoding="utf-8", errors="replace"):
+            return None
+    return f"symbol {symbol} not found in {base}"
+
+
 def main(argv: list[str]) -> int:
     text = TRACE.read_text(encoding="utf-8")
     counts: dict[str, int] = {"done": 0, "partial": 0, "todo": 0, "blocked": 0}
@@ -64,8 +87,13 @@ def main(argv: list[str]) -> int:
         counts[status] += 1
         if status != "done":
             continue
+        last_path: str | None = None
         for tok in PATH_TOKEN.findall(body):
-            err = _check_ref(tok)
+            if _is_path(tok):
+                err = _check_ref(tok)
+                last_path = tok
+            else:
+                err = _check_symbol(tok, last_path)
             if err:
                 errors.append(f"{req}: {err}")
     if "--summary" in argv or errors:

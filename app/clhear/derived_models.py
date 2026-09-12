@@ -191,3 +191,7 @@ DERIVED_TABLES = (
     obligations, blocks, activities, attribute_schema, sample_profiles,
     blueprints, concepts, concept_members, license_types,
 )
+
+from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402
+
+_attach(*DERIVED_TABLES)

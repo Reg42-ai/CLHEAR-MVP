@@ -13,6 +13,7 @@ from typing import Callable
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
+from app.clhear.platform import record
 from app.clhear.models import eval_runs
 from app.clhear.settings import get_settings
 
@@ -664,6 +665,7 @@ def l2_concept_integrity(engine: Engine, source_key: str | None) -> tuple[dict, 
         member_rows = conn.execute(
             sa.select(concept_members.c.concept_id, concept_members.c.obligation_id, obligations.c.status)
             .join(obligations, obligations.c.id == concept_members.c.obligation_id, isouter=True)
+            .where(record.in_force(concept_members))
         ).all()
         for row in member_rows:
             if row.status not in ("derived", "validated"):
@@ -838,8 +840,32 @@ def latest_source_scorecard(engine: Engine, source_key: str) -> dict:
 GLOBAL_SUITES = ("l0_smoke", "l1_fidelity")
 
 
+def gate_suites() -> tuple[str, ...]:
+    """Every registered suite that sits in some layer's publication gate, plus the
+    global suites. Suites a gate names but nobody has registered yet stay
+    'missing' in gates.gate_status — the layer is simply not publishable."""
+    from app.clhear.platform.gates import LAYER_GATES
+
+    ordered: list[str] = list(GLOBAL_SUITES)
+    for suites in LAYER_GATES.values():
+        for suite in suites:
+            if suite in SUITES and suite not in ordered:
+                ordered.append(suite)
+    return tuple(ordered)
+
+
 def run_all(engine: Engine, release: str | None = None) -> list[dict]:
-    return [run_suite(engine, suite, release=release) for suite in GLOBAL_SUITES]
+    records = []
+    for suite in gate_suites():
+        try:
+            records.append(run_suite(engine, suite, release=release))
+        except Exception as exc:  # a crashing suite is a failed suite, never a skipped one
+            log.exception("suite %s crashed", suite)
+            scores = {"error": str(exc)[:300]}
+            with engine.begin() as conn:
+                conn.execute(eval_runs.insert().values(suite=suite, release=release, scores=scores, passed=False))
+            records.append({"suite": suite, "passed": False, "release": release, "scores": scores})
+    return records
 
 
 def release_gate(engine: Engine, release: str) -> bool:

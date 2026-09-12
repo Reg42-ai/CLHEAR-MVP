@@ -80,5 +80,40 @@ variable "schedules_enabled" {
 variable "database_url_ssm_param" {
   type        = string
   default     = "/clhear/DATABASE_URL"
-  description = "SSM param holding the Aurora DSN for schemas l0_platform/l1_sources"
+  description = "SSM param holding the Aurora DSN (schemas l0_platform … l8, community)"
+}
+
+# --- The record: Aurora Serverless v2 (HLD v2 I7) ------------------------
+variable "aurora_enabled" {
+  type        = bool
+  default     = false
+  description = "Deploy Aurora PostgreSQL Serverless v2 as the record. Needs existing_vpc_id/subnets."
+}
+
+variable "aurora_engine_version" {
+  type    = string
+  default = "16.6"
+}
+
+variable "aurora_max_acu" {
+  type    = number
+  default = 4
+}
+
+# --- Inference: Reg42 Infer on Bedrock (HLD v2 I6) ----------------------
+variable "infer_base_url" {
+  type    = string
+  default = "https://infer.reg42.ai/v1"
+}
+
+# --- Datalake cross-region replication (DR) ----------------------------
+variable "replication_enabled" {
+  type        = bool
+  default     = false
+  description = "Replicate the Object-Locked datalake to replica_region (needs the aws.replica provider)."
+}
+
+variable "replica_region" {
+  type    = string
+  default = "eu-west-1"
 }

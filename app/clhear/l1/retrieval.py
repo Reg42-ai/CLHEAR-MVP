@@ -21,6 +21,7 @@ import re
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection, Engine
 
+from app.clhear.platform import record
 from app.clhear.l1.adapters.base import CLAUSE_TYPES, DocNode, SourceMeta
 from app.clhear.l1.models import (
     clause_annotations,
@@ -64,10 +65,8 @@ def build_units_for_version(
     )]
     if old_ids:
         if fts:
-            conn.exec_driver_sql(
-                f"DELETE FROM search_units_fts WHERE rowid IN ({','.join(str(i) for i in old_ids)})"
-            )
-        conn.execute(search_units.delete().where(search_units.c.source_id == source_id))
+            record.drop_fts_rows(conn, "search_units_fts", old_ids)
+        record.rebuild_projection(conn, search_units, search_units.c.source_id == source_id)
     if meta.license != "open":
         return 0
 
@@ -151,7 +150,7 @@ def append_summary_to_unit(conn: Connection, clause_id: int, summary: str) -> No
     new_text = f"{row.text}\n{summary}"
     conn.execute(search_units.update().where(search_units.c.id == row.id).values(text=new_text))
     if _fts_ok(conn):
-        conn.exec_driver_sql("DELETE FROM search_units_fts WHERE rowid = ?", (row.id,))
+        record.drop_fts_rows(conn, "search_units_fts", [row.id])
         conn.exec_driver_sql("INSERT INTO search_units_fts(rowid, text) VALUES (?, ?)", (row.id, new_text))
 
 

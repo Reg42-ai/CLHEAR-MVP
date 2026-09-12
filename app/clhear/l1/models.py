@@ -500,3 +500,8 @@ ALL_TABLES = (
     licenses_held,
     byol_uploads,
 )
+
+# HLD v2 §3: every layer table inherits the shared bi-temporal / why-trail schema.
+from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402
+
+_attach(*ALL_TABLES)

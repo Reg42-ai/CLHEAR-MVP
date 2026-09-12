@@ -1,4 +1,4 @@
-# Alarms: DLQ>0, spend>cap, freshness SLA breach (freshness metric lands with P1 adapters).
+# Alarms: DLQ>0, spend>cap, missed schedules, any layer below its gate.
 resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
   alarm_name          = "${var.name_prefix}-dlq-not-empty"
   namespace           = "AWS/SQS"
@@ -26,22 +26,24 @@ resource "aws_cloudwatch_metric_alarm" "schedule_missed" {
   treat_missing_data  = "breaching" # no metric = the nightly job itself did not run
 }
 
-# Workers publish CLHEAR/DailyLlmSpendUsd from the llm_calls ledger.
-# Sidecar/GPU Ollama hit their CPU limit (cgroup nr_throttled delta).
-# Missing is normal: GPU is dark most of the day; sidecar publishes only when up.
-resource "aws_cloudwatch_metric_alarm" "ollama_cpu_throttled" {
-  alarm_name          = "${var.name_prefix}-ollama-cpu-throttled"
+# Evals gate publication (I10): gates.freeze_below_gate publishes
+# CLHEAR/LayerBelowGate{Layer} when a layer's latest suites fail.
+resource "aws_cloudwatch_metric_alarm" "layer_below_gate" {
+  for_each            = toset(["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"])
+  alarm_name          = "${var.name_prefix}-${lower(each.key)}-below-gate"
   namespace           = "CLHEAR"
-  metric_name         = "OllamaCpuThrottled"
+  metric_name         = "LayerBelowGate"
+  dimensions          = { Layer = each.key }
   statistic           = "Maximum"
-  period              = 60
-  evaluation_periods  = 2
+  period              = 3600
+  evaluation_periods  = 1
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
-  alarm_description   = "Ollama sidecar or GPU container is CPU-throttled (noisy neighbor / undersized limit)."
+  alarm_description   = "${each.key} dropped below its publication gate; release publication for the layer is frozen."
 }
 
+# Workers publish CLHEAR/DailyLlmSpendUsd from the llm_calls ledger (Infer usage).
 resource "aws_cloudwatch_metric_alarm" "llm_spend_over_cap" {
   alarm_name          = "${var.name_prefix}-llm-spend-over-cap"
   namespace           = "CLHEAR"
@@ -61,18 +63,18 @@ resource "aws_cloudwatch_dashboard" "clhear" {
       {
         type = "metric", x = 0, y = 0, width = 12, height = 6
         properties = {
-          title  = "Events queue depth / DLQ"
+          title  = "Fleet queue depth (per layer) / DLQ"
           region = var.aws_region
-          metrics = [
-            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.events.name],
-            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.events_dlq.name],
-          ]
+          metrics = concat(
+            [for k, q in local.fleet_queue : ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", q.name, { label = k }]],
+            [["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", aws_sqs_queue.events_dlq.name, { label = "dlq" }]],
+          )
         }
       },
       {
         type = "metric", x = 12, y = 0, width = 12, height = 6
         properties = {
-          title   = "Daily LLM spend (USD)"
+          title   = "Daily LLM spend via Infer (USD)"
           region  = var.aws_region
           metrics = [["CLHEAR", "DailyLlmSpendUsd"]]
         }
@@ -80,20 +82,17 @@ resource "aws_cloudwatch_dashboard" "clhear" {
       {
         type = "metric", x = 0, y = 6, width = 12, height = 6
         properties = {
-          title   = "GPU orphans (must stay 0)"
+          title   = "Layers below gate (must stay 0)"
           region  = var.aws_region
-          metrics = [["CLHEAR", "GpuOrphanCount"]]
+          metrics = [for l in ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"] : ["CLHEAR", "LayerBelowGate", "Layer", l]]
         }
       },
       {
         type = "metric", x = 12, y = 6, width = 12, height = 6
         properties = {
-          title  = "Ollama CPU throttle (sidecar / GPU)"
-          region = var.aws_region
-          metrics = [
-            ["CLHEAR", "OllamaCpuThrottled", "Role", "sidecar"],
-            ["CLHEAR", "OllamaCpuThrottled", "Role", "gpu"],
-          ]
+          title   = "Scheduled sources missed (24h)"
+          region  = var.aws_region
+          metrics = [["CLHEAR", "ScheduleMissedSources"]]
         }
       },
     ]

@@ -1,0 +1,110 @@
+name: release
+
+# HLD v2 §3 release pipeline: nightly derivation -> evals -> snapshot -> signed
+# release (Sigstore keyless) -> publish. Versions are semantic dates (2026.09.28).
+# Publication to the public `clhear` repo is gated on CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED.
+
+on:
+  schedule:
+    - cron: "15 1 * * *" # after the 00:00 UTC adapter fleets and 23:30 EOD publish
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: "Override release id (YYYY.MM.DD)"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write # keyless cosign
+
+env:
+  AWS_REGION: us-east-1
+  CLHEAR_HTTP_MODE: replay
+
+jobs:
+  derive-eval-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Configure AWS (OIDC)
+        if: ${{ secrets.AWS_RELEASE_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve release id
+        id: rid
+        run: |
+          RID="${{ github.event.inputs.release_id }}"
+          if [ -z "$RID" ]; then RID=$(date -u +%Y.%m.%d); fi
+          echo "rid=$RID" >> "$GITHUB_OUTPUT"
+
+      - name: Nightly derivation (all layer fleets, event-driven)
+        run: python -m app.clhear.fleets nightly --release "${{ steps.rid.outputs.rid }}"
+
+      - name: Evals — every layer gate
+        run: python -m app.clhear.platform.evals all "${{ steps.rid.outputs.rid }}"
+
+      - name: Publish evals summary table (public dashboard source)
+        run: python -m app.clhear.platform.gates summary "${{ steps.rid.outputs.rid }}" > artifacts/evals-summary.json
+
+      - name: Freeze model manifest from Infer
+        env:
+          INFER_BASE_URL: ${{ secrets.INFER_BASE_URL }}
+          INFER_TOKEN: ${{ secrets.INFER_TOKEN }}
+        run: python -m app.clhear.platform.manifest freeze "${{ steps.rid.outputs.rid }}" > artifacts/model-manifest.json
+
+      - name: Snapshot + manifest (layers gated by evals)
+        run: python -m app.clhear.releases publish --release "${{ steps.rid.outputs.rid }}" --model-manifest artifacts/model-manifest.json
+
+      - name: SBOM (syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: artifacts/releases/${{ steps.rid.outputs.rid }}/sbom.spdx.json
+
+      - name: Agnostic-store scan (I5) — zero organization identifiers
+        run: python -m app.clhear.platform.agnostic_scan artifacts/releases/${{ steps.rid.outputs.rid }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign manifest (Sigstore keyless)
+        run: |
+          cd artifacts/releases/${{ steps.rid.outputs.rid }}
+          cosign sign-blob --yes manifest.json --bundle manifest.sigstore.json
+          python - <<'PY'
+          import json, pathlib
+          p = pathlib.Path("manifest.json"); m = json.loads(p.read_text())
+          m["signature"].update({"signed": True, "bundle_uri": "manifest.sigstore.json",
+                                 "identity": "https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}"})
+          m["sbom_uri"] = "sbom.spdx.json"
+          p.write_text(json.dumps(m, indent=2))
+          PY
+
+      - name: Verify release (signature, hash, frozen model ids, gates)
+        run: python scripts/verify_release.py artifacts/releases/${{ steps.rid.outputs.rid }} --require-signature
+
+      - name: Upload release to S3 (immutable, Object Lock)
+        if: ${{ secrets.AWS_RELEASE_ROLE_ARN != '' }}
+        run: aws s3 cp --recursive artifacts/releases/${{ steps.rid.outputs.rid }} s3://clhear-deploy-730649732189/releases/${{ steps.rid.outputs.rid }}/
+
+      - name: Export to public `clhear` repo (gated on disclosure confirmation)
+        env:
+          CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED: ${{ vars.CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED }}
+          CLHEAR_PUBLIC_REPO_URL: ${{ secrets.CLHEAR_PUBLIC_REPO_URL }}
+          CLHEAR_EXPORT_GIT_TOKEN: ${{ secrets.CLHEAR_EXPORT_GIT_TOKEN }}
+        run: python -m app.clhear.platform.exporter "${{ steps.rid.outputs.rid }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.rid.outputs.rid }}
+          path: artifacts/

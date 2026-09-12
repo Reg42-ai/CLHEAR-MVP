@@ -168,3 +168,47 @@ def run_nightly_if_due(
             gpu.get("id") if isinstance(gpu, dict) else None,
             client_factory=client_factory,
         )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI: python -m app.clhear.fleets nightly [--release YYYY.MM.DD] [--force] [--fake]
+
+    Runs the layer fleets once against the configured store using whatever
+    inference providers are configured (Reg42 Infer in production; the
+    FakeProvider with ``--fake`` or when nothing is configured, which is the
+    replay posture used by CI). No GPU is launched: inference is remote (I6).
+    """
+    import argparse
+    import json
+    import sys
+
+    from app.clhear.db import get_engine, run_migrations
+    from app.clhear.platform.gateway import FakeProvider
+    from app.clhear.platform.router import Router, build_providers
+
+    parser = argparse.ArgumentParser(prog="python -m app.clhear.fleets")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    nightly = sub.add_parser("nightly")
+    nightly.add_argument("--release", default=None, help="release id the run is attributed to")
+    nightly.add_argument("--force", action="store_true")
+    nightly.add_argument("--fake", action="store_true", help="use the deterministic FakeProvider")
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+    engine = get_engine()
+    run_migrations(engine)
+    providers = {} if args.fake else build_providers()
+    if not providers:
+        log.warning("no inference providers configured; using FakeProvider (replay posture)")
+        providers = {"fake": FakeProvider()}
+    llm = Router(engine, providers=providers)
+    if not args.force and _already_ran_today(engine):
+        print(json.dumps({"skipped": "already ran today", "release": args.release}))
+        return 0
+    outputs = run_nightly_stack(engine, llm, force=args.force)
+    outputs["release"] = args.release
+    print(json.dumps({k: v for k, v in outputs.items() if k in ("gates", "release", "cohorts")}, default=str, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

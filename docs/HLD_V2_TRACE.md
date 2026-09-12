@@ -13,37 +13,37 @@ row references a code path or test that does not exist.
 
 | Req | Invariant | Code | Test | Status |
 |---|---|---|---|---|
-| CLHEAR-0.1 | I1 layers derived strictly in order; L(n) reads only ≤ L(n−1) | `app/clhear/layers.py` (`LAYER_CATALOG[*].derivation.inputs`), `app/clhear/platform/record.py` (`assert_layer_inputs`) | `tests/test_record.py::test_layer_input_guard` | todo |
-| CLHEAR-0.2 | I2 every node/edge versioned and dated; nothing deleted, only invalidated | `app/clhear/platform/record.py` (`SHARED_COLUMNS`, `invalidate`), `migrations/m0008_shared_schema.py` | `tests/test_record.py::test_no_delete_anywhere`, `tests/test_record.py::test_invalidate_sets_valid_to` | todo |
-| CLHEAR-0.3 | I3 every determination has a why-trail; no trail, no write | `app/clhear/platform/record.py` (`write` raises `WhyTrailRequired`), `why_trails` table | `tests/test_record.py::test_write_requires_why_trail` | todo |
+| CLHEAR-0.1 | I1 layers derived strictly in order; L(n) reads only ≤ L(n−1) | `app/clhear/layers.py` (`LAYER_CATALOG[*].derivation.inputs`), `app/clhear/platform/record.py` (`assert_layer_inputs`, `WhyTrail.input_layers`) | `tests/test_record.py::test_layer_input_guard`, `tests/test_record.py::test_write_rejects_lower_layer_reading_higher` | done |
+| CLHEAR-0.2 | I2 every node/edge versioned and dated; nothing deleted, only invalidated | `app/clhear/platform/shared_schema.py` (`shared_columns`), `app/clhear/platform/record.py` (`invalidate`, `rebuild_projection`, `drop_fts_rows`), `migrations/m0008_shared_schema.py` | `tests/test_record.py::test_no_delete_anywhere`, `tests/test_record.py::test_invalidate_sets_valid_to`, `tests/test_record.py::test_rebuild_projection_only_for_projection_tables` | done |
+| CLHEAR-0.3 | I3 every determination has a why-trail; no trail, no write | `app/clhear/platform/record.py` (`write` raises `WhyTrailRequired`, `why_trails` table) | `tests/test_record.py::test_write_requires_why_trail`, `tests/test_record.py::test_write_populates_shared_columns_and_why_trail` | done |
 | CLHEAR-0.4 | I4 full AI determination, HITL by exception (confidence < threshold, modification requests, re-derive with human edits) | `app/clhear/platform/console.py`, `app/clhear/platform/record.py` (`LOW_CONFIDENCE_THRESHOLDS`) | `tests/test_console.py` | todo |
-| CLHEAR-0.5 | I5 agnostic store contains no organization data; automated scan per release | `app/clhear/platform/agnostic_scan.py` | `tests/test_agnostic_scan.py` | todo |
-| CLHEAR-0.6 | I6 Bedrock-only inference via Reg42 Infer; frozen model ids; manifest per release | `app/clhear/platform/gateway.py` (`InferProvider`), `app/clhear/platform/manifest.py` | `tests/test_infer_provider.py`, `tests/test_release_verify.py` | todo |
-| CLHEAR-0.7 | I7 Postgres record, Neo4j query graph, vectors an index; all rebuildable from Postgres | `infra/rds.tf`, `infra/neo4j.tf`, `app/clhear/platform/graph.py`, `app/clhear/l1/retrieval.py` | `tests/test_graph.py` | todo |
+| CLHEAR-0.5 | I5 agnostic store contains no organization data; automated scan per release | `app/clhear/platform/agnostic_scan.py`, `.github/workflows/release.yml` | `tests/test_never_list.py::test_agnostic_scan_flags_pii_and_org_identifiers`, `tests/test_never_list.py::test_agnostic_scan_of_store_is_clean` | partial |
+| CLHEAR-0.6 | I6 Bedrock-only inference via Reg42 Infer; frozen model ids; manifest per release | `app/clhear/platform/gateway.py` (`InferProvider`), `app/clhear/platform/manifest.py`, `app/clhear/platform/task_classes.py` | `tests/test_infer_provider.py`, `tests/test_release_verify.py::test_model_manifest_complete_and_clean` | partial |
+| CLHEAR-0.7 | I7 Postgres record, Neo4j query graph, vectors an index; all rebuildable from Postgres | `infra/rds.tf`, `app/clhear/db.py` (`all_schemas`, pgvector extension), `scripts/migrate_snapshot_to_postgres.py`, `infra/neo4j.tf`, `app/clhear/platform/graph.py` | `tests/test_graph.py` | partial |
 | CLHEAR-0.8 | I8 rights before text | `app/clhear/l1/rights.py`, `sources.rights_basis` | `tests/test_rights.py` | todo |
 | CLHEAR-0.9 | I9 open by mode not by layer | `app/clhear/platform/mode.py` | `tests/test_mode.py` | todo |
-| CLHEAR-0.10 | I10 evals gate publication; drift below gate freezes layer + alarms | `app/clhear/platform/gates.py`, `app/clhear/releases.py` | `tests/test_gates.py` | todo |
-| CLHEAR-0.11 | I11 stable identifiers `CLHEAR-<layer>.<n>`, `OBL-/BLK-/PRF-/ACT-/BLU-/RSK-/FIL-`, never reused | `app/clhear/platform/ids.py` | `tests/test_ids.py` | todo |
+| CLHEAR-0.10 | I10 evals gate publication; drift below gate freezes layer + alarms | `app/clhear/platform/gates.py` (`gate_status`, `freeze_below_gate`), `app/clhear/releases.py` (`_gate_layers`), `infra/cloudwatch.tf` (`layer_below_gate`) | `tests/test_release_verify.py::test_layer_below_gate_is_reserved_not_published`, `tests/test_release_verify.py::test_fresh_install_publishes_l1_unverified_and_verify_flags_it` | done |
+| CLHEAR-0.11 | I11 stable identifiers `CLHEAR-<layer>.<n>`, `OBL-` `BLK-` `PRF-` `ACT-` `BLU-` `RSK-` `FIL-`, never reused | `app/clhear/platform/ids.py` (`next_id`, `id_sequences`) | `tests/test_ids.py::test_next_id_is_monotonic_per_prefix`, `tests/test_ids.py::test_every_hld_prefix_is_registered` | done |
 | CLHEAR-0.12 | I12 contributions never write directly | `app/clhear/community.py` (proposal path), `app/clhear/platform/contributions.py` | `tests/test_contributions.py` | todo |
 
 ## §3 L0 platform plane
 
 | Req | Component | Code | Test | Status |
 |---|---|---|---|---|
-| CLHEAR-0.20 | Record store: Postgres, one schema per layer, bi-temporal columns | `infra/rds.tf`, `migrations/m0008_shared_schema.py` | `tests/test_record.py::test_all_tables_have_shared_columns` | todo |
+| CLHEAR-0.20 | Record store: Postgres, one schema per layer, bi-temporal columns | `infra/rds.tf`, `app/clhear/db.py` (`all_schemas`), `migrations/m0008_shared_schema.py`, `scripts/migrate_snapshot_to_postgres.py` | `tests/test_record.py::test_all_tables_have_shared_columns` | done |
 | CLHEAR-0.21 | Query graph: Neo4j Community projection, rebuilt nightly | `infra/neo4j.tf`, `app/clhear/platform/graph.py` | `tests/test_graph.py` | todo |
 | CLHEAR-0.22 | Retrieval index: pgvector | `migrations/m0016_pgvector.py`, `app/clhear/l1/retrieval.py` | `tests/test_retrieval.py` | todo |
-| CLHEAR-0.23 | Object store: S3 Object Lock, cross-region replica | `infra/s3.tf` | terraform validate | todo |
-| CLHEAR-0.24 | Events: EventBridge bus `clhear.<layer>.<event>` (`derived`, `changed`, `invalidated`, `below_gate`) | `app/clhear/platform/events.py`, `infra/eventbridge.tf` | `tests/test_events_bus.py` | todo |
-| CLHEAR-0.25 | Workers: one task definition per layer fleet, scale 0 → N | `infra/ecs.tf`, `app/clhear/workers.py` | terraform validate | todo |
+| CLHEAR-0.23 | Object store: S3 Object Lock, cross-region replica | `infra/s3.tf` (`aws_s3_bucket_replication_configuration.datalake`) | terraform validate | done |
+| CLHEAR-0.24 | Events: EventBridge bus `clhear.<layer>.<event>` (`derived`, `changed`, `invalidated`, `below_gate`) | `app/clhear/platform/events.py` (`publish_layer_event`, `EventBridgeTransport`), `infra/eventbridge.tf` (`aws_cloudwatch_event_bus.clhear`, fan-out rules, archive) | `tests/test_events_bus.py::test_publish_layer_event_relays_to_bus_and_queue` | done |
+| CLHEAR-0.25 | Workers: one task definition per layer fleet, scale 0 → N | `infra/ecs.tf` (`aws_ecs_task_definition.fleet`, `aws_ecs_service.fleet`), `infra/sqs.tf` (`aws_sqs_queue.fleet`), `app/clhear/workers.py` | terraform validate | done |
 | CLHEAR-0.26 | Inference: Reg42 Infer with CLHEAR task classes | `app/clhear/platform/router.py`, `handoff/reg42-infra/tasks.clhear.yaml` | `tests/test_infer_route_explain.py` | todo |
 | CLHEAR-0.27 | Evals: Langfuse self-hosted + per-layer golden sets; public dashboard reads summary table | `infra/langfuse.tf`, `app/clhear/platform/evals.py` (`publish_summary`), `clhear-evals/` | `tests/test_gates.py::test_summary_table_published` | todo |
 | CLHEAR-0.28 | Approval console at `/console` | `app/clhear/platform/console.py`, `app/clhear/web/console.html` | `tests/test_console.py` | todo |
-| CLHEAR-0.29 | Release pipeline: nightly derive → evals → snapshot → Sigstore → publish; `YYYY.MM.DD`; daily deltas | `.github/workflows/release.yml`, `app/clhear/releases.py`, `scripts/verify_release.py` | `tests/test_release_verify.py` | todo |
+| CLHEAR-0.29 | Release pipeline: nightly derive → evals → snapshot → Sigstore → publish; `YYYY.MM.DD`; daily deltas | `.github/workflows/release.yml`, `app/clhear/releases.py` (`release_id_for`, `build_manifest`, `_delta`), `app/clhear/fleets.py` (`main`), `scripts/verify_release.py` | `tests/test_release_verify.py::test_publish_and_verify_release`, `tests/test_release_verify.py::test_delta_against_previous` | done |
 | CLHEAR-0.30 | Identity: Cognito public users, Google SSO Reg42, API keys per org, SAML enterprise | `infra/cognito.tf`, `app/clhear/app_auth.py`, `app/clhear/api_keys.py` | `tests/test_api_keys.py` | todo |
 | CLHEAR-0.31 | Observability: Prometheus + Grafana, GlitchTip, CloudWatch, status page; freshness and gate status public | `infra/observability.tf`, `app/clhear/platform/metrics.py`, `status/` | `tests/test_metrics.py` | todo |
 | CLHEAR-0.32 | Public repo `clhear`: standard, schema, vault packs, evals harness, SDKs | `export/clhear/`, `app/clhear/platform/exporter.py` | `tests/test_exporter_public.py` | todo |
-| CLHEAR-0.33 | Shared schema columns on every layer table | `app/clhear/platform/record.py::SHARED_COLUMNS` | `tests/test_record.py::test_all_tables_have_shared_columns` | todo |
+| CLHEAR-0.33 | Shared schema columns on every layer table | `app/clhear/platform/shared_schema.py` (`SHARED_COLUMN_NAMES`, `attach_shared_columns`), `app/clhear/platform/record.py` (`layer_tables`) | `tests/test_record.py::test_all_tables_have_shared_columns` | done |
 
 ## §4 Layers
 
@@ -108,24 +108,24 @@ row references a code path or test that does not exist.
 | Req | Mechanism | Code | Test | Status |
 |---|---|---|---|---|
 | CLHEAR-11.1 | Audit log of licensed-text reads and every write | `app/clhear/platform/audit.py` | `tests/test_audit.py` | todo |
-| CLHEAR-11.2 | Signed releases (Sigstore), SBOM, pinning | `.github/workflows/release.yml`, `requirements.lock` | `tests/test_release_verify.py` | todo |
+| CLHEAR-11.2 | Signed releases (Sigstore), SBOM, pinning | `.github/workflows/release.yml` (cosign sign-blob, syft), `scripts/verify_release.py`, `app/clhear/releases.py` (`pin_release`) | `tests/test_release_verify.py::test_publish_and_verify_release` | done |
 | CLHEAR-11.3 | Status page with SLOs; DR drills | `status/`, `.github/workflows/dr_drill.yml` | — | todo |
 | CLHEAR-11.4 | Rights and sourcing (7.3), similarity guard in CI | `app/clhear/l1/rights.py`, `app/clhear/l1/guard.py`, `.github/workflows/ci.yml` | `tests/test_rights.py` | todo |
-| CLHEAR-11.5 | Model governance: frozen ids, manifest, second-model review, low-confidence human review | `app/clhear/platform/manifest.py`, `app/clhear/l2/review.py`, `app/clhear/platform/console.py` | `tests/test_release_verify.py` | todo |
+| CLHEAR-11.5 | Model governance: frozen ids, manifest, second-model review, low-confidence human review | `app/clhear/platform/manifest.py` (`check_manifest`, `freeze_from_infer`), `app/clhear/platform/record.py` (`needs_human`), `app/clhear/l2/review.py`, `app/clhear/platform/console.py` | `tests/test_release_verify.py::test_model_manifest_rejects_cn_origin_in_derivation` | partial |
 | CLHEAR-11.6 | Instance-mode contract with Reg42 OS | `docs/INSTANCE_MODE_CONTRACT.md`, `app/clhear/instance_contract.py` | `tests/test_agnostic_scan.py` | todo |
 
 ## §9 Never-list (CI lint)
 
 | Req | Rule | Test | Status |
 |---|---|---|---|
-| CLHEAR-12.1 | No deletion of nodes/edges | `tests/test_never_list.py::test_no_delete_anywhere` | todo |
+| CLHEAR-12.1 | No deletion of nodes/edges | `tests/test_record.py::test_no_delete_anywhere` | done |
 | CLHEAR-12.2 | No inference outside Reg42 Infer | `tests/test_never_list.py::test_only_infer_provider_in_prod` | todo |
 | CLHEAR-12.3 | No LLM call outside `router.run` | `tests/test_never_list.py::test_no_gateway_calls_outside_router` | todo |
 | CLHEAR-12.4 | Offense/defense never schema terms | `tests/test_never_list.py::test_no_offense_defense_schema_terms` | todo |
-| CLHEAR-12.5 | No Chinese-origin weights in derivation classes | `tests/test_infer_route_explain.py` | todo |
+| CLHEAR-12.5 | No Chinese-origin weights in derivation classes | `tests/test_never_list.py::test_derivation_ladders_are_procurement_clean` | done |
 | CLHEAR-12.6 | No public disclosure before filing confirmed | `tests/test_never_list.py::test_disclosure_gate` | todo |
 | CLHEAR-12.7 | No verbatim text without rights basis | `tests/test_rights.py` | todo |
-| CLHEAR-12.8 | No layer reads a higher layer | `tests/test_record.py::test_layer_input_guard` | todo |
+| CLHEAR-12.8 | No layer reads a higher layer | `tests/test_record.py::test_layer_input_guard` | done |
 
 ## Blocked (needs action outside this repo)
 

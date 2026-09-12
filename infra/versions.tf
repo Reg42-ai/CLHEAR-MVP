@@ -15,6 +15,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
@@ -24,6 +28,19 @@ provider "aws" {
     tags = {
       Project   = "clhear"
       ManagedBy = "terraform"
+    }
+  }
+}
+
+# Cross-region replica of the datalake (DR drills, HLD v2 §8 item 17).
+provider "aws" {
+  alias  = "replica"
+  region = var.replica_region
+  default_tags {
+    tags = {
+      Project   = "clhear"
+      ManagedBy = "terraform"
+      Role      = "replica"
     }
   }
 }

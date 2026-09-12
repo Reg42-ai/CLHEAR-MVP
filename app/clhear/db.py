@@ -20,25 +20,24 @@ log = logging.getLogger("clhear.db")
 _engine: Engine | None = None
 
 
-def make_engine(database_url: str) -> Engine:
+def all_schemas() -> tuple[str, ...]:
+    """Every Postgres schema the record uses (one per layer + platform + community)."""
     from app.clhear.community_models import COMMUNITY_SCHEMA
     from app.clhear.derived_models import L2_SCHEMA, L3_SCHEMA, L4_SCHEMA, L5_SCHEMA, L6_SCHEMA
     from app.clhear.l1.models import L1_SCHEMA
 
+    return (
+        L0_SCHEMA, L1_SCHEMA, L2_SCHEMA, L3_SCHEMA, L4_SCHEMA, L5_SCHEMA, L6_SCHEMA,
+        COMMUNITY_SCHEMA,
+    )
+
+
+def make_engine(database_url: str) -> Engine:
     kwargs: dict = {"future": True}
     if not database_url.startswith("postgresql"):
         # SQLite has no schemas: translate `l0_platform.events` -> `events`.
         kwargs["execution_options"] = {
-            "schema_translate_map": {
-                L0_SCHEMA: None,
-                L1_SCHEMA: None,
-                L2_SCHEMA: None,
-                L3_SCHEMA: None,
-                L4_SCHEMA: None,
-                L5_SCHEMA: None,
-                L6_SCHEMA: None,
-                COMMUNITY_SCHEMA: None,
-            }
+            "schema_translate_map": {schema: None for schema in all_schemas()}
         }
     return sa.create_engine(database_url, **kwargs)
 
@@ -66,12 +65,15 @@ def dispose_engine() -> None:
 
 def run_migrations(engine: Engine) -> list[int]:
     """Apply pending numbered migrations from the top-level `migrations` package."""
-    from app.clhear.l1.models import L1_SCHEMA
-
     with engine.begin() as conn:
         if engine.dialect.name == "postgresql":
-            conn.execute(sa.text(f"CREATE SCHEMA IF NOT EXISTS {L0_SCHEMA}"))
-            conn.execute(sa.text(f"CREATE SCHEMA IF NOT EXISTS {L1_SCHEMA}"))
+            for schema in all_schemas():
+                conn.execute(sa.text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
+            # HLD v2 I7: pgvector lives beside the record (Aurora Postgres).
+            try:
+                conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+            except Exception:  # pragma: no cover - extension not available on this host
+                log.warning("pgvector extension unavailable; embeddings stay JSON")
         schema_migrations.create(conn, checkfirst=True)
         applied = {row.version for row in conn.execute(sa.select(schema_migrations.c.version))}
 

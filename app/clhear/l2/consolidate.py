@@ -14,6 +14,7 @@ import re
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
+from app.clhear.platform import record
 from app.clhear.derived_models import obligations
 from app.clhear.l2.concepts import consolidated_ids, upsert_concept
 from app.clhear.models import proposals as proposals_t
@@ -99,7 +100,9 @@ def _already_proposed(engine: Engine, member_ids: list[str]) -> bool:
         live = {
             r.obligation_id
             for r in conn.execute(
-                sa.select(concept_members.c.obligation_id).where(concept_members.c.obligation_id.in_(member_ids))
+                sa.select(concept_members.c.obligation_id).where(
+                    concept_members.c.obligation_id.in_(member_ids), record.in_force(concept_members)
+                )
             )
         }
         if live & wanted:
