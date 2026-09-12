@@ -45,13 +45,22 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     from app.clhear.l8.cohorts import refresh_cohorts
     from app.clhear.platform import evals as ev
 
+    from app.clhear.l2.change import nightly_change_pass
+    from app.clhear.l2.dedupe import consolidate as l2_consolidate
+    from app.clhear.l2.review import review_obligations
+    from app.clhear.l2.structured import refine_structured
+
     started = datetime.now(timezone.utc)
     seeded = curated.seed(engine)
     extraction = run_extraction(engine)
     triage = triage_duties(engine, llm)
+    structured = refine_structured(engine, llm)
+    l2_changes = nightly_change_pass(engine, llm)
     concepts_seed = curated.seed_concepts(engine)
     flagged = flag_stale_concepts(engine)
     consolidation = draft_and_propose(engine, llm)
+    registry_consolidation = l2_consolidate(engine)
+    reviews = review_obligations(engine, llm)
     blocks = generate_blocks(engine, llm)
     licenses = extract_licenses(engine, llm)
     activities = map_activities(engine, llm)
@@ -77,6 +86,7 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     gates = {}
     for suite in (
         "l2_basis_integrity", "l2_extraction_quality", "l2_concept_integrity",
+        "l2_coverage", "l2_precision", "l2_dedupe", "l2_change_inference",
         "l3_l5_referential", "l4_grounding", "l6_citation", "l7_number_echo", "l8_k_anonymity",
     ):
         try:
@@ -87,6 +97,10 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     outputs = {
         "extraction": extraction,
         "triage": triage,
+        "structured": structured,
+        "l2_changes": l2_changes,
+        "registry_consolidation": registry_consolidation,
+        "reviews": reviews,
         "curated": seeded,
         "concepts": concepts_seed,
         "consolidation": consolidation,
@@ -101,7 +115,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     }
     reasoning = (
         f"Nightly fleets: {extraction.get('inserted', 0)} obligations extracted, "
-        f"{triage.get('inserted', 0)} triaged, {consolidation.get('applied', 0)} concepts applied, "
+        f"{triage.get('inserted', 0)} triaged, {registry_consolidation['dedupe'].get('merged', 0)} deduped, "
+        f"{registry_consolidation['equivalences'].get('written', 0)} equivalences, "
+        f"{reviews.get('reviewed', 0)} reviewed, {consolidation.get('applied', 0)} concepts applied, "
         f"{blocks.get('written', 0)} blocks, {licenses.get('written', 0)} licenses, "
         f"{activities.get('written', 0)} activities; "
         f"{sum(1 for g in gates.values() if g.get('passed'))}/{len(gates)} eval gates green"

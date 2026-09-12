@@ -18,8 +18,10 @@ from dataclasses import dataclass
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
-from app.clhear.derived_models import obligations
+from app.clhear.derived_models import asserts, obligations
 from app.clhear.l1.models import clauses, family_members, source_versions, sources
+from app.clhear.platform import record
+from app.clhear.platform.ids import next_id
 
 log = logging.getLogger("clhear.l2")
 
@@ -64,6 +66,8 @@ class Candidate:
     confidence: float
     text_hash: str
     public: bool
+    clause_id: int | None = None
+    clause_text: str = ""
 
 
 def _title_from(text: str, ref: str) -> str:
@@ -96,8 +100,34 @@ def detect_duty(text: str, ref: str, heading: str = "") -> tuple[str, float] | N
     return None
 
 
+def container_clause_ids(conn, source_version_id: int) -> set[int]:
+    """Clauses that contain other clauses (a section wrapping provisions).
+    Their text is the concatenation of their children, so a duty detected in
+    them is the child's duty: obligations anchor to the atomic (leaf) clause."""
+    from app.clhear.l1.models import doc_nodes
+
+    parents = {
+        r.id: r.parent_id
+        for r in conn.execute(sa.select(doc_nodes.c.id, doc_nodes.c.parent_id).where(doc_nodes.c.source_version_id == source_version_id))
+    }
+    clause_nodes = {
+        r.doc_node_id: r.id
+        for r in conn.execute(sa.select(clauses.c.id, clauses.c.doc_node_id).where(clauses.c.source_version_id == source_version_id))
+        if r.doc_node_id is not None
+    }
+    containers: set[int] = set()
+    for node_id in clause_nodes:
+        parent = parents.get(node_id)
+        while parent is not None:
+            if parent in clause_nodes:
+                containers.add(clause_nodes[parent])
+            parent = parents.get(parent)
+    return containers
+
+
 def extract_source(engine: Engine, source_row, version_row) -> list[Candidate]:
-    """Candidates for one in-force source version. Binding tier only."""
+    """Candidates for one in-force source version. Binding tier only; atomic
+    (leaf) clauses only — see :func:`container_clause_ids`."""
     open_source = source_row.license == "open"
     out: list[Candidate] = []
     with engine.connect() as conn:
@@ -106,8 +136,11 @@ def extract_source(engine: Engine, source_row, version_row) -> list[Candidate]:
             .where(clauses.c.source_version_id == version_row.id)
             .order_by(clauses.c.ordering)
         ).all()
+        containers = container_clause_ids(conn, version_row.id)
     for row in rows:
         text = row.text or ""
+        if row.id in containers:
+            continue
         if not open_source or not row.public_ok:
             # Restricted: we cannot inspect text; no machine derivation.
             continue
@@ -130,6 +163,8 @@ def extract_source(engine: Engine, source_row, version_row) -> list[Candidate]:
                 confidence=confidence,
                 text_hash=row.text_hash,
                 public=True,
+                clause_id=row.id,
+                clause_text=text,
             )
         )
     return out
@@ -137,6 +172,16 @@ def extract_source(engine: Engine, source_row, version_row) -> list[Candidate]:
 
 def obligation_id(source_key: str, ref: str) -> str:
     return f"OBL:{source_key}#{ref}"
+
+
+def registry_next_id(conn) -> str:
+    return next_id(conn, "OBL")
+
+
+def why_id(conn, oid: str) -> str:
+    """The why-trail id the obligation row was just written with (edges and
+    change events of the same derivation share it)."""
+    return conn.execute(sa.select(obligations.c.why_trail_id).where(obligations.c.id == oid)).scalar_one()
 
 
 def run_extraction(engine: Engine, source_key: str | None = None) -> dict:
@@ -173,9 +218,27 @@ def run_extraction(engine: Engine, source_key: str | None = None) -> dict:
         all_candidates.extend(extract_source(engine, s, versions[s.id]))
 
     jurisdictions = {s.key: s.jurisdiction for s in source_rows}
+    regulators = {s.key: s.issuer for s in source_rows}
     version_labels = {s.key: versions[s.id].version_label for s in source_rows if s.id in versions}
+    version_as_of = {s.key: versions[s.id].as_of_date for s in source_rows if s.id in versions}
+
+    from app.clhear.l1.models import change_events as l1_change_events
+    from app.clhear.l2 import registry
 
     with engine.begin() as conn:
+        # Latest L1 change per source: the L2 change inherits its effective date.
+        l1_latest: dict[str, object] = {}
+        for src in source_rows:
+            if src.key not in scoped_keys:
+                continue
+            row = conn.execute(
+                sa.select(l1_change_events)
+                .where(l1_change_events.c.source_id == src.id)
+                .order_by(l1_change_events.c.id.desc())
+                .limit(1)
+            ).first()
+            if row is not None:
+                l1_latest[src.key] = row
         existing = {
             row.id: row
             for row in conn.execute(
@@ -189,6 +252,10 @@ def run_extraction(engine: Engine, source_key: str | None = None) -> dict:
             oid = obligation_id(cand.source_key, cand.ref)
             seen.add(oid)
             row = existing.get(oid)
+            l1_change = l1_latest.get(cand.source_key)
+            effective = getattr(l1_change, "effective_date", None) or version_as_of.get(cand.source_key)
+            effective_basis = getattr(l1_change, "effective_date_basis", "") or ("publisher" if effective else "none")
+            structured = registry.structured_fields(cand.clause_text or cand.statement, cand.modality)
             values = dict(
                 source_key=cand.source_key,
                 clause_ref=cand.ref,
@@ -197,28 +264,102 @@ def run_extraction(engine: Engine, source_key: str | None = None) -> dict:
                 addressee=cand.addressee,
                 modality=cand.modality,
                 jurisdiction=jurisdictions.get(cand.source_key, ""),
+                jurisdictions=[jurisdictions.get(cand.source_key, "")] if jurisdictions.get(cand.source_key) else [],
+                regulator=regulators.get(cand.source_key, "") or "",
                 themes=themes_by_source.get(cand.source_key, []),
                 confidence=cand.confidence,
                 method=EXTRACTOR_VERSION,
                 text_hash=cand.text_hash,
                 source_version_label=version_labels.get(cand.source_key, ""),
+                effective_from=effective,
+                **structured,
             )
             if row is None:
-                conn.execute(obligations.insert().values(id=oid, status="derived", **values))
+                why = registry.why_for(
+                    oid, clause_id=cand.clause_id, text_hash=cand.text_hash, method=EXTRACTOR_VERSION,
+                    confidence=cand.confidence,
+                    summary=f"deterministic duty ({cand.modality}) in {cand.source_key} {cand.ref}",
+                )
+                record.write(
+                    conn, obligations,
+                    {"id": oid, "status": "derived", "stable_id": registry_next_id(conn), **values},
+                    why=why, valid_from=effective,
+                )
+                if cand.clause_id is not None:
+                    registry.upsert_assert(
+                        conn, obligation_id=oid, clause_id=cand.clause_id, source_key=cand.source_key,
+                        clause_ref=cand.ref, text=cand.clause_text, text_hash=cand.text_hash,
+                        strength="explicit", why=why_id(conn, oid),
+                    )
+                registry.record_change(
+                    conn, obligation_id=oid, kind="added",
+                    cause_clause_ids=[cand.clause_id] if cand.clause_id is not None else [],
+                    source_key=cand.source_key, new_text_hash=cand.text_hash,
+                    effective_date=effective, effective_date_basis=effective_basis,
+                    cause_l1_change_event_id=getattr(l1_change, "id", None),
+                    why=why_id(conn, oid),
+                )
                 inserted += 1
             elif row.text_hash != cand.text_hash or row.method != EXTRACTOR_VERSION:
                 # Basis clause changed (or extractor upgraded): re-derive.
+                why = registry.why_for(
+                    oid, clause_id=cand.clause_id, text_hash=cand.text_hash, method=EXTRACTOR_VERSION,
+                    confidence=cand.confidence,
+                    summary=f"basis clause changed ({row.text_hash[:8]} -> {cand.text_hash[:8]}): re-derived",
+                )
+                trail = why.write(conn)
                 conn.execute(
                     obligations.update()
                     .where(obligations.c.id == oid)
-                    .values(status="derived", validated_by=None, validated_at=None, **values)
+                    .values(status="derived", validated_by=None, validated_at=None, why_trail_id=trail,
+                            version=(row.version or 1) + 1, review_confidence=None, **values)
                 )
+                if cand.clause_id is not None:
+                    registry.upsert_assert(
+                        conn, obligation_id=oid, clause_id=cand.clause_id, source_key=cand.source_key,
+                        clause_ref=cand.ref, text=cand.clause_text, text_hash=cand.text_hash,
+                        strength="explicit", why=trail,
+                    )
+                if row.text_hash != cand.text_hash:
+                    registry.record_change(
+                        conn, obligation_id=oid, kind="updated",
+                        cause_clause_ids=[cand.clause_id] if cand.clause_id is not None else [],
+                        source_key=cand.source_key, old_text_hash=row.text_hash, new_text_hash=cand.text_hash,
+                        effective_date=effective, effective_date_basis=effective_basis,
+                        cause_l1_change_event_id=getattr(l1_change, "id", None),
+                        detail={"old_version": row.source_version_label, "new_version": version_labels.get(cand.source_key, "")},
+                        why=trail,
+                    )
                 updated += 1
             else:
+                if not row.stable_id:
+                    registry.ensure_stable_id(conn, oid)
                 unchanged += 1
         for oid, row in existing.items():
             if oid not in seen and row.status != "stale":
-                conn.execute(obligations.update().where(obligations.c.id == oid).values(status="stale"))
+                l1_change = l1_latest.get(row.source_key)
+                effective = getattr(l1_change, "effective_date", None) or version_as_of.get(row.source_key)
+                why = registry.why_for(
+                    oid, clause_id=None, text_hash=row.text_hash, method=EXTRACTOR_VERSION, confidence=None,
+                    summary="basis clause no longer in force: obligation revoked (stale)",
+                )
+                trail = why.write(conn)
+                conn.execute(
+                    obligations.update().where(obligations.c.id == oid)
+                    .values(status="stale", effective_to=effective, why_trail_id=trail, version=(row.version or 1) + 1)
+                )
+                record.invalidate(
+                    conn, asserts, sa.and_(asserts.c.obligation_id == oid, asserts.c.valid_to.is_(None)),
+                    why=trail, reason="basis clause gone", valid_to=effective,
+                )
+                registry.record_change(
+                    conn, obligation_id=oid, kind="revoked", cause_clause_ids=[],
+                    source_key=row.source_key, old_text_hash=row.text_hash,
+                    effective_date=effective,
+                    effective_date_basis=getattr(l1_change, "effective_date_basis", "") or ("publisher" if effective else "none"),
+                    cause_l1_change_event_id=getattr(l1_change, "id", None),
+                    why=trail,
+                )
                 staled += 1
     summary = {
         "extractor": EXTRACTOR_VERSION,

@@ -224,11 +224,23 @@ def handle_community_write(engine: Engine, gateway: Gateway, envelope: Envelope)
     return community_writes.apply_op(engine, envelope.payload)
 
 
+def handle_l1_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """HLD v2 §4.2: an L1 clause change -> L2 change inference for that source."""
+    from app.clhear.l2.change import on_l1_changed
+    from app.clhear.platform.router import Router, is_router
+
+    llm = gateway
+    if gateway is not None and not is_router(gateway):
+        llm = Router(engine, providers={getattr(gateway._provider, "name", "fake"): gateway._provider})
+    return on_l1_changed(engine, envelope.payload or {}, llm)
+
+
 HANDLERS = {
     "DummyChanged": handle_dummy_changed,
     "AdapterRunRequested": handle_adapter_run,
     "PublishReleaseRequested": handle_publish_release,
     "CommunityWrite": handle_community_write,
+    "clhear.l1.changed": handle_l1_changed,
     # Later layers: add kinds here. handle_envelope already ignores unknown kinds.
 }
 

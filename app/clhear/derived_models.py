@@ -52,6 +52,120 @@ obligations = sa.Table(
     sa.Column("derived_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.Column("validated_by", sa.Text, nullable=True),
     sa.Column("validated_at", sa.DateTime(timezone=True), nullable=True),
+    # HLD v2 §4.2 registry fields. ``stable_id`` is the public ``OBL-000001``
+    # identifier (I11, never reused); ``id`` stays the deterministic derivation
+    # key so the same corpus always derives the same registry.
+    sa.Column("stable_id", sa.Text, nullable=True, unique=True),
+    sa.Column("determination", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("subject", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("action", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("condition", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("object", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("regulator", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("obligation_type", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("effective_from", sa.Date, nullable=True),
+    sa.Column("effective_to", sa.Date, nullable=True),
+    # Canonical obligation this row was deduplicated into (NULL = canonical itself).
+    sa.Column("canonical_id", sa.Text, nullable=True),
+    sa.Column("review_confidence", sa.Numeric(4, 3), nullable=True),
+    schema=L2_SCHEMA,
+)
+
+# --------------------------------------------------------- L2 registry edges
+
+OBLIGATION_TYPES = (
+    "conduct", "disclosure", "reporting", "record_keeping", "governance",
+    "prudential", "prohibition", "authorisation", "consumer_protection", "other",
+)
+ASSERT_STRENGTHS = ("explicit", "implied")
+L2_CHANGE_KINDS = ("added", "updated", "revoked")
+
+asserts = sa.Table(
+    "asserts",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # AST-000001
+    sa.Column("obligation_id", sa.Text, nullable=False, index=True),
+    sa.Column("clause_id", BigId, nullable=False, index=True),
+    sa.Column("source_key", sa.Text, nullable=False, default=""),
+    sa.Column("clause_ref", sa.Text, nullable=False, default=""),
+    sa.Column("span_start", sa.Integer, nullable=True),  # offsets into clauses.text
+    sa.Column("span_end", sa.Integer, nullable=True),
+    sa.Column(
+        "strength",
+        sa.Text,
+        sa.CheckConstraint("strength in ('explicit','implied')", name="asserts_strength_check"),
+        nullable=False,
+        default="explicit",
+    ),
+    sa.Column("text_hash", sa.Text, nullable=False, default=""),
+    schema=L2_SCHEMA,
+)
+
+equivalences = sa.Table(
+    "equivalences",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # EQV-000001
+    sa.Column("obligation_a", sa.Text, nullable=False, index=True),
+    sa.Column("obligation_b", sa.Text, nullable=False, index=True),
+    sa.Column("basis", sa.Text, nullable=False, default="lexical"),  # lexical | concept | model | human
+    sa.Column("concept_id", sa.Text, nullable=True),
+    sa.Column("similarity", sa.Numeric(4, 3), nullable=True),
+    sa.Column("method", sa.Text, nullable=False, default=""),
+    sa.UniqueConstraint("obligation_a", "obligation_b", name="equivalences_pair_unique"),
+    schema=L2_SCHEMA,
+)
+
+supersessions = sa.Table(
+    "supersessions",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # SUP-000001
+    sa.Column("old_obligation_id", sa.Text, nullable=False, index=True),
+    sa.Column("new_obligation_id", sa.Text, nullable=False, index=True),
+    sa.Column("cause_change_event_id", sa.Text, nullable=True),
+    sa.Column("effective_date", sa.Date, nullable=True),
+    sa.Column("note", sa.Text, nullable=False, default=""),
+    schema=L2_SCHEMA,
+)
+
+l2_change_events = sa.Table(
+    "l2_change_events",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # CHG-000001
+    sa.Column("obligation_id", sa.Text, nullable=False, index=True),
+    sa.Column(
+        "kind",
+        sa.Text,
+        sa.CheckConstraint("kind in ('added','updated','revoked')", name="l2_change_events_kind_check"),
+        nullable=False,
+    ),
+    sa.Column("cause_clause_ids", Json, nullable=False, default=list),
+    sa.Column("cause_l1_change_event_id", BigId, nullable=True, index=True),
+    sa.Column("source_key", sa.Text, nullable=False, default=""),
+    sa.Column("old_text_hash", sa.Text, nullable=False, default=""),
+    sa.Column("new_text_hash", sa.Text, nullable=False, default=""),
+    sa.Column("effective_date", sa.Date, nullable=True),
+    sa.Column("effective_date_basis", sa.Text, nullable=False, default=""),
+    sa.Column("detected_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Column("detail", Json, nullable=False, default=dict),
+    schema=L2_SCHEMA,
+)
+
+obligation_reviews = sa.Table(
+    "obligation_reviews",
+    metadata,
+    sa.Column("id", BigId, primary_key=True, autoincrement=True),
+    sa.Column("obligation_id", sa.Text, nullable=False, index=True),
+    sa.Column("reviewer_kind", sa.Text, nullable=False, default="model"),  # model | expert
+    sa.Column("reviewer", sa.Text, nullable=False, default=""),  # model id or panel member handle
+    sa.Column(
+        "verdict",
+        sa.Text,
+        sa.CheckConstraint("verdict in ('correct','incorrect','unsure')", name="obligation_reviews_verdict_check"),
+        nullable=False,
+    ),
+    sa.Column("text_hash", sa.Text, nullable=False, default=""),  # basis hash the verdict was given on
+    sa.Column("notes", sa.Text, nullable=False, default=""),
+    sa.Column("reviewed_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     schema=L2_SCHEMA,
 )
 
@@ -190,6 +304,7 @@ concept_members = sa.Table(
 DERIVED_TABLES = (
     obligations, blocks, activities, attribute_schema, sample_profiles,
     blueprints, concepts, concept_members, license_types,
+    asserts, equivalences, supersessions, l2_change_events, obligation_reviews,
 )
 
 from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402

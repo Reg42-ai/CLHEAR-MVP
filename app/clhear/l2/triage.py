@@ -15,8 +15,11 @@ from sqlalchemy.engine import Engine
 
 from app.clhear.derived_models import obligations
 from app.clhear.l1.models import clauses, family_members, source_versions, sources
-from app.clhear.l2.extract import ADDRESSEE, MAX_STATEMENT, NON_DUTY_HEADINGS, _title_from, detect_duty, obligation_id
+from app.clhear.l2 import registry
+from app.clhear.l2.extract import ADDRESSEE, MAX_STATEMENT, NON_DUTY_HEADINGS, _title_from, detect_duty, obligation_id, why_id
+from app.clhear.platform import record
 from app.clhear.platform.gateway import parse_json_object
+from app.clhear.platform.ids import next_id
 from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l2.triage")
@@ -64,9 +67,12 @@ def _weak_candidates(engine: Engine, limit: int = MAX_PER_RUN) -> list[dict]:
                     "ref": row.ref,
                     "text": text,
                     "text_hash": row.text_hash,
+                    "clause_id": row.id,
                     "jurisdiction": src.jurisdiction,
+                    "regulator": src.issuer,
                     "themes": src.topics if isinstance(src.topics, list) else [],
                     "version_label": versions[sid].version_label,
+                    "as_of_date": versions[sid].as_of_date,
                 })
                 if len(out) >= limit:
                     return out
@@ -114,10 +120,20 @@ def triage_duties(engine: Engine, llm, limit: int = MAX_PER_RUN) -> dict:
         if len(statement) > MAX_STATEMENT:
             statement = statement[: MAX_STATEMENT - 1].rsplit(" ", 1)[0] + "…"
         addressee_match = ADDRESSEE.search(cand["text"])
+        structured = registry.structured_fields(cand["text"], str(parsed.get("modality") or "should"))
         with engine.begin() as conn:
-            conn.execute(
-                obligations.insert().values(
+            why = registry.why_for(
+                oid, clause_id=cand["clause_id"], text_hash=cand["text_hash"], method="duty-triage-v1",
+                confidence=0.7,
+                summary=f"weak-modality duty accepted by {result.model}; evidence span quoted verbatim",
+                model_manifest={"model": result.model, "task": "l2.duty_triage"},
+            )
+            record.write(
+                conn,
+                obligations,
+                dict(
                     id=oid,
+                    stable_id=next_id(conn, "OBL"),
                     source_key=cand["source_key"],
                     clause_ref=cand["ref"],
                     title=_title_from(cand["text"], cand["ref"]),
@@ -125,13 +141,31 @@ def triage_duties(engine: Engine, llm, limit: int = MAX_PER_RUN) -> dict:
                     addressee=addressee_match.group(1).strip() if addressee_match else "",
                     modality=str(parsed.get("modality") or "should"),
                     jurisdiction=cand["jurisdiction"] or "",
+                    jurisdictions=[cand["jurisdiction"]] if cand["jurisdiction"] else [],
+                    regulator=cand.get("regulator") or "",
                     themes=cand["themes"],
                     confidence=0.7,
                     status="derived",
                     method="duty-triage-v1",
                     text_hash=cand["text_hash"],
                     source_version_label=cand["version_label"] or "",
-                )
+                    effective_from=cand.get("as_of_date"),
+                    **structured,
+                ),
+                why=why,
+                valid_from=cand.get("as_of_date"),
+            )
+            trail = why_id(conn, oid)
+            registry.upsert_assert(
+                conn, obligation_id=oid, clause_id=cand["clause_id"], source_key=cand["source_key"],
+                clause_ref=cand["ref"], text=cand["text"], text_hash=cand["text_hash"],
+                strength="implied", why=trail,
+            )
+            registry.record_change(
+                conn, obligation_id=oid, kind="added", cause_clause_ids=[cand["clause_id"]],
+                source_key=cand["source_key"], new_text_hash=cand["text_hash"],
+                effective_date=cand.get("as_of_date"), effective_date_basis="publisher" if cand.get("as_of_date") else "none",
+                detail={"evidence_span": span[:200]}, why=trail,
             )
         from app.clhear.governance import mark_generated
 

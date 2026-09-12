@@ -118,6 +118,11 @@ TASKS: dict[str, TaskSpec] = {
         "l2.change", "classification", "medium", "high", 0.90, "l2.change", "L2", task_class="l2_change",
         latency_tolerance="hours", domain="legal", description="Infer obligation change from an L1 change",
     ),
+    "l2.review": TaskSpec(
+        "l2.review", "judging", "medium", "high", 0.90, "l2.review", "L2", task_class="judge",
+        latency_tolerance="nightly", domain="legal",
+        description="Second-model reviewer: is the obligation a correct reading of its clause?",
+    ),
     "l3.block_generate": TaskSpec(
         "l3.block_generate", "structured_drafting", "high", "medium", 0.82, "l3.generate", "L3",
         task_class="l3_decompose", latency_tolerance="nightly", domain="legal",
@@ -189,6 +194,7 @@ SEED_QUALITY: dict[tuple[str, str], float] = {
     ("l0.revalidate", CLAUDE_SONNET_5): 0.93,
     ("l0.revalidate", CLAUDE_OPUS_5): 0.97,
     ("eval.judge", NOVA_LITE): 0.86,
+    ("l2.review", CLAUDE_SONNET_5): 0.93,
 }
 
 # Default quality by ladder position when neither seed nor Eval Studio has a figure:
