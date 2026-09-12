@@ -79,6 +79,7 @@ OBLIGATION_TYPES = (
 )
 ASSERT_STRENGTHS = ("explicit", "implied")
 L2_CHANGE_KINDS = ("added", "updated", "revoked")
+BLOCK_KINDS = ("System", "Document", "Role", "Configuration", "Process", "Workflow", "Asset", "Body")
 
 asserts = sa.Table(
     "asserts",
@@ -183,6 +184,64 @@ blocks = sa.Table(
     sa.Column("satisfies", Json, nullable=False, default=list),
     sa.Column("implements_controls", Json, nullable=False, default=list),
     sa.Column("status", sa.Text, nullable=False, default="curated"),
+    sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    # HLD v2 §4.3: fixed kind, purpose, harmonisation thread.
+    sa.Column(
+        "kind",
+        sa.Text,
+        sa.CheckConstraint("kind in ('" + "','".join(BLOCK_KINDS) + "')", name="blocks_kind_check"),
+        nullable=False,
+        default="Process",
+        server_default="Process",
+    ),
+    sa.Column("purpose", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("canonical_id", sa.Text, nullable=True),  # set on blocks harmonised into a canonical one
+    schema=L3_SCHEMA,
+)
+
+# requires: obligation -> block, with the span of obligation text that motivates it.
+requires = sa.Table(
+    "requires",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # REQ-000001
+    sa.Column("obligation_id", sa.Text, nullable=False, index=True),
+    sa.Column("block_id", sa.Text, nullable=False, index=True),
+    sa.Column("rationale", sa.Text, nullable=False, default=""),
+    sa.Column("rationale_start", sa.Integer, nullable=True),
+    sa.Column("rationale_end", sa.Integer, nullable=True),
+    sa.Column("method", sa.Text, nullable=False, default=""),  # curated-anchor | deterministic | llm
+    sa.Column("obligation_text_hash", sa.Text, nullable=False, default=""),
+    schema=L3_SCHEMA,
+)
+
+# characteristics: one row per (block, key) of the kind's fixed schema.
+characteristics = sa.Table(
+    "characteristics",
+    metadata,
+    sa.Column("id", BigId, primary_key=True, autoincrement=True),
+    sa.Column("block_id", sa.Text, nullable=False, index=True),
+    sa.Column("key", sa.Text, nullable=False),
+    sa.Column("value", sa.Text, nullable=False, default=""),
+    sa.Column(
+        "status",
+        sa.Text,
+        sa.CheckConstraint("status in ('backed','not_specified','unbacked')", name="characteristics_status_check"),
+        nullable=False,
+        default="not_specified",
+    ),
+    sa.Column("backing_obligation_id", sa.Text, nullable=True),
+    sa.Column("backing_span", sa.Text, nullable=False, default=""),
+    sa.Column("method", sa.Text, nullable=False, default=""),
+    schema=L3_SCHEMA,
+)
+
+# l3_kinds: the schema registry served at /l3/kinds (seeded from l3.kinds).
+l3_kinds = sa.Table(
+    "l3_kinds",
+    metadata,
+    sa.Column("kind", sa.Text, primary_key=True),
+    sa.Column("description", sa.Text, nullable=False, default=""),
+    sa.Column("fields", Json, nullable=False, default=list),
     sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     schema=L3_SCHEMA,
 )
@@ -305,6 +364,7 @@ DERIVED_TABLES = (
     obligations, blocks, activities, attribute_schema, sample_profiles,
     blueprints, concepts, concept_members, license_types,
     asserts, equivalences, supersessions, l2_change_events, obligation_reviews,
+    requires, characteristics,
 )
 
 from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402

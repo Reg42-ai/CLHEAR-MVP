@@ -37,12 +37,24 @@ def seed(engine: Engine) -> dict:
                 satisfies=item.get("satisfies", []),
                 implements_controls=item.get("implements_controls", []),
                 status="curated",
+                kind=item.get("kind", "Process"),
+                purpose=item.get("purpose", ""),
             )
             if exists:
                 conn.execute(blocks.update().where(blocks.c.id == item["id"]).values(**values))
             else:
                 conn.execute(blocks.insert().values(id=item["id"], **values))
             counts["blocks"] += 1
+        from app.clhear.derived_models import l3_kinds
+        from app.clhear.l3.kinds import kinds_catalog
+
+        for entry in kinds_catalog():
+            exists = conn.execute(sa.select(l3_kinds.c.kind).where(l3_kinds.c.kind == entry["kind"])).first()
+            values = dict(description=entry["description"], fields=entry["fields"])
+            if exists:
+                conn.execute(l3_kinds.update().where(l3_kinds.c.kind == entry["kind"]).values(**values))
+            else:
+                conn.execute(l3_kinds.insert().values(kind=entry["kind"], **values))
         for item in load("l5_activities"):
             exists = conn.execute(sa.select(activities.c.id).where(activities.c.id == item["id"])).first()
             values = dict(
