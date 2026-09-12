@@ -1359,6 +1359,163 @@ def l6_citation(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     return {"checked": checked, "failed": failed, "extra_ids": extras[:20]}, failed == 0
 
 
+L6_GOLDEN = Path(__file__).resolve().parents[3] / "clhear-evals" / "l6"
+
+
+def _l6_cases(folder: str) -> list[dict]:
+    cases: list[dict] = []
+    for path in sorted((L6_GOLDEN / folder).glob("*.json")):
+        data = json.loads(path.read_text())
+        for item in data.get("cases", []):
+            item.setdefault("file", path.name)
+            cases.append(item)
+    return cases
+
+
+def _l6_current(engine: Engine) -> list[dict]:
+    """Current stored blueprints as compositions (stored profiles composed when none is stored)."""
+    from app.clhear.derived_models import blueprints
+    from app.clhear.l6 import composer
+
+    out: list[dict] = []
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.select(blueprints.c.stable_id, blueprints.c.composition, blueprints.c.profile_id)
+                .where(blueprints.c.status == "current", blueprints.c.stable_id.isnot(None)).order_by(blueprints.c.id)).all()
+    except sa.exc.OperationalError:  # pre-m0014 database
+        return out
+    for sid, comp, pid in rows:
+        comp = composer._json(comp, None)
+        if comp:
+            comp["blueprint_id"] = sid
+            comp["profile_id"] = pid
+            out.append(comp)
+    if not out:
+        from app.clhear.derived_models import profiles
+
+        with engine.connect() as conn:
+            pids = [r[0] for r in conn.execute(sa.select(profiles.c.id).where(profiles.c.status == "valid").order_by(profiles.c.id))]
+        for pid in pids:
+            out.append(composer.compose_for_profile(engine, pid, log_request=False))
+    return out
+
+
+@register_suite("l6_completeness")
+def l6_completeness(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Completeness 100 %: in every current blueprint each applicable obligation
+    is satisfied by ≥ 1 item. A blueprint without any applicable obligation
+    proves nothing, so an instance with only such blueprints fails."""
+    comps = _l6_current(engine)
+    total = covered = 0
+    gaps: list[dict] = []
+    for comp in comps:
+        s = comp.get("coverage_summary") or {}
+        total += s.get("total", 0)
+        covered += s.get("covered", 0)
+        for c in comp.get("coverage") or []:
+            if c["state"] == "gap" and len(gaps) < 20:
+                gaps.append({"blueprint": comp.get("blueprint_id"), "obligation_id": c["obligation_id"], "title": c.get("title")})
+    stats = {"blueprints": len(comps), "applicable_obligations": total, "covered": covered,
+             "completeness": (covered / total) if total else None, "gaps": gaps, "threshold": 1.0}
+    return stats, total > 0 and covered == total
+
+
+@register_suite("l6_minimality")
+def l6_minimality(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Minimality checked: no item of a current blueprint is removable without
+    breaking coverage; the composer's own proof is re-verified independently."""
+    from app.clhear.l6.check import verify_minimality
+
+    comps = _l6_current(engine)
+    checked = minimal = 0
+    problems: list[dict] = []
+    for comp in comps:
+        if not comp.get("items"):
+            continue
+        checked += 1
+        v = verify_minimality(comp)
+        if v["minimal"] and v["proof_agrees"]:
+            minimal += 1
+        else:
+            problems.append({"blueprint": comp.get("blueprint_id"), "redundant": v["redundant"], "proof_agrees": v["proof_agrees"]})
+    stats = {"blueprints": len(comps), "checked": checked, "minimal": minimal, "problems": problems[:20], "threshold": "all"}
+    return stats, checked > 0 and minimal == checked
+
+
+@register_suite("l6_reference")
+def l6_reference(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Reference-program agreement ≥ 90 % against expert-authored programs
+    (clhear-evals/l6/reference): per case the F1 between the composed item set
+    and the expert block set; cases whose instruments are not in the store are
+    reported as skipped, never counted as agreement."""
+    from app.clhear.derived_models import obligations as obligations_t
+    from app.clhear.l6 import composer
+
+    cases = _l6_cases("reference")
+    with engine.connect() as conn:
+        sources = {r[0] for r in conn.execute(sa.select(sa.distinct(obligations_t.c.source_key)))}
+        live = {r[0] for r in conn.execute(sa.select(obligations_t.c.id).where(obligations_t.c.status.in_(("derived", "validated"))))}
+    scores: list[float] = []
+    detail: list[dict] = []
+    skipped = 0
+    for case in cases:
+        needed = set(case.get("requires_sources") or [])
+        if needed and not needed & sources:
+            skipped += 1
+            detail.append({"case": case["id"], "skipped": sorted(needed - sources)})
+            continue
+        comp = composer.compose(engine, {"attributes": case["attributes"], "activities": case.get("activities")}, log_request=False)
+        # The expert program: block -> the obligations that justify it. Only
+        # blocks whose justification is live in this store are in scope, and
+        # only composed items addressing the expert's obligations are compared.
+        expected: dict[str, list[str]] = case["expected"]
+        expert_obls = {o for obls in expected.values() for o in obls}
+        want = {b for b, obls in expected.items() if any(o in live for o in obls)}
+        composed = {i["block_id"]: set(i["obligations_satisfied"]) for i in comp["items"]}
+        got = {b for b, obls in composed.items() if obls & expert_obls}
+        beyond = sorted(set(composed) - got)
+        forbidden = set(case.get("forbidden_blocks") or []) & set(composed)
+        if not want:
+            skipped += 1
+            detail.append({"case": case["id"], "skipped": "no expected block justified by a live obligation"})
+            continue
+        tp = len(got & want)
+        precision = tp / len(got) if got else 0.0
+        recall = tp / len(want)
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+        if forbidden:
+            f1 = 0.0
+        scores.append(f1)
+        detail.append({"case": case["id"], "f1": round(f1, 3), "in_scope": sorted(want), "missing": sorted(want - got),
+                       "disagree": sorted(got - want), "beyond_reference": beyond, "forbidden_present": sorted(forbidden),
+                       "gaps": comp["coverage_summary"]["gaps"]})
+    agreement = (sum(scores) / len(scores)) if scores else None
+    stats = {"cases": len(cases), "evaluated": len(scores), "skipped": skipped, "agreement": agreement, "detail": detail[:30],
+             "threshold": 0.90, "reference_sets": sorted({c["file"] for c in cases})}
+    return stats, bool(scores) and agreement >= 0.90
+
+
+@register_suite("l6_explanation")
+def l6_explanation(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Explanation quality ≥ 90 % on the rubric over every item of every current blueprint."""
+    from app.clhear.l6.explain import score_blueprint
+
+    comps = _l6_current(engine)
+    items = passed = 0
+    total = 0.0
+    failing: list[dict] = []
+    for comp in comps:
+        s = score_blueprint(comp)
+        items += s["items"]
+        passed += s["passed"]
+        total += (s["score"] or 0.0) * s["items"]
+        failing.extend({"blueprint": comp.get("blueprint_id"), **f} for f in s["failing"][:5])
+    score = (total / items) if items else None
+    stats = {"blueprints": len(comps), "items": items, "passed": passed, "score": score, "failing": failing[:20], "threshold": 0.90}
+    return stats, items > 0 and score >= 0.90
+
+
 @register_suite("l7_number_echo")
 def l7_number_echo(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     from app.clhear.l7.narrate import number_echo_ok
