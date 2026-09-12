@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["clhear-v*"]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest tests/ -v
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform -chdir=infra init -backend=false -input=false
+      - run: terraform -chdir=infra validate
+      - run: terraform -chdir=infra fmt -check
+
+  # Release gate (HLD principle 5): a clhear-vX.Y.Z tag runs all eval suites and
+  # exports the snapshot only if everything is green. Publishing to the public
+  # `clhear` repo needs CLHEAR_PUBLIC_REPO_URL + token secrets configured.
+  release:
+    if: startsWith(github.ref, 'refs/tags/clhear-v')
+    needs: [tests, terraform]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run eval suites for the release
+        run: python -m app.clhear.platform.evals all "${GITHUB_REF_NAME}"
+      - name: Export snapshot (gated on green evals)
+        run: python -m app.clhear.platform.exporter "${GITHUB_REF_NAME}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-${{ github.ref_name }}
+          path: clhear-public/

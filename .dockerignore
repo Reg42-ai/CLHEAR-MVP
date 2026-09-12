@@ -1,0 +1,12 @@
+.git
+.venv
+deploy
+artifacts
+**/__pycache__
+**/*.pyc
+tests/fixtures
+*.db
+infra/.terraform
+infra/terraform.tfstate*
+infra/tfplan
+/tmp

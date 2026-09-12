@@ -1,0 +1,29 @@
+[
+  {
+    "id": "BM-COVERAGE-PERCENTILE",
+    "name": "Program coverage percentile",
+    "definition": "Where a program's obligation-coverage ratio sits among anonymized peers in the same profile cluster.",
+    "cluster": "EU CASPs, 10-100 employees",
+    "k_anonymity": 5,
+    "locked": true,
+    "blurred_sample": "your program ranks in the ▓▓th percentile of ▓▓ peers"
+  },
+  {
+    "id": "BM-INCIDENT-CLOCK",
+    "name": "Notification-clock readiness",
+    "definition": "Distribution of measured time-to-notify (GDPR 72h / DORA initial report) across the peer cluster, from tabletop exercise evidence.",
+    "cluster": "EU financial entities, DORA scope",
+    "k_anonymity": 5,
+    "locked": true,
+    "blurred_sample": "median peer readiness ▓▓h · yours ▓▓h"
+  },
+  {
+    "id": "BM-CHURN-EXPOSURE",
+    "name": "Regulatory churn exposure",
+    "definition": "How much of the peer cluster's obligation base changed in the last 12 months (from L1 clause-level change events), versus this program's.",
+    "cluster": "UK EMIs",
+    "k_anonymity": 5,
+    "locked": true,
+    "blurred_sample": "cluster median ▓▓ changed clauses/quarter"
+  }
+]

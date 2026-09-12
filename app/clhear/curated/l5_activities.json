@@ -1,0 +1,88 @@
+[
+  {
+    "id": "ACT-ONBOARD-CUSTOMER",
+    "name": "Onboard a customer",
+    "description": "Open a business relationship: collect identity data, verify it, classify risk, and register the lawful basis for the personal data processed.",
+    "business_owner": "Growth / Operations",
+    "triggers": [
+      {"anchor": {"source_key": "uksi/2017/692", "refs": ["regulation-27", "regulation-28"]}, "when": {"jurisdictions": "UK"}},
+      {"anchor": {"source_key": "celex/32024R1624", "refs": ["art_20"]}, "when": {"jurisdictions": "EU"}},
+      {"anchor": {"source_key": "celex/32016R0679", "refs": ["art_5", "art_6"]}, "when": {"data_footprint": "*"}}
+    ]
+  },
+  {
+    "id": "ACT-HIGH-RISK-RELATIONSHIPS",
+    "name": "Handle high-risk relationships",
+    "description": "Manage relationships flagged high-risk: PEPs, high-risk third countries, complex structures.",
+    "business_owner": "Compliance",
+    "triggers": [
+      {"anchor": {"source_key": "uksi/2017/692", "refs": ["regulation-33"]}, "when": {"jurisdictions": "UK"}}
+    ]
+  },
+  {
+    "id": "ACT-MONITOR-TRANSACTIONS",
+    "name": "Monitor transactions",
+    "description": "Screen and scrutinise transaction flows against the customer's expected profile.",
+    "business_owner": "Financial crime operations",
+    "triggers": [
+      {"anchor": {"source_key": "uksi/2017/692", "refs": ["regulation-28"]}, "when": {"jurisdictions": "UK"}}
+    ]
+  },
+  {
+    "id": "ACT-PROCESS-PERSONAL-DATA",
+    "name": "Process personal data",
+    "description": "Any collection, storage, use or sharing of personal data across products and internal systems.",
+    "business_owner": "Every team (data owner registry)",
+    "triggers": [
+      {"anchor": {"source_key": "celex/32016R0679", "refs": ["art_5", "art_6", "art_30", "art_32"]}, "when": {"data_footprint": "*"}},
+      {"anchor": {"source_key": "celex/32016R0679", "refs": ["art_35", "art_37"]}, "when": {"data_footprint": "large-scale personal data"}}
+    ]
+  },
+  {
+    "id": "ACT-RESPOND-TO-INCIDENTS",
+    "name": "Respond to security & data incidents",
+    "description": "Detect, contain, classify and notify security incidents, data breaches and ICT disruptions.",
+    "business_owner": "Security / CISO",
+    "triggers": [
+      {"anchor": {"source_key": "celex/32016R0679", "refs": ["art_33"]}, "when": {"data_footprint": "*"}},
+      {"anchor": {"source_key": "celex/32022R2554", "refs": ["art_17", "art_19"]}, "when": {"financial_entity_dora": true}}
+    ]
+  },
+  {
+    "id": "ACT-CUSTODY-CRYPTO",
+    "name": "Custody client crypto-assets",
+    "description": "Hold, or control the means of access to, clients' crypto-assets and fiat funds.",
+    "business_owner": "Custody operations",
+    "triggers": [
+      {"anchor": {"source_key": "celex/32023R1114", "refs": ["art_62", "art_68", "art_70"]}, "when": {"crypto_services": true}}
+    ]
+  },
+  {
+    "id": "ACT-OUTSOURCE-ICT",
+    "name": "Outsource ICT services",
+    "description": "Contract cloud and other ICT services supporting critical or important functions.",
+    "business_owner": "Technology / Procurement",
+    "triggers": [
+      {"anchor": {"source_key": "celex/32022R2554", "refs": ["art_5", "art_6", "art_28"]}, "when": {"financial_entity_dora": true}}
+    ]
+  },
+  {
+    "id": "ACT-KEEP-RECORDS",
+    "name": "Keep records",
+    "description": "Retain CDD, transaction and processing records for their statutory periods and delete defensibly afterwards.",
+    "business_owner": "Compliance / Data governance",
+    "triggers": [
+      {"anchor": {"source_key": "uksi/2017/692", "refs": ["regulation-40"]}, "when": {"jurisdictions": "UK"}},
+      {"anchor": {"source_key": "celex/32016R0679", "refs": ["art_30"]}, "when": {"data_footprint": "*"}}
+    ]
+  },
+  {
+    "id": "ACT-RUN-RISK-ASSESSMENT",
+    "name": "Run the business risk assessment",
+    "description": "Produce and refresh the business-wide ML/TF risk assessment that calibrates the rest of the programme.",
+    "business_owner": "MLRO",
+    "triggers": [
+      {"anchor": {"source_key": "uksi/2017/692", "refs": ["regulation-18", "regulation-19", "regulation-21"]}, "when": {"jurisdictions": "UK"}}
+    ]
+  }
+]
