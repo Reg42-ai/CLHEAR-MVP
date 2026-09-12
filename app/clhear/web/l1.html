@@ -180,7 +180,7 @@ function SourcePage({ sourceKey, watched, setWatched, openFamily, openClause, ba
       <h2>${src.name}</h2>
       <div class="meta"><span><b>${src.jurisdiction}</b></span><span>regulator <b>${src.regulator}</b></span><span>publisher <b>${src.publisher}</b></span><span>instrument <b>${src.instrument}</b></span><span>adapter <span class="mono">${src.adapter}</span></span></div>
       <div class="meta"><${Rights} basis=${src.rights.basis} /> <span>${RIGHTS_LABEL[src.rights.basis]}</span> ${src.rights.licence_ref && html`<span class="mono">${src.rights.licence_ref}</span>`} <a href=${src.canonical_url} target="_blank" rel="noopener">official text ↗</a></div>
-      <${WatchButton} sourceKey=${sourceKey} watching=${watching} onChange=${(w) => { const n = new Set(watched); w ? n.add(sourceKey) : n.delete(sourceKey); setWatched(n); }} />
+      <${WatchButton} sourceKey=${sourceKey} watching=${watching} onChange=${(w) => { const n = new Set(watched); w ? n.add(sourceKey) : n.delete(sourceKey); setWatched(n); setSrc({ ...src, watchers: Math.max(0, (src.watchers || 0) + (w ? 1 : -1)) }); }} />
       <span class="mono"> ${src.watchers} watcher${src.watchers === 1 ? "" : "s"}</span>
       <h3>Versions</h3>
       ${versions.length ? html`<table class="src"><thead><tr><th>Label</th><th>Kind</th><th>As of</th><th>Effective</th><th>Retrieved</th><th>Clauses</th><th>Hash</th></tr></thead>
@@ -254,15 +254,19 @@ function Scorecard() {
   if (!card) return html`<div class="spin">Loading scorecard…</div>`;
   if (card.error) return html`<div class="empty">${card.error}</div>`;
   const gate = card.gate || {};
-  const suites = gate.suites || {};
+  // gate_status: suites that ran (with pass/fail), suites the gate names that
+  // never ran ("missing" — the layer is simply not publishable yet).
+  const suites = { ...(gate.suites || {}) };
+  for (const m of gate.missing || []) if (!suites[m]) suites[m] = { status: "missing", passed: false };
   return html`<section class="panelx"><h2>L1 scorecard</h2>
     <div class="score">
-      <div class="kpi"><b class=${gate.publishable ? "ok" : "bad"}>${gate.publishable ? "publishable" : "below gate"}</b><span>L1 publication gate (I10)</span></div>
+      <div class="kpi"><b class=${gate.passed ? "ok" : "bad"}>${gate.passed ? "publishable" : "below gate"}</b><span>L1 publication gate (I10)${gate.missing && gate.missing.length ? ` · ${gate.missing.length} suite${gate.missing.length === 1 ? "" : "s"} not yet run` : ""}</span></div>
       <div class="kpi"><b>${card.clauses.total}</b><span>clauses (${card.clauses.normative} normative)</span></div>
       <div class="kpi"><b>${card.starter_corpus.ingested}/${card.starter_corpus.sources}</b><span>starter corpus ingested</span></div>
       <div class="kpi"><b class=${card.families.passed ? "ok" : "warn"}>${card.families.families.length}</b><span>families (${card.families.passed ? "all ≥ 99 %" : "some incomplete"})</span></div>
     </div>
     <h3>Gate suites</h3>
+    <div class="mono">${Object.entries(gate.thresholds || {}).map(([k, v]) => `${k} ${v}`).join(" · ")}</div>
     <table class="src"><thead><tr><th>Suite</th><th>Status</th><th>Detail</th></tr></thead><tbody>
       ${Object.entries(suites).map(([k, v]) => html`<tr key=${k}><td class="mono">${k}</td><td class=${v && v.passed ? "ok" : (v && v.status === "missing" ? "warn" : "bad")}>${v ? (v.passed ? "pass" : v.status || "fail") : "—"}</td><td class="mono">${v && v.scores ? JSON.stringify(v.scores).slice(0, 160) : ""}</td></tr>`)}
     </tbody></table>
