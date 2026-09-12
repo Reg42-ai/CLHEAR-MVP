@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · L4 Profile space</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* L4 browser (HLD v2 §4.4): guided validating builder (only valid permutations
+     offered), ontology explorer with register provenance, permutation explorer,
+     profile page with the obligations that apply, scorecard. */
+  main { position: relative; z-index: 1; max-width: 1500px; margin: 22px auto; padding: 0 20px 70px; }
+  .layout { display: grid; grid-template-columns: 300px 1fr; gap: 18px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .side { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 16px; align-self: start; position: sticky; top: 74px; }
+  .side h4, .panelx h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .side h4:first-child { margin-top: 0; }
+  input, select { border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); box-sizing: border-box; }
+  .side input, .side select { width: 100%; }
+  .chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--edge); font-size: 12px; cursor: pointer; color: var(--muted); background: var(--panel-strong); }
+  .chip.on { color: var(--ink); border-color: var(--edge-bright); background: rgba(129,140,248,0.18); }
+  .chip.x { cursor: pointer; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-color: var(--edge-bright); background: var(--panel-strong); }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .name { color: var(--accent); font-weight: 600; cursor: pointer; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; border: 1px solid transparent; }
+  .badge.jur { background: var(--ind-800); color: var(--ind-100); border-color: var(--edge); }
+  .badge.st-valid, .badge.st-validated, .badge.st-live { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.st-derived, .badge.st-sample, .badge.st-builder, .badge.st-api { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.st-invalid, .badge.st-error { background: rgba(251,113,133,0.14); color: var(--bad); }
+  .badge.st-warning, .badge.st-snapshot { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .badge.b-jurisdiction { background: var(--ind-800); color: var(--ind-100); }
+  .badge.b-subject { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.b-condition { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.b-llm { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .panelx { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+  .panelx h2 { margin: 0 0 6px; font-size: 17px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; }
+  .opt { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; cursor: pointer; }
+  .opt:hover { border-color: var(--edge-bright); }
+  .opt.blocked { opacity: 0.7; cursor: default; }
+  .opt .t { font-weight: 600; }
+  .opt .d { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .opt .r { font-size: 12px; color: var(--bad); margin-top: 4px; }
+  .opt .w { font-size: 12px; color: var(--warn); margin-top: 4px; }
+  .opt .n { font-size: 12px; color: var(--accent); margin-top: 4px; }
+  .field { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; }
+  .field span.k { display: block; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
+  .timeline { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 2px solid var(--edge); }
+  .timeline li { position: relative; margin: 0 0 14px; font-size: 13.5px; }
+  .timeline li::before { content: ""; position: absolute; left: -24px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .timeline .when { font-size: 12px; color: var(--muted); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .score .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
+  .score .kpi b { display: block; font-size: 20px; }
+  .score .kpi span { font-size: 11.5px; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .crumbs a { cursor: pointer; }
+  .spin { color: var(--muted); padding: 30px; text-align: center; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .verdict { border-radius: 10px; padding: 10px 14px; font-size: 13.5px; margin: 8px 0; border: 1px solid var(--edge); }
+  .verdict.ok { background: rgba(52,211,153,0.10); } .verdict.bad { background: rgba(251,113,133,0.10); }
+  .verdict ul { margin: 6px 0 0; padding-left: 18px; }
+  .why { font-size: 13px; } .why code { font-family: var(--mono); font-size: 12px; }
+  .steps { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .steps span { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--edge); color: var(--muted); }
+  .steps span.done { color: var(--ok); border-color: rgba(52,211,153,0.4); }
+  .steps span.now { color: var(--ink); border-color: var(--edge-bright); background: var(--panel-strong); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+  .card { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 12px; padding: 12px 14px; }
+  .card h5 { margin: 0 0 4px; font-size: 15px; }
+  .card p { margin: 0 0 6px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = (p, opts = {}) =>
+  fetch(p, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers || {}) } }).then(async (r) => {
+    if (!r.ok) { const t = await r.text(); let d = t; try { d = JSON.parse(t).detail; } catch (e) {} throw Object.assign(new Error(typeof d === "string" ? d : (d && d.message) || r.statusText), { detail: d }); }
+    return r.json();
+  });
+const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(body) });
+const qs = (o) => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+const fmt = (d) => (d ? String(d).slice(0, 10) : "—");
+const pct = (v) => (v == null ? "—" : `${Math.round(v * 1000) / 10}%`);
+const show = (v) => (Array.isArray(v) ? v.join(", ") : v === true ? "yes" : v === false ? "no" : v == null || v === "" ? "—" : String(v));
+const ATTR_ORDER = ["jurisdictions", "authorisations", "products", "customer_base", "channels", "data_footprint", "crypto_services", "financial_entity_dora"];
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const Status = ({ s }) => html`<span class=${"badge st-" + s}>${s}</span>`;
+const Jur = ({ j }) => html`<span class="badge jur">${j}</span>`;
+const Basis = ({ b }) => html`<span class=${"badge b-" + b}>${b}</span>`;
+
+function Verdict({ v }) {
+  if (!v) return "";
+  const errs = v.errors || [], warns = v.warnings || [];
+  return html`<div class=${"verdict " + (v.valid ? "ok" : "bad")}>
+    <b>${v.valid ? "Valid permutation" : "Impossible permutation"}</b> <span class="mono">ontology ${v.ontology_version}</span>
+    ${errs.length ? html`<ul>${errs.map((e, i) => html`<li key=${i}><span class="badge st-error">${e.code}</span> ${e.message}${e.allowed && e.allowed.length ? html` <span class="mono">(${e.allowed.join(" / ")})</span>` : ""}</li>`)}</ul>` : ""}
+    ${warns.length ? html`<ul>${warns.map((w, i) => html`<li key=${i}><span class="badge st-warning">${w.rule || w.code}</span> ${w.message}</li>`)}</ul>` : ""}
+  </div>`;
+}
+
+function AttrSummary({ attrs, remove }) {
+  const keys = ATTR_ORDER.filter((k) => attrs[k] !== undefined && attrs[k] !== null && !(Array.isArray(attrs[k]) && !attrs[k].length));
+  if (!keys.length) return html`<div class="mono">nothing chosen yet</div>`;
+  return html`<div class="grid2">${keys.map((k) => html`<div key=${k} class="field"><span class="k">${k.replace("_", " ")}</span>
+    ${Array.isArray(attrs[k]) ? attrs[k].map((v) => html`<span key=${v} class=${remove ? "chip x" : "chip"} title=${remove ? "remove" : ""} onClick=${() => remove && remove(k, v)}>${v}${remove ? " ×" : ""}</span>`) : html`<span class=${remove ? "chip x" : "chip"} onClick=${() => remove && remove(k)}>${show(attrs[k])}${remove ? " ×" : ""}</span>`}
+  </div>`)}</div>`;
+}
+
+// ------------------------------------------------------------------ builder
+
+function Builder({ openProfile }) {
+  const [attrs, setAttrs] = useState({});
+  const [step, setStep] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(null);
+  const [err, setErr] = useState("");
+  const [similar, setSimilar] = useState(null);
+  useEffect(() => { setBusy(true); setSaved(null); post("/l4/builder/next", { attributes: attrs }).then(setStep).catch((e) => setErr(e.message)).finally(() => setBusy(false)); }, [attrs]);
+  useEffect(() => { if (attrs.products && attrs.products.length) post("/l4/builder/similar", { attributes: attrs }).then(setSimilar).catch(() => {}); else setSimilar(null); }, [attrs.products, attrs.authorisations]);
+  const pick = (o) => {
+    if (!o.valid) return;
+    const k = step.attribute;
+    if (step.type === "list") setAttrs({ ...attrs, [k]: [...(attrs[k] || []), o.value] });
+    else setAttrs({ ...attrs, [k]: o.value });
+  };
+  const skip = () => { const k = step.attribute; setAttrs({ ...attrs, [k]: step.type === "list" ? (attrs[k] || []) : (step.type === "bool" ? false : "") }); };
+  const doneStep = () => { const k = step.attribute; if (step.type === "list") setAttrs({ ...attrs, [k]: attrs[k] || [] }); };
+  const remove = (k, v) => { const n = { ...attrs }; if (v === undefined) delete n[k]; else { n[k] = (n[k] || []).filter((x) => x !== v); if (!n[k].length) delete n[k]; } setAttrs(n); };
+  const save = () => { setErr(""); post("/l4/profiles", { attributes: attrs }).then((p) => setSaved(p)).catch((e) => setErr(e.message)); };
+  const v = step && step.validation;
+  const pending = step && step.attribute ? step.options.filter((o) => !(attrs[step.attribute] || []).includes(o.value)) : [];
+  return html`<div class="layout">
+    <aside class="side">
+      <h4>Your profile so far</h4>
+      <${AttrSummary} attrs=${attrs} remove=${remove} />
+      ${v ? html`<${Verdict} v=${v} />` : ""}
+      <div style=${{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+        <button class="btn" disabled=${!v || !v.valid || !Object.keys(attrs).length} onClick=${save}>Store profile</button>
+        <button class="btn quiet" onClick=${() => setAttrs({})}>Start over</button>
+      </div>
+      ${saved ? html`<div class="verdict ok">Stored as <a class="name" onClick=${() => openProfile(saved.id)}>${saved.id}</a> · <${Status} s=${saved.status} /> ${saved.name}</div>` : ""}
+      ${err ? html`<div class="verdict bad">${err}</div>` : ""}
+      ${similar && (similar.similar.length || similar.same_products_reachable_in.length) ? html`<h4>Organisations like this</h4>
+        ${similar.same_products_reachable_in.length ? html`<div class="mono">the same products are reachable in ${similar.same_products_reachable_in.map((r) => `${r.jurisdiction} (via ${r.via.join(", ")})`).join("; ")}</div>` : ""}
+        ${similar.similar.map((s) => html`<div key=${s.id} style=${{ fontSize: 13, marginTop: 6 }}><a class="name" onClick=${() => openProfile(s.id)}>${s.id}</a> ${s.name} <span class="mono">${pct(s.similarity)} · ${s.jurisdictions.join("/")}</span></div>`)}` : ""}
+    </aside>
+    <section>
+      <div class="steps">${ATTR_ORDER.map((k) => html`<span key=${k} class=${attrs[k] !== undefined ? "done" : (step && step.attribute === k ? "now" : "")}>${k.replace("_", " ")}</span>`)}</div>
+      ${busy && !step ? html`<div class="spin">loading…</div>` : ""}
+      ${step && step.complete ? html`<div class="panelx"><h2>Profile complete</h2><p class="mono">Every attribute is set. Store it, or remove a value on the left to change it.</p></div>` : ""}
+      ${step && !step.complete ? html`<div class="panelx">
+        <h2>${step.question}</h2>
+        <div class="meta"><span>attribute <b>${step.attribute}</b></span><span>type <b>${step.type}</b></span>
+          <span><b class="ok">${pending.length}</b> valid option${pending.length === 1 ? "" : "s"}</span>
+          ${step.unavailable.length ? html`<span><b class="bad">${step.unavailable.length}</b> not offered</span>` : ""}</div>
+        <div class="grid2">${pending.map((o) => html`<div key=${String(o.value)} class="opt" onClick=${() => pick(o)}>
+          <div class="t">${o.label}${o.suggested ? html` <span class="badge st-valid">suggested by the rules</span>` : ""}</div>
+          ${o.detail ? html`<div class="d">${o.detail}</div>` : ""}
+          ${o.permits && o.permits.length ? html`<div class="d">permits: ${o.permits.join(", ")}</div>` : ""}
+          ${o.permitted_by && o.permitted_by.length ? html`<div class="d">permitted by: ${o.permitted_by.join(", ")}</div>` : ""}
+          ${o.register && o.register.url ? html`<div class="d">register: <a href=${o.register.url} target="_blank" rel="noopener">${o.register.key}</a> <${Status} s=${o.register.status} /></div>` : ""}
+          ${o.then_requires.length ? html`<div class="n">then requires: ${o.then_requires.join("; ")}</div>` : ""}
+          ${o.warnings.length ? html`<div class="w">${o.warnings.join("; ")}</div>` : ""}
+        </div>`)}</div>
+        ${step.unavailable.length ? html`<h3>Not offered — would be an impossible permutation</h3>
+          <div class="grid2">${step.unavailable.map((o) => html`<div key=${String(o.value)} class="opt blocked">
+            <div class="t">${o.label}</div>${o.detail ? html`<div class="d">${o.detail}</div>` : ""}
+            <div class="r">${o.blocked_by.join("; ")}</div></div>`)}</div>` : ""}
+        <div style=${{ display: "flex", gap: 8, marginTop: 14 }}>
+          ${step.type === "list" && (attrs[step.attribute] || []).length ? html`<button class="btn" onClick=${doneStep}>Done with ${step.attribute.replace("_", " ")}</button>` : ""}
+          <button class="btn quiet" onClick=${skip}>${step.type === "list" ? "None / skip" : "Skip"}</button>
+        </div>
+      </div>` : ""}
+    </section>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ ontology explorer
+
+function Ontology({ openLicence }) {
+  const [onto, setOnto] = useState(null);
+  const [coll, setColl] = useState("licences");
+  const [jur, setJur] = useState("");
+  const [q, setQ] = useState("");
+  useEffect(() => { api("/l4/ontology").then(setOnto).catch(() => setOnto({ error: true })); }, []);
+  if (!onto) return html`<div class="spin">loading ontology…</div>`;
+  if (onto.error) return html`<div class="empty">ontology unavailable</div>`;
+  const needle = q.toLowerCase();
+  const rows = (onto[coll] || []).filter((r) => (!jur || !r.jurisdiction || r.jurisdiction === "*" || r.jurisdiction === jur) && (!needle || JSON.stringify(r).toLowerCase().includes(needle)));
+  const nameOf = (c, id) => { const r = (onto[c] || []).find((x) => x.id === id); return r ? r.name : id; };
+  const cols = {
+    licences: ["jurisdiction", "name", "regulator", "regime", "register", "status"],
+    products_services: ["name", "category", "description", "status"],
+    client_types: ["name", "description", "status"],
+    channels: ["name", "description", "status"],
+    permits: ["licence_id", "product_id", "basis"],
+    validity_rules: ["jurisdiction", "name", "severity", "rule", "basis"],
+  }[coll];
+  const cell = (r, c) => {
+    if (c === "name" && coll === "licences") return html`<span class="name" onClick=${() => openLicence(r.id)}>${r.name}</span>`;
+    if (c === "jurisdiction") return html`<${Jur} j=${r[c]} />`;
+    if (c === "status" || c === "severity") return html`<${Status} s=${r[c]} />`;
+    if (c === "licence_id") return html`<span class="name" onClick=${() => openLicence(r[c])}>${nameOf("licences", r[c])}</span>`;
+    if (c === "product_id") return nameOf("products_services", r[c]);
+    if (c === "register") return r.register_url ? html`<a href=${r.register_url} target="_blank" rel="noopener">${r.register}</a>${r.register_ref ? html` <span class="mono">${r.register_ref}</span>` : ""}` : html`<span class="mono">${r.register || "—"}</span>`;
+    if (c === "rule") return html`<code class="mono">${JSON.stringify(r.rule)}</code>`;
+    return show(r[c]);
+  };
+  return html`<div class="layout">
+    <aside class="side">
+      <h4>Collection</h4>
+      <div>${Object.entries(onto.counts).map(([k, n]) => html`<span key=${k} class=${"chip" + (coll === k ? " on" : "")} onClick=${() => setColl(k)}>${k.replace("_", " ")} ${n}</span>`)}</div>
+      <h4>Jurisdiction</h4>
+      <div>${onto.jurisdictions.map((j) => html`<span key=${j.code} class=${"chip" + (jur === j.code ? " on" : "")} onClick=${() => setJur(jur === j.code ? "" : j.code)}>${j.code}</span>`)}</div>
+      <h4>Search</h4><input value=${q} onInput=${(e) => setQ(e.target.value)} placeholder="name, alias, basis…" />
+      <h4>Registers</h4>
+      ${onto.registers.map((r) => html`<div key=${r.key} style=${{ fontSize: 12.5, marginBottom: 6 }}><a href=${r.url} target="_blank" rel="noopener">${r.name}</a><div class="mono">${r.taxonomy || ""}</div></div>`)}
+      <h4>Snapshot</h4><div class="mono">${onto.version}</div>
+    </aside>
+    <section class="panelx">
+      <h2>${coll.replace("_", " ")} <span class="mono">${rows.length}</span></h2>
+      <table class="reg"><thead><tr>${cols.map((c) => html`<th key=${c}>${c.replace("_", " ")}</th>`)}</tr></thead>
+      <tbody>${rows.map((r) => html`<tr key=${r.id}>${cols.map((c) => html`<td key=${c}>${cell(r, c)}</td>`)}</tr>`)}</tbody></table>
+      ${!rows.length ? html`<div class="empty">nothing matches</div>` : ""}
+    </section>
+  </div>`;
+}
+
+function LicencePage({ id, back, openProfile }) {
+  const [lic, setLic] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { setLic(null); api("/l4/licences/" + encodeURIComponent(id)).then(setLic).catch((e) => setErr(e.message)); }, [id]);
+  if (err) return html`<div class="empty">${err}</div>`;
+  if (!lic) return html`<div class="spin">loading…</div>`;
+  return html`<div>
+    <div class="crumbs"><a onClick=${back}>ontology</a> › ${lic.id}</div>
+    <div class="panelx">
+      <h2><${Jur} j=${lic.jurisdiction} /> ${lic.name} <${Status} s=${lic.status} /></h2>
+      <div class="meta"><span>regulator <b>${lic.regulator || "—"}</b></span><span>regime <b>${lic.regime || "—"}</b></span>
+        <span>register <b>${lic.register_url ? html`<a href=${lic.register_url} target="_blank" rel="noopener">${lic.register}</a>` : "—"}</b>${lic.register_ref ? html` <span class="mono">${lic.register_ref}</span>` : ""}</span>
+        <span>valid from <b>${fmt(lic.valid_from)}</b></span><span>version <b>${lic.version}</b></span></div>
+      ${(lic.aliases || []).length ? html`<div class="mono">also known as: ${lic.aliases.join(", ")}</div>` : ""}
+      <h3>Permits</h3>
+      ${lic.permits.length ? html`<table class="reg"><thead><tr><th>product / service</th><th>basis</th></tr></thead><tbody>${lic.permits.map((p) => html`<tr key=${p.product_id}><td>${p.name}</td><td class="mono">${p.basis}</td></tr>`)}</tbody></table>` : html`<div class="mono">no permits recorded</div>`}
+      <h3>Validity rules that mention it</h3>
+      ${lic.validity_rules.length ? lic.validity_rules.map((r) => html`<div key=${r.id} class="field" style=${{ marginBottom: 6 }}><${Status} s=${r.severity} /> <b>${r.name}</b><div class="mono">${JSON.stringify(r.rule)}</div><div style=${{ fontSize: 12.5, color: "var(--muted)" }}>${r.basis}</div></div>`) : html`<div class="mono">none</div>`}
+      <h3>Profiles holding it</h3>
+      ${lic.profiles.length ? lic.profiles.map((p) => html`<div key=${p.id}><a class="name" onClick=${() => openProfile(p.id)}>${p.id}</a> ${p.name} <${Status} s=${p.status} /></div>`) : html`<div class="mono">none stored</div>`}
+      <h3>Why</h3>
+      ${lic.why.map((w) => html`<div key=${w.id} class="why"><code>${w.id}</code> ${w.reasoning_summary} <span class="mono">${(w.evidence_refs || []).join(", ")}</span></div>`)}
+    </div>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ permutations
+
+function Permutations({ openLicence }) {
+  const [data, setData] = useState(null);
+  const [jur, setJur] = useState("");
+  useEffect(() => { setData(null); api("/l4/permutations?" + qs({ jurisdiction: jur })).then(setData).catch(() => setData({ error: true })); }, [jur]);
+  return html`<div>
+    <div class="tabs">${["", "UK", "EU", "US"].map((j) => html`<button key=${j} class=${jur === j ? "on" : ""} onClick=${() => setJur(j)}>${j || "All"}</button>`)}</div>
+    ${!data ? html`<div class="spin">exploring permutations…</div>` : data.error ? html`<div class="empty">unavailable</div>` :
+      data.jurisdictions.map((j) => html`<div key=${j.jurisdiction} class="panelx">
+        <h2><${Jur} j=${j.jurisdiction} /> ${j.name}</h2>
+        <div class="meta"><span>regulators <b>${j.regulators.join(", ")}</b></span><span>authorisations <b>${j.licences}</b></span><span>products reachable <b>${j.products_reachable}</b></span>
+          <span>licence pairs <b class="ok">${j.licence_pairs.valid} valid</b> / <b class="bad">${j.licence_pairs.invalid} impossible</b></span></div>
+        <table class="reg"><thead><tr><th>authorisation</th><th>must come with</th><th>products it reaches</th><th>register</th><th>minimal profile</th></tr></thead>
+        <tbody>${j.single_licence_permutations.map((s) => html`<tr key=${s.licence_id}>
+          <td><span class="name" onClick=${() => openLicence(s.licence_id)}>${s.licence}</span></td>
+          <td class="mono">${s.with.length ? s.with.join(", ") : "—"}</td>
+          <td>${s.products.length ? s.products.join(", ") : html`<span class="mono">no product permits recorded</span>`}</td>
+          <td>${s.register.url ? html`<a href=${s.register.url} target="_blank" rel="noopener">${s.register.key}</a>` : "—"} <${Status} s=${s.register.status} /></td>
+          <td>${s.valid ? html`<span class="badge st-valid">valid</span>` : html`<span class="badge st-invalid">invalid</span> <span class="mono">${s.errors.join("; ")}</span>`}</td>
+        </tr>`)}</tbody></table>
+      </div>`)}
+  </div>`;
+}
+
+// ------------------------------------------------------------------ profiles
+
+function Profiles({ open }) {
+  const [data, setData] = useState(null);
+  const [f, setF] = useState({ status: "", source: "", q: "" });
+  useEffect(() => { api("/l4/profiles?" + qs(f)).then(setData).catch(() => setData({ items: [], facets: {} })); }, [f]);
+  if (!data) return html`<div class="spin">loading…</div>`;
+  const chips = (k, values) => html`<div>${Object.entries(values || {}).map(([v, n]) => html`<span key=${v} class=${"chip" + (f[k] === v ? " on" : "")} onClick=${() => setF({ ...f, [k]: f[k] === v ? "" : v })}>${v} ${n}</span>`)}</div>`;
+  return html`<div class="layout">
+    <aside class="side"><h4>Search</h4><input value=${f.q} onInput=${(e) => setF({ ...f, q: e.target.value })} placeholder="name, attribute…" />
+      <h4>Status</h4>${chips("status", data.facets.statuses)}<h4>Source</h4>${chips("source", data.facets.sources)}</aside>
+    <section class="panelx"><h2>Stored profiles <span class="mono">${data.count}</span></h2>
+      <table class="reg"><thead><tr><th>id</th><th>name</th><th>jurisdictions</th><th>authorisations</th><th>products</th><th>status</th><th>source</th></tr></thead>
+      <tbody>${data.items.map((p) => html`<tr key=${p.id}><td><span class="name" onClick=${() => open(p.id)}>${p.id}</span></td><td>${p.name}</td>
+        <td>${(p.attributes.jurisdictions || []).map((j) => html`<${Jur} key=${j} j=${j} />`)}</td><td>${show(p.attributes.authorisations)}</td><td>${show(p.attributes.products)}</td>
+        <td><${Status} s=${p.status} /></td><td><${Status} s=${p.source} /></td></tr>`)}</tbody></table>
+      ${!data.items.length ? html`<div class="empty">no profiles stored yet — build one</div>` : ""}
+    </section></div>`;
+}
+
+function ProfilePage({ id, back, openProfile }) {
+  const [p, setP] = useState(null);
+  const [obs, setObs] = useState(null);
+  const [sim, setSim] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    setP(null); setObs(null); setSim(null); setErr("");
+    api("/l4/profiles/" + id).then(setP).catch((e) => setErr(e.message));
+    api("/l4/profiles/" + id + "/obligations").then(setObs).catch(() => setObs({ items: [], count: 0 }));
+    api("/l4/profiles/" + id + "/similar").then(setSim).catch(() => {});
+  }, [id]);
+  if (err) return html`<div class="empty">${err}</div>`;
+  if (!p) return html`<div class="spin">loading…</div>`;
+  return html`<div>
+    <div class="crumbs"><a onClick=${back}>profiles</a> › ${p.id}</div>
+    <div class="panelx">
+      <h2>${p.name} <${Status} s=${p.status} /> <${Status} s=${p.source} /></h2>
+      <div class="meta"><span>id <b class="mono">${p.id}</b></span><span>valid from <b>${fmt(p.valid_from)}</b></span><span>version <b>${p.version}</b></span>
+        <span>ontology <b class="mono">${p.validity.ontology_version}</b></span><span>obligations <b>${p.obligations.count}</b></span></div>
+      <${AttrSummary} attrs=${p.attributes} />
+      <${Verdict} v=${p.validity} />
+      <h3>Obligations that apply <span class="mono">${obs ? obs.count : "…"}</span></h3>
+      ${obs && obs.count ? html`<div class="meta">${Object.entries(obs.by_jurisdiction).map(([k, v]) => html`<span key=${k}>${k} <b>${v}</b></span>`)}${Object.entries(obs.by_type).map(([k, v]) => html`<span key=${k}>${k} <b>${v}</b></span>`)}</div>
+        <table class="reg"><thead><tr><th>obligation</th><th>title</th><th>source</th><th>applies because</th></tr></thead>
+        <tbody>${obs.items.map((o) => html`<tr key=${o.derivation_key}><td><a class="name" href=${"/l2#" + o.obligation_id}>${o.obligation_id}</a></td><td>${o.title}</td>
+          <td class="mono">${o.source_key} § ${o.clause_ref}</td>
+          <td>${o.predicates.map((e) => html`<div key=${e.id}><${Basis} b=${e.basis} /> <code class="mono">${JSON.stringify(e.predicate)}</code> <span class="mono">${e.rationale}</span></div>`)}</td></tr>`)}</tbody></table>` :
+        obs ? html`<div class="mono">no obligation carries applicability edges matching this profile yet (the L4 fleet derives them from the L2 registry each night)</div>` : ""}
+      ${sim ? html`<h3>Organisations like this</h3>
+        ${sim.same_products_reachable_in.length ? html`<div class="mono">the same products are reachable in: ${sim.same_products_reachable_in.map((r) => `${r.jurisdiction} via ${r.via.join(", ")}`).join("; ")}</div>` : ""}
+        ${sim.similar.map((s) => html`<div key=${s.id} style=${{ fontSize: 13, marginTop: 6 }}><a class="name" onClick=${() => openProfile(s.id)}>${s.id}</a> ${s.name} <span class="mono">${pct(s.similarity)} · shares ${[...s.shared_products, ...s.shared_authorisations].join(", ")}</span></div>`)}
+        ${!sim.similar.length && !sim.same_products_reachable_in.length ? html`<div class="mono">no comparable profile stored</div>` : ""}` : ""}
+      <h3>History</h3>
+      <ul class="timeline"><li><div>stored · version 1</div><div class="when">${fmt(p.history.valid_from)}</div></li>
+        ${p.history.events.map((e, i) => html`<li key=${i}><div>${e.event}${e.from ? ` ${e.from} → ${e.to}` : ""}${e.reason ? ` — ${e.reason}` : ""}</div><div class="when">${fmt(e.at)} · <code class="mono">${e.why_trail_id}</code></div></li>`)}</ul>
+      <h3>Why</h3>
+      ${p.why.map((w) => html`<div key=${w.id} class="why"><code>${w.id}</code> ${w.reasoning_summary} <span class="mono">${w.agent_id} · ${fmt(w.created_at)}</span></div>`)}
+    </div>
+  </div>`;
+}
+
+// ------------------------------------------------------------------ scorecard
+
+function Scorecard() {
+  const [card, setCard] = useState(null);
+  useEffect(() => { api("/l4/scorecard").then(setCard).catch(() => setCard({ error: true })); }, []);
+  if (!card) return html`<div class="spin">loading…</div>`;
+  if (card.error) return html`<div class="empty">scorecard unavailable</div>`;
+  const g = card.gate, a = card.applicability, o = card.ontology;
+  return html`<div class="panelx">
+    <h2>L4 scorecard <span class=${"badge " + (g.passed ? "st-valid" : "st-invalid")}>${g.passed ? "gate passed" : "below gate"}</span></h2>
+    <div class="meta">${Object.entries(card.thresholds).map(([k, v]) => html`<span key=${k}>${k.replace(/_/g, " ")} <b>${v}</b></span>`)}</div>
+    <div class="score">
+      <div class="kpi"><b>${o.counts.licences}</b><span>authorisations (${Object.entries(o.licences_by_jurisdiction).map(([k, v]) => `${k} ${v}`).join(", ")})</span></div>
+      <div class="kpi"><b>${o.counts.products_services}</b><span>products and services</span></div>
+      <div class="kpi"><b>${o.counts.permits}</b><span>permits (licence → product)</span></div>
+      <div class="kpi"><b>${o.counts.validity_rules}</b><span>validity rules</span></div>
+      <div class="kpi"><b>${(card.profiles.valid || 0)}</b><span>valid profiles stored (${card.profiles.invalid || 0} invalid, kept visible)</span></div>
+      <div class="kpi"><b class=${a.rate >= 0.95 ? "ok" : "warn"}>${pct(a.rate)}</b><span>live obligations with applicability predicates (${a.with_predicates}/${a.obligations})</span></div>
+      <div class="kpi"><b>${a.narrowed_beyond_jurisdiction}</b><span>narrowed beyond jurisdiction</span></div>
+    </div>
+    <h3>Gate suites</h3>
+    <div class="meta">${Object.entries(g.suites || {}).map(([k, v]) => html`<span key=${k}>${k} <b class=${v && v.passed ? "ok" : "bad"}>${v && v.passed ? "pass" : "fail"}</b>${v && v.scores && v.scores.accuracy != null ? html` <span class="mono">${pct(v.scores.accuracy)}</span>` : ""}${v && v.scores && v.scores.precision != null ? html` <span class="mono">P ${pct(v.scores.precision)} R ${pct(v.scores.recall)}</span>` : ""}</span>`)}
+      ${(g.missing || []).length ? html`<span class="warn">not yet run: ${g.missing.join(", ")}</span>` : ""}</div>
+    <h3>Licence status</h3><div class="meta">${Object.entries(o.licences_by_status).map(([k, v]) => html`<span key=${k}><${Status} s=${k} /> <b>${v}</b></span>`)}</div>
+    <h3>Edges by basis</h3><div class="meta">${Object.entries(a.edges_by_basis).map(([k, v]) => html`<span key=${k}><${Basis} b=${k} /> <b>${v}</b></span>`)}${!Object.keys(a.edges_by_basis).length ? html`<span class="mono">none yet</span>` : ""}</div>
+    <h3>Registers</h3>
+    <div class="cards">${o.registers.map((r) => html`<div key=${r.key} class="card"><h5><a href=${r.url} target="_blank" rel="noopener">${r.name}</a></h5><p>${r.taxonomy || ""}</p><div class="mono">${r.key}</div></div>`)}</div>
+    <div class="mono" style=${{ marginTop: 10 }}>snapshot ${o.version}</div>
+  </div>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [tab, setTab] = useState("builder");
+  const [view, setView] = useState({ page: "list" });
+  const openProfile = (id) => { setTab("profiles"); setView({ page: "profile", id }); history.replaceState(null, "", "#" + id); };
+  const openLicence = (id) => { setTab("ontology"); setView({ page: "licence", id }); history.replaceState(null, "", "#" + id); };
+  const back = () => { setView({ page: "list" }); history.replaceState(null, "", "#" + tab); };
+  // Deep links: /l4#PRF-000001 opens a profile; #LIC:UK:... a licence; #builder / #ontology / #permutations / #profiles / #scorecard a tab.
+  useEffect(() => {
+    const apply = () => {
+      const h = decodeURIComponent(location.hash.slice(1));
+      if (/^PRF-/.test(h)) { setTab("profiles"); setView({ page: "profile", id: h }); }
+      else if (/^LIC:/.test(h)) { setTab("ontology"); setView({ page: "licence", id: h }); }
+      else if (["builder", "ontology", "permutations", "profiles", "scorecard"].includes(h)) { setTab(h); setView({ page: "list" }); }
+    };
+    apply(); window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  let body;
+  if (view.page === "profile") body = html`<${ProfilePage} id=${view.id} back=${back} openProfile=${openProfile} />`;
+  else if (view.page === "licence") body = html`<${LicencePage} id=${view.id} back=${back} openProfile=${openProfile} />`;
+  else if (tab === "ontology") body = html`<${Ontology} openLicence=${openLicence} />`;
+  else if (tab === "permutations") body = html`<${Permutations} openLicence=${openLicence} />`;
+  else if (tab === "profiles") body = html`<${Profiles} open=${openProfile} />`;
+  else if (tab === "scorecard") body = html`<${Scorecard} />`;
+  else body = html`<${Builder} openProfile=${openProfile} />`;
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L4 · profile space</span></div>
+      <div class="spacer"></div>
+      <a class="navlink" href="/">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink active" href="/l4">L4</a>
+      <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main>
+      <div class="tabs">
+        ${[["builder", "Builder"], ["ontology", "Ontology"], ["permutations", "Permutations"], ["profiles", "Profiles"], ["scorecard", "Scorecard"]].map(([k, label]) =>
+          html`<button key=${k} class=${tab === k && view.page === "list" ? "on" : ""} onClick=${() => { setTab(k); setView({ page: "list" }); history.replaceState(null, "", "#" + k); }}>${label}</button>`)}
+      </div>
+      ${body}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

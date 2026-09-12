@@ -161,29 +161,36 @@ LAYER_CATALOG: dict[str, dict] = {
         "name": "Profile space",
         "schema": "l4_profiles",
         "published": False,
-        "status": "curated",
-        "purpose": "The dimensions that determine which rules apply to an organisation: "
-        "jurisdictions, licenses, products, customer base, data footprint.",
+        "status": "derived",
+        "purpose": "The profile permutation space: jurisdictions -> regulators -> "
+        "authorisations -> permitted products and services -> client types -> channels, "
+        "plus the validity rules that make an impossible permutation detectable and the "
+        "applies_to predicates that say which obligations reach which profiles.",
         "derivation": {
-            "inputs": ["L2", "L5"],
-            "method": "Profiles are declared, not inferred: an organisation states its "
-            "facts (where it operates, what licenses it holds, what it sells, to whom). "
-            "The profile schema itself is derived from the applicability conditions "
-            "found in L2 obligations — every profile attribute exists because some "
-            "obligation's scope depends on it.",
+            "inputs": ["L1", "L2"],
+            "method": "The ontology is built from public regulator registers and permission "
+            "taxonomies (FCA register / RAO, ESMA and EBA registers, SEC / FINRA, FinCEN, NFA) held "
+            "as a reviewed snapshot and cross-checked against the live registers each night; every "
+            "row carries its register URL and reference. Validity rules (licence foundations, "
+            "product permits, regime flags) are read from the same instruments. Applicability "
+            "predicates are derived deterministically from each obligation's jurisdiction, subject and "
+            "condition in the shared predicate language, with a grounded LLM read only where the "
+            "structured fields carry no cue. Profiles are declared by the organisation and validated "
+            "against the ontology before they are stored; the builder only offers valid permutations.",
             "generation": {
-                "nature": "grounded license registry (RAG, closed-world — no general knowledge)",
-                "technique": "Retrieve authorization-creating clauses → extract with grounding contract → store license_types",
-                "guarantee": "The model sees only retrieved clause text; any ungrounded license type is discarded; authorisations is a closed enum",
-                "may": ["name a license type that the retrieved clause creates"],
-                "must_not": ["invent a permission from model memory"],
-                "gates": ["l4_grounding (100% — one failure blocks publish)"],
+                "nature": "register-backed ontology; deterministic predicates; LLM confined to a closed-world applicability read",
+                "technique": "Register snapshot + live cross-check; permits / validity rules; cue-based predicate extraction; grounded quote-required LLM fallback",
+                "guarantee": "Every licence cites its register; every profile is validated (impossible permutations are never offered as valid); every applies_to edge carries its rationale and why-trail and is re-stamped when L2 changes",
+                "may": ["propose an applicability predicate quoting the obligation text", "flag a permutation as invalid with the rule that says so"],
+                "must_not": ["invent an authorisation that no register holds", "store an invalid permutation as valid"],
+                "gates": ["l4_validity", "l4_applicability", "l4_grounding"],
             },
             "gates": [
-                "Profile attributes added only when an obligation's applicability requires them",
-                "authorisations must be grounded license types — incomplete is honest, invented is not",
+                "Profile validity >= 99% on the golden permutation set with register provenance for every licence named (HLD v2 §4.4)",
+                "Applicability precision / recall >= 95% against golden predicates; every stored edge points at a live obligation and schema attributes",
+                "L2 'revoked' withdraws the obligation's applies_to edges; 'updated' re-stamps them; an ontology change re-validates every stored profile",
             ],
-            "evidence": ["per-attribute list of the obligations whose scope reads it"],
+            "evidence": ["register URL + reference per licence", "permits and validity rules per permutation", "applies_to rationale per obligation"],
         },
     },
     "L5": {

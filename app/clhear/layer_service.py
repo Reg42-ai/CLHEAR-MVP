@@ -72,6 +72,20 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
             "sample_profiles": _count(conn, sample_profiles_t),
             "license_types": _count(conn, license_types_t),
         }
+        try:
+            from app.clhear.derived_models import applies_to as applies_to_t
+            from app.clhear.derived_models import licences as licences_t
+            from app.clhear.derived_models import profiles as profiles_t
+            from app.clhear.derived_models import validity_rules as validity_rules_t
+
+            out["L4"].update({
+                "licences": _count(conn, licences_t, licences_t.c.valid_to.is_(None)),
+                "validity_rules": _count(conn, validity_rules_t, validity_rules_t.c.valid_to.is_(None)),
+                "profiles": _count(conn, profiles_t, profiles_t.c.valid_to.is_(None)),
+                "applies_to_edges": _count(conn, applies_to_t, applies_to_t.c.valid_to.is_(None)),
+            })
+        except sa.exc.OperationalError:  # pre-m0012 database
+            pass
         out["L5"] = {"activities": _count(conn, activities_t)}
         out["L6"] = {
             "sample_programs": _count(conn, sample_profiles_t),
@@ -306,12 +320,22 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
         with engine.connect() as conn:
             schema_rows = [dict(r) for r in conn.execute(sa.select(attribute_schema_t)).mappings()]
             profile_rows = [dict(r) for r in conn.execute(sa.select(sample_profiles_t)).mappings()]
-        return {
+        out = {
             "attribute_schema": schema_rows,
             "sample_profiles": profile_rows,
             "license_types": list_license_types(engine),
             "authorisations_enum": sorted({r["name"] for r in list_license_types(engine)}),
         }
+        try:
+            from app.clhear.l4.ontology import ontology as l4_ontology
+
+            onto = l4_ontology(engine)
+            out["ontology"] = {k: len(onto[k]) for k in ("licences", "products_services", "client_types", "channels", "permits", "validity_rules")}
+            out["ontology_version"] = onto["version"]
+            out["authorisations_enum"] = sorted(set(out["authorisations_enum"]) | {r["name"] for r in onto["licences"]})
+        except sa.exc.OperationalError:  # pre-m0012 database
+            pass
+        return out
     if layer == "L5":
         with engine.connect() as conn:
             rows = [dict(r) for r in conn.execute(sa.select(activities_t)).mappings()]
