@@ -257,6 +257,57 @@ activities = sa.Table(
     sa.Column("triggers", Json, nullable=False, default=list),
     sa.Column("status", sa.Text, nullable=False, default="curated"),
     sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    # HLD v2 §4.5: which side of the junction the activity sits on, and its action type
+    # (business: onboarding, order_handling, ... / compliance: screen, monitor, report, ...).
+    sa.Column(
+        "side",
+        sa.Text,
+        sa.CheckConstraint("side in ('business','compliance')", name="activities_side_check"),
+        nullable=False,
+        default="compliance",
+    ),
+    sa.Column("action_type", sa.Text, nullable=False, default=""),
+    sa.Column("canonical_id", sa.Text, nullable=True),
+    schema=L5_SCHEMA,
+)
+
+# implies: an L4 product / service implies a business activity (IMP-000001).
+implies = sa.Table(
+    "implies",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),
+    sa.Column("product_id", sa.Text, nullable=False, index=True),
+    sa.Column("activity_id", sa.Text, nullable=False, index=True),
+    sa.Column("rationale", sa.Text, nullable=False, default=""),
+    sa.Column("method", sa.Text, nullable=False, default=""),  # curated | deterministic | llm
+    schema=L5_SCHEMA,
+)
+
+# operates: a compliance activity operates an L3 block (OPR-000001), reached
+# through the obligations the activity implements.
+operates = sa.Table(
+    "operates",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),
+    sa.Column("activity_id", sa.Text, nullable=False, index=True),
+    sa.Column("block_id", sa.Text, nullable=False, index=True),
+    sa.Column("obligation_refs", Json, nullable=False, default=list),
+    sa.Column("rationale", sa.Text, nullable=False, default=""),
+    sa.Column("method", sa.Text, nullable=False, default=""),
+    schema=L5_SCHEMA,
+)
+
+# mitigates: a compliance activity governs a business activity (MIT-000001);
+# the edge is lit by the obligations both sides share.
+mitigates = sa.Table(
+    "mitigates",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),
+    sa.Column("compliance_activity_id", sa.Text, nullable=False, index=True),
+    sa.Column("business_activity_id", sa.Text, nullable=False, index=True),
+    sa.Column("obligation_refs", Json, nullable=False, default=list),
+    sa.Column("rationale", sa.Text, nullable=False, default=""),
+    sa.Column("method", sa.Text, nullable=False, default=""),
     schema=L5_SCHEMA,
 )
 
@@ -476,6 +527,7 @@ DERIVED_TABLES = (
     asserts, equivalences, supersessions, l2_change_events, obligation_reviews,
     requires, characteristics,
     licences, products_services, client_types, channels, profiles, permits, applies_to, validity_rules,
+    implies, operates, mitigates,
 )
 
 from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402

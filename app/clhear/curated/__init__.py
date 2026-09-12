@@ -65,6 +65,7 @@ def seed(engine: Engine) -> dict:
                 name=item["name"], description=item.get("description", ""),
                 business_owner=item.get("business_owner", ""),
                 triggers=item.get("triggers", []), status="curated",
+                side=item.get("side", "compliance"), action_type=item.get("action_type", ""),
             )
             if exists:
                 conn.execute(activities.update().where(activities.c.id == item["id"]).values(**values))
@@ -95,6 +96,10 @@ def seed(engine: Engine) -> dict:
             else:
                 conn.execute(sample_profiles.insert().values(id=item["id"], **values))
             counts["profiles"] += 1
+    # HLD v2 §4.5: the junction edges derive from the catalog just seeded (no outbox event at startup).
+    from app.clhear.l5.map import build_junction
+
+    counts["junction_edges"] = build_junction(engine, publish=False)["added"]
     return counts
 
 
