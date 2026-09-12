@@ -18,7 +18,7 @@ import hashlib
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -565,7 +565,11 @@ def _persist(
                 .returning(source_versions.c.id)
             ).scalar_one()
 
-        clause_rows = persist_tree(conn, version_id, tree, public_ok)
+        clause_rows = persist_tree(
+            conn, version_id, tree, public_ok,
+            derived_by=f"l1.pipeline.{meta.adapter}",
+            valid_from=result.as_of_date or result.effective_date or datetime.now(timezone.utc).date(),
+        )
         if clause_rows:
             conn.execute(clauses.insert(), clause_rows)
         from app.clhear.l1 import annotate as l1_annotate
@@ -760,6 +764,9 @@ def persist_tree(
     version_id: int,
     tree: list[DocNode],
     public_ok: bool,
+    *,
+    derived_by: str = "l1.pipeline",
+    valid_from: date | None = None,
 ) -> list[dict]:
     """Insert the DocNode tree; return clause-projection rows (not yet inserted).
 
@@ -816,6 +823,8 @@ def persist_tree(
                     "public_ok": public_ok,
                     "span_start": start,
                     "span_end": end,
+                    "derived_by": derived_by,
+                    "valid_from": valid_from,
                     "normative": spans.is_normative(
                         "\n".join(t for t in (node.raw_text, *(c.subtree_text() for c in node.children)) if t),
                         status_hint=getattr(node, "status", ""),

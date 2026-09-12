@@ -435,10 +435,10 @@ def l1_currency(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
             anchor = row.as_of_date or row.effective_date
             if isinstance(anchor, str):
                 anchor = _date.fromisoformat(anchor)
-            if anchor is None:
-                continue
-            # Publisher date is a calendar day; the earliest we could have seen it is that day 00:00 UTC.
-            published = datetime(anchor.year, anchor.month, anchor.day, tzinfo=timezone.utc)
+            # Publisher date is a calendar day; the earliest we could have seen it
+            # is that day 00:00 UTC. Undated publishers: lag is bounded by our
+            # previous probe only.
+            published = datetime(anchor.year, anchor.month, anchor.day, tzinfo=timezone.utc) if anchor else None
             previous = conn.execute(
                 sa.select(source_versions.c.retrieved_at)
                 .where(source_versions.c.source_id == sa.select(sources.c.id).where(sources.c.key == row.key).scalar_subquery())
@@ -456,7 +456,12 @@ def l1_currency(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
             # The publisher may back-date a consolidation; we cannot have seen it
             # before our previous successful probe, so lag counts from the later of
             # the two. A first ingest is backfill (nothing to be late against).
-            anchor_ts = max(published, previous) if previous is not None else None
+            if previous is None:
+                anchor_ts = None
+            elif published is None:
+                anchor_ts = previous
+            else:
+                anchor_ts = max(published, previous)
             if anchor_ts is None:
                 lag_h = 0.0
             else:

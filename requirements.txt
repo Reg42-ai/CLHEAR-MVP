@@ -12,5 +12,10 @@ beautifulsoup4>=4.12
 mangum>=0.17
 pypdf>=5.0
 
+# optional L1 renderers (HLD v2 §4.1): publisher pages that need a browser.
+# Install on the L1 fleet image only; adapters fall back to plain HTTP when absent.
+# crawl4ai>=0.4
+# docling>=2.0
+
 # dev/test
 pytest>=8.2

@@ -40,6 +40,7 @@ _PATTERN = re.compile(
     re.I,
 )
 _ISO_ONLY = re.compile(_ISO)
+_ANY_DATE = re.compile(_DATE, re.I)
 # Cheap pre-check before spending an `l1.change` call: the model may only quote
 # a date the text contains, so text with no year-like token cannot yield one.
 _DATE_HINT = re.compile(rf"\b(?:19|20)\d{{2}}\b|\b(?:{'|'.join(_MONTHS)})\b", re.I)
@@ -130,7 +131,12 @@ def refine_with_router(router, source_key: str, changed_texts: list[str], curren
         return current
     if not any(answer in t for t in changed_texts):
         return current  # hallucinated quote: ignore
-    dates = extract_effective_dates(answer)
+    # The quote is verified verbatim against the clause, so any date inside it
+    # is a date the text states; the model's job was only to find the phrase
+    # our trigger grammar missed.
+    dates = extract_effective_dates(answer) or [
+        (d, m.group(0)) for m in _ANY_DATE.finditer(answer) if (d := _to_date(m)) is not None
+    ]
     if not dates:
         return current
     return EffectiveDate(dates[0][0], "text", dates[0][1])

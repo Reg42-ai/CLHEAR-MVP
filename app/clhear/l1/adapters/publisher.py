@@ -131,6 +131,9 @@ class _PublisherBase:
     def meta(self) -> SourceMeta:
         if self._meta is not None:
             return self._meta
+        from app.clhear.l1 import rights as l1_rights
+
+        basis = l1_rights.rights_for(self.key, self.license)
         return SourceMeta(
             family_key=self._family_key,
             family_name=self._family_name,
@@ -146,6 +149,8 @@ class _PublisherBase:
             about=self._about,
             topics=list(self._topics),
             version_policy=self.version_policy,
+            rights_basis=basis.basis,
+            rights_ref=basis.ref,
             publisher=self.publisher,
             instrument=self._instrument,
         )

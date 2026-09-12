@@ -980,6 +980,16 @@ def sources_explorer() -> HTMLResponse:
     )
 
 
+@router.get("/l1", response_class=HTMLResponse, include_in_schema=False)
+def l1_browser() -> HTMLResponse:
+    """HLD v2 §4.1 L1 UI: browse by jurisdiction / regulator / instrument,
+    family tree, change timeline, rights badge, watch this instrument."""
+    return HTMLResponse(
+        (WEB_DIR / "l1.html").read_text(),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
 def _change_dict(row) -> dict:
     refs = row.clause_refs if isinstance(row.clause_refs, list) else []
     return {
