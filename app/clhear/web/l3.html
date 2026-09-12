@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · L3 Building blocks</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* L3 browser (HLD v2 §4.3): catalogue by kind, block page with the kind's
+     characteristic schema (backed / not specified / unbacked), backing
+     obligations with rationale spans, needed-by profiles, history, why-trail. */
+  main { position: relative; z-index: 1; max-width: 1500px; margin: 22px auto; padding: 0 20px 70px; }
+  .layout { display: grid; grid-template-columns: 260px 1fr; gap: 18px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .facets { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 16px; align-self: start; position: sticky; top: 74px; }
+  .facets h4 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .facets h4:first-child { margin-top: 0; }
+  .facets input, .facets select, .form input, .form select, .form textarea { width: 100%; border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); box-sizing: border-box; }
+  .chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--edge); font-size: 12px; cursor: pointer; color: var(--muted); background: var(--panel-strong); }
+  .chip.on { color: var(--ink); border-color: var(--edge-bright); background: rgba(129,140,248,0.18); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-color: var(--edge-bright); background: var(--panel-strong); }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .name { color: var(--accent); font-weight: 600; cursor: pointer; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; border: 1px solid transparent; }
+  .badge.kind { background: var(--ind-800); color: var(--ind-100); border-color: var(--edge); }
+  .badge.st-curated { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.st-derived { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.st-validated { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.st-stale, .badge.st-rejected { background: rgba(251,113,133,0.14); color: var(--bad); }
+  .badge.c-backed { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.c-not_specified { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .badge.c-unbacked, .badge.c-missing { background: rgba(251,113,133,0.14); color: var(--bad); }
+  .badge.m-curated-anchor { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.m-deterministic { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.m-llm, .badge.m-harmonized { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .panelx { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+  .panelx h2 { margin: 0 0 6px; font-size: 17px; }
+  .panelx h3 { margin: 18px 0 8px; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+  .field { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; }
+  .field span.k { display: block; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
+  .field .src { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .timeline { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 2px solid var(--edge); }
+  .timeline li { position: relative; margin: 0 0 14px; font-size: 13.5px; }
+  .timeline li::before { content: ""; position: absolute; left: -24px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .timeline .when { font-size: 12px; color: var(--muted); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .score .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
+  .score .kpi b { display: block; font-size: 20px; }
+  .score .kpi span { font-size: 11.5px; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .crumbs a { cursor: pointer; }
+  pre.clause { white-space: pre-wrap; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; font: 13px/1.5 var(--mono); }
+  pre.clause mark { background: rgba(251,191,36,0.35); color: inherit; border-radius: 3px; padding: 0 1px; }
+  .spin { color: var(--muted); padding: 30px; text-align: center; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .form { display: grid; gap: 8px; max-width: 640px; }
+  .why { font-size: 13px; }
+  .why code { font-family: var(--mono); font-size: 12px; }
+  .kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .kinds .card { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 12px; padding: 12px 14px; cursor: pointer; }
+  .kinds .card h5 { margin: 0 0 4px; font-size: 15px; }
+  .kinds .card p { margin: 0 0 6px; font-size: 13px; color: var(--muted); }
+  .kinds .card .n { font-size: 12px; color: var(--faint); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = (p, opts = {}) =>
+  fetch(p, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers || {}) } }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || r.statusText);
+    return r.json();
+  });
+const qs = (o) => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+const fmt = (d) => (d ? String(d).slice(0, 10) : "—");
+const pct = (v) => (v == null ? "—" : `${Math.round(v * 1000) / 10}%`);
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const Status = ({ s }) => html`<span class=${"badge st-" + s}>${s}</span>`;
+const KindBadge = ({ k }) => html`<span class="badge kind">${k}</span>`;
+const CStatus = ({ s }) => html`<span class=${"badge c-" + s}>${(s || "").replace("_", " ")}</span>`;
+const Method = ({ m }) => html`<span class=${"badge m-" + m}>${m}</span>`;
+
+function Facets({ facets, filters, setFilters }) {
+  const set = (k, v) => setFilters({ ...filters, [k]: filters[k] === v ? "" : v });
+  const chips = (k, values) => html`<div>${(values || []).map((v) => html`<span key=${v} class=${"chip" + (filters[k] === v ? " on" : "")} onClick=${() => set(k, v)}>${v}</span>`)}</div>`;
+  return html`<aside class="facets">
+    <h4>Search</h4>
+    <input placeholder="policy, officer, monitoring…" value=${filters.q} onInput=${(e) => setFilters({ ...filters, q: e.target.value })} />
+    <h4>Kind</h4>${chips("kind", facets.kinds)}
+    <h4>Status</h4>${chips("status", facets.statuses)}
+    <h4>Harmonisation</h4>
+    <span class=${"chip" + (filters.canonical_only ? " on" : "")} onClick=${() => setFilters({ ...filters, canonical_only: !filters.canonical_only })}>canonical only</span>
+  </aside>`;
+}
+
+function Catalogue({ filters, open }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { setData(null); api(`/l3/blocks?${qs({ ...filters, limit: 500 })}`).then(setData).catch(() => setData({ items: [], total: 0 })); }, [JSON.stringify(filters)]);
+  if (!data) return html`<div class="spin">Loading catalogue…</div>`;
+  if (!data.items.length) return html`<div class="empty">No blocks match.</div>`;
+  return html`<div>
+    <div class="meta"><span><b>${data.total}</b> blocks</span></div>
+    <table class="reg"><thead><tr><th>Id</th><th>Block</th><th>Kind</th><th>Purpose</th><th>Obligations</th><th>Status</th></tr></thead>
+    <tbody>${data.items.map((b) => html`<tr key=${b.id}>
+      <td class="mono"><span class="name" onClick=${() => open(b.id)}>${b.id}</span></td>
+      <td><b>${b.name}</b>${b.canonical_id ? html` <span class="badge kind" title="merged into canonical">→ ${b.canonical_id}</span>` : ""}</td>
+      <td><${KindBadge} k=${b.kind} /></td>
+      <td>${b.purpose}</td>
+      <td>${b.obligations}</td>
+      <td><${Status} s=${b.status} /></td></tr>`)}</tbody></table></div>`;
+}
+
+function KindsPage({ pick }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { api("/l3/kinds").then(setData).catch(() => setData({ items: [] })); }, []);
+  if (!data) return html`<div class="spin">Loading kinds…</div>`;
+  return html`<div class="panelx">
+    <h2>The eight kinds</h2>
+    <p style=${{ color: "var(--muted)", fontSize: "13.5px", margin: "0 0 12px" }}>Every building block is one of these kinds; each kind has a fixed characteristic schema. A value is shown only when a backing obligation says it; otherwise it is marked <i>not specified by source</i>.</p>
+    <div class="kinds">${data.items.map((k) => html`<div key=${k.kind} class="card" onClick=${() => pick(k.kind)}>
+      <h5>${k.kind}</h5><p>${k.description}</p>
+      <div class="n">${k.blocks} blocks · ${k.fields.map((f) => f.key).join(", ")}</div></div>`)}</div></div>`;
+}
+
+function Highlighted({ text, span }) {
+  if (!text) return html`<span class="withheld">no text</span>`;
+  if (!span || span.start == null) return html`<pre class="clause">${text}</pre>`;
+  return html`<pre class="clause">${text.slice(0, span.start)}<mark>${text.slice(span.start, span.end)}</mark>${text.slice(span.end)}</pre>`;
+}
+
+function ModificationForm({ block, onDone }) {
+  const [field, setField] = useState("name");
+  const [value, setValue] = useState("");
+  const [rationale, setRationale] = useState("");
+  const [state, setState] = useState(null);
+  const fields = ["name", "purpose", "kind", "status", ...block.characteristics.map((c) => `characteristic:${c.key}`)];
+  const submit = () => {
+    setState("sending");
+    api(`/l3/blocks/${encodeURIComponent(block.id)}/modification-requests`, { method: "POST", body: JSON.stringify({ field, proposed_value: value, rationale }) })
+      .then((r) => { setState(`Proposal ${r.proposal_id} filed — the approval console decides.`); onDone && onDone(); })
+      .catch((e) => setState("Error: " + e.message));
+  };
+  return html`<div class="form">
+    <select value=${field} onChange=${(e) => setField(e.target.value)}>${fields.map((f) => html`<option key=${f} value=${f}>${f}</option>`)}</select>
+    <textarea rows="3" placeholder="proposed value" value=${value} onInput=${(e) => setValue(e.target.value)}></textarea>
+    <textarea rows="2" placeholder="why (min 10 characters) — cite the obligation text" value=${rationale} onInput=${(e) => setRationale(e.target.value)}></textarea>
+    <div><button class="btn" disabled=${state === "sending" || rationale.length < 10 || !value} onClick=${submit}>Request modification</button></div>
+    ${state && state !== "sending" ? html`<div class="mono">${state}</div>` : ""}
+  </div>`;
+}
+
+function BlockPage({ id, back, open, pickKind }) {
+  const [b, setB] = useState(null);
+  const [err, setErr] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  useEffect(() => { setB(null); setErr(null); api(`/l3/blocks/${encodeURIComponent(id)}`).then(setB).catch((e) => setErr(e.message)); }, [id]);
+  if (err) return html`<div class="panelx"><div class="crumbs"><a onClick=${back}>← catalogue</a></div><div class="empty">${err}</div></div>`;
+  if (!b) return html`<div class="spin">Loading ${id}…</div>`;
+  const cs = b.characteristics_summary || {};
+  return html`<div>
+    <div class="crumbs"><a onClick=${back}>← catalogue</a> · <a onClick=${() => pickKind(b.kind)}>${b.kind}</a> · <span class="mono">${b.id}</span></div>
+    <div class="panelx">
+      <h2>${b.name} <${KindBadge} k=${b.kind} /> <${Status} s=${b.status} /></h2>
+      <div class="meta">
+        <span>Obligations <b>${b.obligations}</b></span>
+        <span>Characteristics <b>${cs.filled}/${cs.required}</b> filled (${cs.backed} backed, ${cs.not_specified} not specified${cs.unbacked ? `, ${cs.unbacked} unbacked` : ""}${cs.missing ? `, ${cs.missing} missing` : ""})</span>
+        <span>Since <b>${fmt(b.valid_from)}</b></span>
+        ${b.needs_human ? html`<span class="warn">needs human review</span>` : ""}
+        ${b.canonical ? html`<span>merged into <span class="name" onClick=${() => open(b.canonical.id)}>${b.canonical.id}</span></span>` : ""}
+      </div>
+      <p style=${{ fontSize: "14.5px", lineHeight: 1.55, margin: "0 0 8px" }}>${b.purpose}</p>
+      ${b.capability ? html`<div class="mono">capability: ${b.capability}</div>` : ""}
+      ${(b.evidence_artifacts || []).length ? html`<div class="mono">evidence: ${b.evidence_artifacts.join(" · ")}</div>` : ""}
+
+      <h3>Characteristics (${b.kind} schema)</h3>
+      <div class="grid2">${b.characteristics.map((c) => html`<div key=${c.key} class="field">
+        <span class="k">${c.key.replace(/_/g, " ")}</span>
+        <div>${c.value || html`<i style=${{ color: "var(--muted)" }}>—</i>`} <${CStatus} s=${c.status} /></div>
+        ${c.backing_obligation_id ? html`<div class="src">from <span class="name" onClick=${() => (location.href = "/l2#" + c.backing_obligation_id)}>${c.backing_obligation_id}</span>${c.backing_span ? html`: “${c.backing_span}”` : ""}${c.method ? html` · ${c.method}` : ""}</div>` : ""}
+      </div>`)}</div>
+
+      <h3>Backing obligations (requires edges)</h3>
+      ${b.backing_obligations.length ? b.backing_obligations.map((o) => html`<div key=${o.requires_id} class="field" style=${{ marginBottom: "8px" }}>
+        <div class="meta" style=${{ margin: "0 0 6px" }}>
+          <span class="name" onClick=${() => (location.href = "/l2#" + o.obligation_id)}>${o.obligation_id}</span>
+          <span>${o.jurisdiction} · ${o.regulator || "—"}</span>
+          <span class="mono">${o.source_key} #${o.clause_ref}</span>
+          <${Method} m=${o.method} />
+          ${o.basis_current ? "" : html`<span class="warn">obligation text changed since link</span>`}
+        </div>
+        <${Highlighted} text=${o.determination} span=${o.span} />
+      </div>`) : html`<div class="empty">No live obligation requires this block${b.status === "curated" ? " yet (curated anchor awaiting ingestion)" : ""}.</div>`}
+
+      <h3>Needed by</h3>
+      ${b.needed_by.length ? html`<ul class="timeline">${b.needed_by.map((p) => html`<li key=${p.blueprint_id}>blueprint #${p.blueprint_id} <span class="mono">${JSON.stringify(p.profile_attributes)}</span><div class="when">${fmt(p.created_at)} · ${p.requested_by || "anonymous"}</div></li>`)}</ul>` : html`<div class="mono">No blueprint has selected this block yet.</div>`}
+
+      ${b.merged_duplicates.length ? html`<h3>Harmonised duplicates</h3><div class="meta">${b.merged_duplicates.map((d) => html`<span key=${d.id} class="name" onClick=${() => open(d.id)}>${d.id} — ${d.name}</span>`)}</div>` : ""}
+
+      <h3>History</h3>
+      <ul class="timeline">
+        <li>Block created<div class="when">${fmt(b.valid_from)}${b.valid_to ? ` → ${fmt(b.valid_to)}` : ""}</div></li>
+        ${b.history.requires.filter((e) => !e.live).map((e) => html`<li key=${e.requires_id}>requires edge to ${e.obligation_id} invalidated<div class="when">${fmt(e.valid_from)} → ${fmt(e.valid_to)}</div></li>`)}
+        ${b.history.characteristics.filter((c) => c.valid_to).map((c, i) => html`<li key=${"c" + i}>${c.key} “${c.value}” reopened${(c.review || []).slice(-1).map((r) => ` — ${r.reason}`)}<div class="when">${fmt(c.valid_from)} → ${fmt(c.valid_to)}</div></li>`)}
+        ${b.history.merged_from.map((m) => html`<li key=${m}>${m} harmonised into this block</li>`)}
+      </ul>
+
+      <h3>Why</h3>
+      ${b.why.length ? b.why.map((w) => html`<div key=${w.id} class="why field" style=${{ marginBottom: "8px" }}>
+        <div><b>${w.agent_id}</b> · ${w.layer} · conf ${w.confidence == null ? "—" : w.confidence} · <code>${w.id}</code></div>
+        <div>${w.reasoning_summary}</div>
+        <div class="mono">model ${JSON.stringify(w.model_manifest)} · inputs ${String(w.inputs_hash).slice(0, 12)} · ${fmt(w.created_at)}</div>
+      </div>`) : html`<div class="mono">No why-trail recorded (curated seed).</div>`}
+
+      <h3>Request a modification</h3>
+      ${showForm ? html`<${ModificationForm} block=${b} />` : html`<button class="btn quiet" onClick=${() => setShowForm(true)}>Propose a change to this block</button>`}
+    </div></div>`;
+}
+
+function Scorecard() {
+  const [card, setCard] = useState(null);
+  useEffect(() => { api("/l3/scorecard").then(setCard).catch(() => setCard({ error: true })); }, []);
+  if (!card) return html`<div class="spin">Loading scorecard…</div>`;
+  if (card.error) return html`<div class="empty">Scorecard unavailable.</div>`;
+  const g = card.gate || {}, c = card.completeness || {}, ch = card.characteristics || {}, r = card.reuse || {};
+  return html`<div class="panelx">
+    <h2>L3 scorecard <span class=${"badge " + (g.passed ? "st-validated" : "st-stale")}>${g.passed ? "gate passed" : "gate open"}</span></h2>
+    <div class="meta">${Object.entries(card.thresholds || {}).map(([k, v]) => html`<span key=${k}>${k} <b>${v}</b></span>`)}</div>
+    <div class="score">
+      <div class="kpi"><b>${card.blocks.canonical}</b><span>canonical blocks (${card.blocks.merged} harmonised away)</span></div>
+      <div class="kpi"><b class=${c.missing_count === 0 ? "ok" : "bad"}>${pct(c.rate)}</b><span>obligations with a block (${c.linked}/${c.obligations})</span></div>
+      <div class="kpi"><b class=${ch.rate >= 0.95 ? "ok" : "warn"}>${pct(ch.rate)}</b><span>characteristics filled (${ch.backed} backed, ${ch.not_specified} not specified)</span></div>
+      <div class="kpi"><b class=${r.explosion ? "bad" : "ok"}>${r.reuse_ratio}</b><span>requires edges per canonical block${r.explosion ? " — explosion" : ""}</span></div>
+      <div class="kpi"><b>${r.live_edges}</b><span>live requires edges (${Object.entries(card.requires_by_method || {}).map(([k, v]) => `${k} ${v}`).join(", ") || "none"})</span></div>
+    </div>
+    <h3>Gate suites</h3>
+    <div class="meta">${Object.entries(g.suites || {}).map(([k, v]) => html`<span key=${k}>${k} <b class=${v && v.passed ? "ok" : "bad"}>${v && v.passed ? "pass" : (v ? "fail" : "missing")}</b></span>`)}
+      ${(g.missing || []).length ? html`<span class="warn">not yet run: ${g.missing.join(", ")}</span>` : ""}</div>
+    <h3>By kind</h3><div class="meta">${Object.entries(card.blocks.by_kind || {}).map(([k, v]) => html`<span key=${k}>${k} <b>${v}</b></span>`)}</div>
+    <h3>By status</h3><div class="meta">${Object.entries(card.blocks.by_status || {}).map(([k, v]) => html`<span key=${k}>${k} <b>${v}</b></span>`)}</div>
+    ${(c.missing || []).length ? html`<h3>Obligations without a block</h3><div class="mono">${c.missing.join(", ")}</div>` : ""}
+    ${(ch.gaps || []).length ? html`<h3>Characteristic gaps</h3><div class="mono">${ch.gaps.join(", ")}</div>` : ""}
+  </div>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [tab, setTab] = useState("catalogue");
+  const [view, setView] = useState({ page: "list" });
+  const [filters, setFilters] = useState({ q: "", kind: "", status: "", canonical_only: true });
+  const [facets, setFacets] = useState({});
+  useEffect(() => { api("/l3/blocks?limit=1").then((d) => setFacets(d.facets)).catch(() => {}); }, []);
+  const open = (id) => { setTab("catalogue"); setView({ page: "block", id }); history.replaceState(null, "", "#" + id); };
+  const back = () => { setView({ page: "list" }); history.replaceState(null, "", "#"); };
+  const pickKind = (k) => { setFilters({ ...filters, kind: k }); setTab("catalogue"); setView({ page: "list" }); history.replaceState(null, "", "#kind=" + k); };
+  // Deep links: /l3#BLK-000001 opens a block; #kinds / #scorecard / #catalogue open a tab; #kind=Role filters.
+  useEffect(() => {
+    const apply = () => {
+      const h = decodeURIComponent(location.hash.slice(1));
+      if (/^BLK[-:]/.test(h)) { setTab("catalogue"); setView({ page: "block", id: h }); }
+      else if (h.startsWith("kind=")) { setFilters((f) => ({ ...f, kind: h.slice(5) })); setTab("catalogue"); setView({ page: "list" }); }
+      else if (["kinds", "scorecard", "catalogue"].includes(h)) { setTab(h); if (h === "catalogue") setView({ page: "list" }); }
+    };
+    apply(); window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+
+  let body;
+  if (tab === "kinds") body = html`<${KindsPage} pick=${pickKind} />`;
+  else if (tab === "scorecard") body = html`<${Scorecard} />`;
+  else if (view.page === "block") body = html`<${BlockPage} id=${view.id} back=${back} open=${open} pickKind=${pickKind} />`;
+  else body = html`<div class="layout"><${Facets} facets=${facets} filters=${filters} setFilters=${setFilters} /><${Catalogue} filters=${filters} open=${open} /></div>`;
+
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L3 · building blocks</span></div>
+      <div class="spacer"></div>
+      <a class="navlink" href="/">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink active" href="/l3">L3</a>
+      <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main>
+      <div class="tabs">
+        ${[["catalogue", "Catalogue"], ["kinds", "Kinds"], ["scorecard", "Scorecard"]].map(([k, label]) =>
+          html`<button key=${k} class=${tab === k ? "on" : ""} onClick=${() => { setTab(k); if (k === "catalogue") back(); else history.replaceState(null, "", "#" + k); }}>${label}</button>`)}
+      </div>
+      ${body}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>
