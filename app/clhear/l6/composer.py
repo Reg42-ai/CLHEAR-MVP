@@ -14,6 +14,7 @@ from sqlalchemy.engine import Engine
 from app.clhear.derived_models import activities as activities_t
 from app.clhear.derived_models import blocks as blocks_t
 from app.clhear.derived_models import blueprints, obligations
+from app.clhear.derived_models import requires as requires_t
 
 log = logging.getLogger("clhear.l6")
 
@@ -48,6 +49,20 @@ def resolve_anchor(engine: Engine, anchor: dict) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _live_requires(conn) -> dict[str, list[str]]:
+    """obligation id -> block ids with a live L3 ``requires`` edge."""
+    out: dict[str, list[str]] = {}
+    try:
+        rows = conn.execute(
+            sa.select(requires_t.c.obligation_id, requires_t.c.block_id).where(requires_t.c.valid_to.is_(None))
+        ).all()
+    except sa.exc.OperationalError:  # pre-m0011 database
+        return out
+    for oid, bid in rows:
+        out.setdefault(oid, []).append(bid)
+    return out
+
+
 def _selector_covers(selector: dict, obligation: dict) -> bool:
     if selector["source_key"] != obligation["source_key"]:
         return False
@@ -63,6 +78,8 @@ def compose(engine: Engine, profile: dict, requested_by: str = "", release: str 
     with engine.connect() as conn:
         activity_rows = [dict(r) for r in conn.execute(sa.select(activities_t)).mappings()]
         block_rows = [dict(r) for r in conn.execute(sa.select(blocks_t)).mappings()]
+        requires_edges = _live_requires(conn)
+    blocks_by_id = {b["id"]: b for b in block_rows}
 
     triggered: dict[str, dict] = {}  # obligation id -> {obligation, activities, conditions}
     unresolved_anchors: list[dict] = []
@@ -92,8 +109,15 @@ def compose(engine: Engine, profile: dict, requested_by: str = "", release: str 
     for oid, slot in sorted(triggered.items()):
         ob = slot["obligation"]
         covering = [
-            b for b in block_rows if any(_selector_covers(sel, ob) for sel in b["satisfies"])
+            b for b in block_rows if any(_selector_covers(sel, ob) for sel in b["satisfies"] or [])
         ]
+        # L3 requires edges (HLD v2 §4.3) cover too; a merged block resolves to its canonical.
+        for bid in requires_edges.get(oid, ()):
+            b = blocks_by_id.get(bid)
+            while b is not None and b.get("canonical_id") and b["canonical_id"] in blocks_by_id:
+                b = blocks_by_id[b["canonical_id"]]
+            if b is not None and b["id"] not in {c["id"] for c in covering}:
+                covering.append(b)
         for b in covering:
             selected_blocks.setdefault(b["id"], b)
         coverage.append(

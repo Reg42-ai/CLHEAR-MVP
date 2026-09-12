@@ -235,12 +235,20 @@ def handle_l1_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> d
     return on_l1_changed(engine, envelope.payload or {}, llm)
 
 
+def handle_l2_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """HLD v2 §4.3: an L2 obligation change -> L3 requires / characteristics propagation."""
+    from app.clhear.l3.decompose import on_l2_changed
+
+    return on_l2_changed(engine, envelope.payload or {})
+
+
 HANDLERS = {
     "DummyChanged": handle_dummy_changed,
     "AdapterRunRequested": handle_adapter_run,
     "PublishReleaseRequested": handle_publish_release,
     "CommunityWrite": handle_community_write,
     "clhear.l1.changed": handle_l1_changed,
+    "clhear.l2.changed": handle_l2_changed,
     # Later layers: add kinds here. handle_envelope already ignores unknown kinds.
 }
 

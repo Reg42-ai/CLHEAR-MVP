@@ -73,7 +73,8 @@ def generate_blocks(engine: Engine, llm, limit: int = MAX_BLOCKS) -> dict:
             "Design ONE reusable compliance building block that satisfies these obligations. "
             "satisfies MUST be a list of {\"source_key\", \"refs\"} drawn ONLY from the obligations. "
             "Do not invent sources or refs.\n"
-            'JSON: {"name": "", "description": "", "capability": "", '
+            'JSON: {"name": "", "kind": "System|Document|Role|Configuration|Process|Workflow|Asset|Body", '
+            '"purpose": "", "description": "", "capability": "", '
             '"evidence_artifacts": ["..."], "satisfies": [{"source_key": "", "refs": [""]}]}\n\n'
             + "\n".join(
                 f"- {o['id']} [{o['source_key']} #{o['clause_ref']}] {o['title']}"
@@ -110,9 +111,16 @@ def generate_blocks(engine: Engine, llm, limit: int = MAX_BLOCKS) -> dict:
         if not satisfies:
             blocked += 1
             continue
+        from app.clhear.l3.kinds import KINDS, infer_kind
+
+        kind = str(parsed.get("kind", "")).strip().capitalize()
+        if kind not in KINDS:
+            kind = infer_kind(f"{name} {parsed.get('description', '')} {parsed.get('capability', '')}")
         bid = f"BLK-AI-{_slug(name)}"
         values = dict(
             name=name,
+            kind=kind,
+            purpose=str(parsed.get("purpose") or parsed.get("description", ""))[:400],
             description=str(parsed.get("description", ""))[:800],
             capability=str(parsed.get("capability", ""))[:200],
             evidence_artifacts=[
@@ -131,6 +139,15 @@ def generate_blocks(engine: Engine, llm, limit: int = MAX_BLOCKS) -> dict:
                 blocked += 1
                 continue
             conn.execute(blocks_t.insert().values(id=bid, **values))
+            # HLD v2 §4.3: the closed-world satisfies anchors become explicit requires edges.
+            from app.clhear.l3.decompose import link, why_for
+
+            for o in cluster:
+                if any(sel["source_key"] == o["source_key"] and o["clause_ref"] in sel["refs"] for sel in satisfies):
+                    why = why_for(o["stable_id"] or o["id"], method="llm", confidence=0.7,
+                                  summary=f"l3.block_generate proposed block '{name}' for this obligation (closed-world refs)",
+                                  evidence_refs=[o["id"]], model_manifest={"model": result.model, "task": "l3.block_generate"})
+                    link(conn, obligation=o, block_id=bid, method="llm", why=why)
         from app.clhear.governance import mark_generated
 
         mark_generated(

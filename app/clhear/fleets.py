@@ -49,6 +49,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     from app.clhear.l2.dedupe import consolidate as l2_consolidate
     from app.clhear.l2.review import review_obligations
     from app.clhear.l2.structured import refine_structured
+    from app.clhear.l3.characterize import characterize as l3_characterize
+    from app.clhear.l3.decompose import decompose as l3_decompose
+    from app.clhear.l3.harmonize import harmonize as l3_harmonize
 
     started = datetime.now(timezone.utc)
     seeded = curated.seed(engine)
@@ -62,6 +65,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     registry_consolidation = l2_consolidate(engine)
     reviews = review_obligations(engine, llm)
     blocks = generate_blocks(engine, llm)
+    decomposition = l3_decompose(engine)
+    harmonisation = l3_harmonize(engine)
+    characterisation = l3_characterize(engine, llm)
     licenses = extract_licenses(engine, llm)
     activities = map_activities(engine, llm)
     # L6 rationale: narrate the latest sample-profile blueprints (computed).
@@ -87,6 +93,7 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     for suite in (
         "l2_basis_integrity", "l2_extraction_quality", "l2_concept_integrity",
         "l2_coverage", "l2_precision", "l2_dedupe", "l2_change_inference",
+        "l3_completeness", "l3_characteristics", "l3_reuse", "l3_precision",
         "l3_l5_referential", "l4_grounding", "l6_citation", "l7_number_echo", "l8_k_anonymity",
     ):
         try:
@@ -106,6 +113,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "consolidation": consolidation,
         "flagged_concepts": flagged,
         "blocks": blocks,
+        "decomposition": decomposition,
+        "harmonisation": harmonisation,
+        "characterisation": characterisation,
         "licenses": licenses,
         "activities": activities,
         "rationales": rationales,
@@ -118,7 +128,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         f"{triage.get('inserted', 0)} triaged, {registry_consolidation['dedupe'].get('merged', 0)} deduped, "
         f"{registry_consolidation['equivalences'].get('written', 0)} equivalences, "
         f"{reviews.get('reviewed', 0)} reviewed, {consolidation.get('applied', 0)} concepts applied, "
-        f"{blocks.get('written', 0)} blocks, {licenses.get('written', 0)} licenses, "
+        f"{blocks.get('written', 0)} blocks generated, {decomposition.get('linked_curated', 0) + decomposition.get('linked_derived', 0)} "
+        f"obligations decomposed, {harmonisation.get('merged', 0)} blocks harmonised, "
+        f"{characterisation.get('backed', 0)} characteristics backed, {licenses.get('written', 0)} licenses, "
         f"{activities.get('written', 0)} activities; "
         f"{sum(1 for g in gates.values() if g.get('passed'))}/{len(gates)} eval gates green"
     )
