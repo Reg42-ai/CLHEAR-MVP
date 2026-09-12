@@ -240,28 +240,37 @@ LAYER_CATALOG: dict[str, dict] = {
         "schema": "l6_composer",
         "published": False,
         "status": "computed",
-        "purpose": "Composes a concrete compliance program for one profile: the set of "
-        "L3 building blocks that covers every obligation the profile's activities trigger.",
+        "purpose": "Composes the leanest complete compliance program for one profile: the set of "
+        "L3 building blocks (items) that satisfies every applicable obligation, with a minimality "
+        "proof and a full evidence chain per item (HLD v2 §4.6).",
         "derivation": {
-            "inputs": ["L3", "L4", "L5"],
-            "method": "Deterministic set-cover: take the profile (L4), enumerate its "
-            "activities (L5), collect every triggered obligation (L2), then select "
-            "building blocks (L3) until the obligation set is covered. The output is "
-            "a coverage matrix — obligation x block — where every cell is explainable "
-            "and every gap is explicit.",
+            "inputs": ["L2", "L3", "L4", "L5"],
+            "method": "Deterministic set-cover with hard constraints: take the profile (L4), collect "
+            "every applicable obligation (L4 predicates + L5 activity triggers over L2), make every "
+            "block an obligation requires (L3) mandatory, then pick the fewest further blocks whose "
+            "selectors satisfy what is left and prune anything redundant. Each item carries its "
+            "characteristics resolved for the profile, the obligations it satisfies, the compliance "
+            "activities that operate it (L5) and whether it is load-bearing. A blueprint is stored "
+            "under a BLU- id with ITM- items and its proof; when any lower layer changes it is "
+            "recomposed and the diff published (clhear.l6.changed); the old one is superseded, never deleted.",
             "generation": {
-                "nature": "deterministic optimization; LLM as citing narrator only",
-                "technique": "Set-cover math (LLM-free) + citation-checked rationale",
-                "guarantee": "Every claim in the narrative references an id present in that blueprint; extras are rejected",
-                "may": ["narrate coverage, blocks, and gaps already in the blueprint"],
-                "must_not": ["cite obligations or blocks outside the blueprint"],
-                "gates": ["l6_determinism", "l6_citation"],
+                "nature": "deterministic optimization; LLM as explainer / citing narrator only",
+                "technique": "Set-cover math (LLM-free) + rubric-gated item explanations + citation-checked rationale",
+                "guarantee": "Every explanation names its block, cites obligations in the blueprint, states the "
+                "trigger and the item's role, and cites nothing outside the blueprint; rewrites that fail are dropped",
+                "may": ["rephrase item explanations and narrate coverage, blocks, and gaps already in the blueprint"],
+                "must_not": ["cite obligations or blocks outside the blueprint", "add or remove items"],
+                "gates": ["l6_completeness", "l6_minimality", "l6_reference", "l6_explanation", "l6_citation"],
             },
             "gates": [
-                "Coverage gaps are surfaced, never silently accepted",
-                "Program versions pinned to a CLHEAR release (obligations don't drift under a program)",
+                "Completeness 100 %: every applicable obligation satisfied by ≥ 1 item",
+                "Minimality checked: no item removable without breaking coverage (independently re-verified)",
+                "Reference-program agreement ≥ 90 % against expert-authored programs",
+                "Explanation quality ≥ 90 % on the rubric",
+                "Coverage gaps are surfaced, never silently accepted; programs pinned to a release",
             ],
-            "evidence": ["coverage matrix per program; gap list; release pin"],
+            "evidence": ["items with obligations satisfied and characteristics; minimality proof with removal impact; "
+                         "diff against any earlier blueprint; OSCAL system-security-plan export"],
         },
     },
     "L7": {

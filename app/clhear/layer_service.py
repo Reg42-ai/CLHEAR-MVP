@@ -105,6 +105,18 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
             "sample_programs": _count(conn, sample_profiles_t),
             "blueprints_requested": _count(conn, blueprints),
         }
+        try:
+            from app.clhear.derived_models import blueprint_items as items_t
+            from app.clhear.derived_models import minimality_proofs as proofs_t
+
+            out["L6"].update({
+                "blueprints_current": _count(conn, blueprints, blueprints.c.status == "current", blueprints.c.stable_id.isnot(None)),
+                "blueprints_superseded": _count(conn, blueprints, blueprints.c.status == "superseded", blueprints.c.stable_id.isnot(None)),
+                "items": _count(conn, items_t),
+                "minimality_proofs": _count(conn, proofs_t),
+            })
+        except sa.exc.OperationalError:  # pre-m0014 database
+            pass
         out["L7"] = {"risk_areas": _count(conn, sample_profiles_t) * 2}
         out["L8"] = {
             "benchmark_definitions": len(load_curated("l8_benchmarks")),

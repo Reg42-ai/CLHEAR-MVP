@@ -246,18 +246,32 @@ def handle_l2_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> d
     out = on_l2_changed(engine, envelope.payload or {})
     out["l4"] = l4_on_l2_changed(engine, envelope.payload or {})
     out["l5"] = l5_on_l2_changed(engine, envelope.payload or {})
+    out["l6"] = l6_on_changed(engine, envelope.payload or {}, layer="L2")
     return out
 
 
 def handle_l4_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
-    """HLD v2 §4.4 / §4.5: an ontology change re-judges every stored profile (never
-    deletes) and re-derives the L5 implies edges (products may have come or gone)."""
+    """HLD v2 §4.4 / §4.5 / §4.6: an ontology change re-judges every stored profile
+    (never deletes), re-derives the L5 implies edges (products may have come or
+    gone) and recomposes the stored blueprints."""
     from app.clhear.l4.validate import revalidate_profiles
     from app.clhear.l5.map import on_l4_changed
 
     out = revalidate_profiles(engine)
     out["l5"] = on_l4_changed(engine, envelope.payload or {})
+    out["l6"] = l6_on_changed(engine, envelope.payload or {}, layer="L4")
     return out
+
+
+def handle_l5_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """HLD v2 §4.6: a junction change recomposes the stored blueprints (diff engine)."""
+    return {"l6": l6_on_changed(engine, envelope.payload or {}, layer="L5")}
+
+
+def l6_on_changed(engine: Engine, payload: dict, *, layer: str) -> dict:
+    from app.clhear.l6.diff import on_lower_layer_changed
+
+    return on_lower_layer_changed(engine, payload, layer=layer)
 
 
 HANDLERS = {
@@ -268,6 +282,7 @@ HANDLERS = {
     "clhear.l1.changed": handle_l1_changed,
     "clhear.l2.changed": handle_l2_changed,
     "clhear.l4.changed": handle_l4_changed,
+    "clhear.l5.changed": handle_l5_changed,
     # Later layers: add kinds here. handle_envelope already ignores unknown kinds.
 }
 

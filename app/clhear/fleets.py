@@ -31,6 +31,29 @@ def _already_ran_today(engine: Engine) -> bool:
     return False
 
 
+def compose_stored_profiles(engine: Engine) -> dict:
+    """L6 composers: a current blueprint for every stored valid L4 profile (idempotent)."""
+    import sqlalchemy as sa
+
+    from app.clhear.derived_models import blueprints, profiles
+    from app.clhear.l6.composer import compose_for_profile
+
+    composed = stored = 0
+    try:
+        with engine.connect() as conn:
+            ids = [r[0] for r in conn.execute(sa.select(profiles.c.id).where(profiles.c.status == "valid").order_by(profiles.c.id))]
+    except sa.exc.OperationalError:  # pre-m0012 database
+        return {"composed": 0, "stored": 0}
+    for pid in ids:
+        with engine.connect() as conn:
+            before = {r[0] for r in conn.execute(sa.select(blueprints.c.stable_id).where(blueprints.c.profile_id == pid))}
+        bp = compose_for_profile(engine, pid, requested_by="l6.compose:nightly")
+        composed += 1
+        if bp.get("blueprint_id") not in before:
+            stored += 1
+    return {"composed": composed, "stored": stored}
+
+
 def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     """Extract → triage → consolidate → L3/L4/L5/L6/L7/L8 → eval gates."""
     from app.clhear import curated
@@ -82,22 +105,28 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
 
     activities = map_activities(engine, llm)
     junction = check_junction(engine)
-    # L6 rationale: narrate the latest sample-profile blueprints (computed).
+    # L6 (HLD v2 §4.6): composers for every stored profile (diff engine supersedes
+    # changed blueprints and publishes clhear.l6.changed), explainers on the
+    # current blueprints (rubric-gated), citation-checked program rationale.
     from app.clhear import layer_service
+    from app.clhear.l6 import composer as l6_composer
+    from app.clhear.l6.diff import recompose as l6_recompose
+    from app.clhear.l6.explain import refine_explanations
     from app.clhear.l6.rationale import narrate_blueprint
 
+    blueprints_out = compose_stored_profiles(engine)
+    recomposition = l6_recompose(engine, cause="nightly")
     rationales = []
-    for item in layer_service.layer_items(engine, "L6")[:3]:
-        # Re-compose to get a full blueprint with coverage ids.
-        from app.clhear.derived_models import sample_profiles
-        import sqlalchemy as sa
-
-        with engine.connect() as conn:
-            prow = conn.execute(sa.select(sample_profiles).where(sample_profiles.c.id == item["profile_id"])).first()
-        if prow is None:
+    explanations = []
+    with engine.connect() as conn:
+        current = l6_composer.list_blueprints(conn, status="current", limit=3)
+        comps = [l6_composer.get_blueprint(conn, r["blueprint_id"]) for r in current]
+    for bp in comps:
+        if not bp or not bp["composition"].get("items"):
             continue
-        bp = layer_service._profile_blueprint(engine, prow)
-        rationales.append(narrate_blueprint(engine, llm, bp))
+        comp = dict(bp["composition"], blueprint_id=bp["blueprint_id"])
+        explanations.append(refine_explanations(engine, llm, comp))
+        rationales.append(narrate_blueprint(engine, llm, comp))
     risk_items = layer_service.risk_items(engine)[:4]
     narratives = [narrate_risk(engine, llm, it) for it in risk_items]
     cohorts = refresh_cohorts(engine)
@@ -107,7 +136,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "l2_coverage", "l2_precision", "l2_dedupe", "l2_change_inference",
         "l3_completeness", "l3_characteristics", "l3_reuse", "l3_precision",
         "l3_l5_referential", "l4_validity", "l4_applicability", "l4_grounding",
-        "l5_completeness", "l5_mapping", "l5_precision", "l6_citation", "l7_number_echo", "l8_k_anonymity",
+        "l5_completeness", "l5_mapping", "l5_precision",
+        "l6_completeness", "l6_minimality", "l6_reference", "l6_explanation", "l6_citation",
+        "l7_number_echo", "l8_k_anonymity",
     ):
         try:
             gates[suite] = ev.run_suite(engine, suite, release=started.strftime("%Y%m%dT%H%M%SZ"))
@@ -137,6 +168,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "activities": activities,
         "junction": {"activities": junction["activities"], "edges": junction["edges"], "orphans": len(junction["orphans"]),
                      "dangling": len(junction["dangling"]), "ok": junction["ok"]},
+        "blueprints": blueprints_out,
+        "recomposition": {k: v for k, v in recomposition.items() if k != "changes"},
+        "explanations": explanations,
         "rationales": rationales,
         "narratives": [{"written": n.get("written"), "id": n.get("id")} for n in narratives],
         "cohorts": cohorts,
@@ -153,7 +187,10 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         f"ontology {ontology['version']} ({sum(c['added'] + c['updated'] for c in ontology['counts'].values())} rows changed), "
         f"{predicates.get('added', 0)} applicability edges added, {profile_revalidation.get('changed', 0)} profiles flipped, "
         f"{activities.get('written', 0)} obligations mapped to activities, junction "
-        f"{'consistent' if junction['ok'] else str(len(junction['orphans'])) + ' orphan(s)'}; "
+        f"{'consistent' if junction['ok'] else str(len(junction['orphans'])) + ' orphan(s)'}, "
+        f"{blueprints_out['composed']} blueprints composed ({blueprints_out['stored']} new), "
+        f"{recomposition['changed']}/{recomposition['checked']} recomposed after lower-layer changes, "
+        f"{sum(e['accepted'] for e in explanations)} explanations refined; "
         f"{sum(1 for g in gates.values() if g.get('passed'))}/{len(gates)} eval gates green"
     )
     import time
