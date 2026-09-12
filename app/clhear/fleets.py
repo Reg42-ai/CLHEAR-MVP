@@ -69,6 +69,14 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     harmonisation = l3_harmonize(engine)
     characterisation = l3_characterize(engine, llm)
     licenses = extract_licenses(engine, llm)
+    # L4 (HLD v2 §4.4): register-backed ontology, applicability predicates, profile re-validation.
+    from app.clhear.l4.ontology import build_ontology
+    from app.clhear.l4.predicates import extract_predicates
+    from app.clhear.l4.validate import revalidate_profiles
+
+    ontology = build_ontology(engine)
+    predicates = extract_predicates(engine, llm)
+    profile_revalidation = revalidate_profiles(engine)
     activities = map_activities(engine, llm)
     # L6 rationale: narrate the latest sample-profile blueprints (computed).
     from app.clhear import layer_service
@@ -94,7 +102,7 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "l2_basis_integrity", "l2_extraction_quality", "l2_concept_integrity",
         "l2_coverage", "l2_precision", "l2_dedupe", "l2_change_inference",
         "l3_completeness", "l3_characteristics", "l3_reuse", "l3_precision",
-        "l3_l5_referential", "l4_grounding", "l6_citation", "l7_number_echo", "l8_k_anonymity",
+        "l3_l5_referential", "l4_validity", "l4_applicability", "l4_grounding", "l6_citation", "l7_number_echo", "l8_k_anonymity",
     ):
         try:
             gates[suite] = ev.run_suite(engine, suite, release=started.strftime("%Y%m%dT%H%M%SZ"))
@@ -117,6 +125,10 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "harmonisation": harmonisation,
         "characterisation": characterisation,
         "licenses": licenses,
+        "ontology": {"version": ontology["version"], "counts": ontology["counts"],
+                     "registers": {k: v.get("freshness") for k, v in ontology["registers"].items()}},
+        "predicates": predicates,
+        "profile_revalidation": profile_revalidation,
         "activities": activities,
         "rationales": rationales,
         "narratives": [{"written": n.get("written"), "id": n.get("id")} for n in narratives],
@@ -131,6 +143,8 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         f"{blocks.get('written', 0)} blocks generated, {decomposition.get('linked_curated', 0) + decomposition.get('linked_derived', 0)} "
         f"obligations decomposed, {harmonisation.get('merged', 0)} blocks harmonised, "
         f"{characterisation.get('backed', 0)} characteristics backed, {licenses.get('written', 0)} licenses, "
+        f"ontology {ontology['version']} ({sum(c['added'] + c['updated'] for c in ontology['counts'].values())} rows changed), "
+        f"{predicates.get('added', 0)} applicability edges added, {profile_revalidation.get('changed', 0)} profiles flipped, "
         f"{activities.get('written', 0)} activities; "
         f"{sum(1 for g in gates.values() if g.get('passed'))}/{len(gates)} eval gates green"
     )

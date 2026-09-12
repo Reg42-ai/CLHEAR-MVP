@@ -138,6 +138,11 @@ TASKS: dict[str, TaskSpec] = {
         latency_tolerance="nightly", domain="legal", context_size="large",
         description="Extract license types only from retrieved clause text",
     ),
+    "l4.applicability": TaskSpec(
+        "l4.applicability", "extraction", "medium", "high", 0.90, "l4.predicates", "L4", task_class="l4_enumerate",
+        latency_tolerance="nightly", domain="legal",
+        description="Applicability predicate from an obligation's subject/condition, closed-world over the L4 ontology",
+    ),
     "l5.activity_map": TaskSpec(
         "l5.activity_map", "graph_mapping", "medium", "medium", 0.84, "l5.map", "L5", task_class="l5_map",
         latency_tolerance="nightly", domain="legal",
@@ -187,6 +192,7 @@ SEED_QUALITY: dict[tuple[str, str], float] = {
     ("l3.block_generate", CLAUDE_SONNET_5): 0.93,
     ("l3.characterize", GPT_OSS_120B): 0.88,
     ("l4.license_extract", GPT_OSS_120B): 0.93,
+    ("l4.applicability", GPT_OSS_120B): 0.91,
     ("l5.activity_map", GPT_OSS_120B): 0.90,
     ("l6.rationale", CLAUDE_SONNET_5): 0.92,
     ("l7.narrative", GPT_OSS_120B): 0.89,

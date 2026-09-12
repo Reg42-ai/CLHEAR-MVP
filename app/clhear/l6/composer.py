@@ -22,19 +22,22 @@ ENGINE_VERSION = "composer-v1"
 
 
 def when_matches(when: dict, attributes: dict) -> bool:
-    """Trigger condition evaluator. "*" = attribute is present/truthy;
-    list attributes use containment; scalars use equality."""
-    for key, requirement in (when or {}).items():
-        value = attributes.get(key)
-        if requirement == "*":
-            if not value:
-                return False
-        elif isinstance(value, list):
-            if requirement not in value:
-                return False
-        elif value != requirement:
-            return False
-    return True
+    """Trigger condition evaluator — the L4 predicate language shared with
+    ``applies_to`` edges and validity rules ("*" = present; list = any-of;
+    scalar = equality / containment, case-insensitive)."""
+    from app.clhear.l4.ontology import matches
+
+    return matches(when, attributes)
+
+
+def _l4_applicable(conn, attributes: dict) -> list[dict]:
+    """Obligations whose live L4 applies_to edges all match the profile (HLD v2 §4.4)."""
+    from app.clhear.l4.predicates import obligations_for_attributes
+
+    try:
+        return obligations_for_attributes(conn, attributes)
+    except sa.exc.OperationalError:  # pre-m0012 database
+        return []
 
 
 def resolve_anchor(engine: Engine, anchor: dict) -> list[dict]:
@@ -79,10 +82,18 @@ def compose(engine: Engine, profile: dict, requested_by: str = "", release: str 
         activity_rows = [dict(r) for r in conn.execute(sa.select(activities_t)).mappings()]
         block_rows = [dict(r) for r in conn.execute(sa.select(blocks_t)).mappings()]
         requires_edges = _live_requires(conn)
+        l4_applicable = _l4_applicable(conn, attributes) if wanted_activities is None else []
     blocks_by_id = {b["id"]: b for b in block_rows}
 
     triggered: dict[str, dict] = {}  # obligation id -> {obligation, activities, conditions}
     unresolved_anchors: list[dict] = []
+    # L4 applicability edges trigger directly (every edge matched the profile).
+    for item in l4_applicable:
+        ob = {"id": item["derivation_key"], "source_key": item["source_key"], "clause_ref": item["clause_ref"],
+              "title": item["title"], "status": item["status"], "confidence": item["confidence"]}
+        slot = triggered.setdefault(ob["id"], {"obligation": ob, "activities": [], "conditions": []})
+        slot["activities"].append("L4:applies_to")
+        slot["conditions"].append({k: v for p in item["predicates"] for k, v in p["predicate"].items()})
     for act in activity_rows:
         if wanted_activities is not None and act["id"] not in wanted_activities:
             continue

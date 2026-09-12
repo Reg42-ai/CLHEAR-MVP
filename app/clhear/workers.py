@@ -236,10 +236,21 @@ def handle_l1_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> d
 
 
 def handle_l2_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
-    """HLD v2 §4.3: an L2 obligation change -> L3 requires / characteristics propagation."""
+    """HLD v2 §4.3 / §4.4: an L2 obligation change -> L3 requires / characteristics
+    propagation and L4 applicability-edge re-stamping (I1: derive downward)."""
     from app.clhear.l3.decompose import on_l2_changed
+    from app.clhear.l4.predicates import on_l2_changed as l4_on_l2_changed
 
-    return on_l2_changed(engine, envelope.payload or {})
+    out = on_l2_changed(engine, envelope.payload or {})
+    out["l4"] = l4_on_l2_changed(engine, envelope.payload or {})
+    return out
+
+
+def handle_l4_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """HLD v2 §4.4: an ontology change re-judges every stored profile (never deletes)."""
+    from app.clhear.l4.validate import revalidate_profiles
+
+    return revalidate_profiles(engine)
 
 
 HANDLERS = {
@@ -249,6 +260,7 @@ HANDLERS = {
     "CommunityWrite": handle_community_write,
     "clhear.l1.changed": handle_l1_changed,
     "clhear.l2.changed": handle_l2_changed,
+    "clhear.l4.changed": handle_l4_changed,
     # Later layers: add kinds here. handle_envelope already ignores unknown kinds.
 }
 
