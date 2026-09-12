@@ -1,0 +1,30 @@
+{
+  "adapter": "finra",
+  "channel": "finra",
+  "source_key": "finra/rule/3110",
+  "title": "FINRA Rule 3110",
+  "url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules/3110",
+  "html": "<html><head><title>3110. Supervision | FINRA.org</title></head><body>\n<h1>3110. Supervision</h1>\n<p>(a) Supervisory System</p>\n<p>Each member shall establish and maintain a system to supervise the activities of each associated person that is reasonably designed to achieve compliance with applicable securities laws and regulations, and with applicable FINRA rules.</p>\n<p>(b) Written Procedures</p>\n<p>Each member shall establish, maintain, and enforce written procedures to supervise the types of business in which it engages and the activities of its associated persons that are reasonably designed to achieve compliance with applicable securities laws and regulations, and with applicable FINRA rules.</p>\n<p>(c) Internal Inspections</p>\n<p>(1) Each member shall conduct a review, at least annually, of the businesses in which it engages.</p>\n</body></html>",
+  "clauses": [
+    {
+      "ref": "3110",
+      "text": "Supervision"
+    },
+    {
+      "ref": "3110(a)",
+      "text": "Supervisory System Each member shall establish and maintain a system to supervise the activities of each associated person that is reasonably designed to achieve compliance with applicable securities laws and regulations, and with applicable FINRA rules."
+    },
+    {
+      "ref": "3110(b)",
+      "text": "Written Procedures Each member shall establish, maintain, and enforce written procedures to supervise the types of business in which it engages and the activities of its associated persons that are reasonably designed to achieve compliance with applicable securities laws and regulations, and with applicable FINRA rules."
+    },
+    {
+      "ref": "3110(c)",
+      "text": "Internal Inspections"
+    },
+    {
+      "ref": "3110(c)(1)",
+      "text": "Each member shall conduct a review, at least annually, of the businesses in which it engages."
+    }
+  ]
+}

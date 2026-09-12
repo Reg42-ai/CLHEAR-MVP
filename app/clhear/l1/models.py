@@ -58,6 +58,22 @@ sources = sa.Table(
     sa.Column("license_ref", sa.Text, nullable=False, default=""),
     sa.Column("adapter", sa.Text, nullable=False, default=""),
     sa.Column("canonical_url", sa.Text, nullable=False, default=""),
+    # HLD v2 §4.1: rights basis decides what CLHEAR may republish; recorded by
+    # the rights recorder (l1/rights.py) with evidence in `rights_records`.
+    sa.Column(
+        "rights_basis",
+        sa.Text,
+        sa.CheckConstraint(
+            "rights_basis in ('public_domain','open_licence','licensed','byol_only','derived_only')",
+            name="sources_rights_basis_check",
+        ),
+        nullable=False,
+        default="open_licence",
+        server_default="open_licence",
+    ),
+    sa.Column("publisher", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("instrument", sa.Text, nullable=False, default="", server_default=""),
+    sa.Column("family_root", sa.Boolean, nullable=False, default=False, server_default=sa.false()),
     # Curated semantic context (authored in the adapter's SourceMeta, code-
     # reviewed — deterministic, zero LLM). Generated semantics belong to the
     # clause_annotations table, never here.
@@ -186,6 +202,7 @@ STAGE_INFO = {
     "persist": "Write the new version, its document nodes and the clause projection to the corpus in one transaction.",
     "annotate": "Deterministically classify every clause (definition, requirement, enforcement, other) and inherit topic tags from the curated source metadata — the orientation layer for readers.",
     "index": "Build the hybrid search units: each clause in distilled form (short name + path + classification + text) plus substantial paragraphs with their clause heading — the corpus becomes findable by citation, exact tokens, or plain words.",
+    "citations": "Mine every clause for references to other instruments (EU acts, UK SIs/Acts, US CFR/USC); resolve them to family members, mark cross-family references, and file unknown instruments as discovery candidates for a human — the family-completeness signal.",
     "diff": "Clause-level comparison against the previous version (aligned by stable references) producing the change event.",
     "relay": "Ship the recorded change events from the transactional outbox to the SQS event queue.",
     "drain": "Consume the queued events worker-style (idempotent on event id), leaving the queue clean.",
@@ -202,7 +219,13 @@ FLEET_SCHEDULES = {
     "uk_legislation": _daily("UK statutes & SIs (legislation.gov.uk) — MLRs, FSMA, POCA, ECCTA, e-money/payments, ISA, CRS, SDRT …"),
     "eur_lex": _daily("EU law (EUR-Lex/Cellar) — GDPR + corrigenda, MiFID II/MiFIR + RTS, MAR, EMIR, MiCA, DORA, AML package, AI Act, DAC8 …"),
     "govinfo_us": _daily("US federal law (GovInfo/eCFR) + NIST — FATCA, Exchange Act, Securities Act, SOX, 17 CFR 240, Reg BI/S-P/S-ID, 31 CFR X, §871(m)."),
-    "fca_handbook": _daily("FCA Handbook (PRIN/SYSC/COBS/CASS/PROD/SUP/DISP/MIFIDPRU) — handbook.fca.org.uk HTML."),
+    "fca_handbook": _daily("FCA Handbook (PRIN/SYSC/COBS/CASS/PROD/SUP/DISP/MIFIDPRU) — handbook.fca.org.uk, one artifact per chapter, rule status R/G/E kept."),
+    "sec_edgar": _daily("SEC + FINRA via the EDGAR channel — SEC final rules (public domain) and FINRA rule filings (derived-only rights)."),
+    "esma": _daily("ESMA guidelines and Q&A (esma.europa.eu PDF/HTML) — MiFID II/MAR/EMIR guidelines."),
+    "bis_basel": _daily("BIS Basel Framework chapters (bis.org/basel_framework) — CRE/OPE/SRP/BCP."),
+    "iosco": _daily("IOSCO Objectives and Principles + methodology (iosco.org PDF)."),
+    "asic": _daily("ASIC Regulatory Guides (asic.gov.au PDF) — RG 227, RG 181, RG 271."),
+    "isa": _daily("Israel Securities Authority — Securities Law 5728-1968 + regulations (English translations, derived-only)."),
     "au_legislation": _daily("Australia — Corporations Act Ch 7, AML/CTF, ASIC DTR, Privacy Act (legislation.gov.au)."),
     "sg_legislation": _daily("Singapore — SFA 2001, PDPA (sso.agc.gov.sg)."),
     "finra": _daily("FINRA rulebook subset (finra.org)."),
@@ -212,10 +235,10 @@ FLEET_SCHEDULES = {
     "malta": _daily("Malta Cap 376 + PMLFTR (legislation.mt)."),
     "uae": _daily("UAE Federal Decree-Law 20/2018 (uaelegislation.gov.ae)."),
     "cysec": _daily("Cyprus Investment Services Law L.87(I)/2017 (PDF/HTML)."),
-    "mas": _daily("MAS Notice SFA04-N02 AML/CFT (PDF/HTML)."),
-    "fatf": _daily("FATF 40 Recommendations (open PDF)."),
+    "mas": _daily("MAS Notices (SFA04-N02 AML/CFT, PSN02) — numbered-paragraph PDF/HTML."),
+    "fatf": _daily("FATF 40 Recommendations + interpretive notes (open PDF), recommendation-grain clauses."),
     "wolfsberg": _daily("Wolfsberg Group standards."),
-    "irs_gov": _daily("IRS QI Rev. Proc. 2022-43 (PDF)."),
+    "irs_gov": _daily("IRS Revenue Procedures (Rev. Proc. 2022-43 QI agreement; 2017-15) — SECTION/.NN grain."),
     "lists": _daily("Sanctions list feeds — OFAC SDN, UN SC, EU consolidated, UK OFSI."),
     "overlay": _daily("EU/EEA host-state overlays (BE/DE/ES/FR/IT)."),
     "restricted_file": _daily("Restricted BYOL prefix watch — ISO 27001, SOC 2 TSC, PCI DSS, IFRS."),
@@ -297,6 +320,12 @@ clauses = sa.Table(
     sa.Column("text", sa.Text, nullable=False),
     sa.Column("text_hash", sa.Text, nullable=False),
     sa.Column("public_ok", sa.Boolean, nullable=False, default=False),
+    # HLD v2 §4.1: character offsets of this clause inside the version's
+    # canonical text (l1.spans.canonical_text) so L2 `asserts` can cite exact
+    # spans; `normative` marks clauses that impose/withdraw an obligation.
+    sa.Column("span_start", sa.Integer, nullable=True),
+    sa.Column("span_end", sa.Integer, nullable=True),
+    sa.Column("normative", sa.Boolean, nullable=False, default=False, server_default=sa.false()),
     sa.Column("embedding", Json, nullable=True),
     sa.Column("embedding_model", sa.Text, nullable=True),
     sa.Index("clauses_source_version_idx", "source_version_id"),
@@ -359,6 +388,48 @@ change_events = sa.Table(
     sa.Column("clause_refs", Json, nullable=False, default=list),
     sa.Column("detected_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.Column("diff_s3_uri", sa.Text, nullable=False, default=""),
+    # HLD v2 §4.1 change detectors: clause ids of the new version that changed,
+    # the extracted effective date and where it came from (text|publisher|none).
+    sa.Column("clause_ids", Json, nullable=False, default=list),
+    sa.Column("effective_date", sa.Date, nullable=True),
+    sa.Column("effective_date_basis", sa.Text, nullable=False, default="", server_default=""),
+)
+
+# Rights recorder ledger (HLD v2 §4.1): one row per rights determination for a
+# source, with the evidence (licence page, statute, publisher notice) behind it.
+RIGHTS_BASES = ("public_domain", "open_licence", "licensed", "byol_only", "derived_only")
+
+rights_records = sa.Table(
+    "rights_records",
+    metadata,
+    sa.Column("id", BigId, sa.Identity(), primary_key=True),
+    sa.Column("source_id", BigId, sa.ForeignKey(f"{L1_SCHEMA}.sources.id"), nullable=False),
+    sa.Column(
+        "rights_basis",
+        sa.Text,
+        sa.CheckConstraint(
+            "rights_basis in ('" + "','".join(RIGHTS_BASES) + "')", name="rights_records_basis_check"
+        ),
+        nullable=False,
+    ),
+    sa.Column("basis_ref", sa.Text, nullable=False, default=""),
+    sa.Column("evidence_url", sa.Text, nullable=False, default=""),
+    sa.Column("republish_text", sa.Boolean, nullable=False, default=False),
+    sa.Column("recorded_by", sa.Text, nullable=False, default="l1.rights"),
+    sa.Column("recorded_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Index("rights_records_source_idx", "source_id"),
+)
+
+# "Watch this instrument" (HLD v2 §5): a user follows a source key; the change
+# feed filters on it. Keyed by the community user id (session) or an app id.
+watchlists = sa.Table(
+    "watchlists",
+    metadata,
+    sa.Column("id", sa.Uuid(as_uuid=False), primary_key=True, default=_uuid),
+    sa.Column("watcher_id", sa.Text, nullable=False),
+    sa.Column("source_key", sa.Text, nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.UniqueConstraint("watcher_id", "source_key", name="watchlists_watcher_source_key"),
 )
 
 # Clause understanding layer: enrichment about the verbatim text, NEVER the
@@ -499,6 +570,8 @@ ALL_TABLES = (
     parse_hints,
     licenses_held,
     byol_uploads,
+    rights_records,
+    watchlists,
 )
 
 # HLD v2 §3: every layer table inherits the shared bi-temporal / why-trail schema.

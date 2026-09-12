@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 from app.clhear.models import events, llm_calls, proposals, runs
 from app.clhear.platform.events import InMemoryTransport, relay_once
-from app.clhear.platform.evals import run_all
+from app.clhear.platform.evals import GLOBAL_SUITES, release_gate, run_all
 from app.clhear.platform.exporter import export_release
 from app.clhear.platform.gateway import FakeProvider, Gateway
 from app.clhear.workers import handle_envelope, run_dummy_fleet
@@ -69,16 +69,22 @@ def test_dummy_fleet_rehearsal(engine, client, tmp_path):
     assert payload["proposal_id"] == proposal_id
     assert payload["approver"] == "avner@reg42.ai"
 
-    # 5. Green (skeleton) evals + tag exports an empty-but-valid snapshot.
+    # 5. Platform suites green; L1 publication gates fail *honestly* on an empty
+    #    corpus (HLD v2 I10: no corpus, no currency) but do not block the release
+    #    of an empty-but-valid snapshot.
     records = run_all(engine, release=RELEASE)
-    assert records and all(r["passed"] for r in records)
+    by_suite = {r["suite"]: r["passed"] for r in records}
+    assert all(by_suite[s] for s in GLOBAL_SUITES)
+    assert by_suite["l1_family_completeness"] is False
+    assert by_suite["l1_currency"] is False
+    assert release_gate(engine, RELEASE) is True
 
     out_dir = tmp_path / "public-repo"
     result = export_release(engine, RELEASE, repo_dir=out_dir)
     snapshot = json.loads((out_dir / "snapshots" / RELEASE / "l1" / "snapshot.json").read_text())
     assert snapshot["release"] == RELEASE
     assert snapshot["sources"] == []          # empty-but-valid
-    assert snapshot["all_evals_passed"] is True
+    assert snapshot["all_evals_passed"] is False
     assert (out_dir / "evals" / f"{RELEASE}.json").exists()
     assert (out_dir / "snapshots" / RELEASE / "l1" / "snapshot.yaml").exists()
     assert result["snapshot"]["eval_scores"]

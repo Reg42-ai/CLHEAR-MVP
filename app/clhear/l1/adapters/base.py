@@ -46,6 +46,14 @@ class SourceMeta:
     # Declared version-ingestion policy, e.g. "as_published+consolidated",
     # "consolidated", "edition" — which version kinds this source tracks.
     version_policy: str = ""
+    # HLD v2 §4.1 — rights basis (public_domain|open_licence|licensed|
+    # byol_only|derived_only; empty = adapter default from l1.rights),
+    # publisher (who hosts the official text) and instrument (the legal
+    # instrument this source is a text of, e.g. "MiFID II", "FCA PRIN").
+    rights_basis: str = ""
+    rights_ref: str = ""
+    publisher: str = ""
+    instrument: str = ""
 
 
 @dataclass
@@ -64,6 +72,9 @@ class DocNode:
     raw_text: str = ""
     source_fragment: str = ""
     children: list["DocNode"] = field(default_factory=list)
+    # Publisher-declared status of a provision when the publisher has one
+    # (FCA R/G/E/D, Basel "standard"/"guidance"); feeds the normative flag.
+    status: str = ""
 
     def walk(self) -> Iterator["DocNode"]:
         yield self

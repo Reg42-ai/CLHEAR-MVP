@@ -33,5 +33,29 @@ ADAPTER_KEYS = (
     "nist_csf",
 )
 
+# HLD v2 §4.1 publisher adapters (parameterised; instantiated through
+# `fleet.adapter_for` / `starter_corpus`). Listed here so tooling can enumerate
+# every adapter class the fleet ships.
+PUBLISHER_ADAPTER_CLASSES = {
+    "fca_handbook": "app.clhear.l1.adapters.fca_handbook:FcaHandbookAdapter",
+    "sec_edgar": "app.clhear.l1.adapters.sec_edgar:SecEdgarAdapter",
+    "finra": "app.clhear.l1.adapters.sec_edgar:SecEdgarAdapter",
+    "esma": "app.clhear.l1.adapters.standards_bodies:EsmaAdapter",
+    "fatf": "app.clhear.l1.adapters.standards_bodies:FatfAdapter",
+    "bis_basel": "app.clhear.l1.adapters.standards_bodies:BisBaselAdapter",
+    "iosco": "app.clhear.l1.adapters.standards_bodies:IoscoAdapter",
+    "mas": "app.clhear.l1.adapters.standards_bodies:MasAdapter",
+    "asic": "app.clhear.l1.adapters.standards_bodies:AsicAdapter",
+    "isa": "app.clhear.l1.adapters.standards_bodies:IsaAdapter",
+    "irs_gov": "app.clhear.l1.adapters.standards_bodies:IrsRevProcAdapter",
+}
+
+
+def publisher_adapter_class(key: str):
+    import importlib
+
+    module_name, class_name = PUBLISHER_ADAPTER_CLASSES[key].split(":")
+    return getattr(importlib.import_module(module_name), class_name)
+
 # Adapters whose source has an official citator/relations feed (HLD §7.2).
 CITATOR_KEYS = ("uk_legislation", "eur_lex")

@@ -26,7 +26,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection, Engine
 
 from app.clhear.platform import record
-from app.clhear.l1 import fidelity
+from app.clhear.l1 import change_detect, fidelity, rights, spans
 from app.clhear.l1.adapters.base import CLAUSE_TYPES, Adapter, DocNode, FetchResult, SourceMeta
 from app.clhear.l1.models import (
     change_events,
@@ -151,6 +151,7 @@ def ensure_source(conn: Connection, meta: SourceMeta) -> tuple[int, int]:
             .values(key=meta.family_key, name=meta.family_name, scope_charter=meta.scope_charter)
             .returning(source_families.c.id)
         ).scalar_one()
+    basis = rights_basis_for(meta)
     source_id = conn.execute(sa.select(sources.c.id).where(sources.c.key == meta.source_key)).scalar()
     if source_id is None:
         source_id = conn.execute(
@@ -163,12 +164,16 @@ def ensure_source(conn: Connection, meta: SourceMeta) -> tuple[int, int]:
                 issuer=meta.issuer,
                 jurisdiction=meta.jurisdiction,
                 license=meta.license,
-                license_ref=meta.license_ref,
+                license_ref=meta.license_ref or basis.ref,
                 adapter=meta.adapter,
                 canonical_url=meta.canonical_url,
                 short_name=meta.short_name,
                 about=meta.about,
                 topics=meta.topics,
+                rights_basis=basis.basis,
+                publisher=meta.publisher or meta.issuer,
+                instrument=meta.instrument or meta.short_name or meta.name,
+                family_root=True,
             )
             .returning(sources.c.id)
         ).scalar_one()
@@ -187,9 +192,24 @@ def ensure_source(conn: Connection, meta: SourceMeta) -> tuple[int, int]:
         conn.execute(
             sources.update()
             .where(sources.c.id == source_id)
-            .values(short_name=meta.short_name, about=meta.about, topics=meta.topics)
+            .values(
+                short_name=meta.short_name,
+                about=meta.about,
+                topics=meta.topics,
+                publisher=meta.publisher or meta.issuer,
+                instrument=meta.instrument or meta.short_name or meta.name,
+            )
         )
+    rights.record(conn, source_id, basis, recorded_by=f"l1.rights.{meta.adapter}")
     return family_id, source_id
+
+
+def rights_basis_for(meta: SourceMeta) -> rights.RightsBasis:
+    """SourceMeta override wins; otherwise the adapter's declared basis."""
+    if meta.rights_basis:
+        default = rights.rights_for(meta.adapter, meta.license)
+        return rights.RightsBasis(meta.rights_basis, meta.rights_ref or default.ref, default.evidence_url)
+    return rights.rights_for(meta.adapter, meta.license)
 
 
 def _latest_version(conn: Connection, source_id: int):
@@ -471,7 +491,7 @@ def ingest(
         return _persist(
             engine, store, meta, source_id, previous, result, content_hash, report,
             hints_used, new_llm_hints, recovered_spans, llm_assisted, recorder,
-            force=force,
+            force=force, llm_router=gateway,
         )
     except Exception as exc:
         recorder.finish("failed", {"source": meta.source_key, "error": str(exc)[:300]})
@@ -493,6 +513,7 @@ def _persist(
     llm_assisted: bool,
     recorder: RunRecorder,
     force: bool = False,
+    llm_router=None,
 ) -> dict:
     prefix = "public-ok" if meta.license == "open" else "restricted"
     artifact_uris = []
@@ -500,7 +521,9 @@ def _persist(
         key = f"{prefix}/{meta.source_key}/{result.version_label}/{artifact.name}"
         artifact_uris.append(store.put(key, artifact.content, artifact.content_type))
 
-    public_ok = meta.license == "open"
+    # Text is public only when the licence is open AND the rights basis allows
+    # republication (derived_only sources keep hashes/derived facts public).
+    public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
     tree = result.tree
 
     with engine.begin() as conn:
@@ -550,12 +573,34 @@ def _persist(
 
         annotation_count = l1_annotate.heuristics_for_version(conn, version_id, list(meta.topics))
         unit_count = l1_retrieval.build_units_for_version(conn, meta, source_id, version_id, tree)
+        from app.clhear.l1 import families as l1_families
+
+        citation_counts = l1_families.mine_citations(conn, source_id, version_id)
 
         new_map = {row["ref"]: row["text_hash"] for row in clause_rows}
         old_map = _clause_map(conn, previous.id) if previous is not None else {}
         diff = diff_clauses(old_map, new_map)
         changed_refs = diff["added"] + diff["removed"] + diff["amended"]
         change_kind = "amended" if previous is not None else "added"
+
+        # Clause ids of the new version for every changed ref + the effective
+        # date extracted from the changed text (HLD v2 §4.1 change detectors).
+        changed_ref_set = set(diff["added"] + diff["amended"])
+        id_rows = conn.execute(
+            sa.select(clauses.c.id, clauses.c.ref, clauses.c.text).where(clauses.c.source_version_id == version_id)
+        ).all()
+        changed_clause_ids = [r.id for r in id_rows if r.ref in changed_ref_set]
+        changed_texts = [r.text for r in id_rows if r.ref in changed_ref_set]
+        if previous is None:
+            changed_texts = []  # first ingest: no amendment text to date
+        effective = change_detect.effective_date_for(
+            changed_texts,
+            publisher_effective=result.effective_date,
+            publisher_as_of=result.as_of_date,
+            detected_on=datetime.now(timezone.utc).date(),
+        )
+        if previous is not None and effective.basis != "text" and llm_router is not None:
+            effective = change_detect.refine_with_router(llm_router, meta.source_key, changed_texts, effective)
 
         diff_uri = ""
         if previous is not None:
@@ -572,28 +617,56 @@ def _persist(
                 f"{prefix}/{meta.source_key}/{result.version_label}/diff.json", diff_doc, "application/json"
             )
 
-        conn.execute(
-            change_events.insert().values(
+        change_event_id = conn.execute(
+            change_events.insert()
+            .values(
                 source_id=source_id,
                 kind=change_kind,
                 old_version=previous.version_label if previous else None,
                 new_version=result.version_label,
                 clause_refs=changed_refs,
                 diff_s3_uri=diff_uri,
+                clause_ids=changed_clause_ids,
+                effective_date=effective.value,
+                effective_date_basis=effective.basis,
             )
-        )
+            .returning(change_events.c.id)
+        ).scalar_one()
+        event_payload = {
+            "source": meta.source_key,
+            "change": change_kind,
+            "old_version": previous.version_label if previous else None,
+            "new_version": result.version_label,
+            "clause_refs": changed_refs,
+            "content_hash": content_hash,
+        }
         l0_events.emit(
             conn,
             layer="l1",
             kind="SourceChanged",
             subject_ref=meta.source_key,
+            payload=event_payload,
+            producer=f"l1.pipeline.{meta.adapter}",
+        )
+        # HLD v2 §3/§4.1: the bus event downstream fleets (L2 change
+        # inferencers, L7 linkers) subscribe to — clause ids + dates.
+        l0_events.publish_layer_event(
+            conn,
+            layer="l1",
+            event="changed",
+            subject_ref=meta.source_key,
             payload={
-                "source": meta.source_key,
-                "change": change_kind,
-                "old_version": previous.version_label if previous else None,
-                "new_version": result.version_label,
-                "clause_refs": changed_refs,
-                "content_hash": content_hash,
+                **event_payload,
+                "change_event_id": change_event_id,
+                "source_version_id": version_id,
+                "clause_ids": changed_clause_ids,
+                "added": diff["added"],
+                "removed": diff["removed"],
+                "amended": diff["amended"],
+                "effective_date": effective.value.isoformat() if effective.value else None,
+                "effective_date_basis": effective.basis,
+                "as_of_date": result.as_of_date.isoformat() if result.as_of_date else None,
+                "detected_at": datetime.now(timezone.utc).isoformat(),
             },
             producer=f"l1.pipeline.{meta.adapter}",
         )
@@ -637,6 +710,7 @@ def _persist(
     recorder.stage("persist", version=result.version_label, nodes=node_count, clauses=len(clause_rows))
     recorder.stage("annotate", annotations=annotation_count)
     recorder.stage("index", search_units=unit_count)
+    recorder.stage("citations", **citation_counts)
     recorder.stage(
         "diff",
         old_version=previous.version_label if previous else None,
@@ -644,6 +718,8 @@ def _persist(
         added=len(diff["added"]),
         removed=len(diff["removed"]),
         amended=len(diff["amended"]),
+        effective_date=effective.value.isoformat() if effective.value else None,
+        effective_date_basis=effective.basis,
     )
     summary = {
         "source": meta.source_key,
@@ -651,8 +727,12 @@ def _persist(
         "version_kind": result.version_kind,
         "nodes": node_count,
         "clauses": len(clause_rows),
+        "normative_clauses": sum(1 for row in clause_rows if row.get("normative")),
         "coverage": round(report.coverage, 5),
         "diff": diff,
+        "change_event_id": change_event_id,
+        "effective_date": effective.value.isoformat() if effective.value else None,
+        "effective_date_basis": effective.basis,
         "artifacts": artifact_uris,
         "content_hash": content_hash,
         "freshness": "live",
@@ -681,9 +761,14 @@ def persist_tree(
     tree: list[DocNode],
     public_ok: bool,
 ) -> list[dict]:
-    """Insert the DocNode tree; return clause-projection rows (not yet inserted)."""
+    """Insert the DocNode tree; return clause-projection rows (not yet inserted).
+
+    Clause rows carry ``span_start``/``span_end`` offsets into the version's
+    canonical text (l1.spans) and the deterministic ``normative`` flag.
+    """
     seq = 0
     clause_rows: list[dict] = []
+    layout = spans.span_layout(tree)
 
     def visit(node: DocNode, parent_id: int | None, depth: int, path_parts: list[str]) -> None:
         nonlocal seq
@@ -718,6 +803,7 @@ def persist_tree(
 
         if node.node_type in CLAUSE_TYPES and node.ref:
             clause_text = node.subtree_text()
+            start, end = layout.get(id(node), (None, None))
             clause_rows.append(
                 {
                     "source_version_id": version_id,
@@ -728,6 +814,12 @@ def persist_tree(
                     "text": clause_text,
                     "text_hash": sha256(clause_text.encode()),
                     "public_ok": public_ok,
+                    "span_start": start,
+                    "span_end": end,
+                    "normative": spans.is_normative(
+                        "\n".join(t for t in (node.raw_text, *(c.subtree_text() for c in node.children)) if t),
+                        status_hint=getattr(node, "status", ""),
+                    ),
                 }
             )
 

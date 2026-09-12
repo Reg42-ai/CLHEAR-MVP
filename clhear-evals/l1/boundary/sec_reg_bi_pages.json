@@ -1,0 +1,20 @@
+{
+  "adapter": "sec_edgar",
+  "channel": "sec",
+  "source_key": "sec/release/34-86031",
+  "title": "Regulation Best Interest",
+  "url": "https://www.sec.gov/files/rules/final/2019/34-86031.pdf",
+  "pages": [
+    "PART 240 — GENERAL RULES AND REGULATIONS, SECURITIES EXCHANGE ACT OF 1934\n§ 240.15l-1 Regulation best interest.\n(a) Best interest obligation. (1) A broker, dealer, or a natural person who is an associated person of a broker or dealer, when making a recommendation of any securities transaction or investment strategy involving securities to a retail customer, shall act in the best interest of the retail customer at the time the recommendation is made.\n§ 240.17a-14 Form CRS, for preparation, filing and delivery of Form CRS.\n(a) Scope of section. This section shall apply to every broker or dealer registered with the Commission that offers services to a retail investor."
+  ],
+  "clauses": [
+    {
+      "ref": "§ 240.15l-1",
+      "text": "Regulation best interest.\n(a) Best interest obligation. (1) A broker, dealer, or a natural person who is an associated person of a broker or dealer, when making a recommendation of any securities transaction or investment strategy involving securities to a retail customer, shall act in the best interest of the retail customer at the time the recommendation is made."
+    },
+    {
+      "ref": "§ 240.17a-14",
+      "text": "Form CRS, for preparation, filing and delivery of Form CRS.\n(a) Scope of section. This section shall apply to every broker or dealer registered with the Commission that offers services to a retail investor."
+    }
+  ]
+}

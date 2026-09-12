@@ -18,10 +18,7 @@ STARTERS = {
 PDF_ADAPTERS = frozenset(
     {
         "cysec",
-        "mas",
-        "fatf",
         "wolfsberg",
-        "irs_gov",
         "israel",
         "seychelles",
         "gibraltar",
@@ -31,10 +28,8 @@ PDF_ADAPTERS = frozenset(
 
 HTML_ADAPTERS = frozenset(
     {
-        "fca_handbook",
         "au_legislation",
         "sg_legislation",
-        "finra",
         "adgm",
         "nydfs",
         "nasdaq",
@@ -78,6 +73,8 @@ def adapter_for(entry: dict) -> Adapter:
         return UkLegislationAdapter(doc=doc, name=entry["name"], meta=meta)
     if key == "govinfo_us":
         return _govinfo_for(entry, meta, fetch)
+    if key in PUBLISHER_ADAPTERS:
+        return _publisher_for(entry, meta, fetch)
     if key == "lists":
         from app.clhear.l1.adapters.lists import ListsAdapter
 
@@ -109,6 +106,41 @@ def adapter_for(entry: dict) -> Adapter:
         kind=entry.get("kind", "regulation"),
         license=entry.get("license", "open"),
     )
+
+
+# HLD v2 §4.1 first-class publisher adapters (replace the generic HTML/PDF
+# fallbacks for these keys; keys stay the fleet schedule names).
+PUBLISHER_ADAPTERS = frozenset(
+    {"fca_handbook", "sec_edgar", "finra", "esma", "fatf", "bis_basel", "iosco", "mas", "asic", "isa", "irs_gov"}
+)
+
+
+def _publisher_for(entry: dict, meta: SourceMeta, fetch: dict):
+    from app.clhear.l1.adapters import standards_bodies as sb
+    from app.clhear.l1.adapters.fca_handbook import FcaHandbookAdapter
+    from app.clhear.l1.adapters.sec_edgar import SecEdgarAdapter
+
+    key = entry["adapter"]
+    common = dict(source_key=entry["key"], title=entry["name"], url=_url(entry), meta=meta)
+    if key == "fca_handbook":
+        return FcaHandbookAdapter(
+            fetch.get("sourcebook", "PRIN"), chapters=fetch.get("chapters"), **common
+        )
+    if key in {"sec_edgar", "finra"}:
+        adapter = SecEdgarAdapter(channel=fetch.get("channel", "finra" if key == "finra" else "sec"), **common)
+        adapter.key = key
+        return adapter
+    cls = {
+        "esma": sb.EsmaAdapter,
+        "fatf": sb.FatfAdapter,
+        "bis_basel": sb.BisBaselAdapter,
+        "iosco": sb.IoscoAdapter,
+        "mas": sb.MasAdapter,
+        "asic": sb.AsicAdapter,
+        "isa": sb.IsaAdapter,
+        "irs_gov": sb.IrsRevProcAdapter,
+    }[key]
+    return cls(**common)
 
 
 def _govinfo_for(entry: dict, meta: SourceMeta, fetch: dict):

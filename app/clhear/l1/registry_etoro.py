@@ -36,7 +36,8 @@ FAMILIES = [
     ("au-afsl", "Australia (ASIC/AUSTRAC)", "Corporations Act Ch 7, DDO, CFD PIO, DTR 2024, AML/CTF reform, RE stack (F13: AU-001..010, GRP-034)"),
     ("me-adgm", "ADGM / UAE (FSRA)", "FSMR + rulebooks, VA framework, UAE AML, ADGM DPR (F14: ME-001..005)"),
     ("sg-mas", "Singapore (MAS)", "SFA + LCB regs, MAS notices, PDPA, DPT boundary (F15: SG-001..007)"),
-    ("small-entities", "Seychelles / Malta / Gibraltar / Israel / BVI", "F16: SC-*, MT-*, GI-* (gated on eToroX status), IL-*, GRP-010"),
+    ("small-entities", "Seychelles / Malta / Gibraltar / BVI", "F16: SC-*, MT-*, GI-* (gated on eToroX status), GRP-010 (Israel lives in il-isa)"),
+    ("il-isa", "Israel (ISA)", "Securities Law 5728-1968 (ISA English translation) + ISA rules (IL-*)"),
     ("sanctions-lists", "Global sanctions & screening lists", "F17: UN, OFAC, EU, OFSI, NBCTF, DFAT, EOCN — structured LIST feeds (separate lists pipeline, class E)"),
     ("intl-tax-aeoi", "International tax reporting & transaction taxes", "F18: FATCA IGAs, CRS/DAC8/CARF, QI/871(m), FTT & stamp layer (TAX-001..031; FATCA statute/regs live in us-fatca)"),
     ("host-state-overlays", "EU/EEA host-state overlays", "F20: BE/FR/ES/DE/IT/NL/PL… product-intervention & marketing overlays (OVL-*)"),
@@ -49,12 +50,14 @@ S: list[dict] = []
 
 
 def _src(family, key, short_name, name, kind, jurisdiction, issuer, url, adapter,
-         relation, tier, topics, ids, wave, license="open", fetch=None):
+         relation, tier, topics, ids, wave, license="open", fetch=None,
+         rights_basis="", publisher="", instrument=""):
     S.append(dict(
         family=family, key=key, short_name=short_name, name=name, kind=kind,
         license=license, jurisdiction=jurisdiction, issuer=issuer, canonical_url=url,
         adapter=adapter, relation=relation, tier=tier, topics=topics,
         registry_ids=ids, wave=wave, fetch=fetch,
+        rights_basis=rights_basis, publisher=publisher or issuer, instrument=instrument or short_name,
     ))
 
 
@@ -142,7 +145,21 @@ _uk("uk-fca", "ukpga/2000/8", "FSMA 2000", "Financial Services and Markets Act 2
 _uk("uk-fca", "ukpga/2023/29", "FSMA 2023", "Financial Services and Markets Act 2023", "law", "amends", ["conduct", "uk"], ["UK-001"])
 _uk("uk-fca", "uksi/2001/544", "RAO 2001", "FSMA (Regulated Activities) Order 2001", "regulation", "implements", ["perimeter", "uk"], ["UK-001", "UK-041"])
 _uk("uk-fca", "uksi/2005/1529", "FPO 2005", "FSMA (Financial Promotion) Order 2005", "regulation", "implements", ["marketing", "uk"], ["UK-020", "UK-021"])
-_src("uk-fca", "fca/handbook", "FCA Handbook", "FCA Handbook (PRIN incl. Consumer Duty, SYSC, COBS, CASS, PROD, SUP, DISP, MIFIDPRU)", "regulation", "UK", "Financial Conduct Authority", "https://www.handbook.fca.org.uk/handbook/PRIN/1/?view=chapter", "fca_handbook", "implements", "binding", ["conduct", "client-assets", "prudential", "uk"], ["UK-002", "UK-008", "UK-009", "UK-010", "UK-011"], 2, fetch={"url": "https://www.handbook.fca.org.uk/handbook/PRIN/1/?view=chapter"})
+_src("uk-fca", "fca/handbook", "FCA PRIN", "FCA Handbook — PRIN (Principles for Businesses incl. Consumer Duty)", "regulation", "UK", "Financial Conduct Authority", "https://www.handbook.fca.org.uk/handbook/PRIN/", "fca_handbook", "implements", "binding", ["conduct", "consumer-duty", "uk"], ["UK-002"], 2, fetch={"sourcebook": "PRIN", "chapters": ["1", "2", "2A", "3", "4"]})
+# HLD v2 starter corpus: FCA Handbook sourcebooks as first-class sources (one
+# artifact per chapter; rule status R/G/E kept for the normative flag).
+for _sb, _chapters, _topics, _ids in [
+    ("SYSC", ["1", "3", "4", "6", "7", "10", "18", "19F"], ["governance", "systems-controls", "uk"], ["UK-008"]),
+    ("COBS", ["2", "4", "6", "9A", "10A", "11", "16A", "22"], ["conduct", "uk"], ["UK-009"]),
+    ("CASS", ["1", "6", "7", "7A", "10"], ["client-assets", "uk"], ["UK-010"]),
+    ("PROD", ["1", "3", "4"], ["products", "uk"], ["UK-011"]),
+    ("SUP", ["10A", "10C", "15", "16", "17A"], ["supervision", "reporting", "uk"], ["UK-011"]),
+    ("DISP", ["1", "2"], ["complaints", "uk"], ["UK-011"]),
+    ("MIFIDPRU", ["1", "4", "7"], ["prudential", "uk"], ["UK-011"]),
+]:
+    _src("uk-fca", f"fca/handbook/{_sb}", f"FCA {_sb}", f"FCA Handbook — {_sb}", "regulation", "UK", "Financial Conduct Authority",
+         f"https://www.handbook.fca.org.uk/handbook/{_sb}/", "fca_handbook", "implements", "binding", _topics, _ids, 2,
+         fetch={"sourcebook": _sb, "chapters": _chapters})
 _uk("uk-fca", "eur/2014/600", "UK MiFIR", "UK MiFIR — onshored Regulation 600/2014", "regulation", "supplements", ["reporting", "uk"], ["UK-003"], key="eur/2014/600/uk")
 _uk("uk-fca", "eur/2012/648", "UK EMIR", "UK EMIR — onshored Regulation 648/2012", "regulation", "supplements", ["derivatives", "reporting", "uk"], ["UK-004"], key="eur/2012/648/uk")
 _uk("uk-fca", "eur/2014/596", "UK MAR", "UK MAR — onshored Regulation 596/2014", "regulation", "supplements", ["market-abuse", "uk"], ["UK-005"], key="eur/2014/596/uk")
@@ -166,7 +183,18 @@ _uk("uk-data-products", "uksi/2017/752", "PSRs 2017", "Payment Services Regulati
 _src("us-broker-dealer", "usc/15/exchange-act", "Exchange Act 1934", "Securities Exchange Act of 1934 (15 USC ch. 2B)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm", "govinfo_us", "root", "binding", ["securities", "us"], ["US-001", "GRP-002", "GRP-005", "GRP-006"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm"})
 _src("us-broker-dealer", "cfr/17/240-bd", "SEC BD rules (17 CFR 240)", "SEC broker-dealer rules — 15c3-1, 15c3-3, 17a-3/4/5, 10b-10, 606", "regulation", "US", "SEC (published by GPO/eCFR)", "https://www.ecfr.gov/current/title-17/chapter-II/part-240", "govinfo_us", "implements", "binding", ["broker-dealer", "us"], ["US-001", "US-003"], 2, fetch={"url": "https://www.ecfr.gov/current/title-17/chapter-II/part-240"})
 _src("us-broker-dealer", "cfr/17/reg-bi-sp", "Reg BI / S-P / S-ID", "SEC Regulations Best Interest, S-P (as amended 2024), S-ID", "regulation", "US", "SEC (eCFR)", "https://www.ecfr.gov/current/title-17/chapter-II/part-240/subpart-N", "govinfo_us", "implements", "binding", ["conduct", "privacy", "us"], ["US-002", "US-004", "US-005"], 2, fetch={"ecfr_title": "17", "ecfr_sections": ["240.15l-1", "248.30", "248.201"], "chapter": "II", "part": "240"})
-_src("us-broker-dealer", "finra/rulebook", "FINRA Rulebook", "FINRA rules 3110/3120/3130, 2210, 2090/2111, 3310, 4511, 4530, 1210", "regulation", "US", "FINRA", "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "finra", "supplements", "binding", ["supervision", "aml", "communications", "us"], ["US-006", "US-007", "US-008"], 2, fetch={"url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules"})
+_src("us-broker-dealer", "finra/rulebook", "FINRA Rulebook", "FINRA rules 3110/3120/3130, 2210, 2090/2111, 3310, 4511, 4530, 1210", "regulation", "US", "FINRA", "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "finra", "supplements", "binding", ["supervision", "aml", "communications", "us"], ["US-006", "US-007", "US-008"], 2, fetch={"url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "channel": "finra"}, rights_basis="derived_only", publisher="FINRA (via SEC EDGAR 19b-4 channel)")
+# HLD v2 starter corpus: SEC + FINRA through the EDGAR channel.
+for _rule, _ids in [("3110", ["US-006"]), ("2111", ["US-007"]), ("3310", ["US-008"]), ("2210", ["US-007"]), ("4511", ["US-006"])]:
+    _src("us-broker-dealer", f"finra/rule/{_rule}", f"FINRA {_rule}", f"FINRA Rule {_rule} (as published; changes via SR-FINRA 19b-4 filings on EDGAR)", "regulation", "US", "FINRA",
+         f"https://www.finra.org/rules-guidance/rulebooks/finra-rules/{_rule}", "finra", "supplements", "binding", ["supervision", "us"], _ids, 2,
+         fetch={"url": f"https://www.finra.org/rules-guidance/rulebooks/finra-rules/{_rule}", "channel": "finra"}, rights_basis="derived_only", publisher="FINRA (via SEC EDGAR 19b-4 channel)")
+_src("us-broker-dealer", "sec/release/34-86031", "Reg BI adopting release", "SEC Release 34-86031 — Regulation Best Interest (adopting release)", "regulation", "US", "U.S. Securities and Exchange Commission",
+     "https://www.sec.gov/files/rules/final/2019/34-86031.pdf", "sec_edgar", "implements", "guidance", ["conduct", "us"], ["US-002"], 2,
+     fetch={"url": "https://www.sec.gov/files/rules/final/2019/34-86031.pdf", "channel": "sec"}, rights_basis="public_domain", publisher="U.S. Securities and Exchange Commission")
+_src("us-broker-dealer", "sec/release/34-100155", "Reg S-P amendments 2024", "SEC Release 34-100155 — Regulation S-P amendments (customer information safeguards, 2024)", "regulation", "US", "U.S. Securities and Exchange Commission",
+     "https://www.sec.gov/files/rules/final/2024/34-100155.pdf", "sec_edgar", "implements", "guidance", ["privacy", "cyber", "us"], ["US-004"], 2,
+     fetch={"url": "https://www.sec.gov/files/rules/final/2024/34-100155.pdf", "channel": "sec"}, rights_basis="public_domain", publisher="U.S. Securities and Exchange Commission")
 _src("us-broker-dealer", "usc/15/securities-act", "Securities Act 1933", "Securities Act of 1933", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2A.htm", "govinfo_us", "supplements", "binding", ["securities", "us"], ["GRP-001"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2A.htm"})
 _src("us-broker-dealer", "usc/15/sox", "SOX 2002", "Sarbanes-Oxley Act 2002 (§302/404/906)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/COMPS-1883/html/COMPS-1883.htm", "govinfo_us", "supplements", "binding", ["governance", "icfr", "us"], ["GRP-003"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/COMPS-1883/html/COMPS-1883.htm"})
 _src("us-broker-dealer", "nasdaq/5600", "Nasdaq 5600", "Nasdaq Listing Rules — 5600 governance series", "regulation", "US", "Nasdaq", "https://listingcenter.nasdaq.com/rulebook/nasdaq/rules/nasdaq-5600-series", "nasdaq", "supplements", "binding", ["listed-company", "us"], ["GRP-004"], 2, fetch={"url": "https://listingcenter.nasdaq.com/rulebook/nasdaq/rules/nasdaq-5600-series"})
@@ -214,7 +242,18 @@ _src("intl-tax-aeoi", "uksi/1986/1711", "UK SDRT", "Stamp Duty Reserve Tax Regul
      fetch={"kind": "html", "url": UKLEG + "uksi/1986/1711/contents"})
 
 # ---- F19 standards ----
-_src("standards", "fatf/40-recommendations", "FATF 40", "FATF Recommendations incl. VASP guidance and travel rule", "standard", "INTL", "FATF", "https://www.fatf-gafi.org/content/fatf-gafi/en/publications/Fatfrecommendations/Fatf-recommendations.html", "fatf", "root", "guidance", ["aml", "standards"], ["GRP-026", "STD-008"], 3, fetch={"url": "https://www.fatf-gafi.org/content/fatf-gafi/en/publications/Fatfrecommendations/Fatf-recommendations.html", "kind": "pdf"})
+_src("standards", "fatf/40-recommendations", "FATF 40", "FATF Recommendations incl. VASP guidance and travel rule", "standard", "INTL", "FATF", "https://www.fatf-gafi.org/content/dam/fatf-gafi/recommendations/FATF%20Recommendations%202012.pdf.coredownload.inline.pdf", "fatf", "root", "guidance", ["aml", "standards"], ["GRP-026", "STD-008"], 3, fetch={"url": "https://www.fatf-gafi.org/content/dam/fatf-gafi/recommendations/FATF%20Recommendations%202012.pdf.coredownload.inline.pdf", "kind": "pdf"})
+# HLD v2 starter corpus: standard-setter and regulator publications.
+_src("standards", "bis/basel/CRE20", "Basel CRE20", "Basel Framework — CRE20 Standardised approach: individual exposures", "standard", "INTL", "Basel Committee on Banking Supervision", "https://www.bis.org/basel_framework/chapter/CRE/20.htm", "bis_basel", "supplements", "guidance", ["prudential", "standards"], ["STD-010"], 3, fetch={"url": "https://www.bis.org/basel_framework/chapter/CRE/20.htm"})
+_src("standards", "bis/basel/OPE25", "Basel OPE25", "Basel Framework — OPE25 Standardised approach to operational risk", "standard", "INTL", "Basel Committee on Banking Supervision", "https://www.bis.org/basel_framework/chapter/OPE/25.htm", "bis_basel", "supplements", "guidance", ["operational-risk", "standards"], ["STD-010"], 3, fetch={"url": "https://www.bis.org/basel_framework/chapter/OPE/25.htm"})
+_src("standards", "iosco/objectives-principles", "IOSCO Principles", "IOSCO Objectives and Principles of Securities Regulation (2017)", "standard", "INTL", "IOSCO", "https://www.iosco.org/library/pubdocs/pdf/IOSCOPD561.pdf", "iosco", "supplements", "guidance", ["securities", "standards"], ["STD-011"], 3, fetch={"url": "https://www.iosco.org/library/pubdocs/pdf/IOSCOPD561.pdf", "kind": "pdf"})
+_src("eu-mifid", "esma/guidelines/suitability", "ESMA suitability GL", "ESMA Guidelines on certain aspects of the MiFID II suitability requirements (ESMA35-43-3172)", "guidance", "EU", "European Securities and Markets Authority", "https://www.esma.europa.eu/sites/default/files/library/esma35-43-3172_final_report_on_mifid_ii_guidelines_on_suitability.pdf", "esma", "interprets", "guidance", ["conduct", "suitability", "eu"], ["EU-004"], 3, fetch={"url": "https://www.esma.europa.eu/sites/default/files/library/esma35-43-3172_final_report_on_mifid_ii_guidelines_on_suitability.pdf", "kind": "pdf"})
+_src("eu-mifid", "esma/guidelines/product-governance", "ESMA PG GL", "ESMA Guidelines on MiFID II product governance requirements (ESMA35-43-3448)", "guidance", "EU", "European Securities and Markets Authority", "https://www.esma.europa.eu/sites/default/files/2023-08/ESMA35-43-3448_Guidelines_on_MiFID_II_product_governance_requirements.pdf", "esma", "interprets", "guidance", ["products", "eu"], ["EU-011"], 3, fetch={"url": "https://www.esma.europa.eu/sites/default/files/2023-08/ESMA35-43-3448_Guidelines_on_MiFID_II_product_governance_requirements.pdf", "kind": "pdf"})
+_src("eu-markets", "esma/guidelines/mar-delay", "ESMA MAR delay GL", "ESMA Guidelines on delay in the disclosure of inside information (MAR, ESMA70-159-4966)", "guidance", "EU", "European Securities and Markets Authority", "https://www.esma.europa.eu/sites/default/files/library/esma70-159-4966_guidelines_on_delay_in_the_disclosure_of_inside_information_and_interactions_with_prudential_supervision.pdf", "esma", "interprets", "guidance", ["market-abuse", "eu"], ["EU-014"], 3, fetch={"url": "https://www.esma.europa.eu/sites/default/files/library/esma70-159-4966_guidelines_on_delay_in_the_disclosure_of_inside_information_and_interactions_with_prudential_supervision.pdf", "kind": "pdf"})
+_src("au-afsl", "au/asic-rg227", "ASIC RG 227", "ASIC Regulatory Guide 227 — Over-the-counter contracts for difference: improving disclosure for retail investors", "guidance", "AU", "ASIC", "https://asic.gov.au/regulatory-resources/find-a-document/regulatory-guides/rg-227-over-the-counter-contracts-for-difference-improving-disclosure-for-retail-investors/", "asic", "interprets", "guidance", ["cfd", "disclosure", "au"], ["AU-003"], 3, fetch={"url": "https://download.asic.gov.au/media/1240983/rg227-published-11-august-2011.pdf", "kind": "pdf"})
+_src("au-afsl", "au/asic-rg271", "ASIC RG 271", "ASIC Regulatory Guide 271 — Internal dispute resolution", "guidance", "AU", "ASIC", "https://asic.gov.au/regulatory-resources/find-a-document/regulatory-guides/rg-271-internal-dispute-resolution/", "asic", "interprets", "guidance", ["complaints", "au"], ["AU-009"], 3, fetch={"url": "https://download.asic.gov.au/media/nlrcbh0l/rg271-published-2-september-2021-20240226.pdf", "kind": "pdf"})
+_src("il-isa", "il/securities-law-5728", "IL Securities Law", "Israel Securities Law 5728-1968 (ISA English translation)", "law", "IL", "Israel Securities Authority", "https://www.isa.gov.il/sites/ISAEng/1489/1511/Pages/default.aspx", "isa", "root", "binding", ["securities", "israel"], ["IL-001"], 3, fetch={"url": "https://www.isa.gov.il/sites/ISAEng/1489/1511/Pages/default.aspx", "kind": "pdf"}, rights_basis="derived_only")
+_src("sg-mas", "sg/mas-psn02", "MAS PSN02", "MAS Notice PSN02 — Prevention of Money Laundering and Countering the Financing of Terrorism (digital payment token services)", "guidance", "SG", "MAS", "https://www.mas.gov.sg/regulation/notices/psn02-aml-cft-notice---digital-payment-token-service", "mas", "supplements", "binding", ["aml", "crypto", "sg"], ["SG-003"], 3, fetch={"url": "https://www.mas.gov.sg/regulation/notices/psn02-aml-cft-notice---digital-payment-token-service", "kind": "pdf"})
 _src("standards", "wolfsberg/standards", "Wolfsberg", "Wolfsberg Group standards (CBDDQ, payment transparency, monitoring)", "standard", "INTL", "Wolfsberg Group", "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "wolfsberg", "supplements", "guidance", ["aml", "standards"], ["GRP-027"], 3, fetch={"url": "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "kind": "pdf"})
 _src("standards", "iso/27001-2022", "ISO 27001", "ISO/IEC 27001:2022 + Amd 1:2024 [RESTRICTED — P3 importer + BYOL]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/27001", "restricted_file", "supplements", "guidance", ["infosec", "standards"], ["STD-001"], 4, license="restricted")
 _src("standards", "aicpa/soc2-tsc", "SOC 2 TSC", "AICPA Trust Services Criteria 2017 (2022 points of focus) [RESTRICTED]", "standard", "US", "AICPA", "https://www.aicpa-cima.com/", "restricted_file", "supplements", "guidance", ["infosec", "assurance", "standards"], ["STD-002"], 4, license="restricted")
@@ -243,9 +282,18 @@ _LICENSE_REF = {
     "lists": "publisher terms — list data reused as published",
     "restricted_file": "BYOL — public APIs omit raw_text until a licensed file is in restricted/",
     "fca_handbook": "FCA Handbook copyright notice",
-    "finra": "FINRA rulebook copyright notice",
+    "finra": "FINRA rulebook copyright notice — derived facts only",
+    "sec_edgar": "public domain (17 U.S.C. 105)",
     "au_legislation": "CC BY 4.0 (Federal Register of Legislation)",
     "sg_legislation": "Singapore legislation copyright",
+    "esma": "ESMA legal notice — reuse with acknowledgement",
+    "bis_basel": "BIS copyright — reproduction with acknowledgement",
+    "iosco": "IOSCO copyright — reproduction with acknowledgement",
+    "asic": "CC BY 4.0 (ASIC)",
+    "isa": "ISA unofficial translation — derived facts only",
+    "irs_gov": "public domain (17 U.S.C. 105)",
+    "fatf": "FATF terms — non-commercial reproduction with acknowledgement",
+    "mas": "MAS terms of use",
 }
 
 
@@ -253,6 +301,9 @@ def source_meta(entry: dict) -> SourceMeta:
     """Build the adapter SourceMeta for a registry entry."""
     license_ref = _LICENSE_REF.get(entry["adapter"], entry.get("license_ref") or "")
     return SourceMeta(
+        rights_basis=entry.get("rights_basis", ""),
+        publisher=entry.get("publisher") or entry["issuer"],
+        instrument=entry.get("instrument") or entry["short_name"],
         family_key=entry["family"],
         family_name=FAMILY_NAMES[entry["family"]],
         source_key=entry["key"],

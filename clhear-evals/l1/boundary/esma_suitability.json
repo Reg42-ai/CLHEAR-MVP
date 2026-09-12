@@ -1,0 +1,23 @@
+{
+  "adapter": "esma",
+  "source_key": "esma/guidelines/suitability",
+  "title": "ESMA suitability guidelines",
+  "url": "https://www.esma.europa.eu/example.pdf",
+  "pages": [
+    "Guidelines on certain aspects of the MiFID II suitability requirements\nGuideline 1 Information to clients about the purpose of the suitability assessment and its scope\n15. Firms should inform clients, clearly and simply, that the reason for assessing suitability is to enable the firm to act in the client's best interest.\n16. Information about the suitability assessment should help clients understand the purpose of the requirements.\nGuideline 2 Know your client and know your product\n17. Firms should establish, implement and maintain adequate policies and procedures to enable them to understand the essential facts about their clients."
+  ],
+  "clauses": [
+    {
+      "ref": "G1.para15",
+      "text": "Firms should inform clients, clearly and simply, that the reason for assessing suitability is to enable the firm to act in the client's best interest."
+    },
+    {
+      "ref": "G1.para16",
+      "text": "Information about the suitability assessment should help clients understand the purpose of the requirements."
+    },
+    {
+      "ref": "G2.para17",
+      "text": "Firms should establish, implement and maintain adequate policies and procedures to enable them to understand the essential facts about their clients."
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "adapter": "fca_handbook",
+  "sourcebook": "SYSC",
+  "chapters": [
+    "4"
+  ],
+  "source_key": "fca/handbook/SYSC",
+  "title": "FCA Handbook — SYSC",
+  "url": "https://www.handbook.fca.org.uk/handbook/SYSC/4/?view=chapter",
+  "html": "<html><head><title>SYSC 4.1 General requirements - FCA Handbook</title></head><body>\n<h1>SYSC 4.1 General requirements</h1>\n<p>SYSC 4.1.1 R 01/01/2022</p><p>A firm must have robust governance arrangements, which include a clear organisational structure with well defined, transparent and consistent lines of responsibility.</p>\n<p>SYSC 4.1.1A R 03/01/2018</p><p>A common platform firm must comply with the requirements in article 21 of the MiFID Org Regulation.</p>\n<p>SYSC 4.1.1AA G 03/01/2018</p><p>The MiFID Org Regulation applies directly to common platform firms.</p>\n<p>SYSC 4.1.2R 01/01/2022</p><p>A firm must establish, implement and maintain adequate risk management policies and procedures.</p>\n</body></html>",
+  "clauses": [
+    {
+      "ref": "SYSC 4.1.1",
+      "text": "01/01/2022 A firm must have robust governance arrangements, which include a clear organisational structure with well defined, transparent and consistent lines of responsibility."
+    },
+    {
+      "ref": "SYSC 4.1.1A",
+      "text": "03/01/2018 A common platform firm must comply with the requirements in article 21 of the MiFID Org Regulation."
+    },
+    {
+      "ref": "SYSC 4.1.1AA",
+      "text": "03/01/2018 The MiFID Org Regulation applies directly to common platform firms."
+    },
+    {
+      "ref": "SYSC 4.1.2",
+      "text": "01/01/2022 A firm must establish, implement and maintain adequate risk management policies and procedures."
+    }
+  ]
+}

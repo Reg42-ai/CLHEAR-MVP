@@ -359,13 +359,193 @@ def e7_closure(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
         if not clause_ids:
             return {"note": "n/a — no citations extracted", "n/a": True}, True
         rows = conn.execute(sa.select(citations).where(citations.c.from_clause_id.in_(clause_ids))).all()
+    # Explained = resolved inside the family, declared cross-family
+    # (out_of_scope), or open with a filed discovery candidate awaiting a human.
     unexplained = [
         r
         for r in rows
-        if r.disposition == "open"
-        or (r.resolved_source_id and r.resolved_source_id not in family_ids)
+        if (r.disposition == "open" and not (r.reason or "").startswith("discovery_candidate:"))
+        or (r.disposition == "resolved" and r.resolved_source_id and r.resolved_source_id not in family_ids)
     ]
-    return {"citations": len(rows), "unexplained": len(unexplained)}, len(unexplained) == 0
+    pending = sum(1 for r in rows if r.disposition == "open")
+    cross = sum(1 for r in rows if r.disposition == "out_of_scope")
+    return {
+        "citations": len(rows),
+        "unexplained": len(unexplained),
+        "pending_candidates": pending,
+        "cross_family": cross,
+    }, len(unexplained) == 0
+
+
+@register_suite("l1_family_completeness")
+def l1_family_completeness(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Family completeness ≥ 99 % vs registries + mined citations (HLD v2 §4.1)."""
+    from app.clhear.l1 import families
+
+    card = families.family_scorecard(engine)
+    if not card["families"]:
+        return {"note": "no families ingested", "families": 0}, False
+    worst = min(card["families"], key=lambda f: f["completeness"])
+    return {
+        "families": len(card["families"]),
+        "failing": [f["family"] for f in card["families"] if not f["passed"]],
+        "worst": worst,
+        "threshold": 0.99,
+    }, card["passed"]
+
+
+CURRENCY_MAX_LAG_HOURS = 24.0
+
+
+@register_suite("l1_currency")
+def l1_currency(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Median lag between the publisher's text date and our retrieval ≤ 24 h for
+    tier-A sources (HLD v2 §4.1). Lag is measured from the LATER of the
+    publisher as-of date and the previous successful run — a consolidation
+    dated months ago that we picked up on the day it appeared is current.
+    Honest failure: no tier-A version at all is a fail, not n/a."""
+    from datetime import date as _date
+
+    from app.clhear.l1.models import source_versions, sources
+    from app.clhear.l1.starter_corpus import TIER_A_ADAPTERS
+
+    lags: list[float] = []
+    per_source: list[dict] = []
+    with engine.connect() as conn:
+        rows = conn.execute(
+            sa.select(
+                sources.c.key, sources.c.adapter, source_versions.c.as_of_date,
+                source_versions.c.effective_date, source_versions.c.retrieved_at, source_versions.c.id,
+            )
+            .join(source_versions, source_versions.c.source_id == sources.c.id)
+            .where(source_versions.c.status == "in_force")
+            .where(sources.c.adapter.in_(sorted(TIER_A_ADAPTERS)))
+        ).all()
+        for row in rows:
+            retrieved = row.retrieved_at
+            if isinstance(retrieved, str):
+                try:
+                    retrieved = datetime.fromisoformat(retrieved)
+                except ValueError:
+                    retrieved = None
+            if retrieved is None:
+                continue
+            if retrieved.tzinfo is None:
+                retrieved = retrieved.replace(tzinfo=timezone.utc)
+            anchor = row.as_of_date or row.effective_date
+            if isinstance(anchor, str):
+                anchor = _date.fromisoformat(anchor)
+            if anchor is None:
+                continue
+            # Publisher date is a calendar day; the earliest we could have seen it is that day 00:00 UTC.
+            published = datetime(anchor.year, anchor.month, anchor.day, tzinfo=timezone.utc)
+            previous = conn.execute(
+                sa.select(source_versions.c.retrieved_at)
+                .where(source_versions.c.source_id == sa.select(sources.c.id).where(sources.c.key == row.key).scalar_subquery())
+                .where(source_versions.c.id < row.id)
+                .order_by(source_versions.c.id.desc())
+                .limit(1)
+            ).scalar()
+            if isinstance(previous, str):
+                try:
+                    previous = datetime.fromisoformat(previous)
+                except ValueError:
+                    previous = None
+            if previous is not None and previous.tzinfo is None:
+                previous = previous.replace(tzinfo=timezone.utc)
+            # The publisher may back-date a consolidation; we cannot have seen it
+            # before our previous successful probe, so lag counts from the later of
+            # the two. A first ingest is backfill (nothing to be late against).
+            anchor_ts = max(published, previous) if previous is not None else None
+            if anchor_ts is None:
+                lag_h = 0.0
+            else:
+                lag_h = max(0.0, (retrieved - anchor_ts).total_seconds() / 3600.0)
+            lags.append(lag_h)
+            per_source.append({"source": row.key, "lag_hours": round(lag_h, 2), "first_ingest": previous is None})
+    if not lags:
+        return {"error": "no tier-A version stored", "tier_a_sources": 0}, False
+    lags.sort()
+    median = lags[len(lags) // 2] if len(lags) % 2 else (lags[len(lags) // 2 - 1] + lags[len(lags) // 2]) / 2
+    return {
+        "tier_a_sources": len(lags),
+        "median_lag_hours": round(median, 2),
+        "max_lag_hours": round(lags[-1], 2),
+        "threshold_hours": CURRENCY_MAX_LAG_HOURS,
+        "worst": sorted(per_source, key=lambda s: -s["lag_hours"])[:5],
+    }, median <= CURRENCY_MAX_LAG_HOURS
+
+
+BOUNDARY_F1_THRESHOLD = 0.98
+
+
+def boundary_f1(golden_refs: set[str], parsed_refs: set[str]) -> dict:
+    tp = len(golden_refs & parsed_refs)
+    fp = len(parsed_refs - golden_refs)
+    fn = len(golden_refs - parsed_refs)
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {"tp": tp, "fp": fp, "fn": fn, "precision": round(precision, 4), "recall": round(recall, 4), "f1": round(f1, 4)}
+
+
+@register_suite("l1_boundary_f1")
+def l1_boundary_f1(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Clause boundary F1 ≥ 0.98 against the golden set in clhear-evals/l1/boundary.
+
+    Each golden case carries the adapter, a fixture (HTML bytes or text pages)
+    and the expected clause refs + texts. The adapter's offline ``parse`` runs
+    on the fixture; a clause counts as matched when ref AND whitespace-
+    normalised text agree. Missing golden set = fail (honest)."""
+    import os
+    from pathlib import Path
+
+    from app.clhear.l1.adapters.base import CLAUSE_TYPES, flatten
+
+    root = Path(os.environ.get("CLHEAR_EVALS_DIR", "clhear-evals")) / "l1" / "boundary"
+    cases = sorted(root.glob("*.json")) if root.exists() else []
+    if not cases:
+        return {"error": f"no golden cases under {root}", "cases": 0}, False
+    results = []
+    for path in cases:
+        case = json.loads(path.read_text())
+        try:
+            adapter = _golden_adapter(case)
+            if "pages" in case:
+                tree = adapter.parse_pages(case["pages"])
+            else:
+                tree = adapter.parse(case["html"].encode())
+        except Exception as exc:  # parser crash is a boundary failure, not a skip
+            results.append({"case": path.stem, "error": str(exc)[:200], "f1": 0.0})
+            continue
+        parsed = {
+            (n.ref, _ws(n.subtree_text())) for n in flatten(tree) if n.node_type in CLAUSE_TYPES and n.ref
+        }
+        golden = {(c["ref"], _ws(c["text"])) for c in case["clauses"]}
+        score = boundary_f1({g[0] for g in golden}, {p[0] for p in parsed})
+        exact = boundary_f1(golden, parsed)
+        results.append({"case": path.stem, "adapter": case["adapter"], "refs": score, "exact": exact, "f1": exact["f1"]})
+    f1s = [r["f1"] for r in results]
+    mean = sum(f1s) / len(f1s)
+    return {"cases": len(results), "mean_f1": round(mean, 4), "threshold": BOUNDARY_F1_THRESHOLD, "results": results}, mean >= BOUNDARY_F1_THRESHOLD
+
+
+def _golden_adapter(case: dict):
+    from app.clhear.l1.adapters import publisher_adapter_class
+    from app.clhear.l1.adapters.official_html import OfficialHtmlAdapter
+
+    key = case["adapter"]
+    kwargs = dict(source_key=case.get("source_key", f"golden/{key}"), title=case.get("title", key), url=case.get("url", "https://example.invalid/golden"))
+    if key == "official_html":
+        adapter = OfficialHtmlAdapter(adapter="official_html", **kwargs)
+        adapter.parse = adapter._parse  # type: ignore[attr-defined]
+        return adapter
+    cls = publisher_adapter_class(key)
+    if key == "fca_handbook":
+        return cls(case.get("sourcebook", "PRIN"), chapters=case.get("chapters"), **kwargs)
+    if key in {"sec_edgar", "finra"}:
+        return cls(channel=case.get("channel", "finra" if key == "finra" else "sec"), **kwargs)
+    return cls(**kwargs)
 
 
 @register_suite("l1_completeness")
@@ -869,13 +1049,18 @@ def run_all(engine: Engine, release: str | None = None) -> list[dict]:
 
 
 def release_gate(engine: Engine, release: str) -> bool:
-    """True iff every recorded eval run for this release passed and none is missing."""
+    """True iff the platform suites (GLOBAL_SUITES) ran and passed for this release.
+
+    Layer gates (HLD v2 I10) decide per layer what gets *published* — see
+    ``gates.publishable_layers``; a layer below its gate stays reserved without
+    blocking the release of the layers above the bar."""
     with engine.connect() as conn:
         rows = conn.execute(
             sa.select(eval_runs.c.suite, eval_runs.c.passed).where(eval_runs.c.release == release)
         ).all()
     ran = {row.suite for row in rows}
-    return bool(rows) and all(row.passed for row in rows) and set(GLOBAL_SUITES) <= ran
+    globals_ok = all(row.passed for row in rows if row.suite in GLOBAL_SUITES)
+    return bool(rows) and set(GLOBAL_SUITES) <= ran and globals_ok
 
 
 def l2_gate(engine: Engine) -> dict:
