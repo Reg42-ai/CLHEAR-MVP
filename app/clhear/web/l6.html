@@ -23,6 +23,7 @@
   table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
   table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  table.reg tr.unlit td { border-bottom-style: dashed; font-style: italic; }
   .name { color: var(--accent); font-weight: 600; cursor: pointer; }
   .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; border: 1px solid transparent; }
@@ -70,6 +71,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
@@ -137,22 +139,22 @@ function Blueprint({ openItem }) {
   return html`<div class="layout">
     <aside class="side">
       <h4>Stored profile</h4>
-      <select value=${pick} onChange=${(e) => runProfile(e.target.value)}>
+      <select aria-label="Sample profile" value=${pick} onChange=${(e) => runProfile(e.target.value)}>
         <option value="">— pick an L4 profile —</option>
         ${profiles.map((p) => html`<option key=${p.id} value=${p.id}>${p.id} · ${p.name}</option>`)}
       </select>
       <h4>Or describe the organisation</h4>
-      <div style="margin-bottom:6px">${SAMPLES.map((s) => html`<button key=${s.label} class="btn quiet" style="margin:0 4px 4px 0" onClick=${() => { setText(JSON.stringify(s.attrs, null, 2)); setPick(""); compose(s.attrs); }}>${s.label}</button>`)}</div>
-      <textarea value=${text} onInput=${(e) => setText(e.target.value)}></textarea>
-      <div style="margin-top:8px"><button class="btn" disabled=${busy} onClick=${() => { try { setPick(""); compose(JSON.parse(text)); } catch (e) { setErr("attributes must be JSON"); } }}>Compose blueprint</button></div>
-      ${bp && bp.blueprint_id && html`<div style="margin-top:14px">
+      <div style=${{ marginBottom: "6px" }}>${SAMPLES.map((s) => html`<button key=${s.label} class="btn quiet" style=${{ margin: "0 4px 4px 0" }} onClick=${() => { setText(JSON.stringify(s.attrs, null, 2)); setPick(""); compose(s.attrs); }}>${s.label}</button>`)}</div>
+      <textarea aria-label="Profile attributes (JSON)" value=${text} onInput=${(e) => setText(e.target.value)}></textarea>
+      <div style=${{ marginTop: "8px" }}><button class="btn" disabled=${busy} onClick=${() => { try { setPick(""); compose(JSON.parse(text)); } catch (e) { setErr("attributes must be JSON"); } }}>Compose blueprint</button></div>
+      ${bp && bp.blueprint_id && html`<div style=${{ marginTop: "14px" }}>
         <h4>Blueprint</h4>
         <div class="mono">${bp.blueprint_id}</div>
-        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        <div style=${{ marginTop: "8px", display: "flex", gap: "6px", flexWrap: "wrap" }}>
           <button class="btn quiet" onClick=${whatChanged}>What changed since</button>
           <button class="btn quiet" onClick=${exportOscal}>Export OSCAL</button>
         </div></div>`}
-      ${err && html`<p class="bad" style="font-size:13px">${err}</p>`}
+      ${err && html`<p class="bad" style=${{ fontSize: "13px" }}>${err}</p>`}
     </aside>
     <section>
       ${busy && html`<div class="spin">Composing — L4 profile → applicable obligations (L2) → activities (L5) → blocks (L3) → leanest complete program…</div>`}
@@ -183,8 +185,8 @@ function Blueprint({ openItem }) {
         <div class="panelx">
           <h3>Applicable obligations ${focused ? html`— lit by ${focused.name}` : ""}</h3>
           <table class="reg"><thead><tr><th>Obligation</th><th>Title</th><th>State</th><th>Satisfied by</th><th>Applies through</th></tr></thead><tbody>
-            ${coverage.map((c) => html`<tr key=${c.obligation_id} style=${focused && !litObls.has(c.obligation_id) ? "opacity:.4" : ""}>
-              <td class="mono">${c.stable_id || c.obligation_id}<br/><span style="font-size:11px">${c.source_key} · ${c.clause_ref}</span></td>
+            ${coverage.map((c) => html`<tr key=${c.obligation_id} class=${focused && !litObls.has(c.obligation_id) ? "unlit" : ""}>
+              <td class="mono">${c.stable_id || c.obligation_id}<br/><span style=${{ fontSize: "11px" }}>${c.source_key} · ${c.clause_ref}</span></td>
               <td>${c.title}</td>
               <td><${Status} s=${c.state} /></td>
               <td class="mono">${(c.satisfied_by || []).join(", ") || "—"}</td>
@@ -203,7 +205,7 @@ function Blueprint({ openItem }) {
             ${since.obligations.coverage_changes.map((c) => html`<div key=${c.obligation_id} class="chg">~ ${c.obligation_id}: ${c.before.state} → ${c.after.state}</div>`)}
           </div>`}
         </div>`}
-        ${exp && html`<div class="panelx"><h3>OSCAL system-security-plan</h3><pre class="export">${JSON.stringify(exp, null, 2)}</pre></div>`}
+        ${exp && html`<div class="panelx"><h3>OSCAL system-security-plan</h3><pre class="export" tabindex="0">${JSON.stringify(exp, null, 2)}</pre></div>`}
         ${(comp.unresolved_anchors || []).length > 0 && html`<div class="panelx"><h3>Unresolved anchors</h3>${comp.unresolved_anchors.map((u, i) => html`<div key=${i} class="mono">${u.activity} → ${u.anchor.source_key} ${(u.anchor.refs || []).join(", ")}: ${u.reason}</div>`)}</div>`}
       </div>`}
     </section>
@@ -231,7 +233,7 @@ function ItemPage({ blueprintId, itemId, back }) {
       <h3>Why — obligations this item satisfies</h3>
       <table class="reg"><thead><tr><th>Obligation</th><th>Title</th><th>Applies through</th><th>Also satisfied by</th></tr></thead><tbody>
         ${d.obligations.map((o) => html`<tr key=${o.obligation_id}>
-          <td class="mono"><a class="name" href=${"/l2#" + (o.stable_id || o.obligation_id)}>${o.stable_id || o.obligation_id}</a><br/><span style="font-size:11px">${o.source_key} · ${o.clause_ref}</span></td>
+          <td class="mono"><a class="name" href=${"/l2#" + (o.stable_id || o.obligation_id)}>${o.stable_id || o.obligation_id}</a><br/><span style=${{ fontSize: "11px" }}>${o.source_key} · ${o.clause_ref}</span></td>
           <td>${o.title}<div class="mono">${o.determination || ""}</div></td>
           <td class="mono">${(o.triggered_by || []).join(", ")}<div>${(o.conditions || []).map((c) => Object.entries(c).map(([k, v]) => `${k}=${show(v)}`).join(" ")).join("; ")}</div></td>
           <td class="mono">${o.only_here ? html`<span class="badge lb">only this item</span>` : (o.satisfied_by || []).filter((b) => b !== it.block_id).join(", ")}</td>
@@ -266,7 +268,7 @@ function BlueprintList({ open }) {
   const [status, setStatus] = useState("current");
   useEffect(() => { setRows(null); api("/l6/blueprints?" + (status ? "status=" + status : "")).then((r) => setRows(r.items)).catch(() => setRows([])); }, [status]);
   return html`<div class="panelx">
-    <div class="meta"><span>Show</span><select value=${status} onChange=${(e) => setStatus(e.target.value)}><option value="current">current</option><option value="superseded">superseded</option><option value="">all</option></select></div>
+    <div class="meta"><span>Show</span><select aria-label="Blueprint status" value=${status} onChange=${(e) => setStatus(e.target.value)}><option value="current">current</option><option value="superseded">superseded</option><option value="">all</option></select></div>
     ${!rows && html`<div class="spin">Loading…</div>`}
     ${rows && rows.length === 0 && html`<p class="empty">No stored blueprints yet.</p>`}
     ${rows && rows.length > 0 && html`<table class="reg"><thead><tr><th>Blueprint</th><th>Profile</th><th>Status</th><th>Coverage</th><th>Items</th><th>Minimal</th><th>Release</th><th>Created</th></tr></thead><tbody>
@@ -283,8 +285,8 @@ function Compare() {
   const [err, setErr] = useState("");
   const run = () => { try { setErr(""); setD(null); post("/l6/compare", { a: { attributes: JSON.parse(a) }, b: { attributes: JSON.parse(b) } }).then(setD).catch((e) => setErr(e.message)); } catch (e) { setErr("both sides must be JSON"); } };
   return html`<div>
-    <div class="cards"><div class="card"><h5>Profile A</h5><textarea value=${a} onInput=${(e) => setA(e.target.value)}></textarea></div><div class="card"><h5>Profile B</h5><textarea value=${b} onInput=${(e) => setB(e.target.value)}></textarea></div></div>
-    <div style="margin:10px 0"><button class="btn" onClick=${run}>Compare programs</button> ${err && html`<span class="bad">${err}</span>`}</div>
+    <div class="cards"><div class="card"><h5>Profile A</h5><textarea aria-label="Blueprint A" value=${a} onInput=${(e) => setA(e.target.value)}></textarea></div><div class="card"><h5>Profile B</h5><textarea aria-label="Blueprint B" value=${b} onInput=${(e) => setB(e.target.value)}></textarea></div></div>
+    <div style=${{ margin: "10px 0" }}><button class="btn" onClick=${run}>Compare programs</button> ${err && html`<span class="bad">${err}</span>`}</div>
     ${d && html`<div class="panelx diff">
       <div class="meta"><span>A: <b>${d.a.items.length}</b> items, ${d.a.coverage_summary.total} obligations</span><span>B: <b>${d.b.items.length}</b> items, ${d.b.coverage_summary.total} obligations</span></div>
       <h3>Only in B</h3>${d.items.added.map((i) => html`<div key=${i.block_id} class="add">+ ${i.name} (${i.block_id}) · ${i.obligations_satisfied.length} obligations</div>`)}${d.items.added.length === 0 && html`<p class="mono">—</p>`}
@@ -353,10 +355,10 @@ function App() {
     <header class="appbar">
       <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L6 · blueprint</span></div>
       <div class="spacer"></div>
-      <a class="navlink" href="/">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink active" href="/l6">L6</a>
+      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink active" href="/l6">L6</a>
       <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
     </header>
-    <main>
+    <main id="main"><h1 class="visually-hidden">L6 — Blueprints</h1>
       <div class="tabs">
         ${[["blueprint", "Blueprint"], ["blueprints", "Stored blueprints"], ["compare", "Compare profiles"], ["scorecard", "Scorecard"]].map(([k, label]) =>
           html`<button key=${k} class=${tab === k && view.page === "list" ? "on" : ""} onClick=${() => { setTab(k); setView({ page: "list" }); history.replaceState(null, "", "#" + k); }}>${label}</button>`)}

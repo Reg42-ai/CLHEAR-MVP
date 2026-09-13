@@ -215,6 +215,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 
 <!-- no-build frontend: React 18 + htm, per repo convention -->
@@ -543,7 +544,7 @@ function ObligationRegistry({ onOpen, auth }) {
     <div>
       <div class="panel" style=${{ marginBottom: "14px" }}>
         <h4>Search the registry</h4>
-        <input class="regsearch" placeholder="search obligations (e.g. due diligence, breach, safeguard)"
+        <input class="regsearch" aria-label="Search obligations" placeholder="search obligations (e.g. due diligence, breach, safeguard)"
                value=${q} onInput=${(e) => search(e.target.value)} />
         <div class="tags" style=${{ marginTop: "10px", maxHeight: "92px", overflowY: "auto" }}>
           ${(data?.per_source || []).map((s) => html`
@@ -899,7 +900,7 @@ function SignIn({ auth, onDone }) {
         Compliance officer, lawyer, PM or developer — no GitHub account needed.
         Sign in to open cases and validate outputs.</p>
       ${state !== "sent" && html`
-        <input class="regsearch" type="email" placeholder="you@company.com"
+        <input class="regsearch" type="email" aria-label="Email address" placeholder="you@company.com"
                value=${email} onInput=${(e) => setEmail(e.target.value)}
                onKeyDown=${(e) => e.key === "Enter" && send()} />
         <div style=${{ display: "flex", gap: "10px", marginTop: "12px", flexWrap: "wrap" }}>
@@ -965,12 +966,12 @@ function CaseForm({ prefill, onSubmitted }) {
           <span class=${"chip linky" + (kind === k ? " sel" : "")} key=${k} title=${hint}
                 onClick=${() => setKind(k)}>${label}</span>`)}
       </div>
-      <input class="regsearch" placeholder="One-line summary (5-200 chars)" value=${title}
+      <input class="regsearch" aria-label="One-line summary" placeholder="One-line summary (5-200 chars)" value=${title}
              onInput=${(e) => setTitle(e.target.value)} />
-      <textarea class="regsearch" rows="4" style=${{ marginTop: "10px", resize: "vertical", fontFamily: "inherit" }}
+      <textarea class="regsearch" aria-label="Details" rows="4" style=${{ marginTop: "10px", resize: "vertical", fontFamily: "inherit" }}
                 placeholder="Details: what is missing/wrong, why it matters, how you know. Never paste licensed standard text (ISO/TSC/PCI/IFRS)."
                 value=${body} onInput=${(e) => setBody(e.target.value)}></textarea>
-      <input class="regsearch" style=${{ marginTop: "10px" }} placeholder="Evidence link (official URL, optional)"
+      <input class="regsearch" style=${{ marginTop: "10px" }} aria-label="Evidence link" placeholder="Evidence link (official URL, optional)"
              value=${evidence} onInput=${(e) => setEvidence(e.target.value)} />
       <div style=${{ marginTop: "12px" }}>
         <button class="bigbtn" disabled=${title.trim().length < 5 || state === "sending"} onClick=${submit}>
@@ -1240,7 +1241,7 @@ function OpsPage() {
         <div class="opsitem" key=${i.id}>
           <div class="why">${i.reasoning}</div>
           <div class="provline">${i.ts} · ${i.kind} · ${i.layer} · ${i.fleet}</div>
-          <details><summary class="mono">detail</summary><pre class="codeblock">${JSON.stringify(i.detail, null, 2)}</pre></details>
+          <details><summary class="mono">detail</summary><pre class="codeblock" tabindex="0">${JSON.stringify(i.detail, null, 2)}</pre></details>
         </div>`)}
     </div>`;
 }
@@ -1278,7 +1279,7 @@ function EvalPage({ auth }) {
         <div class="panel" key=${t.id} style=${{ marginBottom: "12px" }}>
           <div class="id">${t.layer} · ${t.kind} · ${t.subject_ref}</div>
           <h5>${t.prompt}</h5>
-          <pre class="codeblock">${JSON.stringify(t.ai_output, null, 2).slice(0, 800)}</pre>
+          <pre class="codeblock" tabindex="0">${JSON.stringify(t.ai_output, null, 2).slice(0, 800)}</pre>
           <div class="votebtns">
             <button class="votebtn confirm" onClick=${() => vote(t.id, true)}>Agree with AI</button>
             <button class="votebtn dispute" onClick=${() => vote(t.id, false)}>Disagree — open correction</button>
@@ -1312,7 +1313,7 @@ function DocsPage() {
         </div>
         <div class="panel">
           <h4>The blueprint call</h4>
-          <pre class="codeblock">POST /v1/blueprint
+          <pre class="codeblock" tabindex="0">POST /v1/blueprint
 {
   "attributes": {
     "jurisdictions": ["EU"],
@@ -1369,7 +1370,9 @@ function App() {
           <b>CLHEAR</b><span>the compliance stack</span>
         </div>
         <div class="spacer"></div>
+        <a class="navlink" href="/">Start</a>
         <span class=${"navlink" + (page === "home" || page === "layer" ? " active" : "")} onClick=${() => nav("/")}>Stack</span>
+        <a class="navlink" href="/explore">Explore</a>
         <a class="navlink" href="/sources">Explorer</a>
         <span class=${"navlink" + (page === "how" ? " active" : "")} onClick=${() => nav("/how")}>How it works</span>
         <span class=${"navlink" + (page === "team" ? " active" : "")} onClick=${() => nav("/team")}>Team</span>
@@ -1380,7 +1383,7 @@ function App() {
           ${auth.user ? `☺ ${auth.user.display_name}` : "Contribute"}</span>
         <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
       </header>
-      <main>
+      <main id="main">
         ${page === "contribute" && html`<${ContributePage} auth=${auth} refreshAuth=${refreshAuth} prefill=${prefill} />`}
         ${page === "how" && html`<${HowPage} />`}
         ${page === "team" && html`<${TeamPage} />`}

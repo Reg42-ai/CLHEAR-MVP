@@ -84,6 +84,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
@@ -238,7 +239,7 @@ function Ontology({ openLicence }) {
       <div>${Object.entries(onto.counts).map(([k, n]) => html`<span key=${k} class=${"chip" + (coll === k ? " on" : "")} onClick=${() => setColl(k)}>${k.replace("_", " ")} ${n}</span>`)}</div>
       <h4>Jurisdiction</h4>
       <div>${onto.jurisdictions.map((j) => html`<span key=${j.code} class=${"chip" + (jur === j.code ? " on" : "")} onClick=${() => setJur(jur === j.code ? "" : j.code)}>${j.code}</span>`)}</div>
-      <h4>Search</h4><input value=${q} onInput=${(e) => setQ(e.target.value)} placeholder="name, alias, basis…" />
+      <h4>Search</h4><input aria-label="Search the register" value=${q} onInput=${(e) => setQ(e.target.value)} placeholder="name, alias, basis…" />
       <h4>Registers</h4>
       ${onto.registers.map((r) => html`<div key=${r.key} style=${{ fontSize: 12.5, marginBottom: 6 }}><a href=${r.url} target="_blank" rel="noopener">${r.name}</a><div class="mono">${r.taxonomy || ""}</div></div>`)}
       <h4>Snapshot</h4><div class="mono">${onto.version}</div>
@@ -312,7 +313,7 @@ function Profiles({ open }) {
   if (!data) return html`<div class="spin">loading…</div>`;
   const chips = (k, values) => html`<div>${Object.entries(values || {}).map(([v, n]) => html`<span key=${v} class=${"chip" + (f[k] === v ? " on" : "")} onClick=${() => setF({ ...f, [k]: f[k] === v ? "" : v })}>${v} ${n}</span>`)}</div>`;
   return html`<div class="layout">
-    <aside class="side"><h4>Search</h4><input value=${f.q} onInput=${(e) => setF({ ...f, q: e.target.value })} placeholder="name, attribute…" />
+    <aside class="side"><h4>Search</h4><input aria-label="Search profiles" value=${f.q} onInput=${(e) => setF({ ...f, q: e.target.value })} placeholder="name, attribute…" />
       <h4>Status</h4>${chips("status", data.facets.statuses)}<h4>Source</h4>${chips("source", data.facets.sources)}</aside>
     <section class="panelx"><h2>Stored profiles <span class="mono">${data.count}</span></h2>
       <table class="reg"><thead><tr><th>id</th><th>name</th><th>jurisdictions</th><th>authorisations</th><th>products</th><th>status</th><th>source</th></tr></thead>
@@ -425,10 +426,10 @@ function App() {
     <header class="appbar">
       <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L4 · profile space</span></div>
       <div class="spacer"></div>
-      <a class="navlink" href="/">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink active" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink" href="/l6">L6</a>
+      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink active" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink" href="/l6">L6</a>
       <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
     </header>
-    <main>
+    <main id="main"><h1 class="visually-hidden">L4 — Organisation profiles</h1>
       <div class="tabs">
         ${[["builder", "Builder"], ["ontology", "Ontology"], ["permutations", "Permutations"], ["profiles", "Profiles"], ["scorecard", "Scorecard"]].map(([k, label]) =>
           html`<button key=${k} class=${tab === k && view.page === "list" ? "on" : ""} onClick=${() => { setTab(k); setView({ page: "list" }); history.replaceState(null, "", "#" + k); }}>${label}</button>`)}

@@ -75,6 +75,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
@@ -108,7 +109,7 @@ function Facets({ facets, filters, setFilters }) {
   const chips = (k, values) => html`<div>${(values || []).map((v) => html`<span key=${v} class=${"chip" + (filters[k] === v ? " on" : "")} onClick=${() => set(k, v)}>${v}</span>`)}</div>`;
   return html`<aside class="facets">
     <h4>Search</h4>
-    <input placeholder="policy, officer, monitoring…" value=${filters.q} onInput=${(e) => setFilters({ ...filters, q: e.target.value })} />
+    <input aria-label="Search building blocks" placeholder="policy, officer, monitoring…" value=${filters.q} onInput=${(e) => setFilters({ ...filters, q: e.target.value })} />
     <h4>Kind</h4>${chips("kind", facets.kinds)}
     <h4>Status</h4>${chips("status", facets.statuses)}
     <h4>Harmonisation</h4>
@@ -164,9 +165,9 @@ function ModificationForm({ block, onDone }) {
       .catch((e) => setState("Error: " + e.message));
   };
   return html`<div class="form">
-    <select value=${field} onChange=${(e) => setField(e.target.value)}>${fields.map((f) => html`<option key=${f} value=${f}>${f}</option>`)}</select>
-    <textarea rows="3" placeholder="proposed value" value=${value} onInput=${(e) => setValue(e.target.value)}></textarea>
-    <textarea rows="2" placeholder="why (min 10 characters) — cite the obligation text" value=${rationale} onInput=${(e) => setRationale(e.target.value)}></textarea>
+    <select aria-label="Field to change" value=${field} onChange=${(e) => setField(e.target.value)}>${fields.map((f) => html`<option key=${f} value=${f}>${f}</option>`)}</select>
+    <textarea aria-label="Proposed value" rows="3" placeholder="proposed value" value=${value} onInput=${(e) => setValue(e.target.value)}></textarea>
+    <textarea aria-label="Rationale" rows="2" placeholder="why (min 10 characters) — cite the obligation text" value=${rationale} onInput=${(e) => setRationale(e.target.value)}></textarea>
     <div><button class="btn" disabled=${state === "sending" || rationale.length < 10 || !value} onClick=${submit}>Request modification</button></div>
     ${state && state !== "sending" ? html`<div class="mono">${state}</div>` : ""}
   </div>`;
@@ -297,10 +298,10 @@ function App() {
     <header class="appbar">
       <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L3 · building blocks</span></div>
       <div class="spacer"></div>
-      <a class="navlink" href="/">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink active" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink" href="/l6">L6</a>
+      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink active" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink" href="/l6">L6</a>
       <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
     </header>
-    <main>
+    <main id="main"><h1 class="visually-hidden">L3 — Building blocks</h1>
       <div class="tabs">
         ${[["catalogue", "Catalogue"], ["kinds", "Kinds"], ["scorecard", "Scorecard"]].map(([k, label]) =>
           html`<button key=${k} class=${tab === k ? "on" : ""} onClick=${() => { setTab(k); if (k === "catalogue") back(); else history.replaceState(null, "", "#" + k); }}>${label}</button>`)}

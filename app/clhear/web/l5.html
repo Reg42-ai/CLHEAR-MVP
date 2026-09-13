@@ -46,7 +46,7 @@
   .col h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
   .node { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; font-size: 13.5px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
   .node:hover, .node.hi { border-color: var(--edge-bright); box-shadow: 0 0 0 3px rgba(129,140,248,0.16); }
-  .node.dim { opacity: 0.45; }
+  .node.dim { opacity: 0.85; border-style: dashed; }
   .node .t { font-weight: 600; }
   .node .d { font-size: 12px; color: var(--muted); margin-top: 3px; }
   .node .o { font-size: 11.5px; color: var(--faint); margin-top: 4px; font-family: var(--mono); }
@@ -56,7 +56,8 @@
   .edge { display: flex; gap: 10px; align-items: baseline; font-size: 13px; padding: 6px 0; border-bottom: 1px solid var(--edge); }
   .edge .arrow { color: var(--faint); }
   .edge.lit .arrow { color: var(--ok); }
-  .edge.unlit { opacity: 0.6; }
+  .edge.unlit { border-bottom-style: dashed; }
+  .edge.unlit .mono { font-style: italic; }
   .empty { color: var(--muted); text-align: center; padding: 40px 0; }
   .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
   .score .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
@@ -81,6 +82,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
@@ -149,10 +151,10 @@ function ActivityMap({ openActivity }) {
   return html`<div class="layout">
     <aside class="side">
       <h4>Stored profile</h4>
-      <select value=${pick} onChange=${(e) => runProfile(e.target.value)}><option value="">— pick an L4 profile —</option>${profiles.map((p) => html`<option key=${p.id} value=${p.id}>${p.id} · ${p.name}</option>`)}</select>
+      <select aria-label="Sample profile" value=${pick} onChange=${(e) => runProfile(e.target.value)}><option value="">— pick an L4 profile —</option>${profiles.map((p) => html`<option key=${p.id} value=${p.id}>${p.id} · ${p.name}</option>`)}</select>
       <h4>Or describe the organisation</h4>
       ${SAMPLES.map((s) => html`<span key=${s.label} class="chip" onClick=${() => { setPick(""); setText(JSON.stringify(s.attrs, null, 2)); run(s.attrs); history.replaceState(null, "", "#map"); }}>${s.label}</span>`)}
-      <textarea value=${text} onInput=${(e) => setText(e.target.value)} style=${{ marginTop: 8 }} />
+      <textarea aria-label="Profile attributes (JSON)" value=${text} onInput=${(e) => setText(e.target.value)} style=${{ marginTop: 8 }} />
       <button class="btn" style=${{ marginTop: 8 }} onClick=${() => { try { setPick(""); run(JSON.parse(text)); } catch (e) { setErr("attributes must be JSON: " + e.message); } }}>Map activities</button>
       <div class="mono" style=${{ marginTop: 10 }}>Attributes are the L4 schema. Business activities come from the products the organisation offers (implies); compliance activities from the mitigates edges those business activities carry; an edge is lit when one of its obligations applies to this profile through L4.</div>
     </aside>
@@ -204,7 +206,7 @@ function Catalogue({ open }) {
   const facet = (k) => Object.entries((data && data.facets && data.facets[k]) || {});
   return html`<div class="layout">
     <aside class="side">
-      <h4>Search</h4><input placeholder="name, owner, description…" value=${f.q} onInput=${(e) => setF({ ...f, q: e.target.value })} />
+      <h4>Search</h4><input aria-label="Search activities" placeholder="name, owner, description…" value=${f.q} onInput=${(e) => setF({ ...f, q: e.target.value })} />
       <h4>Side</h4>${facet("side").map(([k, n]) => html`<span key=${k} class=${"chip" + (f.side === k ? " on" : "")} onClick=${() => setF({ ...f, side: f.side === k ? "" : k, action_type: "" })}>${k} · ${n}</span>`)}
       <h4>Action type</h4>${facet("action_type").map(([k, n]) => html`<span key=${k} class=${"chip" + (f.action_type === k ? " on" : "")} onClick=${() => setF({ ...f, action_type: f.action_type === k ? "" : k })}>${k} · ${n}</span>`)}
       <h4>Status</h4>${facet("status").map(([k, n]) => html`<span key=${k} class=${"chip" + (f.status === k ? " on" : "")} onClick=${() => setF({ ...f, status: f.status === k ? "" : k })}>${k} · ${n}</span>`)}
@@ -321,10 +323,10 @@ function App() {
     <header class="appbar">
       <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L5 · activities</span></div>
       <div class="spacer"></div>
-      <a class="navlink" href="/">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink active" href="/l5">L5</a><a class="navlink" href="/l6">L6</a>
+      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink active" href="/l5">L5</a><a class="navlink" href="/l6">L6</a>
       <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
     </header>
-    <main>
+    <main id="main"><h1 class="visually-hidden">L5 — Activity map</h1>
       <div class="tabs">
         ${[["map", "Activity map"], ["activities", "Activities"], ["scorecard", "Scorecard"]].map(([k, label]) =>
           html`<button key=${k} class=${tab === k && view.page === "list" ? "on" : ""} onClick=${() => { setTab(k); setView({ page: "list" }); history.replaceState(null, "", "#" + k); }}>${label}</button>`)}

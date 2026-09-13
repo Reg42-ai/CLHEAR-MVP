@@ -74,6 +74,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
@@ -105,10 +106,10 @@ function Facets({ facets, filters, setFilters }) {
   const chips = (k, values) => html`<div>${(values || []).map((v) => html`<span key=${v} class=${"chip" + (filters[k] === v ? " on" : "")} onClick=${() => set(k, v)}>${v}</span>`)}</div>`;
   return html`<aside class="facets">
     <h4>Search</h4>
-    <input placeholder="who must do what…" value=${filters.q} onInput=${(e) => setFilters({ ...filters, q: e.target.value })} />
+    <input aria-label="Search obligations" placeholder="who must do what…" value=${filters.q} onInput=${(e) => setFilters({ ...filters, q: e.target.value })} />
     <h4>Jurisdiction</h4>${chips("jurisdiction", facets.jurisdictions)}
     <h4>Regulator</h4>
-    <select value=${filters.regulator} onChange=${(e) => setFilters({ ...filters, regulator: e.target.value })}>
+    <select aria-label="Filter by regulator" value=${filters.regulator} onChange=${(e) => setFilters({ ...filters, regulator: e.target.value })}>
       <option value="">any regulator</option>${(facets.regulators || []).map((r) => html`<option key=${r} value=${r}>${r}</option>`)}
     </select>
     <h4>Obligation type</h4>${chips("obligation_type", facets.types)}
@@ -156,11 +157,11 @@ function ModificationForm({ id, onDone }) {
     } catch (e) { setState("Error: " + e.message); }
   };
   return html`<div class="form">
-    <select value=${field} onChange=${(e) => setField(e.target.value)}>
+    <select aria-label="Field to change" value=${field} onChange=${(e) => setField(e.target.value)}>
       ${["determination", "subject", "action", "condition", "object", "obligation_type", "effective_from", "effective_to", "status"].map((f) => html`<option key=${f} value=${f}>${f}</option>`)}
     </select>
-    <textarea rows="3" placeholder="proposed value" value=${value} onInput=${(e) => setValue(e.target.value)}></textarea>
-    <textarea rows="2" placeholder="why (at least 10 characters — cite the clause text)" value=${why} onInput=${(e) => setWhy(e.target.value)}></textarea>
+    <textarea aria-label="Proposed value" rows="3" placeholder="proposed value" value=${value} onInput=${(e) => setValue(e.target.value)}></textarea>
+    <textarea aria-label="Rationale" rows="2" placeholder="why (at least 10 characters — cite the clause text)" value=${why} onInput=${(e) => setWhy(e.target.value)}></textarea>
     <div><button class="btn" disabled=${state === "busy" || !value || why.length < 10} onClick=${submit}>Request a modification</button></div>
     ${state && state !== "busy" ? html`<div class=${state.startsWith("Error") ? "bad" : "ok"}>${state}</div>` : ""}
   </div>`;
@@ -240,7 +241,7 @@ function ChangesPage({ open }) {
   useEffect(() => { setFeed(null); api(`/l2/changes?${qs({ since, kind, limit: 300 })}`).then(setFeed).catch(() => setFeed({ items: [] })); }, [since, kind]);
   return html`<div class="panelx">
     <h2>Registry change feed</h2>
-    <div class="meta"><span>since <input type="date" value=${since} onChange=${(e) => setSince(e.target.value)} /></span>
+    <div class="meta"><span>since <input aria-label="Changes since date" type="date" value=${since} onChange=${(e) => setSince(e.target.value)} /></span>
       ${["", "added", "updated", "revoked"].map((k) => html`<span key=${k} class=${"chip" + (kind === k ? " on" : "")} onClick=${() => setKind(k)}>${k || "any kind"}</span>`)}</div>
     ${!feed ? html`<div class="spin">Loading…</div>` : !feed.items.length ? html`<div class="empty">No obligation changes in range.</div>` :
       html`<table class="reg"><thead><tr><th>Kind</th><th>Obligation</th><th>Determination</th><th>Jurisdiction</th><th>Effective</th><th>Basis</th><th>Cause</th><th>Detected</th></tr></thead><tbody>
@@ -260,8 +261,8 @@ function ComparePage({ initialQ, open }) {
   const juris = jur.split(",").map((j) => j.trim().toLowerCase()).filter(Boolean);
   return html`<div class="panelx">
     <h2>Compare across jurisdictions</h2>
-    <div class="meta"><span>jurisdictions <input value=${jur} onInput=${(e) => setJur(e.target.value)} placeholder="uk,eu,il" /></span>
-      <span>filter <input value=${q} onInput=${(e) => setQ(e.target.value)} placeholder="concept or wording" /></span><button class="btn" onClick=${run}>Compare</button></div>
+    <div class="meta"><span>jurisdictions <input aria-label="Jurisdictions to compare" value=${jur} onInput=${(e) => setJur(e.target.value)} placeholder="uk,eu,il" /></span>
+      <span>filter <input aria-label="Concept or wording" value=${q} onInput=${(e) => setQ(e.target.value)} placeholder="concept or wording" /></span><button class="btn" onClick=${run}>Compare</button></div>
     ${!data ? html`<div class="spin">Comparing…</div>` : data.error ? html`<div class="bad">${data.error}</div>` : !data.groups.length ? html`<div class="empty">No concept or equivalence spans two of these jurisdictions yet.</div>` :
       html`<div class="cmp">${data.groups.map((g) => html`<div key=${g.group}>
         <div class="meta"><b>${g.name}</b><span class="badge type">${g.basis}</span>${g.gaps.length ? html`<span class="warn">gaps: ${g.gaps.join(", ")}</span>` : html`<span class="ok">covered in all</span>`}</div>
@@ -337,10 +338,10 @@ function App() {
     <header class="appbar">
       <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L2 · obligation registry</span></div>
       <div class="spacer"></div>
-      <a class="navlink" href="/">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink active" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink" href="/l6">L6</a>
+      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink active" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink" href="/l6">L6</a>
       <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
     </header>
-    <main>
+    <main id="main"><h1 class="visually-hidden">L2 — Obligation registry</h1>
       <div class="tabs">
         ${[["registry", "Registry"], ["changes", "Change feed"], ["compare", "Compare"], ["scorecard", "Scorecard"]].map(([k, label]) =>
           html`<button key=${k} class=${tab === k ? "on" : ""} onClick=${() => { setTab(k); if (k === "registry") back(); else history.replaceState(null, "", "#" + k); }}>${label}</button>`)}

@@ -62,6 +62,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
@@ -117,15 +118,15 @@ function Facets({ facets, filters, setFilters }) {
   const chips = (k, values) => html`<div>${(values || []).map((v) => html`<span key=${v} class=${"chip" + (filters[k] === v ? " on" : "")} onClick=${() => set(k, v)}>${v}</span>`)}</div>`;
   return html`<aside class="facets">
     <h4>Search</h4>
-    <input placeholder="instrument, regulator, key…" value=${filters.q} onInput=${(e) => setFilters({ ...filters, q: e.target.value })} />
+    <input aria-label="Search sources" placeholder="instrument, regulator, key…" value=${filters.q} onInput=${(e) => setFilters({ ...filters, q: e.target.value })} />
     <h4>Jurisdiction</h4>${chips("jurisdiction", facets.jurisdictions)}
     <h4>Regulator</h4>
-    <select value=${filters.regulator} onChange=${(e) => setFilters({ ...filters, regulator: e.target.value })}>
+    <select aria-label="Filter by regulator" value=${filters.regulator} onChange=${(e) => setFilters({ ...filters, regulator: e.target.value })}>
       <option value="">any regulator</option>${(facets.regulators || []).map((r) => html`<option key=${r} value=${r}>${r}</option>`)}
     </select>
     <h4>Rights basis</h4>${chips("rights_basis", facets.rights_bases)}
     <h4>Family</h4>
-    <select value=${filters.family} onChange=${(e) => setFilters({ ...filters, family: e.target.value })}>
+    <select aria-label="Filter by family" value=${filters.family} onChange=${(e) => setFilters({ ...filters, family: e.target.value })}>
       <option value="">any family</option>${(facets.families || []).map((f) => html`<option key=${f} value=${f}>${f}</option>`)}
     </select>
     <h4>State</h4>
@@ -306,10 +307,10 @@ function App() {
     <header class="appbar">
       <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L1 · sources of law</span></div>
       <div class="spacer"></div>
-      <a class="navlink" href="/">Stack</a><a class="navlink" href="/sources">Explorer</a><a class="navlink active" href="/l1">L1</a>
+      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/sources">Explorer</a><a class="navlink active" href="/l1">L1</a>
       <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
     </header>
-    <main>
+    <main id="main"><h1 class="visually-hidden">L1 — Sources and clauses</h1>
       <div class="tabs">
         ${[["sources", "Sources"], ["changes", "Change feed"], ["watchlist", `Watchlist (${watched.size})`], ["scorecard", "Scorecard"]].map(([k, label]) =>
           html`<button key=${k} class=${tab === k ? "on" : ""} onClick=${() => { setTab(k); if (k === "sources") back(); }}>${label}</button>`)}

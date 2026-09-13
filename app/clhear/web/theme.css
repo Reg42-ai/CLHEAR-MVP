@@ -12,8 +12,10 @@
   --panel-strong: rgba(255,255,255,0.06);
   --edge: rgba(129,140,248,0.22);
   --edge-bright: rgba(129,140,248,0.55);
-  --ink: #eef0ff; --muted: #8b8fb8; --faint: #565a85;
-  --accent: var(--ind-400);
+  /* --faint is the dimmest text we allow: 6.7:1 on --canvas and still 4.5:1 on a
+     card (--panel-strong) nested in a --panel over the accent glow (WCAG 1.4.3) */
+  --ink: #eef0ff; --muted: #9c9fc6; --faint: #9093bb;
+  --accent: var(--ind-400); --on-accent: #0b0b1f;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --glow: 0 0 24px rgba(99,102,241,0.18);
   /* status hues used by both apps */
@@ -25,9 +27,11 @@
   --panel-strong: #ffffff;
   --edge: #e3e1d8;
   --edge-bright: #c7d2fe;
-  --ink: #17163a; --muted: #6b6a8a; --faint: #a5a3c0;
+  --ink: #17163a; --muted: #6b6a8a; --faint: #5f5e82;
+  --accent: #4f46e5; --on-accent: #ffffff;
   --glow: 0 4px 20px rgba(30,27,75,0.07);
-  --ok: var(--mint-600); --warn: var(--amber-600); --bad: var(--rose-600);
+  /* darker status hues: the 400/600 shades fail 4.5:1 on a light canvas */
+  --ok: #047857; --warn: #92400e; --bad: #be123c;
 }
 * { box-sizing: border-box; }
 body {
@@ -43,7 +47,27 @@ body::before {
 }
 [data-theme="light"] body::before { opacity: 0.5; }
 a { color: var(--accent); text-decoration: none; }
+/* links inside running text must not rely on colour alone (1.4.1) */
+p a, li a, td a, small a, .foot a, .empty a, .meta a, dd a { text-decoration: underline; text-underline-offset: 2px; }
+a.btn, a.navlink, a.chip, a.mode, a.bigbtn { text-decoration: none; }
 ::selection { background: rgba(99,102,241,0.35); }
+
+/* ------------------------------------------------ accessibility (WCAG 2.2 AA) */
+/* keyboard-first: every focusable element shows a visible ring (2.4.7 / 2.4.11) */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+button:focus-visible, [role="button"]:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+/* skip link (2.4.1 bypass blocks): hidden until focused */
+.skip { position: absolute; left: 8px; top: -60px; z-index: 100; padding: 8px 14px; border-radius: 8px;
+        background: var(--accent); color: var(--on-accent); font-weight: 700; transition: top .15s; }
+.skip:focus { top: 8px; }
+/* text for screen readers only */
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+                   clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* minimum target size for pointer controls (2.5.8) */
+button, .navlink, .chip, .themebtn { min-height: 24px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
 
 /* ------------------------------------------------------------ shared chrome */
 header.appbar {

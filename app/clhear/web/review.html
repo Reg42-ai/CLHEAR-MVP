@@ -52,6 +52,7 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 
 <!-- no-build frontend: React 18 + htm, per repo convention -->
@@ -103,16 +104,16 @@ function App() {
           <b>CLHEAR</b><span>Review console — agents propose, humans ratify</span>
         </div>
         <div class="spacer"></div>
-        <a class="navlink" href="/">Stack</a>
+        <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a>
         <a class="navlink" href="/sources">Sources Explorer</a>
         <span class="navlink active">Review</span>
         <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
       </header>
-      <main>
+      <main id="main"><h1 class="visually-hidden">Review queue</h1>
       ${error && html`<div class="error">${error}</div>`}
       <div class="identity">
         <label>Acting as</label>
-        <input placeholder="maintainer identity (e.g. avner@reg42.ai)"
+        <input aria-label="Maintainer identity" placeholder="maintainer identity (e.g. avner@reg42.ai)"
                value=${user} onInput=${(e) => setUser(e.target.value)} />
       </div>
       <div class="tabs">
@@ -128,7 +129,7 @@ function App() {
               <span class="badge ${p.status}">${p.status}</span>
               <div class="subject">${p.subject_ref}</div>
               ${p.rationale && html`<div class="rationale">${p.rationale}</div>`}
-              <pre class="draft">${JSON.stringify(p.draft, null, 2)}</pre>
+              <pre class="draft" tabindex="0">${JSON.stringify(p.draft, null, 2)}</pre>
               <div class="meta">
                 confidence ${p.confidence ?? "—"} · created ${p.created_at}
                 ${p.approver && html` · decided by <b>${p.approver}</b> at ${p.decided_at}`}
