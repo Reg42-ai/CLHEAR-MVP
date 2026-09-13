@@ -237,16 +237,14 @@ def _llm_draft(llm, slot: str, kind: str, block: dict, chars: dict, obs: list[di
               f"Slot: {slot}. Draft best-practice {kind} content that satisfies ONLY the obligations below; do not invent "
               f"requirements, quote thresholds only when a source states them. Characteristics: "
               f"{json.dumps({k: v.get('value') for k, v in chars.items()})}\nReturn JSON shaped {shape}.\n\nObligations:\n{texts}")
+    key = {"text": "text", "numeric": "value", "item_set": "items", "workflow": "steps"}[kind]
     try:
         result = complete(llm, "l8.fill", prompt=prompt, system="You draft compliance program content from legal text. JSON only.",
-                          required_keys=[next(iter(json.loads(shape.replace('<markdown>', '""').replace('<number|null>', 'null')
-                                                               .replace('<number>', '0').replace('lo, hi', '0, 0').replace('<unit>', '""')
-                                                               .replace('<why>', '""')).keys()))], max_tokens=900)
+                          required_keys=[key], max_tokens=900)
         parsed = parse_json_object(result.text)
     except Exception:
         log.exception("l8.fill failed for %s/%s", block["id"], slot)
         return None, ""
-    key = {"text": "text", "numeric": "value", "item_set": "items", "workflow": "steps"}[kind]
     if key not in parsed:
         return None, ""
     return parsed, getattr(result, "model", "") or ""

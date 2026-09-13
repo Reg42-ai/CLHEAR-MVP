@@ -52,6 +52,11 @@ def ws(text: str) -> str:
 
 # ------------------------------------------------------------------ build side
 def _fts_ok(conn: Connection) -> bool:
+    """True when the SQLite FTS5 shadow table exists. Postgres has no such table
+    and a failed probe there would poison the open transaction (every later
+    statement fails with InFailedSqlTransaction), so it answers without asking."""
+    if conn.dialect.name != "sqlite":
+        return False
     try:
         conn.exec_driver_sql("SELECT count(*) FROM search_units_fts LIMIT 1")
         return True
