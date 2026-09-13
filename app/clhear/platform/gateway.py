@@ -98,6 +98,7 @@ REASONING_HEADROOM_TOKENS = 2048
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
 _THINK_OPEN_RE = re.compile(r"<think>.*", re.S | re.I)
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.I)
+ALTERNATIVES_KEY = "_alternatives"
 
 
 def parse_json_object(text: str) -> dict:
@@ -115,6 +116,11 @@ def parse_json_object(text: str) -> dict:
         if start < 0:
             raise
         parsed, _ = json.JSONDecoder().raw_decode(raw, start)
+    if isinstance(parsed, list) and parsed and all(isinstance(p, dict) for p in parsed):
+        # The model enumerated where one object was asked for. Answer with the first
+        # and keep the whole list under ALTERNATIVES_KEY so a caller that knows
+        # what it asked about can pick the matching one (l2.structured does).
+        parsed = {**parsed[0], ALTERNATIVES_KEY: parsed} if len(parsed) > 1 else parsed[0]
     if not isinstance(parsed, dict):
         raise StructuredOutputError("response is not a JSON object")
     return parsed

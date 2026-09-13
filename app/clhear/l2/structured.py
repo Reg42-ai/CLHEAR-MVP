@@ -19,7 +19,7 @@ from sqlalchemy.engine import Engine
 from app.clhear.derived_models import OBLIGATION_TYPES, asserts, obligations
 from app.clhear.l1.models import clauses
 from app.clhear.l2 import registry
-from app.clhear.platform.gateway import parse_json_object
+from app.clhear.platform.gateway import ALTERNATIVES_KEY, parse_json_object
 from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l2.structured")
@@ -39,6 +39,20 @@ def grounded(field_text: str, clause_text: str, minimum: float = GROUNDING_MIN) 
         return True  # empty field is allowed (e.g. no condition)
     hay = set(_WORD.findall((clause_text or "").lower()))
     return sum(1 for w in words if w in hay) / len(words) >= minimum
+
+
+def _pick(parsed: dict, statement: str) -> dict:
+    """When the model enumerated several duties, keep the one closest to the statement."""
+    options = parsed.get(ALTERNATIVES_KEY)
+    if not isinstance(options, list) or len(options) < 2:
+        return parsed
+    target = set(_WORD.findall((statement or "").lower())) - _STOP
+
+    def overlap(o: dict) -> int:
+        text = " ".join(str(o.get(k) or "") for k in FIELDS).lower()
+        return len(target & set(_WORD.findall(text)))
+
+    return max((o for o in options if isinstance(o, dict)), key=overlap)
 
 
 def _candidates(conn, limit: int) -> list[dict]:
@@ -68,10 +82,13 @@ def refine_structured(engine: Engine, llm, limit: int = MAX_PER_RUN) -> dict:
         batch = _candidates(conn, limit)
     for ob in batch:
         prompt = (
-            "Split this regulatory clause into an atomic obligation. Use ONLY words from the clause. JSON only: "
+            "Restructure ONE obligation from this regulatory clause. The clause may contain several duties; "
+            "describe only the one matching the STATEMENT. Use ONLY words from the clause. "
+            "Return exactly one JSON object, never an array: "
             '{"subject": "who is bound", "action": "what they must do", "condition": "when/if (or empty)", '
             '"object": "what the action is about (or empty)", "obligation_type": one of '
-            + "|".join(OBLIGATION_TYPES) + "}\n\nCLAUSE:\n" + (ob["clause_text"] or "")[:3000]
+            + "|".join(OBLIGATION_TYPES) + "}\n\nSTATEMENT:\n" + (ob["statement"] or "")[:600]
+            + "\n\nCLAUSE:\n" + (ob["clause_text"] or "")[:3000]
         )
         try:
             result = complete(
@@ -79,7 +96,7 @@ def refine_structured(engine: Engine, llm, limit: int = MAX_PER_RUN) -> dict:
                 system="You restructure legal text without adding to it. JSON only.",
                 required_keys=["subject", "action"], max_tokens=400,
             )
-            parsed = parse_json_object(result.text)
+            parsed = _pick(parse_json_object(result.text), ob["statement"])
         except Exception:
             log.exception("structured extraction failed for %s", ob["id"])
             rejected += 1
