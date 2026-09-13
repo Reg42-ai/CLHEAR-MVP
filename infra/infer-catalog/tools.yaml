@@ -1,0 +1,4 @@
+# clhear-infer: no tools. CLHEAR calls chat completions and embeddings only.
+defaults: {}
+seats: {}
+never: []

@@ -1,0 +1,7 @@
+# clhear-infer hard stop. Infer refuses every call once the month's spend reaches
+# company.hired_usd — this is CLHEAR's own ceiling, separate from the workforce budget.
+company:
+  name: CLHEAR
+  monthly_usd: 2000
+  hired_usd: 2000
+  headroom_usd: 0

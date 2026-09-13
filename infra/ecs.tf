@@ -58,7 +58,8 @@ resource "aws_ecs_task_definition" "fleet" {
       essential  = true
       cpu        = each.value.cpu
       memory     = each.value.memory
-      entryPoint = ["python", "-m", "app.clhear.workers"]
+      entryPoint = ["python"]
+      command    = ["-m", "app.clhear.workers"]
       environment = [
         { name = "AWS_REGION", value = var.aws_region },
         { name = "CLHEAR_FLEET", value = upper(each.key) },
@@ -74,7 +75,7 @@ resource "aws_ecs_task_definition" "fleet" {
         { name = "CLHEAR_HTTP_MODE", value = "live" },
         { name = "CLHEAR_ARTIFACT_STORE", value = "s3" },
         { name = "CLHEAR_LLM_PROVIDER", value = "infer" },
-        { name = "INFER_BASE_URL", value = var.infer_base_url },
+        { name = "INFER_BASE_URL", value = local.infer_base_url },
         # One Infer employee for all fleets: an Infer token is bound to a single employee id and the
         # X-Employee-Id header must match it (403 otherwise). The layer is recorded in CLHEAR's own ledger.
         { name = "INFER_EMPLOYEE_ID", value = "clhear" },

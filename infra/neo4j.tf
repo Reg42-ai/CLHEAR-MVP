@@ -111,7 +111,7 @@ resource "aws_cloudwatch_log_group" "neo4j" {
 
 # Private DNS so the fleets reach the graph by a stable name (Bolt has no ALB).
 resource "aws_service_discovery_private_dns_namespace" "clhear" {
-  count = local.deploy_neo4j ? 1 : 0
+  count = local.deploy_cloud_map ? 1 : 0
   name  = "${var.name_prefix}.local"
   vpc   = var.existing_vpc_id
 }

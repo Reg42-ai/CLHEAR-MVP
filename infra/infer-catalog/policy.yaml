@@ -1,0 +1,74 @@
+# clhear-infer routing — generated from app/clhear/platform/task_classes.py. Do not hand-edit.
+# One route per CLHEAR task class (X-Task-Class); anything else lands on the
+# derivation tier, never on a non-clean model (there are none in models.yaml).
+
+defaults:
+  fallback: bedrock
+  escalate_after: 2
+  max_tokens: 4096
+  timeout_seconds: 120
+  tool_required_tier: clhear-derivation
+
+routes:
+  - id: l1_parse
+    match:
+      task_class: [l1_parse]
+    tier: clhear-cheap
+  - id: l1_change
+    match:
+      task_class: [l1_change]
+    tier: clhear-derivation
+  - id: l2_extract
+    match:
+      task_class: [l2_extract]
+    tier: clhear-derivation
+  - id: l2_consolidate
+    match:
+      task_class: [l2_consolidate]
+    tier: clhear-hard
+  - id: l2_change
+    match:
+      task_class: [l2_change]
+    tier: clhear-derivation
+  - id: l3_decompose
+    match:
+      task_class: [l3_decompose]
+    tier: clhear-hard
+  - id: l3_characterize
+    match:
+      task_class: [l3_characterize]
+    tier: clhear-derivation
+  - id: l4_enumerate
+    match:
+      task_class: [l4_enumerate]
+    tier: clhear-derivation
+  - id: l5_map
+    match:
+      task_class: [l5_map]
+    tier: clhear-derivation
+  - id: l6_explain
+    match:
+      task_class: [l6_explain]
+    tier: clhear-hard
+  - id: l7_score
+    match:
+      task_class: [l7_score]
+    tier: clhear-derivation
+  - id: l8_fill
+    match:
+      task_class: [l8_fill]
+    tier: clhear-hard
+  - id: judge
+    match:
+      task_class: [judge]
+    tier: clhear-nonderivation
+  - id: embed
+    match:
+      task_class: [embed]
+    tier: embed
+  - id: clhear-default
+    match: {}
+    tier: clhear-derivation
+
+employee_defaults:
+  clhear: { task_class: l2_extract }

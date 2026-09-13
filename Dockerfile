@@ -12,10 +12,13 @@ RUN pip install --no-cache-dir -r requirements.txt boto3
 
 # No model runtime in the image: inference is Reg42 Infer on Bedrock (HLD v2 I6).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
 COPY migrations ./migrations
 
-ENTRYPOINT ["python", "-m", "app.clhear.workers"]
+# `python` as entrypoint so ECS command overrides can run one-off jobs (record load,
+# nightly stack, probes) in the same image; the long-running worker is the default.
+ENTRYPOINT ["python"]
+CMD ["-m", "app.clhear.workers"]

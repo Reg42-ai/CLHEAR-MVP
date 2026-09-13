@@ -1,0 +1,123 @@
+# clhear-infer model catalog — generated from app/clhear/platform/task_classes.py
+# (CLHEAR-MVP, scripts/render_infer_catalog.py). Do not hand-edit.
+# Entries are keyed by Bedrock id so Infer reports Bedrock ids back to CLHEAR.
+# Only procurement-clean (US/EU origin) models exist in this catalog; Infer's
+# last-resort picker therefore cannot reach anything else.
+
+defaults:
+  backend: bedrock
+  fallback_backend: bedrock
+  escalate_after: 2
+
+tiers:
+  clhear-cheap:
+    champion: "amazon.nova-lite-v1:0"
+    fallbacks: ["amazon.nova-pro-v1:0", "openai.gpt-oss-120b-1:0"]
+  clhear-derivation:
+    champion: "openai.gpt-oss-120b-1:0"
+    fallbacks: ["mistral.mistral-large-3-675b-instruct", "us.anthropic.claude-opus-4-5-20251101-v1:0"]
+  clhear-hard:
+    champion: "mistral.mistral-large-3-675b-instruct"
+    fallbacks: ["us.anthropic.claude-opus-4-5-20251101-v1:0", "openai.gpt-oss-120b-1:0"]
+  clhear-nonderivation:
+    champion: "amazon.nova-lite-v1:0"
+    fallbacks: ["us.meta.llama3-3-70b-instruct-v1:0", "openai.gpt-oss-120b-1:0"]
+  embed:
+    champion: "amazon.titan-embed-text-v2:0"
+    fallbacks: ["cohere.embed-multilingual-v3"]
+
+models:
+  "amazon.nova-lite-v1:0":
+    id: "amazon.nova-lite-v1:0"
+    backend: bedrock
+    license: commercial
+    origin: US
+    usd_per_1m_in: 0.0600
+    usd_per_1m_out: 0.2400
+    tool_call: true
+    context: 300000
+    enabled: true
+  "amazon.nova-pro-v1:0":
+    id: "amazon.nova-pro-v1:0"
+    backend: bedrock
+    license: commercial
+    origin: US
+    usd_per_1m_in: 0.8000
+    usd_per_1m_out: 3.2000
+    tool_call: true
+    context: 300000
+    enabled: true
+  "openai.gpt-oss-120b-1:0":
+    id: "openai.gpt-oss-120b-1:0"
+    backend: bedrock
+    license: open_weight
+    origin: US
+    usd_per_1m_in: 0.1500
+    usd_per_1m_out: 0.6000
+    tool_call: true
+    context: 128000
+    enabled: true
+  "mistral.mistral-large-3-675b-instruct":
+    id: "mistral.mistral-large-3-675b-instruct"
+    backend: bedrock
+    license: commercial
+    origin: EU
+    usd_per_1m_in: 2.0000
+    usd_per_1m_out: 6.0000
+    tool_call: true
+    context: 128000
+    enabled: true
+  "us.anthropic.claude-opus-4-5-20251101-v1:0":
+    id: "us.anthropic.claude-opus-4-5-20251101-v1:0"
+    backend: bedrock
+    license: commercial
+    origin: US
+    usd_per_1m_in: 5.0000
+    usd_per_1m_out: 25.0000
+    tool_call: true
+    context: 200000
+    enabled: true
+  "us.meta.llama3-3-70b-instruct-v1:0":
+    id: "us.meta.llama3-3-70b-instruct-v1:0"
+    backend: bedrock
+    license: open_weight
+    origin: US
+    usd_per_1m_in: 0.7200
+    usd_per_1m_out: 0.7200
+    tool_call: true
+    context: 128000
+    enabled: true
+  "amazon.titan-embed-text-v2:0":
+    id: "amazon.titan-embed-text-v2:0"
+    backend: bedrock
+    license: commercial
+    origin: US
+    usd_per_1m_in: 0.0200
+    usd_per_1m_out: 0.0000
+    tool_call: false
+    context: 8000
+    role: embed
+    enabled: true
+  "cohere.embed-multilingual-v3":
+    id: "cohere.embed-multilingual-v3"
+    backend: bedrock
+    license: commercial
+    origin: US
+    usd_per_1m_in: 0.1000
+    usd_per_1m_out: 0.0000
+    tool_call: false
+    context: 512
+    role: embed
+    enabled: false
+    note: not probed in this account
+  "us.anthropic.claude-sonnet-4-5-20250929-v1:0":
+    id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    backend: bedrock
+    license: commercial
+    origin: US
+    usd_per_1m_in: 3.0000
+    usd_per_1m_out: 15.0000
+    tool_call: true
+    context: 200000
+    enabled: false
+    note: needs the account's Anthropic use-case form accepted

@@ -52,13 +52,13 @@ def test_steps_up_the_ladder_when_quality_is_below_threshold(engine):
 
 def test_premium_rung_only_for_high_criticality(engine):
     ladder = tc.default_ladder("l6_explain")
-    assert tc.CLAUDE_OPUS_5 in ladder and TASKS["l6.rationale"].criticality == "medium"
+    assert tc.CLAUDE_OPUS in ladder and TASKS["l6.rationale"].criticality == "medium"
     quality = {("l6.rationale", m): 0.10 for m in ladder if m not in PREMIUM_MODELS}
-    quality[("l6.rationale", tc.CLAUDE_OPUS_5)] = 0.99
+    quality[("l6.rationale", tc.CLAUDE_OPUS)] = 0.99
     r, _ = _router(engine, quality=quality)
     d = r.decide("l6.rationale")
     assert d.chosen_model not in PREMIUM_MODELS
-    assert any(x["model"] == tc.CLAUDE_OPUS_5 and "criticality" in x["reason"] for x in d.rejected)
+    assert any(x["model"] == tc.CLAUDE_OPUS and "criticality" in x["reason"] for x in d.rejected)
     assert "most capable eligible rung" in d.reason
 
 
@@ -66,11 +66,11 @@ def test_premium_rung_for_high_criticality_when_lower_rungs_fail(engine):
     ladder = tc.default_ladder("judge")
     quality = {("l0.revalidate", m): 0.10 for m in ladder}
     r, _ = _router(engine, quality=quality, model_manifest={
-        "task_classes": {"judge": {"model_id": tc.NOVA_LITE, "ladder": [tc.NOVA_LITE, tc.CLAUDE_OPUS_5]}}
+        "task_classes": {"judge": {"model_id": tc.NOVA_LITE, "ladder": [tc.NOVA_LITE, tc.CLAUDE_OPUS]}}
     })
-    quality[("l0.revalidate", tc.CLAUDE_OPUS_5)] = 0.97
+    quality[("l0.revalidate", tc.CLAUDE_OPUS)] = 0.97
     d = r.decide("l0.revalidate")
-    assert d.chosen_model == tc.CLAUDE_OPUS_5
+    assert d.chosen_model == tc.CLAUDE_OPUS
     assert d.ladder_source == "frozen"
 
 
@@ -78,17 +78,17 @@ def test_premium_monthly_cap_is_hard_stop(engine):
     with engine.begin() as conn:
         conn.execute(
             llm_calls.insert().values(
-                fleet="prior", provider="infer", model=tc.CLAUDE_OPUS_5,
+                fleet="prior", provider="infer", model=tc.CLAUDE_OPUS,
                 prompt_hash="x" * 64, input_tokens=1, output_tokens=1, cost_usd=50.0,
                 task_id="l0.revalidate", tier="judge",
             )
         )
-    quality = {("l0.revalidate", tc.NOVA_LITE): 0.10, ("l0.revalidate", tc.CLAUDE_OPUS_5): 0.99}
+    quality = {("l0.revalidate", tc.NOVA_LITE): 0.10, ("l0.revalidate", tc.CLAUDE_OPUS): 0.99}
     r, _ = _router(engine, quality=quality, model_manifest={
-        "task_classes": {"judge": {"model_id": tc.NOVA_LITE, "ladder": [tc.NOVA_LITE, tc.CLAUDE_OPUS_5]}}
+        "task_classes": {"judge": {"model_id": tc.NOVA_LITE, "ladder": [tc.NOVA_LITE, tc.CLAUDE_OPUS]}}
     })
     d = r.decide("l0.revalidate")
-    assert d.chosen_model != tc.CLAUDE_OPUS_5
+    assert d.chosen_model != tc.CLAUDE_OPUS
     assert any("cap" in x["reason"] for x in d.rejected)
 
 
@@ -108,14 +108,14 @@ def test_derivation_class_refuses_non_procurement_clean_ladder(engine):
 def test_frozen_manifest_pins_the_rung(engine):
     from app.clhear.platform.manifest import build_model_manifest
 
-    frozen = build_model_manifest(release_id="2026.09.28", resolved={"l3_decompose": tc.CLAUDE_OPUS_5})
+    frozen = build_model_manifest(release_id="2026.09.28", resolved={"l3_decompose": tc.CLAUDE_OPUS})
     # l3.block_generate is medium criticality, so the premium frozen rung is rejected and
     # the router falls to the next frozen rung rather than the default ladder head.
     r, _ = _router(engine, model_manifest=frozen)
     d = r.decide("l3.block_generate")
     assert d.ladder_source == "frozen"
-    assert d.ladder[0] == tc.CLAUDE_OPUS_5
-    assert d.chosen_model in tc.default_ladder("l3_decompose") and d.chosen_model != tc.CLAUDE_OPUS_5
+    assert d.ladder[0] == tc.CLAUDE_OPUS
+    assert d.chosen_model in tc.default_ladder("l3_decompose") and d.chosen_model != tc.CLAUDE_OPUS
 
 
 def test_run_logs_task_class_and_rejected_alternatives(engine):

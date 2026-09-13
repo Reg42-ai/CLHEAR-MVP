@@ -10,3 +10,5 @@ clhear_hostname             = "clhear.reg42.ai"
 webui_db_key                = "webui/clhear-latest.db"
 webui_zip_key               = "webui/webui-20260913T092244Z.zip"
 webui_zip_sha256            = "29Hm52zgL8/VAJ0BGOGX2q+yXUsdjQsxaZ0x/5Gyss4="
+
+infer_image = "730649732189.dkr.ecr.us-east-1.amazonaws.com/clhear-infer:latest"

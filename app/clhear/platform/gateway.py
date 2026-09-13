@@ -20,8 +20,8 @@ from sqlalchemy.engine import Engine
 
 from app.clhear.models import llm_calls
 from app.clhear.platform.task_classes import (
-    CLAUDE_OPUS_5,
-    CLAUDE_SONNET_5,
+    CLAUDE_OPUS,
+    CLAUDE_SONNET,
     COHERE_EMBED_MULTI,
     DEEPSEEK_R1,
     GPT_OSS_120B,
@@ -80,8 +80,8 @@ class Provider(Protocol):
 BEDROCK_PRICING: dict[str, tuple[float, float]] = {
     GPT_OSS_120B: (0.15, 0.60),
     MISTRAL_LARGE_3: (2.00, 6.00),
-    CLAUDE_SONNET_5: (3.00, 15.00),
-    CLAUDE_OPUS_5: (15.00, 75.00),
+    CLAUDE_SONNET: (3.00, 15.00),
+    CLAUDE_OPUS: (5.00, 25.00),
     NOVA_PRO: (0.80, 3.20),
     NOVA_LITE: (0.06, 0.24),
     LLAMA_3_3_70B: (0.72, 0.72),
@@ -92,7 +92,7 @@ BEDROCK_PRICING: dict[str, tuple[float, float]] = {
     COHERE_EMBED_MULTI: (0.10, 0.0),
 }
 # Rungs counted against the monthly premium cap (settings.clhear_frontier_monthly_cap_usd).
-PREMIUM_MODELS: frozenset[str] = frozenset({CLAUDE_OPUS_5})
+PREMIUM_MODELS: frozenset[str] = frozenset({CLAUDE_OPUS})
 _DEFAULT_PRICING = (3.00, 15.00)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
 _THINK_OPEN_RE = re.compile(r"<think>.*", re.S | re.I)

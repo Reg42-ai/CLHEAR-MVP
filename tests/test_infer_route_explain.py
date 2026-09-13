@@ -86,6 +86,6 @@ def test_router_replays_frozen_manifest(engine):
 
 
 def test_frozen_manifest_with_cn_derivation_is_rejected():
-    frozen = mm.build_model_manifest(release_id="2026.09.28", ladders={"l3_decompose": [tc.QWEN_3_5_32B, tc.CLAUDE_SONNET_5]})
+    frozen = mm.build_model_manifest(release_id="2026.09.28", ladders={"l3_decompose": [tc.QWEN_3_5_32B, tc.CLAUDE_SONNET]})
     problems = mm.check_manifest(frozen)
     assert any("l3_decompose" in p and "non-procurement-clean" in p for p in problems)

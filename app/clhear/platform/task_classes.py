@@ -11,14 +11,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Bedrock model ids (frozen per release via the model manifest).
+# Bedrock model ids (frozen per release via the model manifest). Every id below was
+# verified with a Converse call in the CLHEAR account (us-east-1, 2026-09-13); `us.`
+# prefixes are the cross-region inference profiles Bedrock requires for those models.
 GPT_OSS_120B = "openai.gpt-oss-120b-1:0"
-MISTRAL_LARGE_3 = "mistral.mistral-large-3-v1:0"
-CLAUDE_SONNET_5 = "anthropic.claude-sonnet-5-v1:0"
-CLAUDE_OPUS_5 = "anthropic.claude-opus-5-v1:0"
+MISTRAL_LARGE_3 = "mistral.mistral-large-3-675b-instruct"
+CLAUDE_OPUS = "us.anthropic.claude-opus-4-5-20251101-v1:0"
+# Sonnet answers only once the account's Anthropic use-case form is accepted; until then it
+# is priced and origin-tagged here but sits in no default ladder.
+CLAUDE_SONNET = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 NOVA_PRO = "amazon.nova-pro-v1:0"
 NOVA_LITE = "amazon.nova-lite-v1:0"
-LLAMA_3_3_70B = "meta.llama3-3-70b-instruct-v1:0"
+LLAMA_3_3_70B = "us.meta.llama3-3-70b-instruct-v1:0"
 # Permitted only for non-derivation classes unless a client policy says otherwise.
 QWEN_3_5_32B = "qwen.qwen3-5-32b-instruct-v1:0"
 DEEPSEEK_R1 = "deepseek.r1-v1:0"
@@ -31,8 +35,8 @@ MODEL_ORIGIN: dict[str, str] = {
     COHERE_EMBED_MULTI: "US",
     GPT_OSS_120B: "US",
     MISTRAL_LARGE_3: "EU",
-    CLAUDE_SONNET_5: "US",
-    CLAUDE_OPUS_5: "US",
+    CLAUDE_SONNET: "US",
+    CLAUDE_OPUS: "US",
     NOVA_PRO: "US",
     NOVA_LITE: "US",
     LLAMA_3_3_70B: "US",
@@ -75,8 +79,8 @@ class TaskClass:
     data_class_default: str = "public"  # public | restricted
 
 
-_DERIVATION_LADDER = (GPT_OSS_120B, MISTRAL_LARGE_3, CLAUDE_SONNET_5, CLAUDE_OPUS_5)
-_HARD_LADDER = (CLAUDE_SONNET_5, CLAUDE_OPUS_5, MISTRAL_LARGE_3)
+_DERIVATION_LADDER = (GPT_OSS_120B, MISTRAL_LARGE_3, CLAUDE_OPUS)
+_HARD_LADDER = (MISTRAL_LARGE_3, CLAUDE_OPUS, GPT_OSS_120B)
 _CHEAP_LADDER = (NOVA_LITE, NOVA_PRO, GPT_OSS_120B)
 _NONDERIVATION_LADDER = (NOVA_LITE, LLAMA_3_3_70B, GPT_OSS_120B)
 
