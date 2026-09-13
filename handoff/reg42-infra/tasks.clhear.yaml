@@ -1,7 +1,7 @@
 # CLHEAR task classes for Reg42 Infer — generated from
 # app/clhear/platform/task_classes.py (CLHEAR-MVP). Do not hand-edit.
 # Derivation classes: procurement-clean (US/EU origin) Bedrock models only.
-employee_prefix: clhear-
+employee: clhear  # one Infer employee for every CLHEAR fleet; the token is bound to it
 tasks:
   l1_parse:
     layer: L1

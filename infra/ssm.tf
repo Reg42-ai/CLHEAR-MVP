@@ -7,7 +7,7 @@ resource "aws_ssm_parameter" "infer_token" {
   name        = "/clhear/INFER_TOKEN"
   type        = "SecureString"
   value       = "CHANGEME"
-  description = "Reg42 Infer bearer token for the clhear-* employee ids"
+  description = "Reg42 Infer bearer token for the clhear employee (infer-v2, expiring; re-mint before expiry)"
   lifecycle {
     ignore_changes = [value]
   }

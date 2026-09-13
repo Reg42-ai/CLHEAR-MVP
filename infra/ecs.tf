@@ -75,7 +75,9 @@ resource "aws_ecs_task_definition" "fleet" {
         { name = "CLHEAR_ARTIFACT_STORE", value = "s3" },
         { name = "CLHEAR_LLM_PROVIDER", value = "infer" },
         { name = "INFER_BASE_URL", value = var.infer_base_url },
-        { name = "INFER_EMPLOYEE_ID", value = "clhear-${each.key}" },
+        # One Infer employee for all fleets: an Infer token is bound to a single employee id and the
+        # X-Employee-Id header must match it (403 otherwise). The layer is recorded in CLHEAR's own ledger.
+        { name = "INFER_EMPLOYEE_ID", value = "clhear" },
         { name = "CLHEAR_FRONTIER_MONTHLY_CAP_USD", value = "50" },
         # Query graph: empty URI -> in-process projection over Postgres (same answers, no Bolt).
         { name = "CLHEAR_NEO4J_URI", value = local.neo4j_uri },

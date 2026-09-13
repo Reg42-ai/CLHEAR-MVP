@@ -49,7 +49,10 @@ def origin_of(model_id: str) -> str:
     low = model_id.lower()
     if any(tag in low for tag in ("qwen", "deepseek", "yi-", "glm", "baichuan", "internlm", "kimi", "minimax")):
         return "CN"
-    if any(tag in low for tag in ("anthropic", "amazon", "openai", "meta", "cohere", "ai21", "gpt-oss", "nova")):
+    # Infer may report its catalog short name (e.g. "claude-haiku-45", "llama4-scout") rather than
+    # the Bedrock id, so the family names are recognised as well as the vendor prefixes.
+    if any(tag in low for tag in ("anthropic", "claude", "amazon", "nova", "titan", "openai", "gpt-oss",
+                                  "meta", "llama", "cohere", "ai21")):
         return "US"
     if "mistral" in low:
         return "EU"
@@ -141,7 +144,7 @@ def to_infer_yaml() -> str:
         "# CLHEAR task classes for Reg42 Infer — generated from",
         "# app/clhear/platform/task_classes.py (CLHEAR-MVP). Do not hand-edit.",
         "# Derivation classes: procurement-clean (US/EU origin) Bedrock models only.",
-        "employee_prefix: clhear-",
+        "employee: clhear  # one Infer employee for every CLHEAR fleet; the token is bound to it",
         "tasks:",
     ]
     for tc in TASK_CLASS_LIST:
