@@ -28,11 +28,10 @@
   .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
-  svg.constellation { width: 100%; height: 420px; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 12px; }
-  svg text { fill: var(--ink); font-size: 11px; pointer-events: none; }
-  svg line { stroke: var(--edge-bright); stroke-width: 1.2; }
-  svg circle { cursor: pointer; }
-  svg circle:focus { outline: none; stroke: var(--ink); stroke-width: 3; }
+  .constellation { position: relative; height: 400px; margin: 12px 0 0; }
+  .constellation .gc-root { position: absolute; inset: 0; }
+  .constellation .open-map { position: absolute; top: 10px; right: 10px; z-index: 2; }
+  figcaption { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
   .why { font-size: 13px; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
   .why code { font-family: var(--mono); font-size: 11.5px; }
   .timeline { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 2px solid var(--edge); }
@@ -56,9 +55,10 @@
 <a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 <script type="module">
-import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import React, { useState, useEffect, useRef } from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import htm from "https://esm.sh/htm@3.1.1";
+import { createGraphCanvas } from "/static/graph-canvas.js";
 
 const html = htm.bind(React.createElement);
 const api = async (url, opts) => {
@@ -75,21 +75,28 @@ function useTheme() {
 const Layer = ({ l }) => html`<span class=${"badge " + l}>${l}</span>`;
 
 function Constellation({ graph, open }) {
+  /* The node plus one hop on the shared Obsidian-style canvas (graph_canvas.js), compact:
+     fixed height, no panel; double-click moves the focus, "Open in map" goes to /map for
+     depth, granularity and the whole store. */
+  const ref = useRef(null); const gc = useRef(null); const openRef = useRef(open); openRef.current = open;
+  useEffect(() => {
+    gc.current = createGraphCanvas(ref.current, { compact: true, onFocus: (n) => openRef.current(n.id), onExpand: (n) => openRef.current(n.id),
+      onSelect: (n) => setSel(n) });
+    return () => gc.current?.destroy();
+  }, []);
+  const [sel, setSel] = useState(null);
+  useEffect(() => {
+    const ids = new Set(graph.nodes.map((n) => n.id));
+    gc.current?.setData({ focus: graph.focus, nodes: graph.nodes.map((n) => ({ ...n, degree: graph.edges.filter((e) => e.from === n.id || e.to === n.id).length })),
+      edges: graph.edges.filter((e) => ids.has(e.from) && ids.has(e.to)).map((e) => ({ from: e.from, to: e.to, rel: String(e.rel || "").toLowerCase(), weight: 1 })) });
+    setSel(null);
+  }, [graph.focus, graph.nodes.length, graph.edges.length]);
   const focus = graph.nodes.find((n) => n.id === graph.focus) || graph.nodes[0];
-  const others = graph.nodes.filter((n) => n.id !== focus.id).slice(0, 40);
-  const W = 900, H = 420, cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 60;
-  const pos = { [focus.id]: [cx, cy] };
-  others.forEach((n, i) => { const a = (2 * Math.PI * i) / others.length; pos[n.id] = [cx + R * Math.cos(a), cy + R * Math.sin(a)]; });
-  const color = { L1: "#93c5fd", L2: "#818cf8", L3: "#34d399", L4: "#fbbf24", L5: "#f0abfc", L6: "#fda4af" };
-  return html`<figure>
-    <svg class="constellation" viewBox=${`0 0 ${W} ${H}`} role="img" aria-label=${`Constellation around ${focus.label}: ${others.length} connected nodes`}>
-      ${graph.edges.filter((e) => pos[e.from] && pos[e.to]).map((e, i) => html`<line key=${i} x1=${pos[e.from][0]} y1=${pos[e.from][1]} x2=${pos[e.to][0]} y2=${pos[e.to][1]} />`)}
-      ${[focus, ...others].map((n) => html`<g key=${n.id}>
-        <circle cx=${pos[n.id][0]} cy=${pos[n.id][1]} r=${n.id === focus.id ? 16 : 9} fill=${color[n.layer] || "#8b8fb8"} tabIndex="0" role="button"
-          aria-label=${`${n.layer} ${n.kind}: ${n.label}`} onClick=${() => open(n.id)} onKeyDown=${(e) => { if (e.key === "Enter" || e.key === " ") open(n.id); }} />
-        <text x=${pos[n.id][0] + 12} y=${pos[n.id][1] - 10}>${(n.label || n.id).slice(0, 34)}</text></g>`)}
-    </svg>
-    <figcaption class="mono">Focus in the centre; one hop each way across layers. Click or press Enter on a node to move the focus.</figcaption>
+  return html`<figure style=${{ margin: 0 }}>
+    <div class="constellation"><div ref=${ref}></div>
+      <a class="btn quiet open-map" href=${"/map#" + encodeURIComponent(graph.focus)}>Open in map</a></div>
+    <figcaption class="mono"><span>One hop each way around ${focus?.label || graph.focus}: ${graph.nodes.length - 1} connected nodes. Hover isolates, scroll zooms, double-click a node to move the focus.</span>
+      ${sel ? html`<span><span class=${"badge " + sel.layer}>${sel.layer}</span>${sel.label} · <a href="#" onClick=${(e) => { e.preventDefault(); open(sel.id); }}>go</a></span>` : null}</figcaption>
   </figure>`;
 }
 
@@ -203,7 +210,7 @@ function App() {
     <header class="appbar">
       <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>explore</span></div>
       <div class="spacer"></div>
-      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink active" href="/explore">Explore</a><a class="navlink" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink" href="/contribute">Contribute</a><a class="navlink" href="/conformance">Conformance</a><a class="navlink" href="/stack">Stack</a></nav>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink active" href="/explore">Explore</a><a class="navlink" href="/map">Map</a><a class="navlink" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink" href="/contribute">Contribute</a><a class="navlink" href="/conformance">Conformance</a><a class="navlink" href="/stack">Stack</a></nav>
       <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
     </header>
     <main id="main"><h1 class="visually-hidden">Explore the CLHEAR derivation graph</h1>

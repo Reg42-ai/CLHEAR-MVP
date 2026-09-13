@@ -154,6 +154,7 @@ function Blueprint({ openItem }) {
           <button class="btn quiet" onClick=${whatChanged}>What changed since</button>
           <button class="btn quiet" onClick=${exportOscal}>Export OSCAL</button>
           <a class="btn quiet" href=${"/l7#" + bp.blueprint_id}>Priorities (L7)</a>
+          <a class="btn quiet" href=${"/map#" + bp.blueprint_id}>Map</a>
         </div></div>`}
       ${err && html`<p class="bad" style=${{ fontSize: "13px" }}>${err}</p>`}
     </aside>
