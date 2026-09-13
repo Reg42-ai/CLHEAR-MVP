@@ -1,7 +1,8 @@
 # clhear-workers: the scheduled ingestion fleet (SQS consumer).
 # EventBridge cron -> SQS AdapterRunRequested -> this container runs the
 # full ingest pipeline and publishes the corpus snapshot for the explorer.
-FROM python:3.12-slim
+# Official image via the ECR Public mirror: not subject to Docker Hub anonymous pull limits.
+FROM public.ecr.aws/docker/library/python:3.12-slim
 
 WORKDIR /srv
 ENV PYTHONUNBUFFERED=1 PYTHONPATH=/srv
