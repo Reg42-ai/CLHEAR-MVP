@@ -8,8 +8,8 @@ aurora_enabled              = true
 schedules_enabled           = true
 clhear_hostname             = "clhear.reg42.ai"
 webui_db_key                = "webui/clhear-latest.db"
-webui_zip_key               = "webui/webui-20260913T141146Z.zip"
-webui_zip_sha256            = "EDxZCN8l+Eug6pTk1KYScqMVrFph/EjwOdRu7z84Wmw="
+webui_zip_key               = "webui/webui-20260913T194411Z.zip"
+webui_zip_sha256            = "rIVm1qwVyStVsBFxwVsdw9SbCMifFHf7aA5gsamA23U="
 
 infer_image    = "730649732189.dkr.ecr.us-east-1.amazonaws.com/clhear-infer:latest"
 aurora_max_acu = 8

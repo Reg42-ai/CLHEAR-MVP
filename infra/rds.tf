@@ -57,8 +57,9 @@ resource "aws_rds_cluster_parameter_group" "aurora" {
   family = "aurora-postgresql16"
 
   parameter {
-    name  = "shared_preload_libraries"
-    value = "pg_stat_statements"
+    name         = "shared_preload_libraries"
+    value        = "pg_stat_statements"
+    apply_method = "pending-reboot" # static parameter; "immediate" is a perpetual plan diff
   }
   parameter {
     name  = "log_min_duration_statement"
