@@ -27,6 +27,25 @@ def test_explore_page_and_layer_counts(engine, client):
     assert layers["L4"]["licences"] >= 1  # the seeded register
 
 
+def test_map_page_and_graph_canvas_are_served_and_linked(engine, client):
+    """The Obsidian-style map (HLD v2 §5 constellation): its own page, the shared
+    renderer module, and the explore node page drawing on the same canvas."""
+    page = client.get("/map")
+    assert page.status_code == 200 and 'id="main"' in page.text and "theme.css" in page.text
+    assert "/static/graph-canvas.js" in page.text and "/graph/subgraph" in page.text
+    for section in ("Filters", "Granularity", "Display", "Forces"):
+        assert f"<summary>{section}</summary>" in page.text
+    js = client.get("/static/graph-canvas.js")
+    assert js.status_code == 200 and js.headers["content-type"].startswith("text/javascript")
+    assert "export function createGraphCanvas" in js.text and "prefers-reduced-motion" in js.text
+    for mod in ("d3-force@3.0.0", "d3-zoom@3.0.0", "d3-selection@3.0.0", "d3-drag@3.0.0"):
+        assert f"https://esm.sh/{mod}" in js.text
+    explore = client.get("/explore").text
+    assert "/static/graph-canvas.js" in explore and '"/map#"' in explore and "<svg" not in explore
+    css = client.get("/static/theme.css").text
+    assert all(f"--l{i}:" in css for i in range(1, 9)) and ".gc-a11y" in css
+
+
 def test_search_finds_nodes_across_layers(engine, client, tmp_path):
     _blueprint(client, engine, tmp_path)
     hits = client.get("/explore/search", params={"q": "client money"}).json()

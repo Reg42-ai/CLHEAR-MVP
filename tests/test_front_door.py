@@ -174,9 +174,20 @@ def test_no_paywall(engine, client):
                  "/watch/feed", "/evals/summary", "/solon/examples"):
         assert client.get(path).status_code == 200, path
     # the pages themselves are open too
-    for page in ("/", "/explore", "/learn", "/watch", "/build", "/evals", "/stack"):
+    for page in ("/", "/explore", "/map", "/learn", "/watch", "/build", "/evals", "/stack"):
         r = client.get(page)
         assert r.status_code == 200 and "Cache-Control" in r.headers, page
+    assert client.get(f"/graph/subgraph?focus={bid}&depth=2").status_code == 200
+
+
+def test_solon_hands_the_finished_blueprint_to_the_map(engine, client):
+    """The front door's "Explore the evidence chain" opens the program as a graph, and
+    the L6 browser has the same door beside Priorities."""
+    home = client.get("/").text
+    assert '"/map#" + done.detail.blueprint_id}>Explore the evidence chain' in home
+    assert 'href="/map">Map</a>' in home
+    l6 = client.get("/l6").text
+    assert '"/map#" + bp.blueprint_id}>Map</a>' in l6
 
 
 def test_front_door_pages_meet_the_static_wcag_rules():

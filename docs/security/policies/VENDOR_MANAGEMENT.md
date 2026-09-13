@@ -19,7 +19,7 @@ Owner: CISO. Reviewed annually and when a vendor is added.
 | Reg42 Infer | model routing to Bedrock | prompts derived from public/licensed regulatory text; never member data | internal; same account | none — derivation pauses, serving continues |
 | GitHub | source, CI, public `clhear` repo, releases | code, public artefacts | GitHub SOC 2 | mirror + signed artefacts allow re-hosting |
 | Discourse (hosted) | community forum | contributor emails, posts | Discourse SOC 2 | export; forum is not in the record |
-| esm.sh | CDN for React/htm in the no-build pages | none (client-side fetch) | public CDN | pin versions; vendor the two files if the CDN fails |
+| esm.sh | CDN for React/htm and the d3 modules (`d3-force`, `d3-zoom`, `d3-selection`, `d3-drag`, all `@3.0.0`) behind the no-build pages and the graph canvas | none (client-side fetch) | public CDN | pin versions; vendor the files if the CDN fails |
 | Upptime (GitHub Actions) | independent uptime probe of `/status.json` | none | runs in our GitHub org | `/status.json` remains authoritative |
 | Regulatory publishers | source texts | none (we fetch) | rights basis recorded per source (`app/clhear/l1/rights.py`) | rights-aware serving; derived facts only when text is withheld |
 

@@ -372,6 +372,20 @@ What is live in account 730649732189 / us-east-1 after the go-live push:
   uses `COGNITO_DEFAULT` mail and is unaffected.
 - **Cognito**: pool `us-east-1_gVVpIhrgl`, hosted UI `clhear-auth` ACTIVE,
   identity providers: Cognito only (Google IdP needs the client secret).
+- **Map (`/map`)**: the compliance program as an Obsidian-style graph — canvas
+  with zoom/pan, hover isolation, labels that appear as you zoom, drag, live
+  force sliders, a depth slider (1–4 hops) around any node and four
+  granularity presets (Programs → Areas → Items → Everything; groups open on
+  double-click). It reads one new open endpoint, `GET /graph/subgraph`
+  (`LocalGraph.subgraph`: BFS + folding + weighted edges, capped at
+  `max_nodes`, blueprint coverage gaps drawn as dashed `gap` edges). Views are
+  links (`/map#BLU-…?depth=2&g=areas&layers=L2,L3&expand=grp:kind:Process`).
+  The explore node page draws the same canvas compactly; Solon's "Explore the
+  evidence chain" and the L6 sidebar open the map. Renderer:
+  `web/graph_canvas.js` (`/static/graph-canvas.js`, d3 modules from esm.sh);
+  colours are the `--l1…--l8` tokens in `theme.css`. Reduced motion draws one
+  settled frame; a focusable node list beside the canvas is the keyboard and
+  screen-reader path.
 
 ### Runbook
 
