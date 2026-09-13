@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     clhear_public_repo_dir: str = "./clhear-public"
     clhear_public_repo_url: str = ""
     clhear_export_git_token: str = ""
+    # HLD v2 §9: no public disclosure before the provisional filing is confirmed.
+    # The exporter compiles the public repo locally regardless; it pushes only when
+    # this is true (set as a repository variable in the release workflow).
+    clhear_public_disclosure_confirmed: bool = False
+
+    # HLD v2 §6 tooling: Discourse forum (link shown on the contribute page) and the
+    # beehiiv newsletter that carries the change digest. Empty = hooks are inert.
+    clhear_discourse_url: str = ""
+    clhear_beehiiv_api_key: str = ""
+    clhear_beehiiv_publication_id: str = ""  # pub_…
+    clhear_beehiiv_post_status: str = "draft"  # draft | confirmed (confirmed sends immediately)
 
     clhear_artifacts_dir: str = "./artifacts"
 

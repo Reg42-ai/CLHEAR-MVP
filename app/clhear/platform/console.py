@@ -517,6 +517,16 @@ def decide(engine: Engine, proposal_id: str, decision: str, approver: str, *, ov
     """The one decision path for every proposal kind: status flip (l0_proposals),
     then the kind's side effect — community sync, concept apply, or the console's
     modification apply — recorded as a human edit."""
+    pending = l0_proposals.get_proposal(engine, proposal_id)
+    if pending is not None and pending.get("kind") == "community_contribution":
+        # HLD v2 §6 / I12: a console decision is one reviewer's vote; the contribution
+        # flow keeps the two-reviewer rule and flips this proposal itself when it lands.
+        from app.clhear.platform import contributions
+
+        contribution = contributions.review_from_console(engine, pending, decision=decision, approver=approver)
+        decided = l0_proposals.get_proposal(engine, proposal_id) or pending
+        decided["contribution"] = contribution
+        return decided
     action = l0_proposals.approve if decision == "approved" else l0_proposals.reject
     decided = action(engine, proposal_id, approver)
     kind = str(decided.get("kind", ""))

@@ -202,12 +202,14 @@ def build_manifest(
     engine=None,
     model_manifest: dict | None = None,
     previous: dict | None = None,
+    contributions: list[dict] | None = None,
 ) -> dict[str, Any]:
     from app.clhear.platform.manifest import build_model_manifest
 
     when = generated_at or _now()
     published, reserved, gate_statuses = _gate_layers(engine)
     mm = model_manifest or _FROZEN_MODEL_MANIFEST or build_model_manifest(release_id=release_id)
+    shipped = list(contributions or [])
     manifest: dict[str, Any] = {
         "id": release_id,
         "version": release_id,
@@ -235,6 +237,13 @@ def build_manifest(
         "sbom_uri": "",
         "delta": _delta(previous, counts, published),
         "licence": {"data": "ODC-By-1.0", "text_and_schemas": "CC-BY-4.0", "code": "Apache-2.0"},
+        # HLD v2 §6: every accepted community contribution ships with attribution and
+        # the impact it had (blueprints / obligations changed).
+        "contributions": {
+            "count": len(shipped),
+            "contributors": sorted({c["contributor"] for c in shipped}),
+            "attribution": shipped,
+        },
     }
     manifest["manifest_hash"] = _manifest_hash(manifest)
     return manifest
@@ -284,6 +293,7 @@ def publish_release(
     previous = get_latest(engine=None)
     _, reserved, _ = _gate_layers(engine)
     _write_reserved_prefixes(rid, reserved)
+    shipped = _ship_contributions(engine, rid)
 
     s3 = _s3_parts()
     if s3:
@@ -295,7 +305,8 @@ def publish_release(
             _s3().upload_file(str(src_path), bucket, dest_key)
         dest_uri = f"s3://{bucket}/{dest_key}"
         manifest = build_manifest(
-            release_id=rid, snapshot_uri=dest_uri, content_hash=content_hash, counts=counts, engine=engine, previous=previous
+            release_id=rid, snapshot_uri=dest_uri, content_hash=content_hash, counts=counts, engine=engine, previous=previous,
+            contributions=shipped,
         )
         _put_json_s3(bucket, f"{prefix}/{rid}/{MANIFEST_NAME}".lstrip("/"), manifest)
         _put_json_s3(bucket, f"{prefix}/{LATEST_NAME}".lstrip("/"), {"id": rid, "manifest_uri": f"s3://{bucket}/{prefix}/{rid}/{MANIFEST_NAME}"})
@@ -315,11 +326,29 @@ def publish_release(
             content_hash = _sha256_file(dest)
             dest_uri = dest.resolve().as_uri()
     manifest = build_manifest(
-        release_id=rid, snapshot_uri=dest_uri, content_hash=content_hash, counts=counts, engine=engine, previous=previous
+        release_id=rid, snapshot_uri=dest_uri, content_hash=content_hash, counts=counts, engine=engine, previous=previous,
+        contributions=shipped,
     )
     _put_json_local(root / rid / MANIFEST_NAME, manifest)
     _put_json_local(root / LATEST_NAME, {"id": rid})
     return manifest
+
+
+def _ship_contributions(engine, release_id: str) -> list[dict]:
+    """Accepted community contributions ship with this release (HLD v2 §6): status →
+    released, impact computed, contributor notified. Tolerates an engine without the
+    community schema (snapshot-only publishes)."""
+    if engine is None:
+        return []
+    try:
+        from app.clhear.platform import contributions
+
+        return contributions.release_contributions(engine, release_id)
+    except Exception as exc:  # pragma: no cover - publish must not fail on the ledger
+        import logging
+
+        logging.getLogger("clhear.releases").warning("contributions not shipped with %s: %s", release_id, exc)
+        return []
 
 
 def _live_manifest(engine) -> dict:
