@@ -83,6 +83,16 @@ resource "aws_iam_role_policy" "webui_db" {
         Resource = "${aws_s3_bucket.deploy.arn}/*"
       },
       {
+        # /v1/releases enumerates release folders (releases.list_releases); GetObject alone
+        # makes that listing an AccessDenied that the status page used to swallow as "no release".
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = aws_s3_bucket.deploy.arn
+        Condition = {
+          StringLike = { "s3:prefix" = ["releases/", "releases/*"] }
+        }
+      },
+      {
         # Community write path: read-only web app enqueues ops for the worker.
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]

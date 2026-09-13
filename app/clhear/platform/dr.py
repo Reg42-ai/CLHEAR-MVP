@@ -115,9 +115,8 @@ def backup(engine: Engine, dest: Path) -> dict:
         finally:
             src.close()
     elif engine.dialect.name == "postgresql":
-        url = engine.url.render_as_string(hide_password=False).replace("+psycopg", "").replace("+psycopg2", "")
-        subprocess.run(["pg_dump", "--format=custom", "--no-owner", "--no-privileges", "--file", str(dest), url],
-                       check=True, capture_output=True, text=True, timeout=3600)
+        _pg_tool("pg_dump", ["--format=custom", "--no-owner", "--no-privileges", "--file", str(dest)],
+                 engine.url.render_as_string(hide_password=False))
     else:  # pragma: no cover - only sqlite and postgres are supported record stores
         raise RuntimeError(f"unsupported dialect for DR backup: {engine.dialect.name}")
     digest = hashlib.sha256(dest.read_bytes()).hexdigest()
@@ -141,12 +140,51 @@ def restore(dump: Path, scratch_url: str) -> Engine:
         shutil.copyfile(dump, target)
     elif scratch_url.startswith("postgresql"):
         _ensure_postgres_database(scratch_url)
-        url = scratch_url.replace("+psycopg", "").replace("+psycopg2", "")
-        subprocess.run(["pg_restore", "--clean", "--if-exists", "--no-owner", "--no-privileges", "--dbname", url, str(dump)],
-                       check=True, capture_output=True, text=True, timeout=3600)
+        # --no-comments: on RDS the dump's COMMENT ON EXTENSION is owned by rdsadmin, and that
+        # one refused statement would otherwise make an otherwise complete restore exit 1.
+        _pg_tool("pg_restore", ["--clean", "--if-exists", "--no-owner", "--no-privileges", "--no-comments",
+                                "--dbname", "{url}", str(dump)], scratch_url, tolerate=_only_session_set_skew)
     else:  # pragma: no cover
         raise RuntimeError(f"unsupported scratch target: {_redact(scratch_url)}")
     return make_engine(scratch_url)
+
+
+def _only_session_set_skew(stderr: str) -> bool:
+    """True when every error pg_restore ignored was a session ``SET`` of a parameter the
+    server does not know (a newer client dumping an older server, e.g. pg_dump 17's
+    ``SET transaction_timeout`` against PostgreSQL 16). Those statements carry no data;
+    the drill's row-count verification decides whether the restore is complete. Any
+    other error keeps the restore a failure."""
+    lines = stderr.splitlines()
+    errors = [i for i, line in enumerate(lines) if ": error:" in line]
+    if not errors:
+        return False
+    for i in errors:
+        following = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        if "unrecognized configuration parameter" not in lines[i] or not following.startswith("Command was: SET "):
+            return False
+    return True
+
+
+def _pg_tool(tool: str, args: list[str], url: str, *, timeout: int = 3600, tolerate=None) -> str:
+    """Run ``pg_dump``/``pg_restore`` with the password in ``PGPASSWORD`` rather than argv, so
+    neither ``ps`` nor a ``CalledProcessError`` (which repeats argv) can carry the credential;
+    a failure surfaces the tool's own stderr, redacted, because exit status 1 alone says nothing.
+    ``tolerate(stderr)`` may accept a non-zero exit whose ignored errors are known to be harmless."""
+    parsed = sa.engine.make_url(url).set(drivername="postgresql")
+    env = {**os.environ, "PGPASSWORD": parsed.password or ""}
+    conn = parsed._replace(password=None).render_as_string(hide_password=False)  # set(password=None) is a no-op
+    argv = [tool, *([conn if a == "{url}" else a for a in args] if "{url}" in args else [*args, conn])]
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+    stderr = proc.stderr.replace(parsed.password, "***") if parsed.password else proc.stderr
+    if proc.returncode != 0:
+        if tolerate is not None and tolerate(stderr):
+            log.warning("%s exited %s with only tolerated errors:\n%s", tool, proc.returncode,
+                        "\n".join(stderr.strip().splitlines()[-6:]))
+            return stderr
+        tail = "\n".join(stderr.strip().splitlines()[-12:])
+        raise RuntimeError(f"{tool} exited {proc.returncode}: {tail}")
+    return stderr
 
 
 def _ensure_postgres_database(scratch_url: str) -> None:

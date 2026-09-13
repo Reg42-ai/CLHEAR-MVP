@@ -32,6 +32,29 @@ def test_status_measures_freshness_and_gates_from_the_data(engine):
     assert st["status"] != "operational"  # an empty L1 can never be operational
 
 
+def test_status_reports_the_release_the_latest_pointer_names(engine, tmp_path, monkeypatch):
+    """The status page names the release ``latest.json`` points at (what the API
+    serves), not merely the newest folder; a store that cannot be read is an honest
+    null rather than an exception."""
+    from app.clhear import releases
+
+    monkeypatch.setenv("CLHEAR_ARTIFACTS_DIR", str(tmp_path))
+    monkeypatch.setenv("CLHEAR_RELEASES_S3_PREFIX", "")
+    get_settings.cache_clear()
+    try:
+        curated.seed(engine)
+        for rid, when in (("2026.01.01", "2026-01-01T00:00:00+00:00"), ("2026.02.02", "2026-02-02T00:00:00+00:00")):
+            releases._put_json_local(releases._local_root() / rid / releases.MANIFEST_NAME, {"id": rid, "generated_at": when})
+        releases._put_json_local(releases._local_root() / releases.LATEST_NAME, {"id": "2026.01.01"})
+        rel = metrics.status(engine)["release"]
+        assert rel == {"id": "2026.01.01", "generated_at": "2026-01-01T00:00:00+00:00"}
+
+        monkeypatch.setattr(releases, "get_latest", lambda engine=None: (_ for _ in ()).throw(PermissionError("denied")))
+        assert metrics.status(engine)["release"] == {"id": None, "generated_at": None}
+    finally:
+        get_settings.cache_clear()
+
+
 def test_prometheus_exposition_is_well_formed(engine):
     curated.seed(engine)
     text = metrics.prometheus(engine)

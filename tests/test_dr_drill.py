@@ -95,6 +95,66 @@ def test_restore_refuses_to_overwrite_a_non_empty_scratch(engine, tmp_path):
         dr.restore(dump, f"sqlite:///{busy}")
 
 
+def test_postgres_tools_never_see_the_password_in_argv_or_errors(monkeypatch):
+    """pg_dump/pg_restore get the credential through PGPASSWORD; argv, ``ps`` and the
+    recorded failure (which quotes stderr) carry a password-less DSN."""
+    seen = {}
+
+    class Proc:
+        returncode, stderr = 1, "pg_restore: error: could not connect to server at secret-pw-123\nerrors ignored on restore: 1"
+
+    def fake_run(argv, **kw):
+        seen["argv"], seen["env"] = argv, kw["env"]
+        return Proc()
+
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    url = "postgresql+psycopg://clhear:secret-pw-123@db.example:5432/clhear_drill?sslmode=require"
+    with pytest.raises(RuntimeError) as exc:
+        dr._pg_tool("pg_restore", ["--clean", "--no-comments", "--dbname", "{url}", "/tmp/x.dump"], url)
+    assert seen["env"]["PGPASSWORD"] == "secret-pw-123"
+    assert seen["argv"][0] == "pg_restore" and seen["argv"][-1] == "/tmp/x.dump"
+    assert seen["argv"][seen["argv"].index("--dbname") + 1] == "postgresql://clhear@db.example:5432/clhear_drill?sslmode=require"
+    assert "secret-pw-123" not in " ".join(seen["argv"]) and "secret-pw-123" not in str(exc.value)
+    assert "errors ignored on restore" in str(exc.value) and "pg_restore exited 1" in str(exc.value)
+
+    class Ok:
+        returncode, stderr = 0, ""
+
+    monkeypatch.setattr(dr.subprocess, "run", lambda argv, **kw: seen.update(argv=argv) or Ok())
+    dr._pg_tool("pg_dump", ["--format=custom", "--file", "/tmp/x.dump"], url)
+    assert seen["argv"] == ["pg_dump", "--format=custom", "--file", "/tmp/x.dump",
+                            "postgresql://clhear@db.example:5432/clhear_drill?sslmode=require"]
+
+
+def test_restore_tolerates_only_client_server_session_set_skew(monkeypatch):
+    """pg_dump 17 against PostgreSQL 16 emits ``SET transaction_timeout``; pg_restore exits 1
+    for that ignored error although every row is restored. That exact class passes (the
+    row-count verification is the real check); any other ignored error still fails."""
+    skew = ('pg_restore: error: could not execute query: ERROR:  unrecognized configuration parameter "transaction_timeout"\n'
+            "Command was: SET transaction_timeout = 0;\n"
+            "pg_restore: warning: errors ignored on restore: 1")
+    real = ('pg_restore: error: could not execute query: ERROR:  relation "l1_record.clauses" does not exist\n'
+            "Command was: COPY l1_record.clauses (id) FROM stdin;\n"
+            "pg_restore: warning: errors ignored on restore: 1")
+    assert dr._only_session_set_skew(skew) is True
+    assert dr._only_session_set_skew(real) is False
+    assert dr._only_session_set_skew(skew + "\n" + real) is False  # one real error poisons the lot
+    assert dr._only_session_set_skew("") is False
+
+    class Proc:
+        returncode = 1
+
+        def __init__(self, err):
+            self.stderr = err
+
+    url = "postgresql://clhear:pw@db.example/clhear_drill"
+    monkeypatch.setattr(dr.subprocess, "run", lambda argv, **kw: Proc(skew))
+    assert "transaction_timeout" in dr._pg_tool("pg_restore", ["--dbname", "{url}", "/tmp/x"], url, tolerate=dr._only_session_set_skew)
+    monkeypatch.setattr(dr.subprocess, "run", lambda argv, **kw: Proc(real))
+    with pytest.raises(RuntimeError, match="does not exist"):
+        dr._pg_tool("pg_restore", ["--dbname", "{url}", "/tmp/x"], url, tolerate=dr._only_session_set_skew)
+
+
 def test_a_tampered_restore_fails_the_record_check_and_the_drill(engine, tmp_path, monkeypatch):
     _seed(engine, tmp_path)
     real_restore = dr.restore

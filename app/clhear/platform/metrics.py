@@ -15,10 +15,13 @@ source the evals dashboard uses — so the status page can never disagree with i
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
+
+log = logging.getLogger(__name__)
 
 SLOS = (
     {"name": "api_availability", "description": "API availability over 30 days", "target": 0.999, "unit": "ratio",
@@ -97,12 +100,16 @@ def gates(engine: Engine, release: str | None = None) -> dict[str, dict]:
 
 
 def _release(engine: Engine) -> dict:
+    """The release the ``latest`` pointer names: one GetObject on ``latest.json`` plus
+    its manifest, rather than listing and reading every release folder on each
+    status probe. ``latest`` is what the API serves, so it is the release to report."""
     try:
-        from app.clhear.releases import list_releases
+        from app.clhear.releases import get_latest, list_releases
 
-        rel = (list_releases(engine) or [{}])[0]
+        rel = get_latest(engine) or (list_releases(engine) or [{}])[0]
         return {"id": rel.get("release") or rel.get("id"), "generated_at": rel.get("generated_at")}
     except Exception:  # noqa: BLE001 — the status page must render even when the release store is unreachable
+        log.warning("status: release store unreachable", exc_info=True)
         return {"id": None, "generated_at": None}
 
 
