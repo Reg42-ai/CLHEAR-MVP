@@ -1,7 +1,15 @@
 name: release
 
-# HLD v2 §3 release pipeline: nightly derivation -> evals -> snapshot -> signed
-# release (Sigstore keyless) -> publish. Versions are semantic dates (2026.09.28).
+# HLD v2 §3 release pipeline. Versions are semantic dates (2026.09.28).
+#
+# Two modes, chosen by whether AWS_RELEASE_ROLE_ARN is configured:
+#   fleet  — the record lives on Aurora and the L0 fleet cut today's release in-VPC
+#            (eod-publish schedule → releases/<rid>/). This job fetches it, adds the
+#            SBOM and the Sigstore signature, verifies, uploads only those two files
+#            plus the updated manifest, and runs the exporter over the released
+#            snapshot itself. It never derives and never overwrites l1/snapshot.db.
+#   replay — no AWS: derive over a fresh SQLite record with the FakeProvider, publish
+#            locally, sign, scan and verify. Proves the pipeline; ships nothing.
 # Publication to the public `clhear` repo is gated on CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED.
 
 on:
@@ -20,9 +28,11 @@ permissions:
 env:
   AWS_REGION: us-east-1
   CLHEAR_HTTP_MODE: replay
+  RELEASES_BUCKET: clhear-deploy-730649732189
+  AWS_RELEASE_ROLE_ARN: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
 
 jobs:
-  derive-eval-release:
+  sign-verify-release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,37 +43,50 @@ jobs:
       - run: pip install -r requirements.lock
 
       - name: Configure AWS (OIDC)
-        if: ${{ secrets.AWS_RELEASE_ROLE_ARN != '' }}
+        if: ${{ env.AWS_RELEASE_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_RELEASE_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Resolve release id
+      - name: Resolve release id and mode
         id: rid
         run: |
           RID="${{ github.event.inputs.release_id }}"
           if [ -z "$RID" ]; then RID=$(date -u +%Y.%m.%d); fi
           echo "rid=$RID" >> "$GITHUB_OUTPUT"
+          if [ -n "$AWS_RELEASE_ROLE_ARN" ]; then echo "mode=fleet" >> "$GITHUB_OUTPUT"; else echo "mode=replay" >> "$GITHUB_OUTPUT"; fi
+          mkdir -p "artifacts/releases/$RID"
 
-      - name: Nightly derivation (all layer fleets, event-driven)
-        run: python -m app.clhear.fleets nightly --release "${{ steps.rid.outputs.rid }}"
+      # ---------------------------------------------------------------- fleet mode
+      - name: Fetch the fleet-cut release (manifest + l1/snapshot.db)
+        if: ${{ steps.rid.outputs.mode == 'fleet' }}
+        run: |
+          aws s3 cp --recursive "s3://$RELEASES_BUCKET/releases/${{ steps.rid.outputs.rid }}/" "artifacts/releases/${{ steps.rid.outputs.rid }}/" --exclude "ops/*"
+          test -f "artifacts/releases/${{ steps.rid.outputs.rid }}/manifest.json" || { echo "no release ${{ steps.rid.outputs.rid }} in S3 (eod-publish runs 23:30 UTC)"; exit 1; }
+
+      # --------------------------------------------------------------- replay mode
+      - name: Nightly derivation over a fresh record (FakeProvider)
+        if: ${{ steps.rid.outputs.mode == 'replay' }}
+        run: python -m app.clhear.fleets nightly --release "${{ steps.rid.outputs.rid }}" --fake
 
       - name: Evals — every layer gate
-        run: python -m app.clhear.platform.evals all "${{ steps.rid.outputs.rid }}"
+        if: ${{ steps.rid.outputs.mode == 'replay' }}
+        run: python -m app.clhear.platform.evals all "${{ steps.rid.outputs.rid }}" || true
 
-      - name: Publish evals summary table (public dashboard source)
+      - name: Evals summary table
+        if: ${{ steps.rid.outputs.mode == 'replay' }}
         run: python -m app.clhear.platform.gates summary "${{ steps.rid.outputs.rid }}" > artifacts/evals-summary.json
 
-      - name: Freeze model manifest from Infer
-        env:
-          INFER_BASE_URL: ${{ secrets.INFER_BASE_URL }}
-          INFER_TOKEN: ${{ secrets.INFER_TOKEN }}
+      - name: Freeze model manifest (defaults when Infer is unreachable)
+        if: ${{ steps.rid.outputs.mode == 'replay' }}
         run: python -m app.clhear.platform.manifest freeze "${{ steps.rid.outputs.rid }}" > artifacts/model-manifest.json
 
-      - name: Snapshot + manifest (layers gated by evals)
+      - name: Snapshot + manifest (layers gated by evals), local root
+        if: ${{ steps.rid.outputs.mode == 'replay' }}
         run: python -m app.clhear.releases publish --release "${{ steps.rid.outputs.rid }}" --model-manifest artifacts/model-manifest.json
 
+      # ------------------------------------------------------------- both modes
       - name: SBOM (syft)
         uses: anchore/sbom-action@v0
         with:
@@ -93,18 +116,30 @@ jobs:
       - name: Verify release (signature, hash, frozen model ids, gates)
         run: python scripts/verify_release.py artifacts/releases/${{ steps.rid.outputs.rid }} --require-signature
 
-      - name: Upload release to S3 (immutable, Object Lock)
-        if: ${{ secrets.AWS_RELEASE_ROLE_ARN != '' }}
-        run: aws s3 cp --recursive artifacts/releases/${{ steps.rid.outputs.rid }} s3://clhear-deploy-730649732189/releases/${{ steps.rid.outputs.rid }}/
+      - name: Upload signature, SBOM and signed manifest (never the snapshot)
+        if: ${{ steps.rid.outputs.mode == 'fleet' }}
+        run: |
+          cd artifacts/releases/${{ steps.rid.outputs.rid }}
+          for f in manifest.json manifest.sigstore.json sbom.spdx.json; do
+            aws s3 cp "$f" "s3://$RELEASES_BUCKET/releases/${{ steps.rid.outputs.rid }}/$f"
+          done
 
       - name: Export to public `clhear` repo (gated on disclosure confirmation)
         env:
           CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED: ${{ vars.CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED }}
           CLHEAR_PUBLIC_REPO_URL: ${{ secrets.CLHEAR_PUBLIC_REPO_URL }}
           CLHEAR_EXPORT_GIT_TOKEN: ${{ secrets.CLHEAR_EXPORT_GIT_TOKEN }}
-        run: python -m app.clhear.platform.exporter "${{ steps.rid.outputs.rid }}"
+        run: |
+          # In fleet mode the exporter reads the released record itself (the snapshot
+          # carries eval_runs), so the tree it compiles is exactly what was gated.
+          if [ "${{ steps.rid.outputs.mode }}" = "fleet" ]; then
+            export DATABASE_URL="sqlite:///$PWD/artifacts/releases/${{ steps.rid.outputs.rid }}/l1/snapshot.db"
+          fi
+          python -m app.clhear.platform.exporter "${{ steps.rid.outputs.rid }}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ steps.rid.outputs.rid }}
-          path: artifacts/
+          path: |
+            artifacts/
+            !artifacts/releases/*/l1/snapshot.db

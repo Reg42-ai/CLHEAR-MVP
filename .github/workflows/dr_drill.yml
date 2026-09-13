@@ -28,6 +28,7 @@ env:
   AWS_REGION: us-east-1
   CLHEAR_HTTP_MODE: replay
   PGPASSWORD: drill
+  AWS_RELEASE_ROLE_ARN: ${{ secrets.AWS_RELEASE_ROLE_ARN }} # `secrets` is not allowed in step `if:`
 
 jobs:
   restore-and-verify:
@@ -60,10 +61,10 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
 
       - name: Configure AWS (OIDC)
-        if: ${{ secrets.AWS_RELEASE_ROLE_ARN != '' }}
+        if: ${{ env.AWS_RELEASE_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_RELEASE_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Fetch the release snapshot (the backup under test)
@@ -138,7 +139,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Publish DrDrillPassed metric
-        if: ${{ always() && secrets.AWS_RELEASE_ROLE_ARN != '' }}
+        if: ${{ always() && env.AWS_RELEASE_ROLE_ARN != '' }}
         run: |
           VALUE=$([ "${{ job.status }}" = "success" ] && echo 1 || echo 0)
           aws cloudwatch put-metric-data --namespace CLHEAR --metric-name DrDrillPassed \
