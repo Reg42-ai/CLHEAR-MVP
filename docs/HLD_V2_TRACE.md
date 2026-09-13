@@ -40,7 +40,7 @@ row references a code path or test that does not exist.
 | CLHEAR-0.27 | Evals: Langfuse self-hosted + per-layer golden sets; public dashboard reads summary table | `infra/langfuse.tf`, `app/clhear/platform/evals.py` (`publish_summary`), `clhear-evals/` | `tests/test_gates.py::test_summary_table_published` | todo |
 | CLHEAR-0.28 | Approval console at `/console` | `app/clhear/platform/console.py`, `app/clhear/web/console.html` | `tests/test_console.py` | todo |
 | CLHEAR-0.29 | Release pipeline: nightly derive → evals → snapshot → Sigstore → publish; `YYYY.MM.DD`; daily deltas | `.github/workflows/release.yml`, `app/clhear/releases.py` (`release_id_for`, `build_manifest`, `_delta`), `app/clhear/fleets.py` (`main`), `scripts/verify_release.py` | `tests/test_release_verify.py::test_publish_and_verify_release`, `tests/test_release_verify.py::test_delta_against_previous` | done |
-| CLHEAR-0.30 | Identity: Cognito public users, Google SSO Reg42, API keys per org, SAML enterprise | `infra/cognito.tf`, `app/clhear/app_auth.py`, `app/clhear/api_keys.py` | `tests/test_api_keys.py` | todo |
+| CLHEAR-0.30 | Identity: Cognito public users, Google SSO Reg42, API keys per org, SAML enterprise | `infra/cognito.tf`, `app/clhear/app_auth.py` (`verify_cognito_token`, `require_app`), `app/clhear/accounts.py` (`/auth/cognito`, `/auth/cognito/callback`), `app/clhear/api_keys.py` (`issue`, `verify`, `revoke`), `migrations/m0015_public_ui.py` | `tests/test_api_keys.py` | partial |
 | CLHEAR-0.31 | Observability: Prometheus + Grafana, GlitchTip, CloudWatch, status page; freshness and gate status public | `infra/observability.tf`, `app/clhear/platform/metrics.py`, `status/` | `tests/test_metrics.py` | todo |
 | CLHEAR-0.32 | Public repo `clhear`: standard, schema, vault packs, evals harness, SDKs | `export/clhear/`, `app/clhear/platform/exporter.py` | `tests/test_exporter_public.py` | todo |
 | CLHEAR-0.33 | Shared schema columns on every layer table | `app/clhear/platform/shared_schema.py` (`SHARED_COLUMN_NAMES`, `attach_shared_columns`), `app/clhear/platform/record.py` (`layer_tables`) | `tests/test_record.py::test_all_tables_have_shared_columns` | done |
@@ -87,12 +87,12 @@ row references a code path or test that does not exist.
 
 | Req | Mechanism | Code | Test | Status |
 |---|---|---|---|---|
-| CLHEAR-9.1 | Solon front door → blueprint < 60 s with progress narrative | `app/clhear/web/front_door.html`, `app/clhear/solon.py` | `tests/test_front_door.py` | todo |
-| CLHEAR-9.2 | Explore: graph + list per layer; why, history, who else, request a change; cross-jurisdiction compare | `app/clhear/web/explore.html`, `app/clhear/v1/explore.py` | `tests/test_v1_api.py` | todo |
-| CLHEAR-9.3 | Learn: tours, obligation of the week, playgrounds, learning path + badge, quizzes | `app/clhear/learn.py`, `app/clhear/web/learn.html` | `tests/test_learn.py` | todo |
-| CLHEAR-9.4 | Watch: digest, public change feed, watchlists | `app/clhear/watch.py` | `tests/test_watch.py` | todo |
-| CLHEAR-9.5 | Build on it: API keys, SDKs, OSCAL/JSON-LD, sandbox, public evals | `app/clhear/api_keys.py`, `export/clhear/sdks/`, `app/clhear/interop/` | `tests/test_api_keys.py`, `tests/test_interop.py` | todo |
-| CLHEAR-9.6 | Design rules: evidence one click, WCAG 2.2 AA, dark/light, no paywall on agnostic blueprint | `app/clhear/web/theme.css`, `scripts/a11y_check.py` | `tests/test_front_door.py::test_no_paywall` | todo |
+| CLHEAR-9.1 | Solon front door → blueprint < 60 s with progress narrative | `app/clhear/solon.py`, `app/clhear/v1/solon.py`, `app/clhear/web/front_door.html`, `scripts/nyc_demo.py` | `tests/test_front_door.py` | done |
+| CLHEAR-9.2 | Explore: graph + list per layer; why, history, who else, request a change; cross-jurisdiction compare | `app/clhear/v1/explore.py` (`neighbourhood`, `node_page`, `search`, `layer_lists`), `app/clhear/web/explore.html` | `tests/test_explore.py` | done |
+| CLHEAR-9.3 | Learn: tours, obligation of the week, playgrounds, learning path + badge, quizzes | `app/clhear/learn.py`, `app/clhear/web/learn.html` | `tests/test_learn.py` | done |
+| CLHEAR-9.4 | Watch: digest, public change feed, watchlists | `app/clhear/watch.py` (`feed`, `atom`, `digest`, `watch_profile`), `app/clhear/web/watch.html` | `tests/test_watch.py` | done |
+| CLHEAR-9.5 | Build on it: API keys, SDKs, OSCAL/JSON-LD, sandbox, public evals | `app/clhear/api_keys.py`, `app/clhear/web/build.html`, `app/clhear/web/evals.html`, `export/clhear/sdks/python/clhear/__init__.py`, `export/clhear/sdks/typescript/src/index.ts`, `app/clhear/interop/` | `tests/test_api_keys.py`, `tests/test_interop.py` | done |
+| CLHEAR-9.6 | Design rules: evidence one click, WCAG 2.2 AA, dark/light, no paywall on agnostic blueprint | `app/clhear/web/theme.css`, `scripts/a11y_check.py`, `scripts/a11y_axe.py`, `.github/workflows/ci.yml` | `tests/test_front_door.py::test_no_paywall`, `tests/test_front_door.py::test_front_door_pages_meet_the_static_wcag_rules`, `tests/test_explore.py` | done |
 
 ## §6 Community
 
@@ -136,3 +136,4 @@ row references a code path or test that does not exist.
 | Solon entity behaviour | `SOLON_PLAN.md` not accessible | `app/clhear/solon.py` guided front door on Reg42 UI tokens |
 | Meridian Markets Annex G + three anonymized profiles | not provided | `clhear-evals/l4/golden_profiles.json`, `clhear-evals/l6/reference_programs.json` seeded with placeholders marked `golden=false` |
 | Discourse, beehiiv, pen test vendor, Cognito SAML IdP metadata | accounts / vendors | Terraform + docs prepared; values in `infra/variables.tf` |
+| Cognito Google IdP client secret | Google Cloud OAuth client owned by Reg42 | `infra/cognito.tf` creates the pool, domain, app client and SSM params; the Google IdP is added once `/clhear/GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are set (CLHEAR-0.30 stays `partial` until SAML lands in item 17) |
