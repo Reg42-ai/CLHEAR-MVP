@@ -54,6 +54,14 @@ variable "clhear_hostname" {
 }
 
 # Same image as reg42-os (HLD: no new image); entrypoint python -m app.clhear.workers
+# Maintainers (HLD v2 I12): the only identities that may decide in the approval
+# console, read the audit log or grant conformance marks. Comma-separated emails;
+# they sign in through Cognito (Google / SAML) or pass X-Reg42-User from a trusted tier.
+variable "maintainers" {
+  type    = string
+  default = "avner@reg42.ai"
+}
+
 variable "worker_image" {
   type    = string
   default = ""

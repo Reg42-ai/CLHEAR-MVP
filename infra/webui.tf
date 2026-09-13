@@ -122,6 +122,18 @@ data "aws_ssm_parameter" "sentry_dsn" {
   depends_on = [aws_ssm_parameter.sentry_dsn]
 }
 
+data "aws_ssm_parameter" "beehiiv_api_key" {
+  count      = local.deploy_webui ? 1 : 0
+  name       = aws_ssm_parameter.beehiiv_api_key.name
+  depends_on = [aws_ssm_parameter.beehiiv_api_key]
+}
+
+data "aws_ssm_parameter" "beehiiv_publication_id" {
+  count      = local.deploy_webui ? 1 : 0
+  name       = aws_ssm_parameter.beehiiv_publication_id.name
+  depends_on = [aws_ssm_parameter.beehiiv_publication_id]
+}
+
 resource "aws_lambda_function" "webui" {
   count            = local.deploy_webui ? 1 : 0
   function_name    = "${var.name_prefix}-webui"
@@ -131,8 +143,14 @@ resource "aws_lambda_function" "webui" {
   s3_bucket        = aws_s3_bucket.deploy.id
   s3_key           = var.webui_zip_key
   source_code_hash = var.webui_zip_sha256
-  memory_size      = 512
+  memory_size      = 1024
   timeout          = 60
+
+  # The read-only snapshot (~500 MB SQLite) is fetched into /tmp at cold start;
+  # the default 512 MB would fill as the record grows.
+  ephemeral_storage {
+    size = 2048
+  }
 
   environment {
     variables = {
@@ -153,8 +171,12 @@ resource "aws_lambda_function" "webui" {
       CLHEAR_COGNITO_DOMAIN           = local.deploy_cognito ? "https://${local.cognito_domain}.auth.${var.aws_region}.amazoncognito.com" : ""
       CLHEAR_SAML_DOMAINS             = local.deploy_cognito ? aws_ssm_parameter.cognito_saml_domains[0].value : ""
       # GlitchTip error tracking (observability.tf); empty = off. Scrubbed in app/clhear/platform/errors.py.
-      SENTRY_DSN                      = data.aws_ssm_parameter.sentry_dsn[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.sentry_dsn[0].value
-      CLHEAR_ENV                      = "prod"
+      SENTRY_DSN                    = data.aws_ssm_parameter.sentry_dsn[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.sentry_dsn[0].value
+      CLHEAR_MAINTAINERS            = var.maintainers
+      CLHEAR_DISCOURSE_URL          = local.discourse_url
+      CLHEAR_BEEHIIV_API_KEY        = data.aws_ssm_parameter.beehiiv_api_key[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.beehiiv_api_key[0].value
+      CLHEAR_BEEHIIV_PUBLICATION_ID = data.aws_ssm_parameter.beehiiv_publication_id[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.beehiiv_publication_id[0].value
+      CLHEAR_ENV                    = "prod"
     }
   }
 }

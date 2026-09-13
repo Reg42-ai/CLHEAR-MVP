@@ -83,6 +83,9 @@ resource "aws_ecs_task_definition" "fleet" {
         { name = "CLHEAR_EMBEDDING_PROVIDER", value = "infer" },
         # Evals mirror into self-hosted Langfuse (langfuse.tf); empty host = off.
         { name = "LANGFUSE_HOST", value = local.langfuse_url },
+        { name = "CLHEAR_MAINTAINERS", value = var.maintainers },
+        { name = "CLHEAR_DISCOURSE_URL", value = local.discourse_url },
+        { name = "CLHEAR_PUBLIC_BASE_URL", value = "https://${var.clhear_hostname}" },
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
@@ -91,6 +94,9 @@ resource "aws_ecs_task_definition" "fleet" {
         { name = "SENTRY_DSN", valueFrom = aws_ssm_parameter.sentry_dsn.arn }, # "CHANGEME" is treated as unset by errors.init
         { name = "LANGFUSE_PUBLIC_KEY", valueFrom = aws_ssm_parameter.langfuse_public_key.arn },
         { name = "LANGFUSE_SECRET_KEY", valueFrom = aws_ssm_parameter.langfuse_secret_key.arn },
+        # Change-digest newsletter (fleets.py nightly community step); "CHANGEME" = inert.
+        { name = "CLHEAR_BEEHIIV_API_KEY", valueFrom = aws_ssm_parameter.beehiiv_api_key.arn },
+        { name = "CLHEAR_BEEHIIV_PUBLICATION_ID", valueFrom = aws_ssm_parameter.beehiiv_publication_id.arn },
       ]
       logConfiguration = {
         logDriver = "awslogs"

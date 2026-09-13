@@ -49,7 +49,9 @@ def _http_transport(method: str, url: str, *, headers: dict, body: dict) -> dict
 
 def configured() -> bool:
     s = get_settings()
-    return bool(s.clhear_beehiiv_api_key and s.clhear_beehiiv_publication_id)
+    # "CHANGEME" is the SSM placeholder Terraform provisions before the publication exists.
+    values = (s.clhear_beehiiv_api_key, s.clhear_beehiiv_publication_id)
+    return all(v and v != "CHANGEME" for v in values)
 
 
 # --------------------------------------------------------------------------- digest
