@@ -94,6 +94,7 @@ BEDROCK_PRICING: dict[str, tuple[float, float]] = {
 # Rungs counted against the monthly premium cap (settings.clhear_frontier_monthly_cap_usd).
 PREMIUM_MODELS: frozenset[str] = frozenset({CLAUDE_OPUS})
 _DEFAULT_PRICING = (3.00, 15.00)
+REASONING_HEADROOM_TOKENS = 2048
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
 _THINK_OPEN_RE = re.compile(r"<think>.*", re.S | re.I)
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.I)
@@ -197,7 +198,10 @@ class InferProvider:
         body: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "max_tokens": max_tokens,
+            # Callers size max_tokens for the answer; on Bedrock a reasoning model's
+            # hidden thinking (gpt-oss) is billed from the same budget and truncates
+            # the JSON when it runs out. Only generated tokens cost anything.
+            "max_tokens": max_tokens + REASONING_HEADROOM_TOKENS,
             "temperature": temperature,
         }
         if json_schema:
@@ -397,6 +401,7 @@ class Gateway:
         actor = provider or self._provider
         last_error: Exception | None = None
         result: LlmResult | None = None
+        raw_text = ""
         for attempt in range(max_retries):
             try:
                 extra = {"task_class": task_class} if task_class else {}
@@ -404,6 +409,7 @@ class Gateway:
                     model=model, prompt=prompt, system=system, max_tokens=max_tokens,
                     temperature=temperature, json_schema=json_schema, **extra,
                 )
+                raw_text = result.text
                 if required_keys is not None:
                     parsed = parse_json_object(result.text)
                     missing = [k for k in required_keys if k not in parsed]
@@ -411,7 +417,12 @@ class Gateway:
                         raise StructuredOutputError(f"missing keys: {missing}")
                     result = replace(result, text=json.dumps(parsed))
                 break
-            except (json.JSONDecodeError, StructuredOutputError, ConnectionError, TimeoutError, InferError) as exc:
+            except (json.JSONDecodeError, StructuredOutputError) as exc:
+                # Keep the head of what the model said so the failure is diagnosable.
+                last_error = StructuredOutputError(f"{exc}; model said: {(raw_text or '')[:160]!r}")
+                result = None
+                time.sleep(2**attempt * 0.5)
+            except (ConnectionError, TimeoutError, InferError) as exc:
                 last_error = exc
                 result = None
                 time.sleep(2**attempt * 0.5)
