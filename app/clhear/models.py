@@ -233,6 +233,26 @@ cohorts = sa.Table(
     sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
 )
 
+# HLD v2 I7: the query graph and the vector index are projections of the record.
+# Every rebuild is logged here (append-only) so the status page can show when
+# each projection was last rebuilt, from which release, and with what checksum.
+graph_projections = sa.Table(
+    "graph_projections",
+    metadata,
+    sa.Column("id", sa.BigInteger().with_variant(sa.Integer, "sqlite"), sa.Identity(), primary_key=True),
+    sa.Column("backend", sa.Text, nullable=False),  # neo4j | local | pgvector | sqlite-vec
+    sa.Column("trigger", sa.Text, nullable=False, default="nightly"),  # nightly | lazy | api | event
+    sa.Column("release", sa.Text, nullable=False, default=""),
+    sa.Column("status", sa.Text, nullable=False, default="succeeded"),  # succeeded | failed
+    sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("duration_ms", sa.Integer, nullable=False, default=0),
+    sa.Column("nodes", sa.Integer, nullable=False, default=0),
+    sa.Column("edges", sa.Integer, nullable=False, default=0),
+    sa.Column("checksum", sa.Text, nullable=False, default=""),
+    sa.Column("detail", Json, nullable=False, default=dict),
+)
+
 # L7/L8 product tables carry the shared schema; ledgers above stay append-only records.
 from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402
 

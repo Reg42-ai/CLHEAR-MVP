@@ -75,6 +75,14 @@ class Settings(BaseSettings):
     clhear_cognito_client_id: str = ""
     clhear_cognito_domain: str = ""  # hosted UI, https://<prefix>-auth.auth.<region>.amazoncognito.com
 
+    # HLD v2 I7 projections: Neo4j query graph (empty = in-process projection) and
+    # the clause embedding index (auto = Infer when configured, else hash-v1).
+    clhear_neo4j_uri: str = ""  # bolt://clhear-neo4j.clhear.local:7687
+    clhear_neo4j_user: str = "neo4j"
+    clhear_neo4j_password: str = ""
+    clhear_embedding_provider: str = "auto"  # auto | infer | hash
+    clhear_embedding_model: str = "amazon.titan-embed-text-v2:0"
+
     # Snapshot mode for the scheduled fleet: the corpus SQLite lives in S3
     # (same object the public explorer serves); workers pull it, ingest, and
     # publish it back. Empty = use database_url directly (Aurora / local dev).

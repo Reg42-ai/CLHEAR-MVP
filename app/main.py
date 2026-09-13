@@ -48,6 +48,7 @@ def create_app() -> FastAPI:
         from app.clhear.learn import router as learn_router
         from app.clhear.watch import router as watch_router
         from app.clhear.api_keys import router as build_router
+        from app.clhear.v1.graph import router as graph_router
 
         app.include_router(router)
         app.include_router(l1_router)
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
         app.include_router(v1_l4_router)
         app.include_router(v1_l5_router)
         app.include_router(v1_l6_router)
+        app.include_router(graph_router)
         app.include_router(app_api_router)
         app.include_router(auth_router)
         app.include_router(community_router)

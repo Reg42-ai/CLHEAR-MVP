@@ -3,6 +3,7 @@ uvicorn>=0.30
 sqlalchemy>=2.0
 psycopg[binary]>=3.1   # Aurora Postgres record (HLD v2 I7); SQLite stays the offline fallback
 pgvector>=0.3
+neo4j>=5.20              # query-graph projection (HLD v2 I7); in-process LocalGraph when CLHEAR_NEO4J_URI is unset
 pydantic>=2.7
 pydantic-settings>=2.3
 httpx>=0.27
