@@ -1,0 +1,71 @@
+title: "[RFC] "
+labels: ["rfc"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An RFC proposes a change to the standard, its schema, a gate threshold, a governance document or the roadmap.
+        The steering group votes on RFCs per `governance/STEERING_VOTING.md`; the voting window opens when a
+        maintainer marks the RFC *ready*. Corrections to individual records are not RFCs — use the contribution flow.
+  - type: input
+    id: summary
+    attributes:
+      label: One-line summary
+      placeholder: "Add `channels` as a fourth L4 profile attribute"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Standard text (layers, invariants, identifiers)
+        - Schema (a record table or field)
+        - Evals (a golden set or gate threshold)
+        - Governance (charter, policies, roles)
+        - Roadmap priority
+        - Working group (form / dissolve)
+        - Conformance program
+        - Interoperability (OSCAL, crosswalks, JSON-LD, GraphQL)
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What is wrong or missing today, with evidence (obligation ids, clause refs, eval runs, release ids).
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The change, precisely. For schema changes include the JSON Schema diff; for gate changes the new threshold and why.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and deprecation
+      description: What existing records, exports or API consumers are affected; the deprecation path per `governance/DEPRECATION_POLICY.md`.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: threshold
+    attributes:
+      label: Voting threshold you believe applies
+      options:
+        - Simple majority (roadmap, working group, reviewer confirmation)
+        - Two-thirds of votes cast (conformance level, assessor criteria)
+        - Two-thirds of all seats after 30-day RFC (charter, licence, trademark)
+    validations:
+      required: true
+  - type: checkboxes
+    id: coi
+    attributes:
+      label: Conflict of interest
+      options:
+        - label: I have declared any conflict of interest on this matter per `governance/CONFLICT_OF_INTEREST.md`.
+          required: true

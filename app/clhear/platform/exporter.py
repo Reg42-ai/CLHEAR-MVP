@@ -2,8 +2,14 @@
 
 Allow-list export, not deny-list: the snapshot is COMPILED from explicitly
 public fields (refs, hashes, family graphs, eval scores). No code path here
-reads clause text, so restricted material is excluded by construction; when
-clause refs join in P1+ they must come through the clauses_public view only.
+reads clause text, so restricted material is excluded by construction. The
+repo layout around the snapshot (standard, schemas, vault packs, evals harness,
+SDKs, governance, release notes with attribution) is built by
+``platform.public_repo``; the vault carries obligation text only where the
+anchoring clause is public under a republishable rights basis (I8).
+
+§9 never-list: nothing is pushed before ``CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED``
+is true; the layout is still compiled locally so it can be reviewed.
 """
 import json
 import logging
@@ -85,16 +91,30 @@ def write_snapshot(snapshot: dict, repo_dir: Path) -> list[Path]:
     return written
 
 
-def export_release(engine: Engine, release: str, repo_dir: Path | None = None, push: bool = False) -> dict:
-    """Compile + write a release snapshot; optionally commit and push.
+class DisclosureNotConfirmed(RuntimeError):
+    """HLD v2 §9: nothing is pushed to the public repo before the filing is confirmed."""
+
+
+def disclosure_confirmed() -> bool:
+    return bool(get_settings().clhear_public_disclosure_confirmed)
+
+
+def export_release(engine: Engine, release: str, repo_dir: Path | None = None, push: bool = False,
+                   *, layout: bool = True) -> dict:
+    """Compile + write a release snapshot and the public repo layout; optionally
+    commit and push.
 
     Called on git tag `clhear-vX.Y.Z` (CI) or manually. Refuses to export a
-    release whose evals did not all pass (evals are gates).
+    release whose evals did not all pass (evals are gates), and refuses to push
+    unless ``CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED`` is true (§9 never-list) — the
+    local layout is always compiled so it can be reviewed.
     """
     from app.clhear.platform.evals import release_gate
 
     if not release_gate(engine, release):
         raise RuntimeError(f"release gate failed for {release}: evals missing or not all passed")
+    if push and not disclosure_confirmed():
+        raise DisclosureNotConfirmed("CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED is not true: the public repo is compiled locally only")
 
     settings = get_settings()
     repo_dir = repo_dir or Path(settings.clhear_public_repo_dir)
@@ -102,6 +122,14 @@ def export_release(engine: Engine, release: str, repo_dir: Path | None = None, p
 
     snapshot = compile_snapshot(engine, release)
     written = write_snapshot(snapshot, repo_dir)
+    if layout:
+        from app.clhear.platform import contributions, public_repo
+
+        built = public_repo.build(engine, repo_dir, release, snapshot=snapshot,
+                                  attribution=contributions.attribution(engine, release))
+        for paths in built.values():
+            written += list(paths)
+    written = list(dict.fromkeys(written))
 
     if push:
         remote = settings.clhear_public_repo_url
@@ -130,11 +158,15 @@ def main() -> int:
     from app.clhear.db import get_engine, run_migrations
 
     release = sys.argv[1]
-    push = "--push" in sys.argv
+    settings = get_settings()
+    # The release workflow always compiles; it pushes only once the filing is
+    # confirmed AND a remote is configured (a --push flag cannot override the gate).
+    push = ("--push" in sys.argv or bool(settings.clhear_public_repo_url)) and disclosure_confirmed()
     engine = get_engine()
     run_migrations(engine)
     result = export_release(engine, release, push=push)
-    print(json.dumps({"release": result["release"], "files": result["files"]}, indent=2))
+    print(json.dumps({"release": result["release"], "files": len(result["files"]), "pushed": push,
+                      "disclosure_confirmed": disclosure_confirmed()}, indent=2))
     return 0
 
 

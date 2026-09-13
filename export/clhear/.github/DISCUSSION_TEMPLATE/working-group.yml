@@ -1,0 +1,40 @@
+title: "[WG] "
+labels: ["working-group"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Propose a working group for a cluster per `governance/WORKING_GROUPS.md`. The steering group confirms by simple majority.
+  - type: input
+    id: cluster
+    attributes:
+      label: Cluster
+      placeholder: "UK AML — MLRs 2017, JMLSG guidance, FCA SYSC 6"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Instruments (source keys), layers and jurisdictions the group owns.
+    validations:
+      required: true
+  - type: textarea
+    id: outputs
+    attributes:
+      label: Expected outputs in the first six months
+      description: Golden cases, reviewer capacity, contributions, crosswalks.
+    validations:
+      required: true
+  - type: textarea
+    id: members
+    attributes:
+      label: Prospective members
+      description: At least three, at least one Reviewer; the convener (a Maintainer or a Reviewer to be nominated).
+    validations:
+      required: true
+  - type: input
+    id: cadence
+    attributes:
+      label: Meeting cadence
+      placeholder: "monthly, second Tuesday, 15:00 UTC"

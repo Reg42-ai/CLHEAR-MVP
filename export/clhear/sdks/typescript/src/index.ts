@@ -16,6 +16,8 @@ export interface ClientOptions {
   baseUrl?: string;
   appId?: string;
   secret?: string;
+  /** Cognito id token of the person — required for the contribution flow (CLA, filing, reviews). */
+  idToken?: string;
   fetch?: typeof fetch;
 }
 
@@ -43,6 +45,25 @@ export interface FeedEntry {
 }
 export interface Feed { generated_at: string; count: number; entries: FeedEntry[]; counts: Record<string, number> }
 
+export type ContributionKind = "correction" | "missing_source" | "equivalence" | "characteristic" | "ontology_entry" | "fill"
+  | "translation" | "golden_case" | "evidence_template" | "enforcement_link";
+export interface ContributionInput {
+  kind: ContributionKind;
+  proposed: Record<string, unknown>;
+  target_ref?: string;
+  field?: string;
+  layer?: string;
+  evidence?: { url?: string; quote?: string }[];
+  rationale?: string;
+}
+export interface Contribution {
+  id: string; kind: ContributionKind; layer: string; target_ref: string; field: string; status: string;
+  proposed: Record<string, unknown>; checks: { check: string; ok: boolean; detail: string }[];
+  rederivation?: { agreement: "agree" | "disagree" | "unverified"; reasons: string[] } | null;
+  reviews: { reviewer_email: string; decision: string; note: string }[]; accepts: number; accepts_required: number;
+  applied?: Record<string, unknown> | null; impact?: Record<string, unknown> | null; released_in?: string | null;
+}
+
 export class ClhearError extends Error {
   constructor(public status: number, public detail: unknown) {
     super(`CLHEAR API ${status}: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
@@ -53,12 +74,14 @@ export class ClhearClient {
   private baseUrl: string;
   private appId?: string;
   private secret?: string;
+  private idToken?: string;
   private fetchImpl: typeof fetch;
 
   constructor(opts: ClientOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? "https://clhear.org").replace(/\/$/, "");
     this.appId = opts.appId;
     this.secret = opts.secret;
+    this.idToken = opts.idToken;
     this.fetchImpl = opts.fetch ?? fetch;
   }
 
@@ -68,6 +91,8 @@ export class ClhearClient {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (this.appId && this.secret) { headers["X-App-Id"] = this.appId; headers["Authorization"] = `Bearer ${this.secret}`; }
+    // A Cognito id token identifies the person for the contribution flow; the app key identifies the application.
+    if (this.idToken && /^\/(cla|contributions|contributors\/me|roles)/.test(path)) headers["Authorization"] = `Bearer ${this.idToken}`;
     const r = await this.fetchImpl(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const text = await r.text();
     const data = text ? JSON.parse(text) : null;
@@ -136,6 +161,28 @@ export class ClhearClient {
   layers(): Promise<Record<string, unknown>> { return this.request("GET", "/v1/layers"); }
   releases(): Promise<unknown> { return this.request("GET", "/v1/releases"); }
   snapshot(releaseId: string, layer: string): Promise<Record<string, unknown>> { return this.request("GET", `/v1/releases/${releaseId}/${layer}/snapshot`); }
+
+  // ---------------------------------------------------------------- contribute (HLD v2 §6; needs idToken)
+
+  cla(): Promise<Record<string, unknown>> { return this.request("GET", "/cla"); }
+  signCla(displayName = ""): Promise<Record<string, unknown>> {
+    return this.request("POST", "/cla/sign", { acknowledge_patent_grant: true, display_name: displayName });
+  }
+  /** File a contribution. Nothing is written to the registry: checks → fleet re-derivation → two reviewers → release. */
+  contribute(input: ContributionInput): Promise<Contribution> {
+    return this.request("POST", "/contributions", { ...input, evidence: input.evidence ?? [], channel: "api" });
+  }
+  contribution(id: string): Promise<Contribution> { return this.request("GET", `/contributions/${id}`); }
+  contributions(opts: { status?: string; kind?: string; contributor?: string; limit?: number } = {}): Promise<{ count: number; items: Contribution[] }> {
+    return this.request("GET", "/contributions", undefined, { status: opts.status, kind: opts.kind, contributor: opts.contributor, limit: opts.limit ?? 100 });
+  }
+  review(id: string, decision: "accept" | "reject" | "request_changes", note = ""): Promise<Contribution> {
+    return this.request("POST", `/contributions/${id}/reviews`, { decision, note });
+  }
+  contributors(limit = 50): Promise<Record<string, unknown>> { return this.request("GET", "/contributors", undefined, { limit }); }
+  myContributions(): Promise<Record<string, unknown>> { return this.request("GET", "/contributors/me"); }
+  notifications(unread = false): Promise<Record<string, unknown>> { return this.request("GET", "/contributions/notifications", undefined, { unread: unread ? "true" : undefined }); }
+  governance(): Promise<Record<string, unknown>> { return this.request("GET", "/governance"); }
 }
 
 export default ClhearClient;

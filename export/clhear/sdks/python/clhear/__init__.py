@@ -33,10 +33,13 @@ class ClhearError(RuntimeError):
 
 class Client:
     def __init__(self, base_url: str = "https://clhear.org", *, app_id: str | None = None, secret: str | None = None,
-                 timeout: float = 60.0):
+                 id_token: str | None = None, timeout: float = 60.0):
         self.base_url = base_url.rstrip("/")
         self.app_id = app_id
         self.secret = secret
+        # A Cognito id token identifies the *person* for the contribution flow
+        # (CLA, filing, reviews); the app key identifies the *application*.
+        self.id_token = id_token
         self.timeout = timeout
 
     # ------------------------------------------------------------------ http
@@ -49,6 +52,8 @@ class Client:
         if self.app_id and self.secret:
             headers["X-App-Id"] = self.app_id
             headers["Authorization"] = f"Bearer {self.secret}"
+        if self.id_token and (path.startswith(("/cla", "/contributions", "/contributors/me", "/roles"))):
+            headers["Authorization"] = f"Bearer {self.id_token}"
         data = None
         if body is not None:
             data = json.dumps(body).encode("utf-8")
@@ -129,6 +134,47 @@ class Client:
 
     def snapshot(self, release_id: str, layer: str) -> dict:
         return self._request("GET", f"/v1/releases/{release_id}/{layer}/snapshot")
+
+    # ------------------------------------------------------------------ contribute (HLD v2 §6)
+
+    def cla(self) -> dict:
+        """The current CLA text, its hash, and whether the identified user signed it."""
+        return self._request("GET", "/cla")
+
+    def sign_cla(self, *, display_name: str = "") -> dict:
+        return self._request("POST", "/cla/sign", body={"acknowledge_patent_grant": True, "display_name": display_name})
+
+    def contribute(self, kind: str, proposed: dict, *, target_ref: str = "", field: str = "", layer: str | None = None,
+                   evidence: list[dict] | None = None, rationale: str = "") -> dict:
+        """File a contribution (correction, missing_source, equivalence, characteristic, ontology_entry, fill,
+        translation, golden_case, evidence_template, enforcement_link). Needs an id_token and a signed CLA.
+        Nothing is written to the registry: checks → fleet re-derivation → two reviewers → release."""
+        return self._request("POST", "/contributions", body={
+            "kind": kind, "proposed": proposed, "target_ref": target_ref, "field": field, "layer": layer,
+            "evidence": evidence or [], "rationale": rationale, "channel": "api"})
+
+    def contribution(self, contribution_id: str) -> dict:
+        return self._request("GET", f"/contributions/{contribution_id}")
+
+    def contributions(self, *, status: str | None = None, kind: str | None = None, contributor: str | None = None,
+                      limit: int = 100) -> dict:
+        return self._request("GET", "/contributions", params={"status": status, "kind": kind, "contributor": contributor, "limit": limit})
+
+    def review(self, contribution_id: str, decision: str, note: str = "") -> dict:
+        """One reviewer's decision: accept | reject | request_changes (reviewer roles only)."""
+        return self._request("POST", f"/contributions/{contribution_id}/reviews", body={"decision": decision, "note": note})
+
+    def contributors(self, limit: int = 50) -> dict:
+        return self._request("GET", "/contributors", params={"limit": limit})
+
+    def my_contributions(self) -> dict:
+        return self._request("GET", "/contributors/me")
+
+    def notifications(self, *, unread: bool = False) -> dict:
+        return self._request("GET", "/contributions/notifications", params={"unread": "true" if unread else None})
+
+    def governance(self) -> dict:
+        return self._request("GET", "/governance")
 
     def iter_feed(self, *, since: str | None = None, page: int = 100) -> Iterator[dict]:
         seen: set[str] = set()

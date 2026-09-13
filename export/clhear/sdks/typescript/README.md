@@ -18,5 +18,19 @@ console.log(await keyed.layers());
 The agnostic blueprint, every why-trail, the change feed and the eval gates
 are open without a key (HLD v2 I9). Keys add release-pinned reads.
 
+Contribute (HLD v2 §6) — identify the *person* with a Cognito id token, sign the
+CLA once, then file. Filing never writes the registry: checks, a fleet
+re-derivation and two reviewers come first; the change ships in the next
+release with your handle and its impact.
+
+```ts
+const me = new ClhearClient({ baseUrl: "https://clhear.org", idToken: "eyJ…" });
+await me.signCla();
+const con = await me.contribute({ kind: "correction", proposed: { value: "Apply customer due diligence" },
+  target_ref: "OBL:uksi/2017/692#regulation-27", field: "title",
+  evidence: [{ url: "https://www.legislation.gov.uk/uksi/2017/692/regulation/27" }] });
+console.log(con.id, con.status, con.checks.filter((c) => !c.ok));
+```
+
 Licence: Apache-2.0. Published from the `clhear` repository by the release
 pipeline (item 13); this copy is the source of truth.
