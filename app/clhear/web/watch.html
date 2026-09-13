@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Watch</title>
+<meta name="description" content="Public change feed with effective dates across sources, obligations and blueprints; watch instruments or a profile like yours and receive a digest." />
+<link rel="stylesheet" href="/static/theme.css" />
+<link rel="alternate" type="application/atom+xml" title="CLHEAR change feed" href="/watch/feed.atom" />
+<style>
+  main { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; display: grid; grid-template-columns: 1fr 320px; gap: 18px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  h1 { font-size: clamp(26px, 4vw, 36px); margin: 0 0 6px; letter-spacing: -0.02em; grid-column: 1 / -1; }
+  .lead { color: var(--muted); margin: 0 0 8px; max-width: 760px; grid-column: 1 / -1; }
+  .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 18px 20px; }
+  .card h2 { margin: 0 0 8px; font-size: 16px; }
+  .card h3 { margin: 12px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; }
+  .tab[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
+  .feed { list-style: none; margin: 0; padding: 0; }
+  .feed li { display: grid; grid-template-columns: 38px 1fr auto; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--edge); align-items: start; }
+  .feed li:last-child { border-bottom: none; }
+  .lyr { font-family: var(--mono); font-weight: 700; color: var(--accent); }
+  .t { font-weight: 600; font-size: 14px; } .t a { color: inherit; text-decoration: none; } .t a:hover { text-decoration: underline; }
+  .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .kind { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; border: 1px solid var(--edge); border-radius: 999px; padding: 1px 7px; margin-right: 6px; color: var(--muted); }
+  .kind.added, .kind.recomposed { color: var(--ok); } .kind.revoked { color: var(--bad); } .kind.amended, .kind.updated { color: var(--warn); }
+  .dates { text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .dates b { display: block; color: var(--ink); font-weight: 600; }
+  .basis { color: var(--faint); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  input[type="text"], input[type="date"] { background: var(--panel-strong); color: var(--ink); border: 1px solid var(--edge); border-radius: 10px; padding: 7px 10px; font: inherit; font-size: 13px; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; text-decoration: none; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  .list li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--edge); }
+  .list li:last-child { border-bottom: none; }
+  .x { border: none; background: transparent; color: var(--faint); cursor: pointer; font-size: 14px; }
+  .empty { color: var(--muted); font-size: 13.5px; }
+  .kpis { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 6px 12px; font-size: 12.5px; color: var(--muted); }
+  .kpi b { color: var(--ink); margin-right: 4px; }
+  .err { color: var(--bad); font-size: 13px; }
+  .foot { color: var(--faint); font-size: 12px; text-align: center; margin-top: 30px; grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const watcher = (() => { let id = localStorage.getItem("clhear_watcher"); if (!id) { id = crypto.randomUUID(); localStorage.setItem("clhear_watcher", id); } return id; })();
+const api = async (url, opts) => {
+  const r = await fetch(url, { headers: { "Content-Type": "application/json", "X-Watcher-Id": watcher }, ...opts });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body));
+  return body;
+};
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+function Entry({ e }) {
+  return html`<li>
+    <span class="lyr">${e.layer}</span>
+    <div><div class="t"><span class=${"kind " + e.kind}>${e.kind}</span><a href=${e.href}>${e.title}</a></div>
+      <div class="sub">${e.subject}${e.jurisdiction ? ` · ${e.jurisdiction}` : ""}${e.clause_ids?.length ? ` · clauses ${e.clause_ids.slice(0, 3).join(", ")}${e.clause_ids.length > 3 ? "…" : ""}` : ""}
+        ${e.summary && Object.keys(e.summary).length ? html` · ${Object.entries(e.summary).map(([k, v]) => `${k} ${v}`).join(", ")}` : null}</div></div>
+    <div class="dates"><b>${e.effective_date ? `effective ${e.effective_date}` : "effective date unknown"}</b><span class="basis">basis: ${e.effective_date_basis}</span><br/>detected ${e.detected_at?.slice(0, 10)}</div>
+  </li>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [mode, setMode] = useState(location.hash === "#digest" ? "digest" : "feed");
+  const [layers, setLayers] = useState(["L1", "L2", "L6"]);
+  const [since, setSince] = useState("");
+  const [doc, setDoc] = useState(null); const [err, setErr] = useState("");
+  const [wl, setWl] = useState({ instruments: [], profiles: [] });
+  const [src, setSrc] = useState(""); const [prof, setProf] = useState("");
+  const load = async () => {
+    setErr("");
+    try {
+      if (mode === "feed") setDoc(await api(`/watch/feed?layers=${layers.join(",")}${since ? `&since=${since}` : ""}`));
+      else { const d = await api(`/watch/digest${since ? `?since=${since}` : ""}`); setDoc(d); setWl(d.watching); }
+    } catch (e) { setErr(e.message); }
+  };
+  const loadWatches = async () => { try { const [a, b] = await Promise.all([api("/l1/watchlists"), api("/watch/profiles")]); setWl({ instruments: a.watching.map((w) => w.source_key), profiles: b.profiles }); } catch (e) { /* anonymous without id */ } };
+  useEffect(() => { load(); }, [mode, layers.join(","), since]);
+  useEffect(() => { loadWatches(); location.hash = mode === "digest" ? "#digest" : ""; }, [mode]);
+  const toggle = (l) => setLayers(layers.includes(l) ? layers.filter((x) => x !== l) : [...layers, l]);
+  const watchSrc = async () => { if (!src.trim()) return; try { await api("/l1/watchlists", { method: "POST", body: JSON.stringify({ source_key: src.trim() }) }); setSrc(""); loadWatches(); if (mode === "digest") load(); } catch (e) { setErr(e.message); } };
+  const unwatchSrc = async (k) => { await api(`/l1/watchlists/${encodeURIComponent(k)}/unwatch`, { method: "POST" }); loadWatches(); if (mode === "digest") load(); };
+  const watchProf = async () => { if (!prof.trim()) return; try { await api("/watch/profiles", { method: "POST", body: JSON.stringify({ profile_id: prof.trim() }) }); setProf(""); loadWatches(); if (mode === "digest") load(); } catch (e) { setErr(e.message); } };
+  const unwatchProf = async (id) => { await api(`/watch/profiles/${encodeURIComponent(id)}/unwatch`, { method: "POST" }); loadWatches(); if (mode === "digest") load(); };
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark"><b>CLHEAR</b><span>watch</span></div><div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink" href="/explore">Explore</a><a class="navlink" href="/learn">Learn</a><a class="navlink active" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main">
+      <h1>What changed, and from when.</h1>
+      <p class="lead">Every change in the sources (L1), the obligations derived from them (L2) and the blueprints they feed (L6) — each with its effective date and where that date came from, separate from the day we detected it. <a href="/watch/feed.atom">Atom feed</a>.</p>
+      <section class="card" aria-label="Change feed">
+        <div class="tabs" role="group" aria-label="View">
+          <button class="tab" aria-pressed=${mode === "feed"} onClick=${() => setMode("feed")}>Public feed</button>
+          <button class="tab" aria-pressed=${mode === "digest"} onClick=${() => setMode("digest")}>My digest</button>
+          ${mode === "feed" ? ["L1", "L2", "L6"].map((l) => html`<button key=${l} class="tab" aria-pressed=${layers.includes(l)} onClick=${() => toggle(l)}>${l}</button>`) : null}
+          <label style=${{ marginLeft: "auto", fontSize: "12.5px", color: "var(--muted)" }}>since <input type="date" value=${since} onInput=${(e) => setSince(e.target.value)} aria-label="Changes since date" /></label>
+        </div>
+        ${err ? html`<div class="err" role="alert">${err}</div>` : null}
+        ${doc ? html`<div class="kpis">${Object.entries(doc.counts).map(([l, n]) => html`<span class="kpi" key=${l}><b>${n}</b>${l}</span>`)}<span class="kpi"><b>${doc.count}</b>shown</span></div>` : null}
+        ${doc && doc.entries.length ? html`<ul class="feed">${doc.entries.map((e) => html`<${Entry} key=${e.layer + e.id} e=${e} />`)}</ul>`
+          : html`<p class="empty">${doc?.empty_reason || (doc ? "No changes recorded in this window yet — the feed is honest about a quiet corpus." : "Loading…")}</p>`}
+      </section>
+      <aside class="card" aria-label="Your watches">
+        <h2>Watch</h2>
+        <h3>Instruments</h3>
+        <ul class="list">${wl.instruments.map((k) => html`<li key=${k}><a href=${"/l1#" + k}>${k}</a><button class="x" aria-label=${"stop watching " + k} onClick=${() => unwatchSrc(k)}>×</button></li>`)}</ul>
+        <div class="row"><input type="text" placeholder="source key, e.g. uksi/2017/692" value=${src} onInput=${(e) => setSrc(e.target.value)} aria-label="Source key to watch" /><button class="btn quiet" onClick=${watchSrc}>Watch</button></div>
+        <h3>Profiles like mine</h3>
+        <ul class="list">${wl.profiles.map((p) => html`<li key=${p.profile_id}><a href=${"/explore#" + p.profile_id}>${p.profile_id}${p.name ? ` · ${p.name}` : ""}</a><button class="x" aria-label=${"stop watching " + p.profile_id} onClick=${() => unwatchProf(p.profile_id)}>×</button></li>`)}</ul>
+        <div class="row"><input type="text" placeholder="profile id, e.g. PRF-000001" value=${prof} onInput=${(e) => setProf(e.target.value)} aria-label="Profile id to watch" /><button class="btn quiet" onClick=${watchProf}>Watch</button></div>
+        <p class="empty" style=${{ marginTop: "10px" }}>Build a profile at <a href="/">Start</a> and watch it here: the digest then reports every obligation and blueprint change that touches profiles like yours. Anonymous watches live in this browser; <a href="/auth/me">sign in</a> to keep them.</p>
+      </aside>
+      <p class="foot">CLHEAR is a derivation, not legal advice. <a href="/disclaimer">Disclaimer</a> · <a href="/terms">Terms</a> · <a href="/evals">Public evals</a></p>
+    </main></div>`;
+}
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>
