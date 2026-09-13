@@ -26,9 +26,10 @@ def all_schemas() -> tuple[str, ...]:
     from app.clhear.derived_models import L2_SCHEMA, L3_SCHEMA, L4_SCHEMA, L5_SCHEMA, L6_SCHEMA
     from app.clhear.l1.models import L1_SCHEMA
     from app.clhear.l7.models import L7_SCHEMA
+    from app.clhear.l8.models import L8_SCHEMA
 
     return (
-        L0_SCHEMA, L1_SCHEMA, L2_SCHEMA, L3_SCHEMA, L4_SCHEMA, L5_SCHEMA, L6_SCHEMA, L7_SCHEMA,
+        L0_SCHEMA, L1_SCHEMA, L2_SCHEMA, L3_SCHEMA, L4_SCHEMA, L5_SCHEMA, L6_SCHEMA, L7_SCHEMA, L8_SCHEMA,
         COMMUNITY_SCHEMA,
     )
 

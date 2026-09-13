@@ -30,7 +30,7 @@ LAYER_GATES: dict[str, tuple[str, ...]] = {
     "L5": ("l5_completeness", "l5_mapping", "l5_precision", "l3_l5_referential"),
     "L6": ("l6_completeness", "l6_minimality", "l6_reference", "l6_explanation", "l6_citation"),
     "L7": ("l7_brier", "l7_linker", "l7_number_echo"),
-    "L8": ("l8_reidentification", "l8_traceability", "l8_k_anonymity"),
+    "L8": ("l8_reidentification", "l8_traceability", "l8_fill_rubric", "l8_k_anonymity"),
 }
 
 # Public gate thresholds (HLD §4) — published with the dashboard so the method is citable.

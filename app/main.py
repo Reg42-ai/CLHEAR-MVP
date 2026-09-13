@@ -44,6 +44,7 @@ def create_app() -> FastAPI:
         from app.clhear.v1.l5 import router as v1_l5_router
         from app.clhear.v1.l6 import router as v1_l6_router
         from app.clhear.v1.l7 import router as v1_l7_router
+        from app.clhear.v1.l8 import router as v1_l8_router
         from app.clhear.v1.solon import router as solon_router
         from app.clhear.v1.explore import router as explore_router
         from app.clhear.learn import router as learn_router
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
         app.include_router(v1_l5_router)
         app.include_router(v1_l6_router)
         app.include_router(v1_l7_router)
+        app.include_router(v1_l8_router)  # fills + member benchmarks; members-only content, public metadata
         app.include_router(graph_router)
         app.include_router(console_router)
         app.include_router(contributions_router)  # /contribute, /contributions, /cla, /governance

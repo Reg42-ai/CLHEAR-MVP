@@ -131,9 +131,8 @@ def write_schemas(repo_dir: Path) -> list[Path]:
     from app.clhear.l7 import models as l7_models
 
     tables = list(record.layer_tables())
-    for extra in (l7_models.enforcement_events, l7_models.enforcement_links, l7_models.risk_scores, l7_models.risk_calibrations):
-        if extra not in tables:
-            tables.append(extra)
+    if l7_models.risk_calibrations not in tables:
+        tables.append(l7_models.risk_calibrations)  # append-only method ledger: published, no shared columns
     written: list[Path] = []
     index: dict[str, list[str]] = {}
     for table in tables:

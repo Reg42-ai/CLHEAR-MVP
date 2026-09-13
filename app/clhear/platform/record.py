@@ -85,8 +85,13 @@ def layer_tables() -> list[sa.Table]:
     from app.clhear.l1 import models as l1_models
     from app.clhear.models import cohorts, risk_narratives
 
+    from app.clhear.l7 import models as l7_models
+    from app.clhear.l8 import models as l8_models
+
     tables: list[sa.Table] = list(l1_models.ALL_TABLES) + list(derived_models.DERIVED_TABLES)
     tables += [risk_narratives, cohorts]
+    tables += [l7_models.enforcement_events, l7_models.enforcement_links, l7_models.risk_scores]
+    tables += [l8_models.fills, l8_models.benchmark_aggregates]
     for loader in _EXTRA_LAYER_TABLE_LOADERS:
         tables += list(loader())
     return tables

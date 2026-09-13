@@ -22,6 +22,7 @@ OBJECT_PREFIXES: dict[str, str] = {
     "BLU": "L6",  # blueprint
     "RSK": "L7",  # risk score
     "FIL": "L8",  # fill
+    "BMA": "L8",  # benchmark aggregate
     # edge / auxiliary objects — same rules (stable, never reused)
     "AST": "L2",  # asserts edge
     "EQV": "L2",  # equivalence

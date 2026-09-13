@@ -36,5 +36,17 @@ print(con["id"], con["status"], [c["check"] for c in con["checks"] if not c["ok"
 print(me.contribution(con["id"])["rederivation"])   # agree / disagree / unverified, once the fleet ran
 ```
 
+L8 fills and benchmarks (HLD v2 §4.8) — *that* a block carries fills, and how
+mature they are, is public; the fill text and the k ≥ 5, noise-protected cohort
+statistics are member content. Members identify with their id token.
+
+```python
+print(c.fills_available("BLK-000002"))            # public: {"blocks": [{"fills": 2, "endorsed": 1, ...}]}
+member = Client("https://clhear.org", id_token="eyJ…")
+print(member.fills(block="BLK-000002")["fills"][0]["content"])
+print(member.benchmarks(metric="cdd_refresh_days"))
+member.submit_benchmark("UK|payments|retail", "cdd_refresh_days", 365)
+```
+
 Licence: Apache-2.0. Published from the `clhear` repository by the release
 pipeline (item 13); this copy is the source of truth.

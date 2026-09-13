@@ -149,6 +149,21 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     risk_items = layer_service.risk_items(engine)[:4]
     narratives = [narrate_risk(engine, llm, it) for it in risk_items]
     cohorts = refresh_cohorts(engine)
+    # L8 (HLD v2 §4.8): drift first so a changed block re-derives its fills before new
+    # slots are drafted; then the member aggregates (k ≥ 5, DP noise) — nothing here
+    # waits on a contribution.
+    from app.clhear.l8 import aggregate as l8_aggregate
+    from app.clhear.l8 import fills as l8_fills
+
+    l8 = {}
+    for name, fn in (("drift", lambda: l8_fills.detect_drift(engine)),
+                     ("fills", lambda: l8_fills.generate_fills(engine, llm)),
+                     ("aggregates", lambda: l8_aggregate.aggregate(engine, release=started.strftime("%Y%m%dT%H%M%SZ")))):
+        try:
+            l8[name] = fn()
+        except Exception as exc:
+            log.exception("l8 %s failed", name)
+            l8[name] = {"error": str(exc)[:200]}
     gates = {}
     for suite in (
         "l2_basis_integrity", "l2_extraction_quality", "l2_concept_integrity",
@@ -157,7 +172,8 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "l3_l5_referential", "l4_validity", "l4_applicability", "l4_grounding",
         "l5_completeness", "l5_mapping", "l5_precision",
         "l6_completeness", "l6_minimality", "l6_reference", "l6_explanation", "l6_citation",
-        "l7_linker", "l7_brier", "l7_number_echo", "l8_k_anonymity",
+        "l7_linker", "l7_brier", "l7_number_echo",
+        "l8_k_anonymity", "l8_reidentification", "l8_traceability", "l8_fill_rubric",
     ):
         try:
             gates[suite] = ev.run_suite(engine, suite, release=started.strftime("%Y%m%dT%H%M%SZ"))
@@ -226,6 +242,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
                "obligation_scores": {k: v for k, v in l7["obligation_scores"].items() if k != "bands"},
                "item_scores": l7["item_scores"]},
         "cohorts": cohorts,
+        "l8": {"drift": {k: v for k, v in l8["drift"].items() if k != "details"},
+               "fills": {k: v for k, v in l8["fills"].items() if k != "ids"},
+               "aggregates": {k: v for k, v in l8["aggregates"].items() if k not in ("ids", "suppressed_detail")}},
         "community": community,
         "gates": {k: {"passed": v.get("passed")} for k, v in gates.items()},
     }

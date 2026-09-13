@@ -1617,6 +1617,35 @@ def l8_k_anonymity(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     return detail, ok
 
 
+@register_suite("l8_reidentification")
+def l8_reidentification(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """HLD v2 §4.8: every current benchmark aggregate has n ≥ k distinct members, echoes
+    no raw input, admits no differencing attack between cohorts on the same metric, and
+    the input store holds HMAC digests only — never a member identity."""
+    from app.clhear.l8.aggregate import reidentification_test
+
+    out = reidentification_test(engine)
+    return {k: v for k, v in out.items() if k != "passed"}, out["passed"]
+
+
+@register_suite("l8_traceability")
+def l8_traceability(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Every current fill names a live L3 block and ≥ 1 live obligation and carries a why-trail (I3): 100 %."""
+    from app.clhear.l8.fills import traceability
+
+    out = traceability(engine)
+    return out, out["ratio"] >= 1.0
+
+
+@register_suite("l8_fill_rubric")
+def l8_fill_rubric(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Endorsed fills all scored ≥ 85 % on the five-criterion expert rubric, by a recorded review."""
+    from app.clhear.l8.fills import rubric_gate
+
+    out = rubric_gate(engine)
+    return {k: v for k, v in out.items() if k != "ok"}, out["ok"]
+
+
 def run_source_evals(engine: Engine, source_key: str, release: str | None = None) -> list[dict]:
     return [run_suite(engine, suite, source_key=source_key, release=release) for suite in SOURCE_SUITES]
 

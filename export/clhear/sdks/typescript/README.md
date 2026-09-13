@@ -32,5 +32,17 @@ const con = await me.contribute({ kind: "correction", proposed: { value: "Apply 
 console.log(con.id, con.status, con.checks.filter((c) => !c.ok));
 ```
 
+L8 fills and benchmarks (HLD v2 §4.8) — *that* a block carries fills, and how
+mature they are, is public; the fill text and the k ≥ 5, noise-protected cohort
+statistics are member content. Members identify with their id token.
+
+```ts
+await client.fillsAvailable("BLK-000002");                 // public metadata
+const member = new ClhearClient({ baseUrl: "https://clhear.org", idToken: "eyJ…" });
+await member.fills({ block: "BLK-000002" });
+await member.benchmarks({ metric: "cdd_refresh_days" });
+await member.submitBenchmark("UK|payments|retail", "cdd_refresh_days", 365);
+```
+
 Licence: Apache-2.0. Published from the `clhear` repository by the release
 pipeline (item 13); this copy is the source of truth.

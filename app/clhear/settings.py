@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # The exporter compiles the public repo locally regardless; it pushes only when
     # this is true (set as a repository variable in the release workflow).
     clhear_public_disclosure_confirmed: bool = False
+    # HLD v2 I9: agnostic (public product) | member | instance (runs in a client account).
+    clhear_mode: str = "agnostic"
+    # L8 benchmark inputs are keyed by HMAC(member id, this secret); rotate = new cohort history.
+    clhear_benchmark_hmac_key: str = ""
 
     # HLD v2 §6 tooling: Discourse forum (link shown on the contribute page) and the
     # beehiiv newsletter that carries the change digest. Empty = hooks are inert.

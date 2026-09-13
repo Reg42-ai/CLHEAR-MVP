@@ -176,6 +176,35 @@ class Client:
     def governance(self) -> dict:
         return self._request("GET", "/governance")
 
+    # ---- L8 fills and member benchmarks (HLD v2 §4.8; open by mode, I9) ----
+    # Existence and maturity are public; fill content and cohort statistics need a
+    # member identity (``id_token`` of a member, or a member's application key).
+
+    def l8_mode(self) -> dict:
+        return self._request("GET", "/l8/mode")
+
+    def fills_available(self, *blocks: str) -> dict:
+        """Public metadata: per block, how many fills exist and at which maturity."""
+        return self._request("GET", "/l8/availability", params={"block": ",".join(blocks) or None})
+
+    def fills(self, *, block: str | None = None, maturity: str | None = None, kind: str | None = None, limit: int = 200) -> dict:
+        """Members: fill content for a block (403 ``members_only`` in agnostic mode)."""
+        return self._request("GET", "/l8/fills", params={"block": block, "maturity": maturity, "kind": kind, "limit": limit})
+
+    def fill(self, fill_id: str) -> dict:
+        return self._request("GET", f"/l8/fills/{fill_id}")
+
+    def benchmarks(self, *, cohort: str | None = None, metric: str | None = None, block: str | None = None) -> dict:
+        """Members: k ≥ 5 cohort aggregates with Laplace noise — never an individual observation."""
+        return self._request("GET", "/l8/benchmarks", params={"cohort": cohort, "metric": metric, "block": block})
+
+    def benchmark_metrics(self) -> dict:
+        return self._request("GET", "/l8/metrics")
+
+    def submit_benchmark(self, cohort_key: str, metric: str, value: float, *, block_id: str | None = None) -> dict:
+        """Members: one opt-in observation, stored under an HMAC of your identity and only ever published inside a k ≥ 5 aggregate."""
+        return self._request("POST", "/l8/benchmarks/inputs", body={"cohort_key": cohort_key, "metric": metric, "value": value, "block_id": block_id})
+
     def iter_feed(self, *, since: str | None = None, page: int = 100) -> Iterator[dict]:
         seen: set[str] = set()
         for entry in self.feed(since=since, limit=page)["entries"]:

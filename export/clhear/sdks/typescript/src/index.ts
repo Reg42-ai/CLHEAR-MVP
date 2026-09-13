@@ -183,6 +183,24 @@ export class ClhearClient {
   myContributions(): Promise<Record<string, unknown>> { return this.request("GET", "/contributors/me"); }
   notifications(unread = false): Promise<Record<string, unknown>> { return this.request("GET", "/contributions/notifications", undefined, { unread: unread ? "true" : undefined }); }
   governance(): Promise<Record<string, unknown>> { return this.request("GET", "/governance"); }
+
+  // ---- L8 fills and member benchmarks (HLD v2 §4.8; open by mode, I9) ----
+  // Existence and maturity are public; content and cohort statistics need a member identity.
+  l8Mode(): Promise<Record<string, unknown>> { return this.request("GET", "/l8/mode"); }
+  fillsAvailable(...blocks: string[]): Promise<Record<string, unknown>> {
+    return this.request("GET", "/l8/availability", undefined, { block: blocks.length ? blocks.join(",") : undefined });
+  }
+  fills(opts: { block?: string; maturity?: string; kind?: string; limit?: number } = {}): Promise<Record<string, unknown>> {
+    return this.request("GET", "/l8/fills", undefined, opts);
+  }
+  fill(id: string): Promise<Record<string, unknown>> { return this.request("GET", `/l8/fills/${id}`); }
+  benchmarks(opts: { cohort?: string; metric?: string; block?: string } = {}): Promise<Record<string, unknown>> {
+    return this.request("GET", "/l8/benchmarks", undefined, opts);
+  }
+  benchmarkMetrics(): Promise<Record<string, unknown>> { return this.request("GET", "/l8/metrics"); }
+  submitBenchmark(cohortKey: string, metric: string, value: number, blockId?: string): Promise<Record<string, unknown>> {
+    return this.request("POST", "/l8/benchmarks/inputs", { cohort_key: cohortKey, metric, value, block_id: blockId ?? null });
+  }
 }
 
 export default ClhearClient;
