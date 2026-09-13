@@ -75,10 +75,15 @@ resource "aws_ecs_task_definition" "fleet" {
         { name = "INFER_BASE_URL", value = var.infer_base_url },
         { name = "INFER_EMPLOYEE_ID", value = "clhear-${each.key}" },
         { name = "CLHEAR_FRONTIER_MONTHLY_CAP_USD", value = "50" },
+        # Query graph: empty URI -> in-process projection over Postgres (same answers, no Bolt).
+        { name = "CLHEAR_NEO4J_URI", value = local.neo4j_uri },
+        { name = "CLHEAR_NEO4J_USER", value = "neo4j" },
+        { name = "CLHEAR_EMBEDDING_PROVIDER", value = "infer" },
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
         { name = "INFER_TOKEN", valueFrom = aws_ssm_parameter.infer_token.arn },
+        { name = "CLHEAR_NEO4J_PASSWORD", valueFrom = aws_ssm_parameter.neo4j_password.arn },
       ]
       logConfiguration = {
         logDriver = "awslogs"

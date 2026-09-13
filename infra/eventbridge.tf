@@ -136,6 +136,30 @@ resource "aws_cloudwatch_event_target" "adapter_to_sqs" {
   })
 }
 
+# Nightly projection rebuild (HLD v2 I7): Neo4j graph + pgvector index are
+# rebuilt from Postgres before the release is cut. Idempotent — rerunning it
+# on an unchanged record changes nothing but the run log.
+resource "aws_cloudwatch_event_rule" "graph_rebuild" {
+  name                = "${var.name_prefix}-graph-rebuild"
+  schedule_expression = "cron(0 23 * * ? *)"
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
+}
+
+resource "aws_cloudwatch_event_target" "graph_rebuild_to_sqs" {
+  rule = aws_cloudwatch_event_rule.graph_rebuild.name
+  arn  = local.fleet_queue["l0"].arn
+  input = jsonencode({
+    event_id       = "schedule-graph-rebuild"
+    layer          = "l0"
+    kind           = "GraphRebuildRequested"
+    subject_ref    = "all"
+    payload        = { index = true, force = false }
+    schema_version = 1
+    producer       = "eventbridge"
+    ts             = ""
+  })
+}
+
 # Nightly named release (semantic date). The L0 fleet snapshots the record,
 # gates each layer on its evals and writes a pin-able manifest.
 resource "aws_cloudwatch_event_rule" "eod_publish" {

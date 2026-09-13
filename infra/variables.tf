@@ -100,6 +100,29 @@ variable "aurora_max_acu" {
   default = 4
 }
 
+# --- The query graph: Neo4j Community on Fargate + EFS (HLD v2 I7) -------
+variable "neo4j_enabled" {
+  type        = bool
+  default     = false
+  description = "Deploy the Neo4j Community projection (rebuilt nightly from Postgres). Needs existing_vpc_id/subnets."
+}
+
+variable "neo4j_image" {
+  type    = string
+  default = "neo4j:5-community"
+}
+
+variable "neo4j_cpu" {
+  type    = number
+  default = 1024
+}
+
+variable "neo4j_memory" {
+  type        = number
+  default     = 4096
+  description = "Task memory in MiB; heap and page cache each take a quarter"
+}
+
 # --- Inference: Reg42 Infer on Bedrock (HLD v2 I6) ----------------------
 variable "infer_base_url" {
   type    = string
