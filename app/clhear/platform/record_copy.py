@@ -29,6 +29,11 @@ log = logging.getLogger("clhear.record_copy")
 
 BATCH = 2000
 
+# The clause vector index (HLD v2 I7) is stored as packed float32 on SQLite and as
+# pgvector on Aurora; it is rebuilt from the record text (platform.embeddings), so a
+# cross-dialect copy leaves it null instead of translating it.
+INDEX_COLUMNS = frozenset({"embedding", "embedding_model", "embedding_hash", "embedded_at"})
+
 
 def declared_tables() -> list[sa.Table]:
     """Every table the application declares, in foreign-key order."""
@@ -52,6 +57,7 @@ class CopyReport:
     tables: dict[str, tuple[int, int]] = field(default_factory=dict)  # name -> (source rows, dest rows after)
     skipped: list[str] = field(default_factory=list)  # destination lacks the table: a real problem
     absent: list[str] = field(default_factory=list)  # source predates the table: nothing to copy
+    index_reset: list[str] = field(default_factory=list)  # vector index columns left null; rebuild_index refills
 
     @property
     def ok(self) -> bool:
@@ -65,6 +71,7 @@ class CopyReport:
             "short": {n: c for n, c in self.tables.items() if c[1] < c[0]},
             "skipped": self.skipped,
             "absent_on_source": len(self.absent),
+            "index_reset": self.index_reset,
         }
 
 
@@ -111,7 +118,10 @@ def copy_record(source: Engine, dest: Engine, *, batch: int = BATCH) -> CopyRepo
             # A source behind on migrations lacks newer columns; copy the intersection and
             # let the destination defaults fill the rest (the source is migrated first anyway).
             src_cols = {c["name"] for c in sa.inspect(src).get_columns(table.name, schema=None if src.dialect.name == "sqlite" else table.schema)}
-            cols = [c.name for c in table.columns if c.name in src_cols]
+            cross_dialect = src.dialect.name != dst.dialect.name
+            cols = [c.name for c in table.columns if c.name in src_cols and not (cross_dialect and c.name in INDEX_COLUMNS)]
+            if cross_dialect and any(c.name in INDEX_COLUMNS for c in table.columns):
+                report.index_reset.append(table.key)
             n_src = 0
             result = src.execution_options(stream_results=True).execute(sa.select(*[table.c[c] for c in cols]))
             while True:
