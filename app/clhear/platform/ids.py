@@ -45,6 +45,7 @@ OBJECT_PREFIXES: dict[str, str] = {
     "SRC": "L1",  # source (exposed id for integer-keyed L1 rows)
     "CLS": "L1",  # clause
     "VER": "L1",  # source version
+    "KEY": "L0",  # API key (identity rails)
 }
 
 _ID_RE = re.compile(r"^(?P<prefix>[A-Z]{3})-(?P<n>\d{6,})$")
