@@ -108,10 +108,12 @@ def parse_json_object(text: str) -> dict:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        start, end = raw.find("{"), raw.rfind("}")
-        if start < 0 or end <= start:
+        # Reasoning models (gpt-oss) often follow the object with prose or a second
+        # object ("Extra data"): decode the first complete object and drop the rest.
+        start = raw.find("{")
+        if start < 0:
             raise
-        parsed = json.loads(raw[start : end + 1])
+        parsed, _ = json.JSONDecoder().raw_decode(raw, start)
     if not isinstance(parsed, dict):
         raise StructuredOutputError("response is not a JSON object")
     return parsed

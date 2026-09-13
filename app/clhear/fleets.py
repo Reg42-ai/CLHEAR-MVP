@@ -312,10 +312,13 @@ def main(argv: list[str] | None = None) -> int:
     """
     import argparse
     import json
+    import logging as _logging
     import sys
 
     from app.clhear.db import get_engine, run_migrations
     from app.clhear.platform.gateway import FakeProvider
+
+    _logging.basicConfig(level=_logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from app.clhear.platform.router import Router, build_providers
 
     parser = argparse.ArgumentParser(prog="python -m app.clhear.fleets")

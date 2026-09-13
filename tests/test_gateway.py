@@ -55,6 +55,13 @@ def test_structured_output_validation(engine):
     )
     assert json.loads(messy.text) == {"classification": "x", "confidence": 0.5}
 
+def test_parse_json_object_takes_the_first_object_when_the_model_keeps_talking():
+    # gpt-oss-style: a valid object followed by commentary that itself contains braces.
+    text = '```json\n{"duties": [{"id": 1}], "confidence": 0.9}\n```\nI also considered {"duties": []} but rejected it.'
+    assert parse_json_object(text) == {"duties": [{"id": 1}], "confidence": 0.9}
+    assert parse_json_object('prose first {"ok": true}\n{"ok": false}') == {"ok": True}
+
+
 def test_parse_json_object_strips_think_and_fences():
     body = {"is_duty": True, "evidence_span": "keep records"}
     wrapped = "<think>hmm</think>\n```json\n" + json.dumps(body) + "\n```"
