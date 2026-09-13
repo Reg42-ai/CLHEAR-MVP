@@ -13,6 +13,7 @@ CLHEAR is the open data standard for compliance programs: a live, eight-layer sy
 | `evals/` | Golden sets per layer, contributed cases, the scoring harness, and each release's gate scores | Apache-2.0 (harness) · CC BY 4.0 (cases) |
 | `sdks/` | Python and TypeScript clients for the public API | Apache-2.0 |
 | `governance/` | Charter, contribution guide, CLA, code of conduct, release / deprecation / conflict-of-interest policies, how the steering group votes, how a working group forms, trademark policy | CC BY 4.0 |
+| `conformance/` | The conformance program: CL1 Mapped → CL4 Automated, the Annex E self-assessment protocol and machine-readable criteria, the ISAE 3000 assessor guide, the marks policy, evidence templates | CC BY 4.0 |
 | `ROADMAP.md` | The public roadmap, by build item | CC BY 4.0 |
 | `RELEASE_NOTES/` | What shipped in each release, with contributor attribution and impact | CC BY 4.0 |
 

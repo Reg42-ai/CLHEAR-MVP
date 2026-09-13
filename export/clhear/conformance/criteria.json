@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clhear.org/conformance/criteria.json",
+  "title": "CLHEAR conformance criteria (Annex E)",
+  "version": "1.0",
+  "licence": "CC BY 4.0",
+  "levels": [
+    {
+      "level": "CL1",
+      "name": "Mapped",
+      "mark": "CLHEAR CL1 Mapped",
+      "verification": "verified self-assessment",
+      "summary": "The compliance program is mapped to a named CLHEAR release, profile and agnostic blueprint: every blueprint item is either operated with a named owner or declared out of scope with a reason.",
+      "validity_months": 12
+    },
+    {
+      "level": "CL2",
+      "name": "Traceable",
+      "mark": "CLHEAR CL2 Traceable",
+      "verification": "verified self-assessment",
+      "summary": "CL1, and every operated item carries evidence traceable to the obligations it satisfies; deviations from the blueprint's characteristics are recorded with rationale; CLHEAR releases are tracked and reconciled within 30 days.",
+      "validity_months": 12
+    },
+    {
+      "level": "CL3",
+      "name": "Assessed",
+      "mark": "CLHEAR CL3 Assessed",
+      "verification": "independent assessor, ISAE 3000 (Revised) reasonable assurance",
+      "summary": "CL2, assessed by an accredited independent assessor: the mapping's completeness, the traceability of evidence and the operation of items over a period of at least six months.",
+      "validity_months": 12
+    },
+    {
+      "level": "CL4",
+      "name": "Automated",
+      "mark": "CLHEAR CL4 Automated",
+      "verification": "independent assessor, ISAE 3000 (Revised) reasonable assurance",
+      "summary": "CL3, and the program is kept current by machine: releases consumed through the API or SDK against a pinned release, blueprint diffs ingested automatically, evidence produced continuously by systems, deviations alerting within 24 hours.",
+      "validity_months": 12
+    }
+  ],
+  "criteria": [
+    {
+      "id": "E.1.1", "level": "CL1", "area": "Scope",
+      "title": "Named release",
+      "requirement": "The self-assessment names the CLHEAR release the program is mapped to.",
+      "evidence": "Release id (clhear-vYYYY.MM.DD or a nightly stamp) as shown at /v1/releases.",
+      "verification": "program", "automated_check": "release_named"
+    },
+    {
+      "id": "E.1.2", "level": "CL1", "area": "Scope",
+      "title": "Named profile and blueprint",
+      "requirement": "The program is composed from a stored L4 profile and its current L6 agnostic blueprint (BLU- id). The organisation confirms the profile's predicates describe it.",
+      "evidence": "Blueprint id; a signed statement that the profile predicates (jurisdictions, licences, products, client types, channels) are accurate.",
+      "verification": "program", "automated_check": "blueprint_current"
+    },
+    {
+      "id": "E.1.3", "level": "CL1", "area": "Scope",
+      "title": "Scope statement",
+      "requirement": "The assessed scope names the legal entities, business lines and jurisdictions covered, and any exclusions with reasons.",
+      "evidence": "Scope statement in the form.",
+      "verification": "program", "automated_check": "scope_stated"
+    },
+    {
+      "id": "E.2.1", "level": "CL1", "area": "Mapping",
+      "title": "Complete blueprint",
+      "requirement": "The blueprint covers 100 % of the obligations applicable to the profile (the L6 completeness gate) in the named release.",
+      "evidence": "The blueprint's coverage summary as published by CLHEAR.",
+      "verification": "program", "automated_check": "blueprint_complete"
+    },
+    {
+      "id": "E.2.2", "level": "CL1", "area": "Mapping",
+      "title": "Every item mapped",
+      "requirement": "Every item of the blueprint is mapped to a program element the organisation operates, or declared out of scope with a reason.",
+      "evidence": "The item mapping in the form: for each ITM- id, status operated | out_of_scope and, for out_of_scope, a reason.",
+      "verification": "program", "automated_check": "items_mapped"
+    },
+    {
+      "id": "E.2.3", "level": "CL1", "area": "Mapping",
+      "title": "Named owners",
+      "requirement": "Every operated item has a named accountable owner (a role, not necessarily a person).",
+      "evidence": "Owner per operated item.",
+      "verification": "program", "automated_check": "owners_named"
+    },
+    {
+      "id": "E.2.4", "level": "CL1", "area": "Mapping",
+      "title": "Out-of-scope items justified",
+      "requirement": "Out-of-scope declarations are justified by a fact about the organisation (no such activity, entity or product) — never by a judgement that the obligation does not matter.",
+      "evidence": "Reasons in the mapping; the program reviews them.",
+      "verification": "program", "automated_check": "exclusions_reasoned"
+    },
+    {
+      "id": "E.3.1", "level": "CL2", "area": "Traceability",
+      "title": "Evidence per item",
+      "requirement": "Every operated item names at least one evidence artefact showing the item exists and operates (policy document, procedure record, system configuration, appointment letter, committee minutes).",
+      "evidence": "Evidence references (document id, system, URL or file hash) per operated item, following the evidence templates in conformance/evidence_templates/.",
+      "verification": "program", "automated_check": "evidence_per_item"
+    },
+    {
+      "id": "E.3.2", "level": "CL2", "area": "Traceability",
+      "title": "Evidence traces to obligations",
+      "requirement": "Each evidence artefact can be traced to the obligations the blueprint item satisfies (the item's obligations_satisfied), so a reviewer can go from evidence to verbatim source in one step.",
+      "evidence": "Evidence references carry the obligation ids they evidence, or the artefact itself cites them.",
+      "verification": "program", "automated_check": "evidence_traces"
+    },
+    {
+      "id": "E.3.3", "level": "CL2", "area": "Traceability",
+      "title": "Characteristics compared",
+      "requirement": "For every operated item, the organisation compares its own characteristics (cadence, approver, retention, threshold …) with the blueprint's and records each deviation with a rationale.",
+      "evidence": "Deviation register in the form.",
+      "verification": "program", "automated_check": "deviations_reasoned"
+    },
+    {
+      "id": "E.4.1", "level": "CL2", "area": "Change",
+      "title": "Release tracking",
+      "requirement": "The organisation tracks CLHEAR releases and change events for its profile (watchlist, change feed or SDK) and can show the last release reconciled.",
+      "evidence": "Watchlist id / feed subscription; last reconciled release.",
+      "verification": "program", "automated_check": "change_tracking"
+    },
+    {
+      "id": "E.4.2", "level": "CL2", "area": "Change",
+      "title": "Reconciliation window",
+      "requirement": "Changes to the blueprint (new, changed or retired items) are reconciled into the program within 30 days of the release.",
+      "evidence": "Declared reconciliation window ≤ 30 days; a reconciliation log.",
+      "verification": "program", "automated_check": "reconciliation_window"
+    },
+    {
+      "id": "E.5.1", "level": "CL2", "area": "Governance",
+      "title": "Annual review",
+      "requirement": "The mapping, exclusions and deviation register are reviewed at least annually and on material change to the organisation's profile, with the review recorded.",
+      "evidence": "Review record (date, reviewer role, outcome).",
+      "verification": "program", "automated_check": "review_recorded"
+    },
+    {
+      "id": "E.5.2", "level": "CL1", "area": "Governance",
+      "title": "Accountable signatory",
+      "requirement": "The self-assessment is signed by an accountable officer of the organisation (head of compliance or equivalent) who confirms its accuracy.",
+      "evidence": "Signatory name, role, date.",
+      "verification": "program", "automated_check": "signed"
+    },
+    {
+      "id": "E.6.1", "level": "CL4", "area": "Automation",
+      "title": "Machine consumption",
+      "requirement": "The program consumes CLHEAR through the API or SDK against a pinned release; the pinned release is upgraded through a controlled change.",
+      "evidence": "Application key id; pinned release; change records for upgrades.",
+      "verification": "assessor", "automated_check": null
+    },
+    {
+      "id": "E.6.2", "level": "CL4", "area": "Automation",
+      "title": "Automatic diff ingestion",
+      "requirement": "Blueprint diffs between releases are ingested automatically and create work items without manual re-keying.",
+      "evidence": "System records showing diff → work item; assessor re-performs on a sample.",
+      "verification": "assessor", "automated_check": null
+    },
+    {
+      "id": "E.6.3", "level": "CL4", "area": "Automation",
+      "title": "Continuous evidence",
+      "requirement": "Evidence for operated items is produced by systems on their own cadence (instance mode of a Reg42 OS deployment or an equivalent), not assembled for the assessment.",
+      "evidence": "System-generated evidence with timestamps across the period.",
+      "verification": "assessor", "automated_check": null
+    },
+    {
+      "id": "E.6.4", "level": "CL4", "area": "Automation",
+      "title": "Deviation alerting",
+      "requirement": "A deviation between the program's characteristics and the blueprint, or a lapsed item, alerts an owner within 24 hours.",
+      "evidence": "Alert configuration and a sample of alerts with response times.",
+      "verification": "assessor", "automated_check": null
+    },
+    {
+      "id": "E.7.1", "level": "CL3", "area": "Assessment",
+      "title": "Independent assessor",
+      "requirement": "The assessment is performed by an assessor on the accredited register who is independent of the organisation and of Reg42 under the ISAE 3000 independence requirements.",
+      "evidence": "Assessor register id; independence confirmation in the report.",
+      "verification": "assessor", "automated_check": null
+    },
+    {
+      "id": "E.7.2", "level": "CL3", "area": "Assessment",
+      "title": "Period of operation",
+      "requirement": "The assessor tests the operation of a sample of items over a period of at least six months (ISAE 3000 reasonable assurance on operating effectiveness).",
+      "evidence": "Period stated in the report; sampling approach; exceptions and their disposition.",
+      "verification": "assessor", "automated_check": null
+    },
+    {
+      "id": "E.7.3", "level": "CL3", "area": "Assessment",
+      "title": "Report form",
+      "requirement": "The report follows conformance/ASSESSOR_GUIDE.md § Report: subject matter, criteria (this Annex), period, opinion, exceptions, and the CLHEAR release and blueprint assessed.",
+      "evidence": "Signed report lodged with the program.",
+      "verification": "assessor", "automated_check": null
+    }
+  ]
+}
