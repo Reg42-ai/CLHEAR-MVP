@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -283,10 +284,32 @@ def publish_release(
     rid = release_id or release_id_for()
     settings = get_settings()
     counts = corpus_counts(engine)
-    content_hash = ""
-    dest_uri = ""
 
     src_path = Path(snapshot_path) if snapshot_path else None
+    export_dir: tempfile.TemporaryDirectory | None = None
+    if engine.dialect.name == "postgresql" and not (src_path and src_path.exists()) \
+            and not (snapshot_uri or "").startswith("s3://"):
+        # Aurora mode: releases still ship l1/snapshot.db, so export a fresh, fully
+        # migrated SQLite copy of the record for this release (HLD v2 §3 I7).
+        from app.clhear.platform.record_copy import export_sqlite_snapshot
+
+        export_dir = tempfile.TemporaryDirectory(prefix="clhear-release-")
+        src_path = Path(export_dir.name) / "snapshot.db"
+        report = export_sqlite_snapshot(engine, src_path)
+        if not report.ok:
+            raise RuntimeError(f"snapshot export incomplete: {report.summary()}")
+    try:
+        return _publish_release(
+            engine, rid=rid, settings=settings, counts=counts, src_path=src_path, snapshot_uri=snapshot_uri,
+        )
+    finally:
+        if export_dir is not None:
+            export_dir.cleanup()
+
+
+def _publish_release(engine, *, rid: str, settings, counts: dict, src_path: Path | None, snapshot_uri: str | None) -> dict:
+    content_hash = ""
+    dest_uri = ""
     if src_path and src_path.exists():
         content_hash = _sha256_file(src_path)
 

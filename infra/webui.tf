@@ -58,6 +58,12 @@ resource "aws_iam_role" "webui" {
   })
 }
 
+resource "aws_iam_role_policy_attachment" "webui_vpc" {
+  count      = local.deploy_webui && local.deploy_private_net ? 1 : 0
+  role       = aws_iam_role.webui[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
 resource "aws_iam_role_policy_attachment" "webui_logs" {
   count      = local.deploy_webui ? 1 : 0
   role       = aws_iam_role.webui[0].name
@@ -152,9 +158,23 @@ resource "aws_lambda_function" "webui" {
     size = 2048
   }
 
+  # Aurora mode: the function joins the private subnets (network.tf) and reads
+  # the record directly; the S3 snapshot is then only the fallback path.
+  dynamic "vpc_config" {
+    for_each = local.deploy_private_net ? [1] : []
+    content {
+      subnet_ids         = local.private_subnet_ids
+      security_group_ids = [aws_security_group.webui[0].id]
+    }
+  }
+
   environment {
     variables = {
-      CLHEAR_DB_S3_URI                = var.webui_db_key != "" ? "s3://${aws_s3_bucket.deploy.bucket}/${var.webui_db_key}" : ""
+      CLHEAR_DB_S3_URI = var.webui_db_key != "" ? "s3://${aws_s3_bucket.deploy.bucket}/${var.webui_db_key}" : ""
+      # Hydrated at cold start from SSM (app/clhear/secrets.py): CHANGEME there = snapshot mode.
+      CLHEAR_DATABASE_URL_SSM_PARAM   = var.database_url_ssm_param
+      INFER_BASE_URL                  = local.deploy_private_net ? local.infer_base_url : ""
+      INFER_EMPLOYEE_ID               = "clhear"
       CLHEAR_RELEASES_S3_PREFIX       = "s3://${aws_s3_bucket.deploy.bucket}/releases"
       CLHEAR_APP_KEYS                 = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key"
       REG42_CLHEAR_ENABLED            = "true"

@@ -198,7 +198,7 @@ resource "aws_security_group" "infer" {
     from_port       = 8000
     to_port         = 8000
     protocol        = "tcp"
-    security_groups = aws_security_group.workers[*].id
+    security_groups = concat(aws_security_group.workers[*].id, aws_security_group.webui[*].id)
   }
 
   egress {
@@ -268,7 +268,7 @@ resource "aws_ecs_task_definition" "infer" {
       # that, which Infer logs at startup. The daily/monthly caps are in the catalog.
       secrets = concat(
         [{ name = "INFER_TOKEN_SECRET", valueFrom = aws_ssm_parameter.infer_token_secret.arn }],
-        local.deploy_aurora ? [{ name = "INFER_DATABASE_URL", valueFrom = aws_ssm_parameter.infer_database_url.arn }] : [],
+        local.record_on_aurora ? [{ name = "INFER_DATABASE_URL", valueFrom = aws_ssm_parameter.infer_database_url.arn }] : [],
       )
       logConfiguration = {
         logDriver = "awslogs"

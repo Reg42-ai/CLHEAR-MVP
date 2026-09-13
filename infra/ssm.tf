@@ -49,5 +49,5 @@ resource "aws_ssm_parameter" "github_deploy_token" {
 resource "aws_ssm_parameter" "database_url" {
   name  = var.database_url_ssm_param
   type  = "SecureString"
-  value = local.deploy_aurora ? local.aurora_dsn : "CHANGEME"
+  value = local.record_on_aurora ? local.aurora_dsn : "CHANGEME"
 }

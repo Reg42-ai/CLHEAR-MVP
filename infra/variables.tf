@@ -100,7 +100,7 @@ variable "aurora_enabled" {
 
 variable "aurora_engine_version" {
   type    = string
-  default = "16.6"
+  default = "16.13"
 }
 
 variable "aurora_max_acu" {

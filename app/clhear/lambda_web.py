@@ -5,9 +5,14 @@
 # this repo, so the MVP ships the same FastAPI app behind API Gateway
 # — near-zero idle cost, swaps out cleanly when reg42-infra is wired.
 
-The read-only corpus (SQLite maintained by the ingestion fleet) is fetched
-from the deploy bucket at cold start and re-checked on a short TTL, so the
-daily fleet's snapshot updates reach the public UI without a redeploy.
+Two record modes:
+
+* Aurora (DATABASE_URL hydrated from SSM is a Postgres DSN): the function runs
+  inside the VPC and reads and writes the record directly, so console decisions,
+  votes and API keys persist.
+* Snapshot (no DSN): the read-only SQLite maintained by the fleets is fetched
+  from the deploy bucket at cold start and re-checked on a short TTL. Writes
+  land in /tmp and are lost with the container; this is the pre-cutover mode.
 """
 import os
 
@@ -19,7 +24,13 @@ hydrate_ssm_env()
 _state = {"etag": "", "checked": 0.0}
 
 
+def _direct_db() -> bool:
+    return os.environ.get("DATABASE_URL", "").startswith("postgresql")
+
+
 def _prepare_db() -> None:
+    if _direct_db():
+        return
     uri = os.environ.get("CLHEAR_DB_S3_URI", "")
     if uri.startswith("s3://") and not os.path.exists(DB_LOCAL_PATH):
         try:
@@ -32,6 +43,8 @@ def _prepare_db() -> None:
 
 def _refresh_db() -> None:
     """Re-fetch the snapshot when the fleet published a newer one (TTL-gated)."""
+    if _direct_db():
+        return
     uri = os.environ.get("CLHEAR_DB_S3_URI", "")
     if not uri.startswith("s3://"):
         return

@@ -5,6 +5,16 @@
 
 locals {
   deploy_aurora = var.aurora_enabled && local.have_network
+  # The cluster can exist (and be loaded) while fleets and web still run on the
+  # S3 snapshot; record_cutover is the moment they switch. Kept separate so the
+  # load happens into an idle database and the switch is one reviewed flip.
+  record_on_aurora = local.deploy_aurora && var.record_cutover
+}
+
+variable "record_cutover" {
+  type        = bool
+  default     = false
+  description = "Point fleets, web tier and clhear-infer at Aurora. Flip only after scripts/load_record has filled it."
 }
 
 resource "random_password" "aurora_master" {
@@ -16,21 +26,21 @@ resource "random_password" "aurora_master" {
 resource "aws_db_subnet_group" "aurora" {
   count      = local.deploy_aurora ? 1 : 0
   name       = "${var.name_prefix}-aurora"
-  subnet_ids = var.existing_private_subnet_ids
+  subnet_ids = local.private_subnet_ids # network.tf: no public IPs, NAT egress
 }
 
 resource "aws_security_group" "aurora" {
   count       = local.deploy_aurora ? 1 : 0
   name        = "${var.name_prefix}-aurora"
   vpc_id      = var.existing_vpc_id
-  description = "CLHEAR record — Postgres from the layer fleets and the web app only"
+  description = "CLHEAR record - Postgres from the layer fleets and the web app only"
 
   ingress {
-    description     = "Postgres from fleets"
+    description     = "Postgres from fleets, the web tier and the private Infer router (spend ledger)"
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
-    security_groups = aws_security_group.workers[*].id
+    security_groups = concat(aws_security_group.workers[*].id, aws_security_group.webui[*].id, aws_security_group.infer[*].id)
   }
 
   egress {
@@ -101,6 +111,16 @@ resource "aws_rds_cluster_instance" "clhear" {
 
 locals {
   aurora_dsn = local.deploy_aurora ? "postgresql+psycopg://clhear:${random_password.aurora_master[0].result}@${aws_rds_cluster.clhear[0].endpoint}:5432/clhear?sslmode=require" : ""
+}
+
+# Always the live DSN (unlike /clhear/DATABASE_URL, which stays CHANGEME until the
+# cutover) so the one-off load job can reach the cluster before anything else does.
+resource "aws_ssm_parameter" "aurora_dsn" {
+  count       = local.deploy_aurora ? 1 : 0
+  name        = "/clhear/AURORA_DSN"
+  type        = "SecureString"
+  value       = local.aurora_dsn
+  description = "Aurora master DSN for the record; used by scripts/load_record.py before the cutover"
 }
 
 output "aurora_endpoint" {

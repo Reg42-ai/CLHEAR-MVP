@@ -70,7 +70,7 @@ resource "aws_ecs_task_definition" "fleet" {
         # DR drill (item 17): the L0 fleet samples the cross-region replica nightly.
         { name = "CLHEAR_DATALAKE_REPLICA_BUCKET", value = var.replication_enabled ? aws_s3_bucket.datalake_replica[0].bucket : "" },
         { name = "REG42_CLHEAR_ENABLED", value = "true" },
-        { name = "CLHEAR_SNAPSHOT_S3_URI", value = var.aurora_enabled ? "" : "s3://${aws_s3_bucket.deploy.bucket}/webui/clhear-latest.db" },
+        { name = "CLHEAR_SNAPSHOT_S3_URI", value = local.record_on_aurora ? "" : "s3://${aws_s3_bucket.deploy.bucket}/webui/clhear-latest.db" },
         { name = "CLHEAR_RELEASES_S3_PREFIX", value = "s3://${aws_s3_bucket.deploy.bucket}/releases" },
         { name = "CLHEAR_HTTP_MODE", value = "live" },
         { name = "CLHEAR_ARTIFACT_STORE", value = "s3" },
