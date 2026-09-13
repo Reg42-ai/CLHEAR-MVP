@@ -8,6 +8,8 @@
 """
 from pathlib import Path
 
+import pytest
+
 from app.clhear.platform import agnostic_scan
 from app.clhear.platform import task_classes as tc
 
@@ -112,3 +114,32 @@ def test_agnostic_scan_allows_publisher_addresses(tmp_path):
 def test_agnostic_scan_of_store_is_clean(engine):
     report = agnostic_scan.scan_engine(engine, denylist=[])
     assert report.clean, [h.__dict__ for h in report.hits][:5]
+
+
+def test_disclosure_gate(engine, monkeypatch):
+    """§9: nothing reaches the public `clhear` repo before the filing is confirmed.
+    The exporter compiles locally regardless, refuses to push without the flag,
+    and the release workflow wires the flag from a repository variable."""
+    from app.clhear.platform import exporter
+    from app.clhear.settings import get_settings
+
+    monkeypatch.delenv("CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED", raising=False)
+    monkeypatch.setenv("CLHEAR_PUBLIC_REPO_URL", "https://github.com/example/clhear.git")
+    get_settings.cache_clear()
+    try:
+        assert exporter.disclosure_confirmed() is False
+        monkeypatch.setattr(exporter, "compile_snapshot", lambda *_a, **_k: {"release": "x"})
+        monkeypatch.setattr("app.clhear.platform.evals.release_gate", lambda *_a, **_k: True)
+        with pytest.raises(exporter.DisclosureNotConfirmed):
+            exporter.export_release(engine, "x", push=True, layout=False)
+        monkeypatch.setenv("CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED", "true")
+        get_settings.cache_clear()
+        assert exporter.disclosure_confirmed() is True
+    finally:
+        get_settings.cache_clear()
+    workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED" in workflow
+    # no workflow pushes to a public remote by hand — only the gated exporter does
+    for wf in (REPO / ".github" / "workflows").glob("*.yml"):
+        text = wf.read_text(encoding="utf-8")
+        assert "git push" not in text.replace("git push --tags", ""), wf.name
