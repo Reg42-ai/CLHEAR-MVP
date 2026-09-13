@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Public evals</title>
+<meta name="description" content="The eval gates every CLHEAR layer must pass before it publishes: thresholds, latest suite runs and scores, read from the published summary table." />
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  main { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: clamp(26px, 4vw, 36px); margin: 0 0 6px; letter-spacing: -0.02em; }
+  .lead { color: var(--muted); margin: 0 0 18px; max-width: 760px; }
+  .meta { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 16px 18px; border-top: 3px solid var(--edge); }
+  .card.pass { border-top-color: var(--ok); } .card.fail { border-top-color: var(--bad); } .card.none { border-top-color: var(--faint); }
+  .card h2 { margin: 0; font-size: 18px; display: flex; justify-content: space-between; align-items: baseline; }
+  .card h2 small { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+  .pass h2 small { color: var(--ok); } .fail h2 small { color: var(--bad); } .none h2 small { color: var(--faint); }
+  h3 { margin: 12px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  td { padding: 4px 3px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .mono { font-family: var(--mono); font-size: 11.5px; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+  .scores { color: var(--muted); }
+  .foot { color: var(--faint); font-size: 12px; text-align: center; margin-top: 30px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+const fmt = (v) => (typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(3)) : typeof v === "object" && v ? JSON.stringify(v) : String(v));
+
+function Layer({ id, s }) {
+  const suites = Object.entries(s.suites);
+  const state = s.passed ? "pass" : suites.length ? "fail" : "none";
+  return html`<section class=${"card " + state} aria-labelledby=${"h-" + id}>
+    <h2 id=${"h-" + id}>${id}<small>${s.passed ? "gate passed" : suites.length ? "gate failed" : "not yet run"}</small></h2>
+    ${Object.keys(s.thresholds).length ? html`<h3>Thresholds</h3><table><tbody>${Object.entries(s.thresholds).map(([k, v]) => html`<tr key=${k}><td class="muted">${k.replaceAll("_", " ")}</td><td class="mono">${v}</td></tr>`)}</tbody></table>` : null}
+    <h3>Latest suite runs</h3>
+    ${suites.length ? html`<table><tbody>${suites.map(([name, r]) => html`<tr key=${name}><td class="mono">${name}</td><td class=${r.passed ? "ok" : "bad"}>${r.passed ? "pass" : "fail"}</td><td class="scores mono">${Object.entries(r.scores || {}).map(([k, v]) => `${k}=${fmt(v)}`).join(" · ")}</td><td class="mono muted">${(r.ran_at || "").slice(0, 10)}</td></tr>`)}</tbody></table>` : null}
+    ${s.missing.length ? html`<p class="muted" style=${{ fontSize: "12.5px", margin: "8px 0 0" }}>Not run yet: <span class="mono">${s.missing.join(", ")}</span>. Until every suite passes, this layer and the layers above it do not publish.</p>` : null}
+  </section>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [doc, setDoc] = useState(null);
+  useEffect(() => { fetch("/evals/summary").then((r) => r.json()).then(setDoc); }, []);
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark"><b>CLHEAR</b><span>public evals</span></div><div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink" href="/explore">Explore</a><a class="navlink" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main">
+      <h1>Evals gate publication.</h1>
+      <p class="lead">Each layer has named eval suites with public thresholds. A release publishes a layer only when every suite passed (I10); a failed gate freezes that layer and everything derived from it. This page reads the published summary table — the same one the release pipeline reads — never the eval store directly.</p>
+      ${doc ? html`<div class="meta">generated ${doc.generated_at} · release ${doc.release || "latest"} · <a href="/evals/summary">JSON</a></div>
+        <div class="layers">${Object.entries(doc.layers).map(([id, s]) => html`<${Layer} key=${id} id=${id} s=${s} />`)}</div>` : html`<p class="muted">Loading…</p>`}
+      <p class="foot">CLHEAR is a derivation, not legal advice. <a href="/disclaimer">Disclaimer</a> · <a href="/terms">Terms</a></p>
+    </main></div>`;
+}
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

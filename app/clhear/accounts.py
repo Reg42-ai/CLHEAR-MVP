@@ -68,9 +68,22 @@ def session_token(user: dict) -> str:
 def current_user(request: Request) -> dict | None:
     token = request.cookies.get(SESSION_COOKIE, "")
     payload = _verify(token, "session")
-    if not payload:
-        return None
-    return {"id": payload["uid"], "email": payload["email"], "display_name": payload.get("name", "")}
+    if payload:
+        return {"id": payload["uid"], "email": payload["email"], "display_name": payload.get("name", "")}
+    # HLD v2 §5: a Cognito id token in the Authorization header is the same
+    # user — SDKs and SPAs can call without the cookie.
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer ") and auth.count(".") == 2:
+        from app.clhear.app_auth import verify_cognito_token
+
+        claims = verify_cognito_token(auth[7:].strip())
+        if claims:
+            from app.clhear import community_writes
+
+            email = claims["email"].strip().lower()
+            return {"id": community_writes.user_id_for(email), "email": email,
+                    "display_name": claims.get("name") or email.split("@")[0], "provider": "cognito"}
+    return None
 
 
 def require_user(request: Request) -> dict:
@@ -162,7 +175,7 @@ def email_verify(token: str):
     if payload is None:
         raise HTTPException(status_code=400, detail="This sign-in link is invalid or expired")
     user = upsert_user(get_engine(), payload["email"], provider="email")
-    return _set_session(RedirectResponse("/#/contribute"), user)
+    return _set_session(RedirectResponse("/stack#/contribute"), user)
 
 
 # ------------------------------------------------------------ Google OAuth
@@ -218,7 +231,62 @@ def google_callback(code: str = "", state: str = ""):
     user = upsert_user(
         get_engine(), info["email"], display_name=info.get("name", ""), provider="google", provider_sub=info.get("sub", "")
     )
-    return _set_session(RedirectResponse("/#/contribute"), user)
+    return _set_session(RedirectResponse("/stack#/contribute"), user)
+
+
+# ------------------------------------------------------------ Cognito hosted UI (HLD v2 §5)
+
+
+def _cognito_redirect_uri() -> str:
+    return f"{get_settings().clhear_public_base_url}/auth/cognito/callback"
+
+
+@router.get("/cognito")
+def cognito_start(provider: str = ""):
+    """Redirect to the pool's hosted UI (``provider=Google`` goes straight to Google)."""
+    from urllib.parse import urlencode
+
+    from app.clhear.app_auth import cognito_enabled
+
+    settings = get_settings()
+    if not cognito_enabled() or not settings.clhear_cognito_domain:
+        raise HTTPException(status_code=503, detail="Cognito sign-in is not configured — use email or Google")
+    params = {
+        "client_id": settings.clhear_cognito_client_id,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "redirect_uri": _cognito_redirect_uri(),
+        "state": _sign({"exp": time.time() + 600}, "oauth-state"),
+    }
+    if provider:
+        params["identity_provider"] = provider
+    return RedirectResponse(f"{settings.clhear_cognito_domain.rstrip('/')}/oauth2/authorize?{urlencode(params)}")
+
+
+@router.get("/cognito/callback")
+def cognito_callback(code: str = "", state: str = ""):
+    from app.clhear.app_auth import cognito_enabled, verify_cognito_token
+
+    settings = get_settings()
+    if not cognito_enabled() or not settings.clhear_cognito_domain:
+        raise HTTPException(status_code=503, detail="Cognito sign-in is not configured")
+    if _verify(state, "oauth-state") is None:
+        raise HTTPException(status_code=400, detail="invalid oauth state")
+    import httpx
+
+    token_resp = httpx.post(
+        f"{settings.clhear_cognito_domain.rstrip('/')}/oauth2/token",
+        data={"grant_type": "authorization_code", "client_id": settings.clhear_cognito_client_id,
+              "code": code, "redirect_uri": _cognito_redirect_uri()},
+        timeout=20,
+    )
+    token_resp.raise_for_status()
+    claims = verify_cognito_token(token_resp.json().get("id_token", ""))
+    if claims is None:
+        raise HTTPException(status_code=401, detail="Cognito token could not be verified")
+    user = upsert_user(get_engine(), claims["email"], display_name=claims.get("name", ""), provider="cognito",
+                       provider_sub=claims.get("sub", ""))
+    return _set_session(RedirectResponse("/stack#/contribute"), user)
 
 
 @router.get("/apple")
@@ -247,6 +315,7 @@ def me(request: Request) -> dict:
             "email": True,
             "google": bool(settings.google_oauth_client_id),
             "apple": bool(settings.apple_oauth_client_id),
+            "cognito": bool(settings.clhear_cognito_user_pool_id and settings.clhear_cognito_domain),
         },
     }
 

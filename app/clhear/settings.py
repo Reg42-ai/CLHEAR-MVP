@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     apple_oauth_key_id: str = ""
     apple_oauth_private_key: str = ""
     clhear_submissions_daily_limit: int = 10
+    # HLD v2 §5 identity: Cognito user pool (Google IdP for Reg42). Empty =
+    # Cognito off; magic link + direct Google OAuth keep working.
+    clhear_cognito_region: str = ""
+    clhear_cognito_user_pool_id: str = ""
+    clhear_cognito_client_id: str = ""
+    clhear_cognito_domain: str = ""  # hosted UI, https://<prefix>-auth.auth.<region>.amazoncognito.com
 
     # Snapshot mode for the scheduled fleet: the corpus SQLite lives in S3
     # (same object the public explorer serves); workers pull it, ingest, and

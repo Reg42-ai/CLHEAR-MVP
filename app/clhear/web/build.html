@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Build on it</title>
+<meta name="description" content="API keys in one click, SDKs, OSCAL and JSON exports, and the public eval gates every release must pass." />
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  main { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: clamp(26px, 4vw, 36px); margin: 0 0 6px; letter-spacing: -0.02em; }
+  .lead { color: var(--muted); margin: 0 0 22px; max-width: 760px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 18px 20px; }
+  .card h2 { margin: 0 0 8px; font-size: 17px; }
+  .card h3 { margin: 12px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .card p { color: var(--muted); font-size: 13.5px; margin: 0 0 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  th { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  code, .mono { font-family: var(--mono); font-size: 12px; }
+  .method { color: var(--accent); font-weight: 700; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+  input[type="text"] { background: var(--panel-strong); color: var(--ink); border: 1px solid var(--edge); border-radius: 10px; padding: 7px 10px; font: inherit; font-size: 13px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .secret { background: var(--panel-strong); border: 1px dashed var(--accent); border-radius: 10px; padding: 10px 12px; margin-top: 10px; word-break: break-all; }
+  .secret b { display: block; font-size: 12px; color: var(--warn); margin-bottom: 4px; }
+  pre { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; overflow: auto; font-size: 12px; margin: 8px 0 0; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+  .err { color: var(--bad); font-size: 13px; }
+  .foot { color: var(--faint); font-size: 12px; text-align: center; margin-top: 30px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = async (url, opts) => {
+  const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body));
+  return body;
+};
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+function Keys({ signedIn }) {
+  const [keys, setKeys] = useState([]); const [label, setLabel] = useState(""); const [fresh, setFresh] = useState(null); const [err, setErr] = useState("");
+  const load = () => api("/keys").then((d) => setKeys(d.keys)).catch(() => setKeys([]));
+  useEffect(() => { if (signedIn) load(); }, [signedIn]);
+  const issue = async () => { setErr(""); try { const k = await api("/keys", { method: "POST", body: JSON.stringify({ label }) }); setFresh(k); setLabel(""); load(); } catch (e) { setErr(e.message); } };
+  const revoke = async (id) => { await api(`/keys/${id}/revoke`, { method: "POST" }); load(); };
+  if (!signedIn) return html`<div><p>Sign in to issue a key — one click, shown once, revocable any time. Reading the agnostic blueprint needs no key at all.</p>
+    <div class="row"><a class="btn" href="/auth/google">Sign in with Google</a><a class="btn quiet" href="/stack#signin">Email link</a></div></div>`;
+  return html`<div>
+    <div class="row"><input type="text" placeholder="label (optional)" value=${label} onInput=${(e) => setLabel(e.target.value)} aria-label="Key label" /><button class="btn" onClick=${issue}>Issue key</button></div>
+    ${err ? html`<div class="err" role="alert">${err}</div>` : null}
+    ${fresh ? html`<div class="secret" role="status"><b>Copy it now — the secret is shown once.</b><code>X-App-Id: ${fresh.app_id}</code><br/><code>Authorization: Bearer ${fresh.secret}</code></div>` : null}
+    ${keys.length ? html`<table style=${{ marginTop: "10px" }}><thead><tr><th>Key</th><th>Label</th><th>Scopes</th><th>Last used</th><th></th></tr></thead><tbody>
+      ${keys.map((k) => html`<tr key=${k.id}><td class="mono">${k.app_id}<br/><span class="muted">${k.prefix}…</span></td><td>${k.label}</td><td class="mono">${k.scopes.length}</td><td class="mono">${k.last_used_at?.slice(0, 10) || "—"}</td>
+        <td>${k.active ? html`<button class="btn quiet" onClick=${() => revoke(k.id)}>Revoke</button>` : html`<span class="bad">revoked</span>`}</td></tr>`)}</tbody></table>` : html`<p style=${{ marginTop: "10px" }}>No keys yet.</p>`}
+  </div>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [ov, setOv] = useState(null); const [evals, setEvals] = useState(null);
+  useEffect(() => { api("/build/overview").then(setOv); api("/evals/summary").then(setEvals); }, []);
+  const layers = evals ? Object.entries(evals.layers) : [];
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark"><b>CLHEAR</b><span>build on it</span></div><div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink" href="/explore">Explore</a><a class="navlink" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink active" href="/build">Build on it</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main">
+      <h1>Build on it.</h1>
+      <p class="lead">The agnostic blueprint, every node's why-trail, the change feed and the eval gates are open without a key. A key adds release-pinned reads and a rate limit of your own; SDKs wrap both.</p>
+      <div class="grid">
+        <section class="card" aria-labelledby="openh"><h3 id="openh">Open — no key</h3>
+          <table><tbody>${(ov?.open_without_key || []).map((r) => html`<tr key=${r.path}><td><span class="method">${r.method}</span> <code>${r.path}</code></td><td class="muted">${r.what}</td></tr>`)}</tbody></table>
+          <h3>With a key</h3>
+          <table><tbody>${(ov?.with_key || []).map((r) => html`<tr key=${r.path}><td><span class="method">${r.method}</span> <code>${r.path}</code></td><td class="muted">${r.what}</td></tr>`)}</tbody></table>
+          <pre tabindex="0" aria-label="Example request">curl -H "X-App-Id: key-…" -H "Authorization: Bearer clh_…" ${location.origin}/v1/layers</pre>
+        </section>
+        <section class="card" aria-labelledby="keysh"><h3 id="keysh">API keys</h3><${Keys} signedIn=${!!ov?.signed_in} />
+          <p style=${{ marginTop: "10px" }}>Up to ${ov?.max_active_keys || 5} active keys; scopes <code>${(ov?.scopes || []).join(" ")}</code>.</p>
+        </section>
+        <section class="card" aria-labelledby="sdkh"><h3 id="sdkh">SDKs</h3>
+          ${(ov?.sdks || []).map((s) => html`<div key=${s.language}><h2>${s.language}</h2><p><code>${s.install}</code> · <code>${s.path}</code></p><ul class="muted" style=${{ fontSize: "12.5px", paddingLeft: "18px" }}>${s.files.map((f) => html`<li key=${f}><code>${f}</code></li>`)}</ul></div>`)}
+          <h3>Interop</h3>
+          <table><tbody>${(ov?.interop || []).map((r) => html`<tr key=${r.format}><td>${r.format}</td><td><code>${r.path}</code></td></tr>`)}</tbody></table>
+        </section>
+        <section class="card" aria-labelledby="evh"><h3 id="evh">Public evals · gates per layer</h3>
+          <p>Nothing publishes below its gate (I10). This reads the published summary table, never the eval store. <a href="/evals">Full dashboard →</a></p>
+          <table><thead><tr><th>Layer</th><th>Gate</th><th>Suites</th></tr></thead><tbody>
+            ${layers.map(([l, s]) => html`<tr key=${l}><td class="mono">${l}</td><td class=${s.passed ? "ok" : "bad"}>${s.passed ? "passed" : s.missing.length ? `not run (${s.missing.join(", ")})` : "failed"}</td><td class="mono muted">${Object.keys(s.suites).length}</td></tr>`)}
+          </tbody></table>
+        </section>
+      </div>
+      <p class="foot">CLHEAR is a derivation, not legal advice. <a href="/disclaimer">Disclaimer</a> · <a href="/terms">Terms</a> · <a href="/evals">Public evals</a></p>
+    </main></div>`;
+}
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

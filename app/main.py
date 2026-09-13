@@ -43,6 +43,11 @@ def create_app() -> FastAPI:
         from app.clhear.v1.l4 import router as v1_l4_router
         from app.clhear.v1.l5 import router as v1_l5_router
         from app.clhear.v1.l6 import router as v1_l6_router
+        from app.clhear.v1.solon import router as solon_router
+        from app.clhear.v1.explore import router as explore_router
+        from app.clhear.learn import router as learn_router
+        from app.clhear.watch import router as watch_router
+        from app.clhear.api_keys import router as build_router
 
         app.include_router(router)
         app.include_router(l1_router)
@@ -56,7 +61,12 @@ def create_app() -> FastAPI:
         app.include_router(auth_router)
         app.include_router(community_router)
         app.include_router(ai_router)
-        app.include_router(layers_router)  # serves "/" — the Stack UI
+        app.include_router(solon_router)  # serves "/" — the Solon front door
+        app.include_router(explore_router)
+        app.include_router(learn_router)
+        app.include_router(watch_router)
+        app.include_router(build_router)
+        app.include_router(layers_router)  # serves "/stack" — the Stack UI
 
     return app
 

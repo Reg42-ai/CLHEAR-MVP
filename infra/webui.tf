@@ -141,6 +141,10 @@ resource "aws_lambda_function" "webui" {
       CLHEAR_SES_SENDER               = "CLHEAR <noreply@${var.clhear_hostname}>"
       CLHEAR_PUBLIC_BASE_URL          = "https://${var.clhear_hostname}"
       CLHEAR_FRONTIER_MONTHLY_CAP_USD = "50"
+      CLHEAR_COGNITO_REGION           = local.deploy_cognito ? var.aws_region : ""
+      CLHEAR_COGNITO_USER_POOL_ID     = local.deploy_cognito ? aws_cognito_user_pool.clhear[0].id : ""
+      CLHEAR_COGNITO_CLIENT_ID        = local.deploy_cognito ? aws_cognito_user_pool_client.web[0].id : ""
+      CLHEAR_COGNITO_DOMAIN           = local.deploy_cognito ? "https://${local.cognito_domain}.auth.${var.aws_region}.amazoncognito.com" : ""
     }
   }
 }
