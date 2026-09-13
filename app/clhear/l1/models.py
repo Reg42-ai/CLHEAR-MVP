@@ -41,7 +41,7 @@ sources = sa.Table(
         "kind",
         sa.Text,
         sa.CheckConstraint(
-            "kind in ('law','regulation','standard','guidance','form','agreement')",
+            "kind in ('law','regulation','standard','guidance','form','agreement','enforcement')",
             name="sources_kind_check",
         ),
         nullable=False,
@@ -221,6 +221,9 @@ FLEET_SCHEDULES = {
     "govinfo_us": _daily("US federal law (GovInfo/eCFR) + NIST — FATCA, Exchange Act, Securities Act, SOX, 17 CFR 240, Reg BI/S-P/S-ID, 31 CFR X, §871(m)."),
     "fca_handbook": _daily("FCA Handbook (PRIN/SYSC/COBS/CASS/PROD/SUP/DISP/MIFIDPRU) — handbook.fca.org.uk, one artifact per chapter, rule status R/G/E kept."),
     "sec_edgar": _daily("SEC + FINRA via the EDGAR channel — SEC final rules (public domain) and FINRA rule filings (derived-only rights)."),
+    "fca_enforcement": _daily("FCA final notices (fca.gov.uk) — enforcement outcomes as an L1 source for L7; licensed text, derived facts published."),
+    "sec_enforcement": _daily("SEC enforcement actions — litigation releases and administrative proceedings (sec.gov, public domain) for L7."),
+    "finra_enforcement": _daily("FINRA disciplinary actions (finra.org, derived-only rights) — enforcement outcomes for L7."),
     "esma": _daily("ESMA guidelines and Q&A (esma.europa.eu PDF/HTML) — MiFID II/MAR/EMIR guidelines."),
     "bis_basel": _daily("BIS Basel Framework chapters (bis.org/basel_framework) — CRE/OPE/SRP/BCP."),
     "iosco": _daily("IOSCO Objectives and Principles + methodology (iosco.org PDF)."),

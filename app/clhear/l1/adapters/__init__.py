@@ -48,6 +48,10 @@ PUBLISHER_ADAPTER_CLASSES = {
     "asic": "app.clhear.l1.adapters.standards_bodies:AsicAdapter",
     "isa": "app.clhear.l1.adapters.standards_bodies:IsaAdapter",
     "irs_gov": "app.clhear.l1.adapters.standards_bodies:IrsRevProcAdapter",
+    # HLD v2 §4.7 enforcement sources (read by L7; informative family members)
+    "fca_enforcement": "app.clhear.l1.adapters.enforcement:FcaFinalNoticesAdapter",
+    "sec_enforcement": "app.clhear.l1.adapters.enforcement:SecEnforcementAdapter",
+    "finra_enforcement": "app.clhear.l1.adapters.enforcement:FinraDisciplinaryAdapter",
 }
 
 

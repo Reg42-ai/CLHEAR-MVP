@@ -111,8 +111,12 @@ def adapter_for(entry: dict) -> Adapter:
 # HLD v2 §4.1 first-class publisher adapters (replace the generic HTML/PDF
 # fallbacks for these keys; keys stay the fleet schedule names).
 PUBLISHER_ADAPTERS = frozenset(
-    {"fca_handbook", "sec_edgar", "finra", "esma", "fatf", "bis_basel", "iosco", "mas", "asic", "isa", "irs_gov"}
+    {"fca_handbook", "sec_edgar", "finra", "esma", "fatf", "bis_basel", "iosco", "mas", "asic", "isa", "irs_gov",
+     "fca_enforcement", "sec_enforcement", "finra_enforcement"}
 )
+
+
+ENFORCEMENT_ADAPTERS = frozenset({"fca_enforcement", "sec_enforcement", "finra_enforcement"})
 
 
 def _publisher_for(entry: dict, meta: SourceMeta, fetch: dict):
@@ -130,6 +134,11 @@ def _publisher_for(entry: dict, meta: SourceMeta, fetch: dict):
         adapter = SecEdgarAdapter(channel=fetch.get("channel", "finra" if key == "finra" else "sec"), **common)
         adapter.key = key
         return adapter
+    if key in ENFORCEMENT_ADAPTERS:
+        from app.clhear.l1.adapters import enforcement as enf
+
+        return {"fca_enforcement": enf.FcaFinalNoticesAdapter, "sec_enforcement": enf.SecEnforcementAdapter,
+                "finra_enforcement": enf.FinraDisciplinaryAdapter}[key](**common)
     cls = {
         "esma": sb.EsmaAdapter,
         "fatf": sb.FatfAdapter,

@@ -182,7 +182,8 @@ def ensure_source(conn: Connection, meta: SourceMeta) -> tuple[int, int]:
                 family_id=family_id,
                 source_id=source_id,
                 relation="root",
-                tier="binding",
+                # enforcement sources are read by L7, never by the L2 extractor (HLD v2 §4.7)
+                tier="informative" if meta.kind == "enforcement" else "binding",
                 status="active",
                 added_via="manual",
             )

@@ -31,7 +31,7 @@ class SourceMeta:
     family_name: str
     source_key: str
     name: str
-    kind: str  # law|regulation|standard|guidance|form|agreement
+    kind: str  # law|regulation|standard|guidance|form|agreement|enforcement
     issuer: str
     jurisdiction: str
     license: str  # open|restricted
