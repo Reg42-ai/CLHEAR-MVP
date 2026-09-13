@@ -1,104 +1,114 @@
 # CLHEAR → reg42-infra handoff
 
 CLHEAR performs no inference of its own (HLD v2 invariant I6, §9). Every model
-call goes through **Reg42 Infer** (`https://infer.reg42.ai/v1`, OpenAI-compatible)
-which fronts Amazon Bedrock inside the Reg42 account.
+call goes through a **Reg42 Infer** router (OpenAI-compatible) that fronts Amazon
+Bedrock inside the Reg42 account.
+
+CLHEAR is a product, not a workforce seat, so it does not sit in the workforce
+roster and its spend never draws on the employees' company-wide monthly ceiling
+(which the shared Infer enforces over every caller). Since 13 Sep 2026 it runs
+**`clhear-infer`**: the same Infer image pinned by digest, with CLHEAR's own
+catalog, token secret, spend ledger and caps, reachable only inside CLHEAR's VPC
+(`http://infer.clhear.local:8000/v1`). The shared `https://infer.reg42.ai` is no
+longer in CLHEAR's path.
 
 ## What reg42-infra needs from this folder
 
 | File | Purpose |
 |---|---|
-| `tasks.clhear.yaml` | The CLHEAR task classes, their procurement-clean model ladders, thresholds and default data class. Generated from `app/clhear/platform/task_classes.py`; a CI test keeps the two byte-identical. Load it into Infer's routing (`policy.yaml` routes + `models.yaml` tiers) for employee `clhear`. |
+| `tasks.clhear.yaml` | The CLHEAR task classes, their procurement-clean model ladders, thresholds and default data class. Generated from `app/clhear/platform/task_classes.py`; a CI test keeps the two byte-identical. |
+| `../../infra/infer-catalog/` | The complete Infer catalog CLHEAR runs today (`models.yaml`, `policy.yaml`, `employees.yaml`, `budget.yaml`, `tools.yaml`, `Dockerfile`). Rendered from the same module by `scripts/render_infer_catalog.py`; a CI test keeps it current. This is the input to `kernel/infer`'s task-class registry when it takes the CLHEAR contract natively. |
 
 ## Request contract (what CLHEAR sends)
 
 ```
 POST {INFER_BASE_URL}/chat/completions
-Authorization: Bearer <INFER_TOKEN>
-X-Employee-Id: clhear               # one Infer employee for all fleets (see Status below)
-X-Task-Class: <task class>          # from tasks.clhear.yaml
+Authorization: Bearer <INFER_TOKEN>      # infer-v2 token for principal `clhear`
+X-Employee-Id: clhear                    # Infer's name for the principal; one for all fleets and web
+X-Task-Class: <task class>               # from tasks.clhear.yaml
 X-Data-Class: public | members | restricted
 { "model": "<bedrock model id>", "messages": [...], "max_tokens": n,
   "temperature": 0.0, "response_format": {...},
   "metadata": {"task_class": "...", "employee_id": "..."} }
 ```
 
-Infer may fall through the ladder; the response `model` field must be the Bedrock
-model id that actually ran (CLHEAR records it in the ledger and freezes it in the
-release model manifest). `usage.cost_usd`, when present, overrides CLHEAR's
-price table.
+Infer picks the model from the route's tier and may fall through the ladder; the
+response `model` must be the Bedrock id that ran. `clhear-infer` guarantees this
+by keying its catalog entries by Bedrock id. `usage.cost_usd`, when present,
+overrides CLHEAR's price table.
 
 ```
 GET {INFER_BASE_URL}/route/explain?task_class=<tc>&employee_id=<id>
 → {"task_class": "...", "ladder": ["...", "..."], "selected": "..."}
 ```
 
-Used nightly by `python -m app.clhear.platform.manifest freeze <release>` to freeze
-the model ids for a release.
+Used nightly by `python -m app.clhear.platform.manifest freeze <release>`; when the
+endpoint is absent the manifest freezes the first rung of CLHEAR's default ladder.
 
-## Policy Infer must enforce for employee `clhear`
+## Policy the router enforces for principal `clhear`
 
-* Derivation classes (`derivation: true`) never route to a model whose origin is
-  `CN`; if every clean rung fails the call fails — no silent fallback.
-* `hosting: aws-bedrock` only. No external vendor endpoints.
-* Budget: the CLHEAR gateway enforces its own daily/monthly caps; Infer should
-  additionally cap the `clhear` employee (`daily_usd_cap` in `catalog/employees.yaml`).
+* Derivation classes (`derivation: true`) never reach a model whose origin is `CN`.
+  In `clhear-infer` no such model exists in the catalog, so Infer's last-resort
+  picker cannot select one either; CLHEAR's gateway additionally fails closed if a
+  derivation answer names a model outside the clean set
+  (`gateway.py::_assert_procurement_clean`).
+* `hosting: aws-bedrock` only. No external vendor endpoints, no tools.
+* Budget: `employees.yaml` `daily_usd_cap: 250`; `budget.yaml` `hired_usd: 2000`
+  is the monthly hard stop. CLHEAR's own gateway caps (`settings.py`) apply on top.
+  Spend is in the `infer` database on CLHEAR's Aurora cluster.
 
-## Secrets
+## Models (verified in the CLHEAR account, us-east-1, 13 Sep 2026)
 
-* SSM `/clhear/INFER_TOKEN` (SecureString) — created by `infra/ssm.tf`, value set by
-  the Reg42 Infer operator.
+| Bedrock id | Origin | Use |
+|---|---|---|
+| `openai.gpt-oss-120b-1:0` | US | derivation champion |
+| `mistral.mistral-large-3-675b-instruct` | EU | derivation fallback, hard champion |
+| `us.anthropic.claude-opus-4-5-20251101-v1:0` | US | hard fallback (premium cap) |
+| `amazon.nova-lite-v1:0`, `amazon.nova-pro-v1:0` | US | cheap / non-derivation |
+| `us.meta.llama3-3-70b-instruct-v1:0` | US | non-derivation fallback |
+| `amazon.titan-embed-text-v2:0` | US | embeddings (1024) |
 
-## Status against the live Infer (checked 13 Sep 2026)
+Not available yet: `anthropic.claude-sonnet-5` / `claude-opus-5` ("not available
+for this account", AWS sales) and every other Anthropic model until the account's
+**Anthropic use-case form** is accepted in the Bedrock console. `CLAUDE_SONNET`
+(`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) is priced and origin-tagged but in
+no default ladder and `enabled: false` in the catalog until then.
 
-Verified against `https://infer.reg42.ai` (`reg42-infer-all`, task definition
-`workforce-dev-infer:5`) by reading its `app/tokens.py`, `app/main.py` and
-`catalog/*.yaml` from the deployed image.
+## Secrets (all SSM SecureString, created by Terraform)
 
-**Identity — done.** Infer tokens are HMAC-derived per employee
-(`infer-v2.<employee>.<exp>.<sig>`, `INFER_TOKEN_REQUIRE_TTL=1` so only expiring v2
-tokens verify) and a token is bound to exactly one employee id: `X-Employee-Id`
-must equal it or Infer answers 403. CLHEAR therefore uses **one employee,
-`clhear`**, for every fleet and the web tier (`infra/ecs.tf`); the layer is in
-CLHEAR's own ledger. A v2 token for `clhear` (TTL 365 d, expires 2027-09-13) is
-in `/clhear/INFER_TOKEN`; `GET /v1/models` with it returns 200. Re-mint before
-expiry with `tokens.mint(secret, "clhear", ttl_seconds=…)` (`scripts/mint-infer-token.py`);
-`rotate_all` does not cover CLHEAR because it writes Secrets Manager seats, not this SSM
-parameter. Add `clhear` to `catalog/employees.yaml` with a `daily_usd_cap` so Infer caps it.
+* `/clhear/INFER_TOKEN_SECRET` — HMAC key of `clhear-infer`. Rotating it invalidates
+  every token; re-mint afterwards.
+* `/clhear/INFER_TOKEN` — the `clhear` principal's infer-v2 token (TTL 365 d,
+  expires 2027-09-13). Mint: `tokens.mint(secret, "clhear", ttl_seconds=…)` with the
+  secret above; the format is `infer-v2.<id>.<exp>.<base32(HMAC-SHA256(secret, "infer-v2:"+id+":"+exp)[:15])>`.
+* `/clhear/INFER_DATABASE_URL` — spend ledger DSN (`infer` database on Aurora).
 
-**Routing — open, blocks every derivation.** Infer routes by `X-Task-Class`
-→ `policy.yaml` route → tier → champion in `models.yaml` and overwrites the
-requested `model`. No route matches the CLHEAR classes, so they fall to the
-`default` route, tier `classify`, champion `qwen3-32b` (observed live:
-`l2_extract` → `qwen3-32b`, `route_id=default`). None of the ladder models in
-`tasks.clhear.yaml` are in `models.yaml`. CLHEAR's gateway now **fails closed**
-when a derivation class is answered by a model outside the clean set
-(`app/clhear/platform/gateway.py::_assert_procurement_clean`), so until the
-routes exist every CLHEAR derivation call errors and the nightly stack derives
-nothing. Required in reg42-infra:
+## Operating `clhear-infer`
 
-1. `catalog/models.yaml`: add the ladder models with their Bedrock ids
-   (`amazon.nova-lite-v1:0`, `amazon.nova-pro-v1:0`, `openai.gpt-oss-120b-1:0`,
-   `mistral.mistral-large-3-v1:0`, `anthropic.claude-sonnet-5-v1:0`,
-   `anthropic.claude-opus-5-v1:0`, `meta.llama3-3-70b-instruct-v1:0`; embeddings
-   `amazon.titan-embed-text-v2:0` already exists) and enable them in Bedrock
-   model access for us-east-1.
-2. `catalog/models.yaml` tiers: one per CLHEAR ladder, e.g. `clhear-derivation`
-   (champion `gpt-oss-120b`, fallbacks `mistral-large-3`, `claude-sonnet-5`,
-   `claude-opus-5`), `clhear-hard`, `clhear-cheap`, `clhear-nonderivation` — the
-   exact ladder per class is in `tasks.clhear.yaml`.
-3. `catalog/policy.yaml` routes: `match.task_class` = the class ids from
-   `tasks.clhear.yaml` → the matching tier. Derivation tiers must contain no
-   CN-origin fallback; when the tier is exhausted the call fails.
-4. Response `model`: return the Bedrock id (or include it, e.g. `infer.bedrock_id`)
-   for `clhear`; CLHEAR's ledger, price table and release manifest key on Bedrock ids.
-   Catalog short names of clean families (`claude-*`, `llama*`, `nova*`, `titan*`,
-   `gpt-oss*`, `mistral*`) are accepted by the origin check in the meantime.
+* Image: `infra/infer-catalog/Dockerfile` = `FROM workforce-dev-infer@sha256:3316…`
+  + `COPY catalog`. Build and push with `scripts/build_worker_image.sh infer`
+  (CodeBuild project `clhear-infer-image`, pushes `clhear-infer:latest`); the ECS
+  service `clhear-infer` picks it up on the next deployment (`terraform apply`).
+* Change routing or caps by editing `task_classes.py` (ladders) or the render
+  arguments (`--daily`, `--monthly`), running `scripts/render_infer_catalog.py`,
+  rebuilding the image, applying. Never hand-edit the catalog: the test fails.
+* Upgrade Infer by bumping `INFER_IMAGE` in `app/clhear/platform/infer_catalog.py`
+  to a new digest, re-rendering, rebuilding. Read the new image's `policy.py`
+  and `catalog.py` first; the catalog schema is theirs.
+* Known gaps in the current image: no `POST /v1/embeddings` and no
+  `GET /v1/route/explain` (manifest falls back as above). Both are requests on
+  `kernel/infer`. Until the first lands, the clause vector index is built by
+  `BedrockEmbedder` (`platform/embeddings.py`) calling Titan Text Embeddings v2
+  directly; the worker and web roles may invoke only the two embedding model ARNs
+  (`infra/iam.tf` `EmbeddingModels`), the never-list test names this single
+  exemption, and an embedding is a rebuildable projection — nothing it produces
+  enters the record. Set `CLHEAR_EMBEDDING_PROVIDER=infer` once the route exists.
 
-**Endpoints — open, degrade gracefully.**
+## When `kernel/infer` ships the CLHEAR contract natively
 
-* `POST /v1/embeddings` (OpenAI-compatible) does not exist; CLHEAR's
-  `InferEmbedder` calls it for task class `embed`. Until it exists the vector
-  index is built with the offline `hash-v1` embedder and labelled as such.
-* `GET /v1/route/explain?task_class=&employee_id=` does not exist; the release
-  manifest falls back to the first rung of CLHEAR's default ladder.
+1. Load `infra/infer-catalog/` (or `tasks.clhear.yaml`) into its task-class registry
+   under principal `clhear`, keeping Bedrock ids in the response `model`.
+2. Give CLHEAR its own budget line, not a workforce seat.
+3. Add `/v1/embeddings` and `/v1/route/explain`.
+4. Then in CLHEAR: `infer_private_enabled = false`, `infer_base_url` = the new URL,
+   re-mint `/clhear/INFER_TOKEN` against the new secret, `terraform apply`.

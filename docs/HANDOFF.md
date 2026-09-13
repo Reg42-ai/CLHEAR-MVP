@@ -262,6 +262,138 @@ Now:
 - Enabling the cron + deploying the worker image is the remaining infra
   apply (ECR + ECS service on the default VPC, `schedules_enabled=true`).
 
+## Go-live state — 13 Sep 2026 (branch `cursor/clhear-hld-v2-325d`, PR #10)
+
+What is live in account 730649732189 / us-east-1 after the go-live push:
+
+- **Record on Aurora Serverless v2** (`clhear-record`, PG 16.13, pgvector 0.8.1,
+  0–8 ACU, auto-pause 30 min, 35-day backups, deletion protection). Loaded from
+  the v1 snapshot with `app.clhear.tools.load_record` (90 tables, 267,512 rows,
+  migration ledger identical, no dangling why-trails). Fleets, the web tier and
+  `clhear-infer` all read and write it; `record_cutover = true` in
+  `infra/terraform.auto.tfvars` is the switch, `/clhear/DATABASE_URL` the DSN.
+  The S3 snapshot `webui/clhear-latest.db` is no longer written; releases ship
+  `l1/snapshot.db` exported from Aurora by `record_copy.export_sqlite_snapshot`.
+- **Network**: two private subnets (`172.31.96.0/20`, `172.31.112.0/20`) with
+  their own route table through NAT `clhear-nat` (`infra/network.tf`). The web
+  Lambda runs in them (`vpc_config`), so console decisions, votes and API keys
+  now persist (verified: a maintainer write through `clhear.reg42.ai` is in
+  Aurora on a separate connection). The shared public subnets are untouched.
+- **Inference**: `clhear-infer` (`infra/infer.tf`), CLHEAR's private Reg42 Infer
+  router on Cloud Map `infer.clhear.local:8000`, image pinned by digest with the
+  catalog in `infra/infer-catalog/` (rendered from `task_classes.py`; only
+  procurement-clean Bedrock models exist in it, keyed by Bedrock id). Principal
+  `clhear`, USD 250/day, USD 2,000/month hard stop, spend ledger in the `infer`
+  database on Aurora. Verified from a fleet task: every task class lands on its
+  clean champion; unknown classes land on the derivation tier. Operating notes
+  and the migration recipe to `kernel/infer`: `handoff/reg42-infra/README.md`.
+- **Images**: `clhear-workers:latest` (entrypoint `python`, default command the
+  worker, `postgresql-client` for the DR drill) and `clhear-infer:latest`, both
+  built by CodeBuild via `scripts/build_worker_image.sh [workers|infer]`.
+  One-off jobs are ECS `run-task` command overrides on `clhear-fleet-l0`
+  (record load, nightly stack, DB peeks) — no Docker needed anywhere.
+- **Models that answer in this account**: `openai.gpt-oss-120b-1:0`,
+  `mistral.mistral-large-3-675b-instruct`, `us.anthropic.claude-opus-4-5-20251101-v1:0`,
+  `amazon.nova-lite-v1:0`, `amazon.nova-pro-v1:0`, `us.meta.llama3-3-70b-instruct-v1:0`,
+  `amazon.titan-embed-text-v2:0`. Claude Sonnet/Opus 5 are not available to
+  the account (AWS sales) and no other Anthropic model answers until the
+  Anthropic use-case form is accepted in the Bedrock console.
+- **Gateway lessons from the first real derivation**: reasoning models spend
+  `max_tokens` on hidden thinking, so Infer requests carry +2048 headroom; the
+  JSON parser takes the first complete object because gpt-oss keeps talking
+  after it, and when the model enumerates several objects `l2.structured`
+  keeps the one closest to the statement. All in `platform/gateway.py` with tests.
+- **Embeddings**: `CLHEAR_EMBEDDING_PROVIDER=bedrock` on fleets and web —
+  `BedrockEmbedder` calls Titan Text Embeddings v2 directly (with backoff; the
+  account quota is roughly 5 requests/s) because the pinned Infer image has no
+  `/embeddings` route. IAM allows only the two embedding model ARNs; the
+  never-list test names the exemption. Flip to `infer` when the route lands.
+- **First derivation** (13 Sep, one L0 task, 2 vCPU / 4 GB, 4 h 04 min, USD 7.64
+  across 4,752 Infer calls — Mistral Large 3 for `l8.fill` was USD 6.87 of it;
+  everything else ran on gpt-oss-120b and Nova Lite for cents). Stage output:
+  3,440 obligations (3,418 decomposed into 2,475 derived blocks + 10 curated),
+  6,120 characteristics backed, 4,134 applicability edges, 3,287 obligations
+  mapped to 2,039 activities, 2 blueprints composed, 4,715 fills drafted,
+  graph projection 20,026 nodes / 33,302 edges, 7,751 clauses embedded on
+  Titan v2 (pgvector). Bugs it surfaced, all fixed and covered by tests:
+  SQLite-only FTS probe poisoned the Postgres transaction (hybrid search was
+  returning 500 on Aurora), `l8.fill` required-key derivation crashed on two
+  shapes, Infer has no `/embeddings` route (Titan direct, see trace), pre-m0009
+  clauses carried `normative = false` (backfill now runs first in the stack).
+- **Release `2026.09.13`**: `s3://clhear-deploy-730649732189/releases/2026.09.13/`
+  (`manifest.json`, `l1/snapshot.db` 512.8 MiB exported from Aurora, sha256
+  `ee301eff…79c25`, `.reserved` markers for L2–L8, frozen model manifest).
+  Ships **L0 + L1**; everything above is reserved until the gates below clear.
+  The 23:30 UTC `eod-publish` schedule re-cuts the day's release from the L0
+  fleet; the exporter was rehearsed locally with the disclosure flag off (176
+  files, `pushed: false`).
+- **Gate status** (30 of 37 suites green; per layer: L0, L1, L4, L6, L8 pass
+  their own suites — L4/L6/L8 stay reserved because L2/L3/L5 below them are
+  blocked):
+
+  | Suite | Score | Threshold | Why it fails | Who clears it |
+  |---|---|---|---|---|
+  | `l2_precision` | 0.55 on 47 model-judged, 0 expert votes | 0.95 | needs maintainer votes | you (console) |
+  | `l3_precision` | 0 votes | 0.92 | needs maintainer votes | you (console) |
+  | `l5_precision` | 0 votes | 0.92 | needs maintainer votes | you (console) |
+  | `l2_coverage` | 0.88 (3,437 / 3,902 normative clauses asserted) | 0.99 | `l2/extract.py` modality patterns are narrower than `l1/spans.is_normative` (prohibitions, "ensure that", offences, liability) | code: widen `MODALITY_PATTERNS`, bump `EXTRACTOR_VERSION`, re-derive |
+  | `l3_l5_referential` | 6 extraction misses | 0 | curated blocks/activities cite GDPR art. 6 and 32, which the extractor does not yield as obligations | same extractor change |
+  | `l5_completeness` | 29 business-side orphans | 0 | activities like `ACT-AI-mtf-otf-trading-process` have no product/service that implies them | curated L4 ontology (`implies` edges) |
+  | `l7_brier` | no published calibration run | beats baseline | too little enforcement-outcome history yet | accrues with the enforcement adapters |
+- **SES**: identities and DKIM verified, but production access was DENIED
+  (case 178406808100114) — sandbox, verified recipients only. Cognito sign-in
+  uses `COGNITO_DEFAULT` mail and is unaffected.
+- **Cognito**: pool `us-east-1_gVVpIhrgl`, hosted UI `clhear-auth` ACTIVE,
+  identity providers: Cognito only (Google IdP needs the client secret).
+
+### Runbook
+
+- Redeploy web: `scripts/deploy_webui.sh` packages `deploy/webui-<stamp>.zip`; upload it
+  to `s3://clhear-deploy-730649732189/webui/`, set `webui_zip_key`/`webui_zip_sha256`
+  in `terraform.auto.tfvars`, `terraform apply`. (The script's `deploy/clhear.db`
+  upload is snapshot-mode only; do not overwrite the S3 snapshot in Aurora mode.)
+- Rebuild fleets: `scripts/build_worker_image.sh` then `terraform apply` (task
+  definitions reference `:latest`; running services pick it up on scale-out).
+- Change routing/caps: edit `task_classes.py` or the render arguments, run
+  `scripts/render_infer_catalog.py`, `scripts/build_worker_image.sh infer`,
+  `terraform apply`.
+- One-off job: `aws ecs run-task --cluster clhear-cluster --task-definition clhear-fleet-l0
+  --launch-type FARGATE --network-configuration '...' --overrides '{"containerOverrides":
+  [{"name":"worker","command":["-m","app.clhear.fleets","nightly","--release","<id>","--force"]}]}'`.
+- Rollback to snapshot mode: `record_cutover = false`, apply (fleets and web
+  return to `webui/clhear-latest.db`; Aurora keeps everything written since).
+- Neo4j stays off (`neo4j_enabled = false`): `LocalGraph` rebuilt the full
+  projection in under a second; `hq/brain` is the intended home later.
+
+### Tasks only a human can do (in order)
+
+1. **Votes** — sign in at `https://clhear.reg42.ai/console` with a
+   `CLHEAR_MAINTAINERS` address and judge the precision samples: L2 (47 model
+   judgements waiting for expert confirmation; ≥ 0.95 agreement needed), L3
+   and L5 (no votes yet; ≥ 0.92). Layers unlock in the next release once each
+   threshold is met.
+2. **Public repo** — create `Reg42-ai/clhear` (org owner) and a fine-grained PAT
+   with `contents: write` on that repo only.
+3. **GitHub Actions secrets** on `CLHEAR-MVP` (Settings > Secrets and variables >
+   Actions): `AWS_RELEASE_ROLE_ARN` = `arn:aws:iam::730649732189:role/clhear-github-release`
+   (switches `release.yml` into *fleet* mode: fetch the L0-cut release, sign,
+   SBOM, verify, upload only those files, export from the released snapshot),
+   `CLHEAR_PUBLIC_REPO_URL`, `CLHEAR_EXPORT_GIT_TOKEN`. `INFER_*` secrets are
+   not needed: the router is VPC-only and CI never derives against it. Leave
+   the variable `CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED` unset until you have read
+   `releases/2026.09.13/manifest.json` `reserved_layers`.
+4. **Bedrock** — accept the Anthropic use-case form in the Bedrock console (enables
+   the Claude rungs); ask the AWS account team for Claude Sonnet/Opus 5.
+5. **SES** — reopen case 178406808100114 for production access (contributor
+   magic links to unverified addresses).
+6. **Google sign-in** — OAuth client with redirect
+   `https://clhear-auth.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`;
+   put id/secret in SSM `/clhear/GOOGLE_CLIENT_ID` / `/clhear/GOOGLE_CLIENT_SECRET`,
+   then `terraform apply`.
+7. **Publish** — set `CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED=true` and run the
+   `release` workflow. Optional later: Discourse, beehiiv, Upptime, pen-test
+   vendor, SAML IdP metadata.
+
 ## Next: P2–P4 (one PR per phase, HLD §9)
 
 - **P2** — `families.py` citation mining + reconciliation; `embeddings.py`

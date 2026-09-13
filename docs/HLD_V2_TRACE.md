@@ -141,7 +141,11 @@ row references a code path or test that does not exist.
 
 | Item | Blocker | Delivered here instead |
 |---|---|---|
-| Infer `tasks.yaml` in `reg42-infra` | repo not readable by the build agent | `handoff/reg42-infra/tasks.clhear.yaml` + contract test |
+| Infer `tasks.yaml` in `reg42-infra` (`kernel/infer` native CLHEAR contract) | repo not readable by the build agent | CLHEAR runs its own router `clhear-infer` (`infra/infer.tf`, catalog `infra/infer-catalog/` rendered from `task_classes.py`); `handoff/reg42-infra/README.md` is the migration recipe |
+| Claude Sonnet/Opus 5 on Bedrock; any Anthropic model | "not available for this account" (AWS sales); Anthropic use-case form not submitted | ladders run on gpt-oss-120b, Mistral Large 3, Claude Opus 4.5 (the one Anthropic model that answers), Nova, Llama 3.3; `CLAUDE_SONNET` priced but disabled |
+| SES production access | AWS review DENIED (case 178406808100114); sandbox = verified recipients only | Cognito sign-in uses `COGNITO_DEFAULT` mail and is unaffected; magic links reach verified addresses until the case is reopened |
+| Infer `POST /v1/embeddings` (I6: no inference outside Infer) | the pinned Infer image has no embeddings route | `BedrockEmbedder` calls Titan v2 directly for the clause index only; IAM limits both roles to the two embedding model ARNs and `tests/test_never_list.py` names this one exemption. Reverts to `CLHEAR_EMBEDDING_PROVIDER=infer` when `kernel/infer` ships the route |
+| Precision gates `l2_precision`, `l3_precision`, `l5_precision` (§5 evals) | need maintainer votes cast in the console | model-judged precision is recorded (`by_kind.model`); the gates hold the layers `reserved` in every release until human votes reach the thresholds (0.95 / 0.92 / 0.92) |
 | Public `clhear` GitHub repo | must be created by an org owner | `export/clhear/` ready to push once `CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED=true` |
 | Solon entity behaviour | `SOLON_PLAN.md` not accessible | `app/clhear/solon.py` guided front door on Reg42 UI tokens |
 | Meridian Markets Annex G + three anonymized profiles | not provided | `clhear-evals/l4/golden_profiles.json`, `clhear-evals/l6/reference_programs.json` seeded with placeholders marked `golden=false` |
