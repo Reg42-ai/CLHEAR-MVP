@@ -123,6 +123,45 @@ variable "neo4j_memory" {
   description = "Task memory in MiB; heap and page cache each take a quarter"
 }
 
+# --- The community forum: Discourse on Fargate (HLD v2 §6) --------------
+variable "discourse_enabled" {
+  type        = bool
+  default     = false
+  description = "Deploy the Discourse forum (needs aurora_enabled, existing_vpc_id/subnets and the ALB listener)."
+}
+
+variable "discourse_hostname" {
+  type    = string
+  default = "community.clhear.reg42.ai"
+}
+
+variable "discourse_image" {
+  type    = string
+  default = "bitnami/discourse:3"
+}
+
+variable "discourse_redis_image" {
+  type    = string
+  default = "bitnami/redis:7.2"
+}
+
+variable "discourse_cpu" {
+  type    = number
+  default = 2048
+}
+
+variable "discourse_memory" {
+  type        = number
+  default     = 6144
+  description = "Task memory in MiB shared by the web, Sidekiq and Redis containers"
+}
+
+variable "existing_alb_cidr_blocks" {
+  type        = list(string)
+  default     = ["10.0.0.0/8"]
+  description = "CIDRs the existing ALB sends traffic from (the VPC range); restricts the forum's ingress"
+}
+
 # --- Inference: Reg42 Infer on Bedrock (HLD v2 I6) ----------------------
 variable "infer_base_url" {
   type    = string

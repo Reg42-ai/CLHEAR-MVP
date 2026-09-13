@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Contribute</title>
+<meta name="description" content="Propose a correction, a missing source, an equivalence or a golden case. Every contribution is checked, re-derived by the fleet, reviewed by two people and shipped with your name and its impact." />
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* Contribute (HLD v2 §6, I12): contributions never write a layer directly — they
+     pass the automated checks, a fleet re-derivation, two reviewers, then ship in a
+     release with attribution and impact. */
+  main { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: clamp(26px, 4vw, 36px); margin: 0 0 6px; letter-spacing: -0.02em; }
+  .lead { color: var(--muted); margin: 0 0 16px; max-width: 800px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .tab[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
+  .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 18px 20px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 17px; }
+  .card h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .grid { display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 12.5px; color: var(--muted); margin: 10px 0 4px; }
+  input, select, textarea { width: 100%; box-sizing: border-box; background: var(--panel-strong); color: var(--ink); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 10px; font: inherit; font-size: 13.5px; }
+  textarea { min-height: 80px; resize: vertical; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 7px 16px; font-size: 13px; cursor: pointer; text-decoration: none; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .btn.danger { background: rgba(251,113,133,0.14); border-color: var(--bad); }
+  .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; border: 1px solid var(--edge); color: var(--muted); white-space: nowrap; }
+  .badge.s-accepted, .badge.s-released, .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.s-rejected, .badge.s-checks_failed, .badge.bad { color: var(--bad); border-color: var(--bad); }
+  .badge.s-rederived, .badge.s-checked, .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .name { color: var(--accent); font-weight: 600; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; text-align: left; }
+  .kpis { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 6px 12px; font-size: 12.5px; color: var(--muted); }
+  .kpi b { color: var(--ink); margin-right: 4px; }
+  .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
+  .note { color: var(--muted); font-size: 13px; }
+  .banner { border: 1px solid var(--warn); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; background: rgba(251,191,36,0.08); }
+  .check { display: flex; gap: 8px; align-items: baseline; font-size: 13px; padding: 4px 0; }
+  .check code { font-family: var(--mono); font-size: 12px; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0 12px; }
+  .step { border: 1px solid var(--edge); border-radius: 10px; padding: 8px 10px; font-size: 12.5px; color: var(--muted); }
+  .step.on { border-color: var(--accent); color: var(--ink); }
+  .step b { display: block; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+  pre.doc { white-space: pre-wrap; font: inherit; font-size: 13.5px; line-height: 1.55; margin: 0; }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .crumbs button { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+  .empty { color: var(--muted); font-size: 13.5px; padding: 12px 0; }
+  .rank { font-variant-numeric: tabular-nums; }
+  dl.kv { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; font-size: 13.5px; margin: 8px 0; }
+  dl.kv dt { color: var(--muted); } dl.kv dd { margin: 0; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = async (url, opts) => {
+  const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
+  const text = await r.text();
+  let body = text; try { body = JSON.parse(text); } catch (e) {}
+  if (!r.ok) { const d = body && body.detail; throw Object.assign(new Error(typeof d === "string" ? d : (d && d.message) || r.statusText), { code: d && d.code, status: r.status }); }
+  return body;
+};
+const fmt = (d) => (d ? String(d).slice(0, 10) : "—");
+const label = (k) => String(k || "").replace(/_/g, " ");
+const Status = ({ s }) => html`<span class=${"badge s-" + s}>${label(s)}</span>`;
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+// ------------------------------------------------------------------ contribute form
+
+const FLOW = [["submitted", "Filed"], ["checked", "Checks"], ["rederived", "Fleet verdict"], ["accepted", "Two reviewers"], ["released", "Shipped"]];
+
+function CLABanner({ cla, onSigned, me }) {
+  const [open, setOpen] = useState(false);
+  const [ack, setAck] = useState(false);
+  const [err, setErr] = useState("");
+  if (!me) return html`<div class="banner" role="status">Sign in to contribute — <a href="/auth/google">Google</a> or <a href="/stack#signin">email link</a>. Reading never needs an account.</div>`;
+  if (cla && cla.signed) return html`<p class="note">CLA v${cla.version} signed ${fmt(cla.signed.signed_at)} as <b>${me.email}</b>.</p>`;
+  const sign = async () => { setErr(""); try { await api("/cla/sign", { method: "POST", body: JSON.stringify({ acknowledge_patent_grant: true }) }); onSigned(); } catch (e) { setErr(e.message); } };
+  return html`<div class="banner">
+    <b>Contributor licence agreement.</b> Contributions are licensed under the standard's licences (CC BY 4.0 text, ODC-By 1.0 data, Apache-2.0 code) with a patent grant limited to use of the standard.
+    <div class="row"><button class="btn quiet" onClick=${() => setOpen(!open)} aria-expanded=${open}>${open ? "Hide" : "Read"} the CLA</button>
+      <label style=${{ margin: 0, display: "inline-flex", gap: "6px", alignItems: "center" }}><input type="checkbox" style=${{ width: "auto" }} checked=${ack} onChange=${(e) => setAck(e.target.checked)} /> I acknowledge the patent grant (§3)</label>
+      <button class="btn" disabled=${!ack} onClick=${sign}>Sign CLA v${cla ? cla.version : ""}</button></div>
+    ${open && cla ? html`<pre class="doc" style=${{ marginTop: "10px" }}>${cla.text}</pre>` : null}
+    ${err ? html`<div class="err" role="alert">${err}</div>` : null}
+  </div>`;
+}
+
+function ContributeForm({ kinds, me, cla, onFiled, discourse }) {
+  const [kind, setKind] = useState("correction");
+  const [target, setTarget] = useState("");
+  const [field, setField] = useState("title");
+  const [proposed, setProposed] = useState({});
+  const [evidence, setEvidence] = useState([{ url: "", quote: "" }]);
+  const [rationale, setRationale] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [result, setResult] = useState(null);
+  const spec = (kinds || []).find((k) => k.kind === kind) || { required: [], layer: "" };
+  const canFile = me && cla && cla.signed;
+  const submit = async (e) => {
+    e.preventDefault(); setBusy(true); setErr(""); setResult(null);
+    try {
+      const body = { kind, target_ref: target.trim(), field: kind === "correction" ? field : "", proposed, rationale,
+        evidence: evidence.filter((x) => x.url || x.quote) };
+      const r = await api("/contributions", { method: "POST", body: JSON.stringify(body) });
+      setResult(r); onFiled(r);
+    } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
+  };
+  const needsTarget = ["correction", "translation", "characteristic", "enforcement_link"].includes(kind);
+  return html`<form class="card" onSubmit=${submit} aria-label="File a contribution">
+    <h2>Propose a change</h2>
+    <p class="note">Nothing you file writes the registry. It runs the automated checks, the relevant fleet re-derives it from the source, two reviewers decide, and it ships in the next release with your handle and its impact.</p>
+    <div class="steps" aria-hidden="true">${FLOW.map(([k, l], i) => html`<div class="step" key=${k}><b>${i + 1}</b>${l}</div>`)}</div>
+    <label for="kind">Kind</label>
+    <select id="kind" value=${kind} onChange=${(e) => { setKind(e.target.value); setProposed({}); }}>${(kinds || []).map((k) => html`<option key=${k.kind} value=${k.kind}>${label(k.kind)} · ${k.layer}</option>`)}</select>
+    ${needsTarget ? html`<label for="target">Target (obligation id / stable id, block id or enforcement event id)</label><input id="target" value=${target} onInput=${(e) => setTarget(e.target.value)} placeholder="OBL:uksi/2017/692#regulation-27 · BLK-CDD-PROGRAMME · ENF-…" required />` : null}
+    ${kind === "correction" ? html`<label for="field">Field</label><select id="field" value=${field} onChange=${(e) => setField(e.target.value)}>${["title", "statement", "modality", "subject", "action", "condition", "object", "obligation_type", "jurisdiction", "regulator", "description", "kind", "evidence_expectation"].map((f) => html`<option key=${f} value=${f}>${f}</option>`)}</select>` : null}
+    ${spec.required.map((f) => html`<div key=${f}><label for=${"p-" + f}>${label(f)}</label>
+      ${["text", "case", "value"].includes(f) ? html`<textarea id=${"p-" + f} value=${typeof proposed[f] === "object" ? JSON.stringify(proposed[f]) : (proposed[f] || "")} onInput=${(e) => setProposed({ ...proposed, [f]: e.target.value })} required></textarea>`
+        : html`<input id=${"p-" + f} value=${proposed[f] || ""} onInput=${(e) => setProposed({ ...proposed, [f]: e.target.value })} required />`}</div>`)}
+    <label>Evidence (public URL + short quote; no verbatim restricted text)</label>
+    ${evidence.map((ev, i) => html`<div class="row" key=${i}><input aria-label=${"evidence url " + (i + 1)} placeholder="https://…" value=${ev.url} onInput=${(e) => setEvidence(evidence.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))} style=${{ flex: 2 }} />
+      <input aria-label=${"evidence quote " + (i + 1)} placeholder="quote or note" value=${ev.quote} onInput=${(e) => setEvidence(evidence.map((x, j) => (j === i ? { ...x, quote: e.target.value } : x)))} style=${{ flex: 3 }} /></div>`)}
+    <div class="row"><button type="button" class="btn quiet" onClick=${() => setEvidence([...evidence, { url: "", quote: "" }])}>+ evidence</button></div>
+    <label for="rationale">Why</label>
+    <textarea id="rationale" value=${rationale} onInput=${(e) => setRationale(e.target.value)} placeholder="What is wrong today, and what the source actually says." />
+    <div class="row"><button class="btn" type="submit" disabled=${!canFile || busy}>${busy ? "Filing…" : "File contribution"}</button>
+      ${!canFile ? html`<span class="note">sign in and sign the CLA first</span>` : null}
+      ${discourse ? html`<a class="btn quiet" href=${discourse} target="_blank" rel="noopener">Discuss first on the forum ↗</a>` : null}</div>
+    ${err ? html`<div class="err" role="alert">${err}</div>` : null}
+    ${result ? html`<div class="banner" role="status" style=${{ marginTop: "10px" }}>Filed <b class="mono">${result.id}</b> — <${Status} s=${result.status} />. ${result.status === "checked" ? "It is in the review queue." : "The automated checks flagged it; see the detail below."}
+      <ul style=${{ margin: "6px 0 0", paddingLeft: "18px" }}>${(result.checks || []).map((c) => html`<li key=${c.check} class="check"><span class=${"badge " + (c.ok ? "ok" : "bad")}>${c.check}</span> ${c.detail}</li>`)}</ul></div>` : null}
+  </form>`;
+}
+
+// ------------------------------------------------------------------ list + detail
+
+function ContributionList({ open, refresh }) {
+  const [rows, setRows] = useState(null);
+  const [status, setStatus] = useState("");
+  const [kind, setKind] = useState("");
+  const [err, setErr] = useState("");
+  useEffect(() => { api(`/contributions?limit=200${status ? "&status=" + status : ""}${kind ? "&kind=" + kind : ""}`).then((r) => setRows(r.items)).catch((e) => setErr(e.message)); }, [status, kind, refresh]);
+  return html`<section class="card" aria-label="Contributions">
+    <div class="tabs" role="group" aria-label="Filter">
+      ${["", "checked", "rederived", "accepted", "released", "rejected", "checks_failed"].map((s) => html`<button key=${s} class="tab" aria-pressed=${status === s} onClick=${() => setStatus(s)}>${s ? label(s) : "all"}</button>`)}
+      <select aria-label="Kind" value=${kind} onChange=${(e) => setKind(e.target.value)} style=${{ width: "auto", marginLeft: "auto" }}><option value="">any kind</option>${["correction", "missing_source", "equivalence", "characteristic", "ontology_entry", "fill", "translation", "golden_case", "evidence_template", "enforcement_link"].map((k) => html`<option key=${k} value=${k}>${label(k)}</option>`)}</select>
+    </div>
+    ${err ? html`<div class="err" role="alert">${err}</div>` : null}
+    ${rows === null ? html`<p class="empty">Loading…</p>` : rows.length === 0 ? html`<p class="empty">No contributions match. Be the first — file one from the Contribute tab.</p>`
+      : html`<table class="reg"><thead><tr><th>Id</th><th>Kind</th><th>Layer · target</th><th>Contributor</th><th>Status</th><th>Fleet</th><th>Filed</th></tr></thead><tbody>
+        ${rows.map((r) => html`<tr key=${r.id}><td><button class="name" onClick=${() => open(r.id)}>${r.id}</button></td><td>${label(r.kind)}</td>
+          <td><span class="badge">${r.layer}</span> <span class="mono">${r.target_ref || "—"}${r.field ? " · " + r.field : ""}</span></td>
+          <td>${r.contributor_email ? r.contributor_email.split("@")[0] : "—"}</td><td><${Status} s=${r.status} /></td>
+          <td>${r.rederivation ? html`<span class=${"badge " + (r.rederivation.agreement === "agree" ? "ok" : r.rederivation.agreement === "disagree" ? "bad" : "warn")}>${r.rederivation.agreement}</span>` : "—"}</td>
+          <td class="mono">${fmt(r.created_at)}</td></tr>`)}</tbody></table>`}
+  </section>`;
+}
+
+function ReviewForm({ row, me, roles, onDone }) {
+  const [decision, setDecision] = useState("accept");
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const isReviewer = roles.some((r) => ["reviewer", "maintainer", "steering"].includes(r));
+  if (!me) return html`<p class="note">Reviewers sign in to decide.</p>`;
+  if (!isReviewer) return html`<p class="note">Two reviewers (Reviewer / Maintainer / Steering) decide; you hold ${roles.join(", ") || "reader"}.</p>`;
+  if (me.email === row.contributor_email) return html`<p class="note">You filed this one — someone else reviews it.</p>`;
+  if (!["checked", "rederived"].includes(row.status)) return null;
+  const send = async () => { setBusy(true); setErr(""); try { await api(`/contributions/${row.id}/reviews`, { method: "POST", body: JSON.stringify({ decision, note }) }); onDone(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
+  const rederive = async () => { setBusy(true); setErr(""); try { await api(`/contributions/${row.id}/rederive`, { method: "POST" }); onDone(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
+  return html`<div>
+    <h3>Your review</h3>
+    <div class="row"><select aria-label="Decision" value=${decision} onChange=${(e) => setDecision(e.target.value)} style=${{ width: "auto" }}><option value="accept">accept</option><option value="request_changes">request changes</option><option value="reject">reject</option></select>
+      <input aria-label="Review note" placeholder="note for the contributor" value=${note} onInput=${(e) => setNote(e.target.value)} style=${{ flex: 1 }} />
+      <button class=${"btn" + (decision === "reject" ? " danger" : "")} disabled=${busy} onClick=${send}>Submit</button>
+      <button class="btn quiet" disabled=${busy} onClick=${rederive}>Re-derive now</button></div>
+    ${err ? html`<div class="err" role="alert">${err}</div>` : null}
+  </div>`;
+}
+
+function Detail({ id, back, me, roles }) {
+  const [row, setRow] = useState(null);
+  const [err, setErr] = useState("");
+  const [tick, setTick] = useState(0);
+  useEffect(() => { api(`/contributions/${id}`).then(setRow).catch((e) => setErr(e.message)); }, [id, tick]);
+  if (err) return html`<div class="card"><div class="crumbs"><button onClick=${back}>← contributions</button></div><div class="err" role="alert">${err}</div></div>`;
+  if (!row) return html`<div class="card"><p class="empty">Loading…</p></div>`;
+  const v = row.rederivation; const imp = row.impact;
+  const stage = FLOW.findIndex(([k]) => k === (row.status === "checks_failed" ? "checked" : row.status === "rejected" ? "accepted" : row.status));
+  return html`<article class="card" aria-label=${"Contribution " + row.id}>
+    <div class="crumbs"><button onClick=${back}>← contributions</button></div>
+    <h2><span class="mono">${row.id}</span> · ${label(row.kind)} <${Status} s=${row.status} /></h2>
+    <div class="steps">${FLOW.map(([k, l], i) => html`<div key=${k} class=${"step" + (i <= stage ? " on" : "")}><b>${i + 1}</b>${l}</div>`)}</div>
+    <dl class="kv">
+      <dt>Layer · target</dt><dd><span class="badge">${row.layer}</span> <span class="mono">${row.target_ref || "—"}${row.field ? " · " + row.field : ""}</span></dd>
+      <dt>Contributor</dt><dd>${row.contributor_email ? row.contributor_email.split("@")[0] : "—"} · filed ${fmt(row.created_at)} via ${row.channel}</dd>
+      <dt>Proposed</dt><dd><pre class="doc mono">${JSON.stringify(row.proposed, null, 1)}</pre></dd>
+      ${row.rationale ? html`<dt>Why</dt><dd>${row.rationale}</dd>` : null}
+      ${row.evidence && row.evidence.length ? html`<dt>Evidence</dt><dd>${row.evidence.map((e, i) => html`<div key=${i}>${e.url ? html`<a href=${e.url} target="_blank" rel="noopener">${e.url}</a>` : null} ${e.quote ? html`<em>“${e.quote}”</em>` : null}</div>`)}</dd>` : null}
+      ${row.proposal_id ? html`<dt>Console proposal</dt><dd><a href=${"/console#" + row.proposal_id} class="mono">${row.proposal_id}</a></dd>` : null}
+    </dl>
+    <h3>Automated checks</h3>
+    ${(row.checks || []).map((c) => html`<div class="check" key=${c.check}><span class=${"badge " + (c.ok ? "ok" : "bad")}>${c.check}</span> ${c.detail}</div>`)}
+    <h3>Fleet re-derivation</h3>
+    ${v ? html`<div class="check"><span class=${"badge " + (v.agreement === "agree" ? "ok" : v.agreement === "disagree" ? "bad" : "warn")}>${v.agreement}</span> ${(v.reasons || []).join("; ")} <span class="mono">· ${v.method} · ${fmt(v.at)}</span></div>` : html`<p class="note">Not yet re-derived — it runs nightly, or a reviewer asks for it now.</p>`}
+    <h3>Reviews (${(row.reviews || []).length} · ${row.accepts_required || 2} accepts apply)</h3>
+    ${(row.reviews || []).length ? row.reviews.map((r) => html`<div class="check" key=${r.reviewer_email}><span class=${"badge " + (r.decision === "accept" ? "ok" : r.decision === "reject" ? "bad" : "warn")}>${label(r.decision)}</span> ${r.reviewer_email.split("@")[0]} ${r.note ? "— " + r.note : ""} <span class="mono">${fmt(r.created_at)}</span></div>`) : html`<p class="note">No reviews yet.</p>`}
+    <${ReviewForm} row=${row} me=${me} roles=${roles} onDone=${() => setTick(tick + 1)} />
+    ${row.applied ? html`<h3>Applied through the record path</h3><pre class="doc mono">${JSON.stringify(row.applied, null, 1)}</pre>` : null}
+    ${imp ? html`<h3>Impact${row.released_in ? " · shipped in " + row.released_in : ""}</h3><div class="kpis"><span class="kpi"><b>${imp.blueprints_changed}</b>blueprints</span><span class="kpi"><b>${imp.obligations_changed}</b>obligations</span><span class="kpi"><b>${imp.blocks_changed}</b>blocks</span></div>
+      ${(imp.blueprints || []).length ? html`<p class="note">${imp.blueprints.map((b) => html`<a key=${b} href=${"/l6#" + b} class="mono" style=${{ marginRight: "8px" }}>${b}</a>`)}</p>` : null}` : null}
+  </article>`;
+}
+
+// ------------------------------------------------------------------ contributors, governance, roadmap
+
+function Contributors() {
+  const [data, setData] = useState(null);
+  const [summary, setSummary] = useState(null);
+  useEffect(() => { api("/contributors").then(setData); api("/contributions/summary").then(setSummary); }, []);
+  return html`<section class="card" aria-label="Contributors">
+    <h2>Contributors</h2>
+    ${summary ? html`<div class="kpis">${Object.entries(summary.by_status || {}).map(([s, n]) => html`<span class="kpi" key=${s}><b>${n}</b>${label(s)}</span>`)}<span class="kpi"><b>${summary.contributors}</b>contributors</span><span class="kpi"><b>${summary.reviewers}</b>reviewers</span></div>` : null}
+    <p class="note">${data ? data.score : ""}. Handles only — no emails are published.</p>
+    ${!data ? html`<p class="empty">Loading…</p>` : data.items.length === 0 ? html`<p class="empty">Nobody yet. The first accepted contribution tops the board.</p>`
+      : html`<table class="reg"><thead><tr><th>#</th><th>Contributor</th><th>Accepted</th><th>Released</th><th>Blueprints changed</th><th>Obligations changed</th><th>Score</th></tr></thead><tbody>
+        ${data.items.map((c) => html`<tr key=${c.contributor}><td class="rank">${c.rank}</td><td>${c.contributor} ${c.recognized_reviewer ? html`<span class="badge ok">reviewer</span>` : null}</td><td>${c.accepted}</td><td>${c.released}</td><td>${c.blueprints_changed}</td><td>${c.obligations_changed}</td><td class="rank"><b>${c.score}</b></td></tr>`)}</tbody></table>`}
+  </section>`;
+}
+
+function Governance() {
+  const [docs, setDocs] = useState(null);
+  const [pick, setPick] = useState("charter");
+  const [text, setText] = useState("");
+  useEffect(() => { api("/governance").then(setDocs); }, []);
+  useEffect(() => { fetch(`/governance/${pick}`).then((r) => r.text()).then(setText); }, [pick]);
+  return html`<section class="card grid" aria-label="Governance">
+    <div><h2>${(docs && docs.docs.find((d) => d.slug === pick) || {}).title || "Governance"}</h2><pre class="doc">${text}</pre></div>
+    <nav aria-label="Governance documents"><h3>Documents</h3>
+      ${docs ? docs.docs.map((d) => html`<div key=${d.slug}><button class=${"name"} aria-current=${pick === d.slug ? "page" : "false"} onClick=${() => setPick(d.slug)} style=${pick === d.slug ? { textDecoration: "underline" } : {}}>${d.title}</button></div>`) : null}
+      ${docs && docs.discourse_url ? html`<h3>Forum</h3><a href=${docs.discourse_url} target="_blank" rel="noopener">${docs.discourse_url}</a>` : null}
+      ${docs && docs.public_repo ? html`<h3>Public repo</h3><a href=${docs.public_repo} target="_blank" rel="noopener">${docs.public_repo}</a>` : null}
+    </nav>
+  </section>`;
+}
+
+function Roadmap() {
+  const [text, setText] = useState("");
+  useEffect(() => { fetch("/roadmap").then((r) => r.text()).then(setText); }, []);
+  return html`<section class="card" aria-label="Roadmap"><h2>Roadmap</h2><pre class="doc">${text}</pre></section>`;
+}
+
+function Newsletter({ enabled }) {
+  const [email, setEmail] = useState("");
+  const [msg, setMsg] = useState("");
+  if (!enabled) return null;
+  const go = async (e) => { e.preventDefault(); try { const r = await api("/newsletter/subscribe", { method: "POST", body: JSON.stringify({ email }) }); setMsg(r.subscribed ? "Subscribed — the weekly change digest is on its way." : r.reason); } catch (ex) { setMsg(ex.message); } };
+  return html`<form class="card" onSubmit=${go} aria-label="Newsletter"><h2>Change digest by email</h2><div class="row"><input type="email" aria-label="Email" value=${email} onInput=${(e) => setEmail(e.target.value)} placeholder="you@example.com" required style=${{ flex: 1 }} /><button class="btn" type="submit">Subscribe</button></div>${msg ? html`<p class="note" role="status">${msg}</p>` : null}</form>`;
+}
+
+// ------------------------------------------------------------------ app
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [tab, setTab] = useState("contribute");
+  const [open, setOpen] = useState("");
+  const [me, setMe] = useState(null);
+  const [roles, setRoles] = useState([]);
+  const [cla, setCla] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [refresh, setRefresh] = useState(0);
+  const [unread, setUnread] = useState(0);
+  const loadMe = () => api("/auth/me").then((r) => { setMe(r.user); if (r.user) { api("/contributors/me").then((p) => setRoles(p.roles || [])).catch(() => {}); api("/contributions/notifications?unread=true").then((n) => setUnread(n.unread)).catch(() => {}); } }).catch(() => {});
+  const loadCla = () => api("/cla").then(setCla).catch(() => {});
+  useEffect(() => { loadMe(); loadCla(); api("/contributions/kinds").then(setMeta).catch(() => {}); }, []);
+  useEffect(() => {
+    const apply = () => { const h = decodeURIComponent(location.hash.slice(1)); if (/^CON-/.test(h)) { setTab("contributions"); setOpen(h); } else if (["contribute", "contributions", "contributors", "governance", "roadmap"].includes(h)) { setTab(h); setOpen(""); } };
+    apply(); window.addEventListener("hashchange", apply); return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  const go = (t) => { setTab(t); setOpen(""); history.replaceState(null, "", "#" + t); };
+  const openRow = (id) => { setTab("contributions"); setOpen(id); history.replaceState(null, "", "#" + id); };
+  let body;
+  if (tab === "contributions" && open) body = html`<${Detail} id=${open} back=${() => go("contributions")} me=${me} roles=${roles} />`;
+  else if (tab === "contributions") body = html`<${ContributionList} open=${openRow} refresh=${refresh} />`;
+  else if (tab === "contributors") body = html`<${Contributors} />`;
+  else if (tab === "governance") body = html`<${Governance} />`;
+  else if (tab === "roadmap") body = html`<${Roadmap} />`;
+  else body = html`<div class="grid"><div><${CLABanner} cla=${cla} me=${me} onSigned=${() => { loadCla(); loadMe(); }} />
+      <${ContributeForm} kinds=${meta ? meta.kinds : []} me=${me} cla=${cla} discourse=${meta && meta.discourse_url} onFiled=${(r) => { setRefresh(refresh + 1); }} /></div>
+    <aside><section class="card" aria-label="How it works"><h2>How a contribution ships</h2>
+      <ol style=${{ margin: "6px 0 0", paddingLeft: "18px", fontSize: "13.5px", lineHeight: 1.6 }}>
+        <li><b>Checks</b> — schema, target exists, no verbatim restricted text, no duplicate or no-op.</li>
+        <li><b>Fleet verdict</b> — the layer's fleet re-reads the source with your proposal as evidence and says agree / disagree / unverified.</li>
+        <li><b>Two reviewers</b> — Reviewer, Maintainer or Steering roles; never the author. One reject closes.</li>
+        <li><b>Record path</b> — acceptance is written the way the console writes: versioned, with a why-trail, nothing deleted.</li>
+        <li><b>Release</b> — it ships in the next release with your handle and an impact count (blueprints and obligations changed).</li></ol>
+      <p class="note" style=${{ marginTop: "8px" }}>Prefer a pull request? Use the <code>contribution</code> block in the public repo's PR template — the same flow, channel <code>pr</code>.</p></section>
+      <${Newsletter} enabled=${meta && meta.newsletter} />
+      ${me && unread ? html`<section class="card" aria-label="Notifications"><h2>${unread} unread</h2><p class="note">Decisions on your contributions. <button class="name" onClick=${() => api("/contributions/notifications/read", { method: "POST" }).then(() => setUnread(0))}>Mark read</button></p></section>` : null}
+    </aside></div>`;
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark"><b>CLHEAR</b><span>contribute</span></div><div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink" href="/explore">Explore</a><a class="navlink" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink active" href="/contribute">Contribute</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main">
+      <h1>Make the standard better. Get credited for it.</h1>
+      <p class="lead">Corrections, missing sources, equivalences, characteristics, ontology entries, golden cases — filed here or by pull request, checked by the fleets, decided by two reviewers, shipped with your name and the count of blueprints it changed.</p>
+      <div class="tabs" role="tablist" aria-label="Sections">
+        ${[["contribute", "Contribute"], ["contributions", "Contributions"], ["contributors", "Contributors"], ["governance", "Governance"], ["roadmap", "Roadmap"]].map(([k, l]) =>
+          html`<button key=${k} class="tab" role="tab" aria-pressed=${tab === k} aria-selected=${tab === k} onClick=${() => go(k)}>${l}</button>`)}
+      </div>
+      ${body}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

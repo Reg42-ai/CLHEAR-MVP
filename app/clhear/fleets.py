@@ -169,6 +169,22 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     from app.clhear.platform import embeddings as _embeddings
     from app.clhear.platform import graph as _graph
 
+    # HLD v2 §6 / I12: every checked community contribution gets its fleet verdict
+    # tonight (agree / disagree / unverified) so reviewers decide on evidence; the
+    # change digest goes to the newsletter when beehiiv is configured (inert otherwise).
+    from app.clhear.platform import contributions as _contributions
+    from app.clhear.platform import newsletter as _newsletter
+
+    try:
+        community = {"rederived": _contributions.rederive_pending(engine)}
+    except Exception as exc:
+        log.exception("contribution re-derivation failed")
+        community = {"rederived": {"error": str(exc)[:200]}}
+    try:
+        community["digest"] = _newsletter.send_digest(engine)
+    except Exception as exc:
+        log.exception("newsletter digest failed")
+        community["digest"] = {"sent": False, "reason": str(exc)[:200]}
     nightly_release = started.strftime("%Y%m%dT%H%M%SZ")
     projections = {
         "graph": _graph.rebuild(engine, release=nightly_release, trigger="nightly"),
@@ -210,6 +226,7 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
                "obligation_scores": {k: v for k, v in l7["obligation_scores"].items() if k != "bands"},
                "item_scores": l7["item_scores"]},
         "cohorts": cohorts,
+        "community": community,
         "gates": {k: {"passed": v.get("passed")} for k, v in gates.items()},
     }
     reasoning = (
