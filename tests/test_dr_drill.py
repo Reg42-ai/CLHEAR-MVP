@@ -81,6 +81,44 @@ def test_drill_restores_into_scratch_and_verifies_record_graph_and_replica(engin
     assert len(ev) == 1 and ev[0]["payload"]["status"] == "passed"
 
 
+def test_fleets_writing_during_the_drill_do_not_read_as_a_failed_restore(engine, tmp_path, monkeypatch):
+    """The record is append-only, so a restored count is right when it lies between the
+    source counts taken just before and just after the dump; rows the fleets append
+    while the drill restores and verifies must not fail it. A restore that lost rows
+    (below the bracket) or gained rows that were never in the source still fails."""
+    _seed(engine, tmp_path)
+    real_restore = dr.restore
+
+    def restore_then_keep_writing(dump, scratch_url):
+        restored = real_restore(dump, scratch_url)
+        with engine.begin() as conn:  # a fleet writes while the drill is verifying
+            record.write(conn, blocks_t, {"id": "BLK-DR-LATE", "name": "Late block", "description": "", "capability": "",
+                                          "evidence_artifacts": [], "satisfies": [], "implements_controls": [], "status": "curated",
+                                          "kind": "Document", "purpose": "p"},
+                         why=record.WhyTrail(layer="L3", reasoning_summary="late", agent_id="agent:test"))
+        return restored
+
+    monkeypatch.setattr(dr, "restore", restore_then_keep_writing)
+    report = dr.run(engine, workdir=tmp_path / "dr", release="2026.09.13", skip_datalake=True, trigger="test")
+    assert report["checks"]["record"]["passed"], json.dumps(report["checks"]["record"], indent=2)
+    graph = report["checks"]["graph"]
+    assert graph["passed"] and graph["checksum_live_at_backup"] == graph["checksum_restored"] != graph["checksum_live"]
+    assert report["status"] == "passed"
+
+    # the bracket itself: a write between the two counts is fine, a lost row is not
+    before = {"blocks": 10, "why_trails": 100}
+    after = {"blocks": 12, "why_trails": 103}
+    restored_eng = real_restore(Path(report["backup"]["path"]), f"sqlite:///{tmp_path / 'again.db'}")
+    try:
+        ok = dr.verify_record(engine, restored_eng, bracket=(before, after))
+    finally:
+        restored_eng.dispose()
+    names = {m["table"] for m in ok["mismatches"]}
+    assert {"blocks", "why_trails"} <= names  # the real restored counts are far outside this made-up bracket
+    late = next(m for m in ok["mismatches"] if m["table"] == "blocks")
+    assert late["source"] == 12 and late["source_before"] == 10
+
+
 def test_drill_refuses_the_live_record_as_scratch_target(engine, tmp_path):
     with pytest.raises(RuntimeError, match="must not be the live record"):
         dr.run(engine, scratch_url=engine.url.render_as_string(hide_password=False), workdir=tmp_path / "dr", skip_datalake=True)

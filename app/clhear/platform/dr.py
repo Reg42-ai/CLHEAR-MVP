@@ -104,6 +104,11 @@ def backup(engine: Engine, dest: Path) -> dict:
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     taken_at = _now()
+    # The record is append-only (I2), so the row counts the dump captured must lie
+    # between a count taken just before it started and one taken just after it ended.
+    # Verifying against that bracket, rather than a live count taken minutes later,
+    # keeps fleets writing during the drill from reading as a failed restore.
+    counts_before = _record_counts(engine)
     if engine.dialect.name == "sqlite":
         src = sqlite3.connect(str(_sqlite_path(engine)))
         try:
@@ -119,9 +124,11 @@ def backup(engine: Engine, dest: Path) -> dict:
                  engine.url.render_as_string(hide_password=False))
     else:  # pragma: no cover - only sqlite and postgres are supported record stores
         raise RuntimeError(f"unsupported dialect for DR backup: {engine.dialect.name}")
+    counts_after = _record_counts(engine)
     digest = hashlib.sha256(dest.read_bytes()).hexdigest()
     return {"path": str(dest), "bytes": dest.stat().st_size, "sha256": digest, "taken_at": taken_at.isoformat(),
-            "format": "sqlite-backup" if engine.dialect.name == "sqlite" else "pg_dump-custom"}
+            "format": "sqlite-backup" if engine.dialect.name == "sqlite" else "pg_dump-custom",
+            "counts_before": counts_before, "counts_after": counts_after}
 
 
 def restore(dump: Path, scratch_url: str) -> Engine:
@@ -224,17 +231,39 @@ def _count(conn, table: sa.Table) -> int | None:
         return None  # table absent on this side → reported as a mismatch below
 
 
-def verify_record(source: Engine, restored: Engine) -> dict:
-    """Row counts per layer table, identical migration ledger, resolvable why-trails."""
+def _verified_tables() -> list[sa.Table]:
+    return list(record.layer_tables()) + _platform_tables()
+
+
+def _record_counts(engine: Engine) -> dict[str, int | None]:
+    with engine.connect() as conn:
+        return {t.name: _count(conn, t) for t in _verified_tables()}
+
+
+def verify_record(source: Engine, restored: Engine, *, bracket: tuple[dict, dict] | None = None) -> dict:
+    """Row counts per layer table, identical migration ledger, resolvable why-trails.
+
+    ``bracket`` is ``(counts_before, counts_after)`` from :func:`backup`; each restored
+    count must fall inside it. Without a bracket the source is counted now, which is
+    only exact when nothing writes to the record meanwhile."""
     mismatches: list[dict] = []
     counts: dict[str, dict] = {}
-    tables = list(record.layer_tables()) + _platform_tables()
+    tables = _verified_tables()
     with source.connect() as s, restored.connect() as r:
         for t in tables:
-            a, b = _count(s, t), _count(r, t)
-            counts[t.name] = {"source": a, "restored": b}
-            if a != b:
-                mismatches.append({"table": t.name, "source": a, "restored": b})
+            b = _count(r, t)
+            if bracket is not None:
+                lo, hi = bracket[0].get(t.name), bracket[1].get(t.name)
+                if lo is None or hi is None:
+                    lo = hi = _count(s, t)
+                if lo is not None and hi is not None:
+                    lo, hi = min(lo, hi), max(lo, hi)
+            else:
+                lo = hi = _count(s, t)
+            counts[t.name] = {"source": hi, "restored": b}
+            ok = (lo == hi == b) if None in (lo, hi, b) else (lo <= b <= hi)  # a table absent on both sides still agrees
+            if not ok:
+                mismatches.append({"table": t.name, "source": hi, "restored": b, **({"source_before": lo} if lo != hi else {})})
         src_mig = sorted((row.version, row.name) for row in s.execute(sa.select(schema_migrations.c.version, schema_migrations.c.name)))
         dst_mig = sorted((row.version, row.name) for row in r.execute(sa.select(schema_migrations.c.version, schema_migrations.c.name)))
         migrations_equal = src_mig == dst_mig
@@ -261,15 +290,21 @@ def verify_record(source: Engine, restored: Engine) -> dict:
             "dangling_why_trails": dangling}
 
 
-def verify_graph(source: Engine, restored: Engine, *, neo4j_database: str | None = None) -> dict:
-    """The projection built from the restored record must equal the live one."""
+def verify_graph(source: Engine, restored: Engine, *, neo4j_database: str | None = None, live_before=None) -> dict:
+    """The projection built from the restored record must equal the live one.
+
+    ``live_before`` is the live projection taken just before the dump; while fleets
+    write during the drill the restored projection matches that one rather than the
+    live projection at verification time, and either match proves the restore."""
     from app.clhear.platform import graph
 
     live = graph.project(source)
     rebuilt = graph.project(restored)
-    same = live.checksum() == rebuilt.checksum()
+    same = live.checksum() == rebuilt.checksum() or (live_before is not None and live_before.checksum() == rebuilt.checksum())
     out = {"passed": same, "backend": "local", "checksum_live": live.checksum(), "checksum_restored": rebuilt.checksum(),
            "nodes": rebuilt.counts()["nodes"], "edges": rebuilt.counts()["edges"]}
+    if live_before is not None and live_before.checksum() != live.checksum():
+        out["checksum_live_at_backup"] = live_before.checksum()
     scratch = graph.LocalGraph()
     loaded = scratch.rebuild(rebuilt)
     out["loaded"] = {"nodes": loaded["nodes"], "edges": loaded["edges"]}
@@ -352,10 +387,13 @@ def run(engine: Engine, *, scratch_url: str | None = None, workdir: Path | None 
     status = "passed"
     restored: Engine | None = None
     try:
+        from app.clhear.platform import graph
+
+        live_graph = graph.project(engine)  # what the dump is about to capture, before fleets move on
         bk = backup(engine, workdir / ("record.db" if engine.dialect.name == "sqlite" else "record.dump"))
         restored = restore(Path(bk["path"]), scratch_url)
-        checks["record"] = verify_record(engine, restored)
-        checks["graph"] = verify_graph(engine, restored, neo4j_database=neo4j_database)
+        checks["record"] = verify_record(engine, restored, bracket=(bk["counts_before"], bk["counts_after"]))
+        checks["graph"] = verify_graph(engine, restored, neo4j_database=neo4j_database, live_before=live_graph)
     except Exception as exc:  # noqa: BLE001 — the drill reports; it never takes the service down
         log.exception("DR drill failed")
         checks["restore"] = {"passed": False, "error": f"{type(exc).__name__}: {exc}"[:400]}
