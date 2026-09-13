@@ -144,7 +144,15 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         base = f"http://127.0.0.1:{port}"
         if args.pages == PAGES and (bid := build_blueprint(base)):
-            args.pages = [*PAGES, f"/l6#{bid}"]
+            # item priorities exist once the scorer has seen the composed blueprint
+            try:
+                from app.clhear.db import make_engine
+                from app.clhear.l7 import score as l7_score
+
+                l7_score.score_items(make_engine(f"sqlite:///{ROOT / '.a11y-axe.db'}"))
+            except Exception as exc:
+                print(f"a11y-axe: warning — could not score items for the l7 page audit: {exc}")
+            args.pages = [*PAGES, f"/l6#{bid}", f"/l7#{bid}"]
     try:
         findings = audit(base, args.pages, themes=[args.theme] if args.theme else THEMES)
     except Exception as exc:  # browser missing, CDN unreachable

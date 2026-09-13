@@ -13,8 +13,8 @@
   .layout { display: grid; grid-template-columns: 300px 1fr; gap: 18px; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
   .side { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 16px; align-self: start; position: sticky; top: 74px; }
-  .side h4, .panelx h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
-  .side h4:first-child { margin-top: 0; }
+  .side h2, .panelx h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .side h2:first-child { margin-top: 0; }
   label { font-size: 12px; color: var(--muted); display: block; margin: 8px 0 3px; }
   input, select { border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); box-sizing: border-box; }
   .side input, .side select { width: 100%; }
@@ -116,7 +116,7 @@ function Priorities({ openScore, openObligation }) {
   const items = data ? data.items : [];
   return html`<div class="layout">
     <aside class="side" aria-label="Priority filters">
-      <h4>Blueprint</h4>
+      <h2>Blueprint</h2>
       <label for="bp">Current blueprint</label>
       <select id="bp" value=${pick} onChange=${(e) => { setPick(e.target.value); history.replaceState(null, "", "#" + (e.target.value || "priorities")); }}>
         <option value="">All obligations (base priorities)</option>
@@ -126,8 +126,8 @@ function Priorities({ openScore, openObligation }) {
       <select id="band" value=${band} onChange=${(e) => setBand(e.target.value)}>
         <option value="">any</option>${["critical", "high", "medium", "low"].map((b) => html`<option key=${b} value=${b}>${b}</option>`)}
       </select>
-      ${data ? html`<h4>Bands</h4><div>${Object.entries(data.bands || {}).map(([b, n]) => html`<div key=${b}><${Band} b=${b} /> <span class="mono">${n}</span></div>`)}</div>
-        <h4>Openness</h4><p class="mono">${data.openness && data.openness.open}</p><p class="mono">${data.openness && data.openness.closed}</p>` : null}
+      ${data ? html`<h2>Bands</h2><div>${Object.entries(data.bands || {}).map(([b, n]) => html`<div key=${b}><${Band} b=${b} /> <span class="mono">${n}</span></div>`)}</div>
+        <h2>Openness</h2><p class="mono">${data.openness && data.openness.open}</p><p class="mono">${data.openness && data.openness.closed}</p>` : null}
     </aside>
     <section aria-live="polite">
       ${err ? html`<div class="empty bad">${err}</div>` : null}
@@ -204,7 +204,7 @@ function Explorer({ openEvent, initialObligation }) {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return html`<div class="layout">
     <aside class="side" aria-label="Enforcement filters">
-      <h4>Who, when, how much</h4>
+      <h2>Who, when, how much</h2>
       <label for="ob">Obligation (OBL- id or source#ref)</label><input id="ob" value=${f.obligation} onChange=${set("obligation")} placeholder="OBL-000001" />
       <label for="reg">Regulator</label><input id="reg" value=${f.regulator} onChange=${set("regulator")} placeholder="FCA, SEC, FINRA…" />
       <label for="jur">Jurisdiction</label><input id="jur" value=${f.jurisdiction} onChange=${set("jurisdiction")} placeholder="UK" />

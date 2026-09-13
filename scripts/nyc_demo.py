@@ -209,7 +209,19 @@ def seed_synthetic_corpus(db: Path) -> None:
 
     engine = make_engine(f"sqlite:///{db}")
     run_migrations(engine)
-    _corpus(engine, Path(tempfile.mkdtemp(prefix="nyc-demo-lake-")))
+    lake = Path(tempfile.mkdtemp(prefix="nyc-demo-lake-"))
+    _corpus(engine, lake)
+    # L7: the synthetic enforcement listing → events → links → calibrated scores, so
+    # /l7 renders a priority view and an enforcement explorer with real rows.
+    from app.clhear.l7 import enforcement as l7_enforcement
+    from app.clhear.l7 import score as l7_score
+    from tests.test_l7_risk import _ingest_notices
+
+    _ingest_notices(engine, lake)
+    l7_enforcement.ingest_events(engine)
+    l7_enforcement.link_events(engine)
+    l7_score.calibrate(engine)
+    l7_score.score_obligations(engine)
     engine.dispose()
 
 
