@@ -145,9 +145,21 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         except Exception as exc:
             log.exception("suite %s failed", suite)
             gates[suite] = {"suite": suite, "passed": False, "error": str(exc)[:200]}
+    # HLD v2 I7: projections are rebuilt from the record after the derivation
+    # passes — the query graph (Neo4j or in-process) and the clause vector index.
+    from app.clhear.platform import embeddings as _embeddings
+    from app.clhear.platform import graph as _graph
+
+    nightly_release = started.strftime("%Y%m%dT%H%M%SZ")
+    projections = {
+        "graph": _graph.rebuild(engine, release=nightly_release, trigger="nightly"),
+        "index": _embeddings.rebuild_index(engine, release=nightly_release, trigger="nightly"),
+    }
     outputs = {
         "extraction": extraction,
         "triage": triage,
+        "projections": {"graph": {k: projections["graph"].get(k) for k in ("backend", "nodes", "edges", "status", "duration_ms")},
+                        "index": {k: projections["index"].get(k) for k in ("backend", "model", "embedded", "skipped", "duration_ms")}},
         "structured": structured,
         "l2_changes": l2_changes,
         "registry_consolidation": registry_consolidation,
@@ -191,7 +203,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         f"{blueprints_out['composed']} blueprints composed ({blueprints_out['stored']} new), "
         f"{recomposition['changed']}/{recomposition['checked']} recomposed after lower-layer changes, "
         f"{sum(e['accepted'] for e in explanations)} explanations refined; "
-        f"{sum(1 for g in gates.values() if g.get('passed'))}/{len(gates)} eval gates green"
+        f"{sum(1 for g in gates.values() if g.get('passed'))}/{len(gates)} eval gates green; "
+        f"graph projection {projections['graph'].get('status')} ({projections['graph'].get('nodes', 0)} nodes / "
+        f"{projections['graph'].get('edges', 0)} edges), {projections['index'].get('embedded', 0)} clauses re-embedded"
     )
     import time
 

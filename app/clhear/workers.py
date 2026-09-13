@@ -268,6 +268,19 @@ def handle_l5_changed(engine: Engine, gateway: Gateway, envelope: Envelope) -> d
     return {"l6": l6_on_changed(engine, envelope.payload or {}, layer="L5")}
 
 
+def handle_graph_rebuild(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """HLD v2 I7: rebuild the query graph and the vector index from the record
+    (scheduled nightly; also on demand). Idempotent by construction."""
+    from app.clhear.platform import embeddings, graph
+
+    payload = envelope.payload or {}
+    out = {"graph": graph.rebuild(engine, release=payload.get("release", ""), trigger="event")}
+    if payload.get("index", True):
+        out["index"] = embeddings.rebuild_index(engine, release=payload.get("release", ""), trigger="event",
+                                                force=bool(payload.get("force")))
+    return out
+
+
 def l6_on_changed(engine: Engine, payload: dict, *, layer: str) -> dict:
     from app.clhear.l6.diff import on_lower_layer_changed
 
@@ -278,6 +291,7 @@ HANDLERS = {
     "DummyChanged": handle_dummy_changed,
     "AdapterRunRequested": handle_adapter_run,
     "PublishReleaseRequested": handle_publish_release,
+    "GraphRebuildRequested": handle_graph_rebuild,
     "CommunityWrite": handle_community_write,
     "clhear.l1.changed": handle_l1_changed,
     "clhear.l2.changed": handle_l2_changed,
@@ -288,7 +302,7 @@ HANDLERS = {
 
 # Scheduled kinds re-fire with the same envelope id by design (EventBridge
 # static input); their work is naturally idempotent (unchanged -> no-op run).
-_ALWAYS_RUN = {"AdapterRunRequested", "PublishReleaseRequested"}
+_ALWAYS_RUN = {"AdapterRunRequested", "PublishReleaseRequested", "GraphRebuildRequested"}
 
 
 def _already_handled(engine: Engine, event_id: str) -> bool:
