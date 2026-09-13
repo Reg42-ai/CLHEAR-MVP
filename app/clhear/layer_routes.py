@@ -175,3 +175,15 @@ def theme_css():
         media_type="text/css",
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
+
+
+@router.get("/static/graph-canvas.js", include_in_schema=False)
+def graph_canvas_js():
+    """The Obsidian-style graph renderer shared by /map and /explore (HLD v2 §5)."""
+    from fastapi.responses import Response
+
+    return Response(
+        (WEB_DIR / "graph_canvas.js").read_text(),
+        media_type="text/javascript; charset=utf-8",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
