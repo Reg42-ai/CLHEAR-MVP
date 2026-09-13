@@ -164,6 +164,17 @@ def write_interop(engine: Engine, repo_dir: Path, release: str) -> list[Path]:
     written.append(sdl)
     with engine.connect() as conn:
         written += crosswalks.write(conn, repo_dir, release)
+    # Item 18: the instance-mode contract is open (method + shapes); the data it describes is not.
+    from app.clhear import instance_contract
+
+    inst = repo_dir / "standard" / "instance-mode"
+    inst.mkdir(parents=True, exist_ok=True)
+    (inst / "openapi.json").write_text(json.dumps(instance_contract.openapi(), indent=2) + "\n", encoding="utf-8")
+    (inst / "contract.json").write_text(json.dumps(instance_contract.contract(), indent=2) + "\n", encoding="utf-8")
+    src_doc = REPO_ROOT / instance_contract.CONTRACT_DOC
+    if src_doc.exists():
+        shutil.copy2(src_doc, inst / "CONTRACT.md")
+    written += sorted(p for p in inst.iterdir() if p.is_file())
     return written
 
 

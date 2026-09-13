@@ -121,12 +121,21 @@ def scan_text(text: str, location: str, denylist: list[str]) -> Iterator[Hit]:
             yield Hit("organization_identifier", location, term)
 
 
+UUID_RE = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
+
+
 def _looks_like_hash_context(text: str, m: re.Match) -> bool:
-    """12 digits inside a longer hex/base64 run are hashes, not account ids."""
+    """12 digits inside a longer hex/base64 run — or the last group of a UUID — are
+    hashes and ids, not account ids."""
     start, end = m.span()
     before = text[max(0, start - 1) : start]
     after = text[end : end + 1]
-    return bool(re.match(r"[0-9a-fA-F]", before) or re.match(r"[0-9a-fA-F]", after))
+    if re.match(r"[0-9a-fA-F]", before) or re.match(r"[0-9a-fA-F]", after):
+        return True
+    if before == "-":
+        window = text[max(0, start - 24) : end]
+        return UUID_RE.search(window) is not None
+    return False
 
 
 def scan_file(path: Path, denylist: list[str]) -> Iterator[Hit]:
@@ -166,16 +175,27 @@ def scan_sqlite(db_path: Path, denylist: list[str], report: ScanReport) -> None:
         conn.close()
 
 
-def scan_engine(engine, denylist: list[str] | None = None) -> ScanReport:
-    """Scan every layer table through SQLAlchemy (Postgres or SQLite)."""
+def _platform_tables() -> list:
+    """L0 tables that could carry instance data by accident: reasoning, events, audit, prompts."""
+    from app.clhear.models import events, llm_calls
+    from app.clhear.platform.audit import audit_log
+    from app.clhear.platform.record import why_trails
+
+    return [why_trails, events, audit_log, llm_calls]
+
+
+def scan_engine(engine, denylist: list[str] | None = None, *, include_platform: bool = True) -> ScanReport:
+    """Scan every layer table — and, by default, the L0 platform tables (why-trails,
+    events, audit log, LLM call ledger) — through SQLAlchemy (Postgres or SQLite)."""
     import sqlalchemy as sa
 
     from app.clhear.platform.record import layer_tables
 
     denylist = denylist if denylist is not None else load_denylist()
     report = ScanReport(target=str(engine.url).split("@")[-1])
+    tables = list(layer_tables()) + (_platform_tables() if include_platform else [])
     with engine.connect() as conn:
-        for table in layer_tables():
+        for table in tables:
             report.tables_scanned += 1
             cols = [c.name for c in table.columns]
             member_cols = MEMBER_ID_COLUMNS & set(cols)

@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
         from app.clhear.v1.conformance import router as conformance_router
         from app.clhear.v1.interop import router as interop_router
         from app.clhear.v1.security import router as security_router
+        from app.clhear.v1.instance import router as instance_router
 
         app.include_router(router)
         app.include_router(l1_router)
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
         app.include_router(conformance_router)  # Annex E self-assessments, marks register, assessors
         app.include_router(interop_router)  # crosswalks, JSON-LD, GraphQL
         app.include_router(security_router)  # security.txt, /security, /status, /metrics, /audit
+        app.include_router(instance_router)  # item 18: contract (open) + overlay endpoints (instance deployments only)
         app.include_router(app_api_router)
         app.include_router(auth_router)
         app.include_router(community_router)
