@@ -61,6 +61,57 @@ def neighbourhood(node_id: str, response: Response) -> dict:
     return out
 
 
+@router.get("/graph/subgraph")
+def subgraph(response: Response, focus: str | None = Query(default=None), depth: int = Query(default=2, ge=1, le=4),
+             layers: str = Query(default=""), grouping: str = Query(default="items"), expand: str = Query(default=""),
+             max_nodes: int = Query(default=1500, ge=10, le=4000)) -> dict:
+    """What the map draws (HLD v2 §5): ``focus`` plus ``depth`` hops — or the whole
+    projection without a focus — folded to the granularity ``grouping`` names
+    (``programs`` | ``areas`` | ``items`` | ``everything``), with the groups in
+    ``expand`` opened. For a blueprint focus the coverage gaps are drawn too, joined
+    to the blueprint by ``gap`` edges, because a program map that hides what is not
+    covered would be a lie."""
+    started = time.perf_counter()
+    engine = get_engine()
+    g = graph.get_graph(engine)
+    if not hasattr(g, "subgraph"):
+        raise HTTPException(status_code=501, detail="the map is served from the local projection on this backend")
+    if grouping not in graph.GROUPINGS:
+        raise HTTPException(status_code=422, detail=f"grouping must be one of {sorted(graph.GROUPINGS)}")
+    wanted = {l.strip().upper() for l in layers.split(",") if l.strip()} or None
+    opened = {e.strip() for e in expand.split(",") if e.strip()}
+    extra = _blueprint_gaps(engine, focus) if focus and focus.startswith("BLU-") else None
+    out = g.subgraph(focus=focus, depth=depth, layers=wanted, grouping=grouping, expand=opened, max_nodes=max_nodes, extra=extra)
+    if out is None:
+        raise HTTPException(status_code=404, detail=f"unknown node {focus}")
+    _timed(response, started, "subgraph")
+    return out
+
+
+def _blueprint_gaps(engine, blueprint_id: str) -> dict[str, dict]:
+    """Obligations the blueprint's composition lists as gaps: not in the projection
+    (nothing satisfies them), so the map adds them from the stored composition."""
+    import json
+
+    import sqlalchemy as sa
+
+    from app.clhear.derived_models import blueprints
+
+    with engine.connect() as conn:
+        row = conn.execute(sa.select(blueprints.c.composition).where(blueprints.c.stable_id == blueprint_id)).first()
+    if row is None:
+        return {}
+    comp = row[0]
+    if isinstance(comp, str):
+        try:
+            comp = json.loads(comp)
+        except ValueError:
+            return {}
+    return {c["obligation_id"]: {"from": blueprint_id, "rel": "gap", "kind": "obligation", "layer": "L2", "gap": True,
+                                 "label": c.get("title") or c["obligation_id"], "stable_id": c.get("stable_id")}
+            for c in (comp or {}).get("coverage") or [] if c.get("state") == "gap" and c.get("obligation_id")}
+
+
 @router.get("/graph/search")
 def vector_search(q: str = Query(min_length=2), limit: int = Query(default=10, ge=1, le=50), response: Response = None) -> dict:
     """Nearest clauses by embedding — the vector leg on its own, for inspection."""

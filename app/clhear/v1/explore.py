@@ -31,7 +31,7 @@ from app.clhear.derived_models import (
     requires,
 )
 from app.clhear.l1.models import clauses, sources
-from app.clhear.platform import record
+from app.clhear.platform import graph, record
 
 router = APIRouter(tags=["explore"])
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -95,9 +95,7 @@ def _node(node_id: str, kind: str, layer: str, label: str, **extra) -> dict:
 
 
 def _href(node_id: str, kind: str) -> str:
-    return {"obligation": f"/l2#{node_id}", "block": f"/l3#{node_id}", "activity": f"/l5#{node_id}", "profile": f"/l4#{node_id}",
-            "blueprint": f"/l6#{node_id}", "licence": f"/l4#{node_id}", "source": f"/l1#{node_id}", "clause": f"/l1#{node_id}",
-            "item": f"/l6#{node_id}"}.get(kind, "/explore#" + node_id)
+    return graph.href_for(node_id, kind)
 
 
 def _obligation(conn: Connection, ref: str):

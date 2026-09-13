@@ -20,6 +20,9 @@
   --glow: 0 0 24px rgba(99,102,241,0.18);
   /* status hues used by both apps */
   --ok: var(--mint-400); --warn: var(--amber-400); --bad: var(--rose-400);
+  /* one hue per layer: badges, the map's node fills and its legend read the same tokens */
+  --l1: #93c5fd; --l2: #818cf8; --l3: #34d399; --l4: #fbbf24; --l5: #f0abfc; --l6: #fda4af; --l7: #fb923c; --l8: #a3e635;
+  --l0: #9c9fc6;
 }
 [data-theme="light"] {
   --canvas: #f6f5f1;
@@ -32,6 +35,8 @@
   --glow: 0 4px 20px rgba(30,27,75,0.07);
   /* darker status hues: the 400/600 shades fail 4.5:1 on a light canvas */
   --ok: #047857; --warn: #92400e; --bad: #be123c;
+  --l1: #1d4ed8; --l2: #4f46e5; --l3: #047857; --l4: #92400e; --l5: #a21caf; --l6: #be123c; --l7: #c2410c; --l8: #3f6212;
+  --l0: #6b6a8a;
 }
 * { box-sizing: border-box; }
 body {

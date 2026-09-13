@@ -59,6 +59,27 @@ LABELS = {
 }
 PRODUCER = "platform.graph"
 
+# Semantic zoom for the map (HLD v2 §5 "the graph explorer renders the Blueprint
+# as a constellation"). A grouping names the kinds that are folded into a coarser
+# node: clauses into their source, obligations into their instrument (also the
+# source node), blocks into their kind, activities into their side, applicability
+# predicates into one node. `expand` un-folds named groups so the reader can drill
+# into one area without opening everything.
+GROUPINGS: dict[str, frozenset[str]] = {
+    "programs": frozenset({"clause", "obligation", "block", "activity", "predicate"}),
+    "areas": frozenset({"clause", "obligation", "predicate"}),
+    "items": frozenset({"clause", "predicate"}),
+    "everything": frozenset(),
+}
+GROUP_PREFIX = "grp:"
+
+
+def href_for(node_id: str, kind: str) -> str:
+    """Where a node's own page is: the layer browser that owns the kind."""
+    return {"obligation": f"/l2#{node_id}", "block": f"/l3#{node_id}", "activity": f"/l5#{node_id}", "profile": f"/l4#{node_id}",
+            "blueprint": f"/l6#{node_id}", "licence": f"/l4#{node_id}", "source": f"/l1#{node_id}", "clause": f"/l1#{node_id}",
+            "item": f"/l6#{node_id}"}.get(kind, "/explore#" + node_id)
+
 
 def _json(value, default):
     if value is None:
@@ -317,6 +338,140 @@ class LocalGraph:
         edges = self.out(nid) + self.inc(nid)
         ids = {nid, *(e["from"] for e in edges), *(e["to"] for e in edges)}
         return {"focus": nid, "nodes": [self.node(i) for i in ids], "edges": edges}
+
+    # -- the map -----------------------------------------------------------------------
+    def _fold_target(self, nid: str, n: dict) -> tuple[str, dict] | None:
+        """Where a node goes when its kind is folded: (group id, group node) or None
+        when the kind is never folded. Sources stand for their own clauses and
+        obligations, so the group node is an existing node when one exists."""
+        kind = n["kind"]
+        if kind == "clause":
+            src = next((e["to"] for e in self.out(nid, "PART_OF")), None)
+            if src and (s := self.node(src)):
+                return src, s
+            return f"{GROUP_PREFIX}source:unknown", {"kind": "group", "layer": "L1", "label": "Clauses (no source)"}
+        if kind == "obligation":
+            key = n.get("source_key") or ""
+            if key and (s := self.node(key)):
+                return key, s
+            return f"{GROUP_PREFIX}instrument:{key or 'unknown'}", {"kind": "group", "layer": "L2", "label": f"{key or 'unknown'} obligations"}
+        if kind == "block":
+            bk = n.get("block_kind") or "Block"
+            return f"{GROUP_PREFIX}kind:{bk}", {"kind": "group", "layer": "L3", "label": f"{bk} blocks", "block_kind": bk}
+        if kind == "activity":
+            side = n.get("side") or "activity"
+            return f"{GROUP_PREFIX}side:{side}", {"kind": "group", "layer": "L5", "label": f"{side.capitalize()} activities", "side": side}
+        if kind == "predicate":
+            return f"{GROUP_PREFIX}predicates", {"kind": "group", "layer": "L4", "label": "Applicability predicates"}
+        return None
+
+    def subgraph(self, *, focus: str | None = None, depth: int = 2, layers: set[str] | None = None,
+                 grouping: str = "items", expand: set[str] | None = None, max_nodes: int = 1500,
+                 extra: dict[str, dict] | None = None) -> dict | None:
+        """The view the map draws: a node plus ``depth`` hops (or the whole graph when
+        ``focus`` is None), optionally restricted to ``layers``, with the kinds named by
+        ``grouping`` folded into group nodes except those listed in ``expand``. Parallel
+        edges between the same pair collapse into one with a ``weight``. Over
+        ``max_nodes`` the lowest-degree nodes are dropped and ``truncated`` is set.
+        ``extra`` adds nodes that the projection does not hold (blueprint coverage gaps):
+        ``{id: {"label", "rel", "from", **props}}`` — each becomes a node joined to
+        ``from`` by ``rel``."""
+        fold = GROUPINGS.get(grouping)
+        if fold is None:
+            raise ValueError(f"unknown grouping {grouping!r}; one of {sorted(GROUPINGS)}")
+        expand = expand or set()
+        nodes = self.snapshot.nodes
+        fid = None
+        if focus is not None:
+            fid = self.resolve(focus)
+            if fid is None:
+                return None
+            seen = {fid}
+            frontier = [fid]
+            for _ in range(max(0, depth)):
+                nxt = []
+                for nid in frontier:
+                    for e in self.out(nid) + self.inc(nid):
+                        other = e["to"] if e["from"] == nid else e["from"]
+                        if other not in seen:
+                            seen.add(other)
+                            nxt.append(other)
+                frontier = nxt
+                if not frontier:
+                    break
+            base = seen
+        else:
+            base = set(nodes)
+        if layers:
+            base = {i for i in base if nodes[i]["layer"] in layers or i == fid}
+
+        # fold: node -> representative id
+        rep: dict[str, str] = {}
+        out_nodes: dict[str, dict] = {}
+        members: dict[str, int] = defaultdict(int)
+
+        def emit(nid: str, n: dict) -> None:
+            if nid not in out_nodes:
+                out_nodes[nid] = {"id": nid, "kind": n["kind"], "layer": n["layer"], "label": n["label"],
+                                  "href": href_for(nid, n["kind"]) if n["kind"] != "group" else f"/map#{nid}",
+                                  **{k: n[k] for k in ("stable_id", "block_kind", "side", "jurisdiction", "status", "normative", "public_ok")
+                                     if k in n and n[k] is not None}}
+
+        for nid in base:
+            n = nodes[nid]
+            target = self._fold_target(nid, n) if (n["kind"] in fold and nid != fid) else None
+            if target is None or target[0] in expand:
+                rep[nid] = nid
+                emit(nid, n)
+            else:
+                gid, gnode = target
+                rep[nid] = gid
+                emit(gid, {**gnode, "id": gid, "label": gnode["label"]})
+                members[gid] += 1
+        for gid, count in members.items():
+            out_nodes[gid]["members"] = count
+            out_nodes[gid]["group"] = True
+
+        # edges among the base set, mapped to representatives and aggregated
+        agg: dict[tuple[str, str, str], int] = defaultdict(int)
+        for nid in base:
+            for e in self._out.get(nid, []):
+                if e["to"] in base:
+                    a, b = rep[nid], rep[e["to"]]
+                    if a != b:
+                        agg[(a, b, e["rel"].lower())] += 1
+        for xid, spec in (extra or {}).items():
+            src = spec.get("from")
+            if src in rep and xid not in out_nodes:
+                out_nodes[xid] = {"id": xid, "kind": spec.get("kind", "obligation"), "layer": spec.get("layer", "L2"),
+                                  "label": spec.get("label") or xid, "href": href_for(xid, spec.get("kind", "obligation")),
+                                  **{k: v for k, v in spec.items() if k not in ("from", "rel", "kind", "layer", "label")}}
+                agg[(rep[src], xid, spec.get("rel", "gap"))] += 1
+
+        degree: dict[str, int] = defaultdict(int)
+        for (a, b, _rel), _w in agg.items():
+            degree[a] += 1
+            degree[b] += 1
+        truncated = False
+        if len(out_nodes) > max_nodes:
+            keep = sorted(out_nodes, key=lambda i: (i == fid, degree[i], out_nodes[i].get("members", 0)), reverse=True)[:max_nodes]
+            kept = set(keep)
+            out_nodes = {i: out_nodes[i] for i in keep}
+            agg = {k: w for k, w in agg.items() if k[0] in kept and k[1] in kept}
+            degree = defaultdict(int)
+            for (a, b, _rel), _w in agg.items():
+                degree[a] += 1
+                degree[b] += 1
+            truncated = True
+        for i, n in out_nodes.items():
+            n["degree"] = degree[i]
+        counts: dict[str, int] = defaultdict(int)
+        for n in out_nodes.values():
+            counts[n["layer"]] += 1
+        return {"focus": fid, "depth": depth if fid else None, "grouping": grouping, "expanded": sorted(expand),
+                "nodes": list(out_nodes.values()),
+                "edges": [{"from": a, "to": b, "rel": rel, "weight": w} for (a, b, rel), w in agg.items()],
+                "truncated": truncated, "counts_by_layer": dict(counts), "base_nodes": len(base)}
 
 
 # --------------------------------------------------------------------------- neo4j backend

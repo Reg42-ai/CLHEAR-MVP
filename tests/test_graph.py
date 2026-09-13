@@ -313,6 +313,89 @@ def test_bedrock_embedder_invokes_titan_per_text_and_is_selectable(monkeypatch):
 # --------------------------------------------------------------------------- api + worker
 
 
+def test_subgraph_folds_by_granularity_and_expands_on_demand(engine, client, tmp_path):
+    """The map's semantic zoom: the same neighbourhood at four granularities. Folded
+    kinds collapse into group nodes with member counts, parallel edges into one
+    weighted edge, and ``expand`` opens one group without opening the rest."""
+    out = _built(engine, client, tmp_path)
+    bp = out["blueprint_id"]
+    g = graph.get_graph(engine)
+
+    everything = g.subgraph(focus=bp, depth=3, grouping="everything")
+    items = g.subgraph(focus=bp, depth=3, grouping="items")
+    areas = g.subgraph(focus=bp, depth=3, grouping="areas")
+    programs = g.subgraph(focus=bp, depth=3, grouping="programs")
+    kinds = lambda sg: {n["kind"] for n in sg["nodes"]}  # noqa: E731
+    assert everything["focus"] == bp and everything["depth"] == 3 and not everything["truncated"]
+    assert "clause" in kinds(everything) and "clause" not in kinds(items)  # clauses fold into their source
+    assert "obligation" in kinds(items) and "obligation" not in kinds(areas)  # obligations fold into instruments
+    assert "block" in kinds(areas) and "block" not in kinds(programs)  # blocks fold into kinds
+    assert len(everything["nodes"]) > len(items["nodes"]) >= len(areas["nodes"]) >= len(programs["nodes"])
+    # the focus is never folded, and every node carries what the canvas needs
+    assert all(n["id"] == bp for n in programs["nodes"] if n["kind"] == "blueprint")
+    for n in programs["nodes"]:
+        assert {"id", "kind", "layer", "label", "href", "degree"} <= set(n)
+    groups = [n for n in programs["nodes"] if n.get("group")]
+    assert groups and all(n["members"] >= 1 for n in groups)
+    kind_groups = {n["id"] for n in groups if n["id"].startswith("grp:kind:")}
+    assert kind_groups, programs["nodes"]
+    # a source that absorbed its clauses is the same node, now with members
+    src = next(n for n in items["nodes"] if n["kind"] == "source")
+    assert src.get("group") and src["members"] >= 1 and src["href"].startswith("/l1#")
+    # folded edges aggregate: weight counts the parallel edges, rels are lowercase
+    assert all(e["rel"] == e["rel"].lower() and e["weight"] >= 1 for e in items["edges"])
+    assert any(e["weight"] > 1 for e in programs["edges"]) or len(programs["edges"]) < len(everything["edges"])
+    assert all(e["from"] != e["to"] for e in programs["edges"])
+    # expanding one kind group opens its blocks and leaves the others folded
+    opened = next(iter(kind_groups))
+    expanded = g.subgraph(focus=bp, depth=3, grouping="programs", expand={opened})
+    assert opened not in {n["id"] for n in expanded["nodes"]} and expanded["expanded"] == [opened]
+    assert any(n["kind"] == "block" for n in expanded["nodes"])
+    assert (kind_groups - {opened}) <= {n["id"] for n in expanded["nodes"]}
+    # depth grows the neighbourhood monotonically; layers restrict it
+    assert len(g.subgraph(focus=bp, depth=1, grouping="everything")["nodes"]) < len(everything["nodes"])
+    only_l6 = g.subgraph(focus=bp, depth=3, grouping="everything", layers={"L3", "L6"})
+    assert {n["layer"] for n in only_l6["nodes"]} <= {"L3", "L6"}
+    # a whole-store view without a focus, and a hard cap that keeps the focus and the busiest nodes
+    whole = g.subgraph(grouping="programs")
+    assert whole["focus"] is None and whole["depth"] is None and whole["base_nodes"] == len(g.snapshot.nodes)
+    capped = g.subgraph(focus=bp, depth=3, grouping="everything", max_nodes=10)
+    assert capped["truncated"] and len(capped["nodes"]) == 10 and bp in {n["id"] for n in capped["nodes"]}
+    assert all(e["from"] in {n["id"] for n in capped["nodes"]} and e["to"] in {n["id"] for n in capped["nodes"]} for e in capped["edges"])
+    assert g.subgraph(focus="BLU-nope") is None
+    import pytest
+
+    with pytest.raises(ValueError):
+        g.subgraph(focus=bp, grouping="galaxy")
+
+
+def test_subgraph_route_draws_blueprint_gaps_and_is_timed(engine, client, tmp_path):
+    out = _built(engine, client, tmp_path)
+    bp = out["blueprint_id"]
+    r = client.get(f"/graph/subgraph?focus={bp}&depth=2&grouping=items&layers=l2,L3,L6")
+    assert r.status_code == 200 and float(r.headers["X-Query-Ms"]) < 300
+    body = r.json()
+    assert body["focus"] == bp and {n["layer"] for n in body["nodes"]} <= {"L2", "L3", "L6"}
+    assert body["counts_by_layer"]["L6"] >= 1
+    # coverage gaps are not in the projection (nothing satisfies them); the map adds them from the composition
+    from app.clhear.derived_models import blueprints
+
+    with engine.begin() as conn:
+        comp = conn.execute(sa.select(blueprints.c.composition).where(blueprints.c.stable_id == bp)).scalar()
+        comp = graph._json(comp, {})
+        comp["coverage"] = list(comp.get("coverage") or []) + [{"obligation_id": "OBL-GAP-1", "state": "gap", "title": "Uncovered duty", "stable_id": "OBL-GAP-1"}]
+        conn.execute(blueprints.update().where(blueprints.c.stable_id == bp).values(composition=comp))
+    body = client.get(f"/graph/subgraph?focus={bp}&depth=1&grouping=everything").json()
+    gap = next(n for n in body["nodes"] if n["id"] == "OBL-GAP-1")
+    assert gap["gap"] is True and gap["layer"] == "L2" and gap["href"] == "/l2#OBL-GAP-1"
+    assert any(e["from"] == bp and e["to"] == "OBL-GAP-1" and e["rel"] == "gap" for e in body["edges"])
+    assert client.get("/graph/subgraph?focus=BLU-nope").status_code == 404
+    assert client.get("/graph/subgraph?grouping=galaxy").status_code == 422
+    assert client.get("/graph/subgraph?depth=9").status_code == 422
+    whole = client.get("/graph/subgraph?grouping=programs").json()
+    assert whole["focus"] is None and whole["nodes"]
+
+
 def test_graph_routes_and_rebuild_event(engine, client, tmp_path, monkeypatch):
     out = _built(engine, client, tmp_path)
     st = client.get("/graph/status").json()
