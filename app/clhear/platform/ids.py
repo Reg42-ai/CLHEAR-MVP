@@ -42,6 +42,7 @@ OBJECT_PREFIXES: dict[str, str] = {
     "ENF": "L7",  # enforcement event
     "AGG": "L8",  # benchmark aggregate
     "WHY": "L0",  # why-trail
+    "EDT": "L0",  # human-accepted edit (approval console)
     "SRC": "L1",  # source (exposed id for integer-keyed L1 rows)
     "CLS": "L1",  # clause
     "VER": "L1",  # source version

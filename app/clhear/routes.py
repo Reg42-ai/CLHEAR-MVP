@@ -40,22 +40,19 @@ def list_proposals(status: str | None = None) -> list[dict]:
 
 
 def _decide(proposal_id: str, approver: str, action) -> dict:
+    """One decision path for every proposal kind (platform.console.decide): the
+    status flip plus the kind's side effect — community sync, concept apply, or a
+    modification applied through the record write path and kept as a human edit."""
+    from app.clhear.platform import console
+
     engine = get_engine()
+    decision = "approved" if action is l0_proposals.approve else "rejected"
     try:
-        decided = action(engine, proposal_id, approver)
+        return console.decide(engine, proposal_id, decision, approver)
     except KeyError:
         raise HTTPException(status_code=404, detail="proposal not found")
     except l0_proposals.ProposalNotPending as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    if str(decided.get("kind", "")).startswith("community_"):
-        from app.clhear import community
-
-        community.sync_submission_from_proposal(engine, decided)
-    if decided.get("kind") == "l2_concept" and decided.get("status") == "approved":
-        from app.clhear.l2.consolidate import apply_approved_concept
-
-        decided["concept"] = apply_approved_concept(engine, decided)
-    return decided
 
 
 @router.post("/api/clhear/proposals/{proposal_id}/approve")

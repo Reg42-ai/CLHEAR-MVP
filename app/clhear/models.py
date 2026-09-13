@@ -253,6 +253,36 @@ graph_projections = sa.Table(
     sa.Column("detail", Json, nullable=False, default=dict),
 )
 
+# Human-accepted edits (HLD v2 I4, §8 item 11). Every decision a maintainer takes
+# in the approval console that changes or vouches for a determination lands here
+# with the basis it was taken on. The next derivation cycle must reproduce the
+# edit (same basis → re-asserted) or escalate it (basis changed → new proposal);
+# the ledger is append-only, statuses move forward only.
+human_edits = sa.Table(
+    "human_edits",
+    metadata,
+    sa.Column("id", sa.Text, primary_key=True),  # EDT-000001
+    sa.Column("layer", sa.Text, nullable=False),
+    sa.Column("kind", sa.Text, nullable=False),  # field_edit | validation | verdict
+    sa.Column("table_name", sa.Text, nullable=False),
+    sa.Column("subject_ref", sa.Text, nullable=False, index=True),  # row key (derivation key / id)
+    sa.Column("field", sa.Text, nullable=False, default=""),
+    sa.Column("before", Json, nullable=True),
+    sa.Column("after", Json, nullable=True),
+    sa.Column("basis_hash", sa.Text, nullable=False, default=""),  # text/inputs hash at acceptance
+    sa.Column("proposal_id", sa.Text, nullable=True),
+    sa.Column("accepted_by", sa.Text, nullable=False),
+    sa.Column("accepted_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("rationale", sa.Text, nullable=False, default=""),
+    # accepted → reproduced (re-asserted on an unchanged basis) | escalated (basis changed;
+    # proposal opened) | superseded (a later edit or decision replaced it)
+    sa.Column("status", sa.Text, nullable=False, default="accepted"),
+    sa.Column("checks", sa.Integer, nullable=False, default=0),
+    sa.Column("last_checked_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("last_outcome", sa.Text, nullable=False, default=""),
+    sa.Column("escalation_proposal_id", sa.Text, nullable=True),
+)
+
 # L7/L8 product tables carry the shared schema; ledgers above stay append-only records.
 from app.clhear.platform.shared_schema import attach_shared_columns as _attach  # noqa: E402
 
