@@ -251,14 +251,16 @@ export function createGraphCanvas(root, { onSelect, onFocus, onExpand, onHover, 
     }
 
     // labels: appear as you zoom in (density), always for the active node and its neighbours
-    const threshold = 16 - 7 * display.labels; // labels=0 → only on hover, 2 → nearly always
+    // a label appears once the node is big enough on screen (radius × zoom); density moves the
+    // bar: 0 → only hover / focus / groups, 1 → the busiest nodes at fit, 2 → nearly everything
+    const threshold = 26 - 10 * display.labels;
     ctx.textAlign = "left"; ctx.textBaseline = "middle";
     for (const n of state.nodes) {
       if (n.x === undefined) continue;
       const r = nodeRadius(n, display, compact);
       const forced = (activeSet && activeSet.has(n.id)) || (hl && hl.has(n.id)) || n.id === state.focus ||
         (state.selected && n.id === state.selected.id);
-      const show = forced || (display.labels > 0 && (r * t.k >= threshold || n.group));
+      const show = forced || n.group || (display.labels > 0 && r * t.k >= threshold);
       if (!show) continue;
       const px = 12 / t.k;
       ctx.font = `${Math.max(9, 12) / t.k}px Inter, -apple-system, Segoe UI, sans-serif`;
