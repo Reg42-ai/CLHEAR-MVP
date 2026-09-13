@@ -8,9 +8,13 @@ aurora_enabled              = true
 schedules_enabled           = true
 clhear_hostname             = "clhear.reg42.ai"
 webui_db_key                = "webui/clhear-latest.db"
-webui_zip_key               = "webui/webui-20260913T194411Z.zip"
-webui_zip_sha256            = "rIVm1qwVyStVsBFxwVsdw9SbCMifFHf7aA5gsamA23U="
+webui_zip_key               = "webui/webui-20260913T204608Z.zip"
+webui_zip_sha256            = "pS7Dxhmb9ZEj3ZLRx+Un4p4pBDWYDCjtANHOv0SAVG8="
 
 infer_image    = "730649732189.dkr.ecr.us-east-1.amazonaws.com/clhear-infer:latest"
 aurora_max_acu = 8
 record_cutover = true
+
+# DR (HLD item 17): Object-Locked datalake replica in eu-west-1; the nightly drill
+# samples it. Objects that predate the rule were backfilled once with S3 Batch Replication.
+replication_enabled = true
