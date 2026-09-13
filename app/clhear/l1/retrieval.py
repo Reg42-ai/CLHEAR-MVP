@@ -10,7 +10,12 @@ Query side: no single scorer is trusted —
   1. ref-lookup retriever (a pasted citation beats any semantic match)
   2. FTS5/BM25 retriever (exact tokens + term rarity)
   3. LIKE retriever (substring fallback; also the FTS5-absent fallback)
-  4. (P2) embedding retriever plugs into the same fusion
+  4. vector retriever over `clauses.embedding` (pgvector on Aurora, packed
+     float32 scan on SQLite — platform.embeddings), mapped back to clause-grain
+     units so it fuses with the others. Only a learned embedder (Titan/Cohere
+     through Infer) fuses; the offline hash embedder is too noisy on long
+     clauses and stays out of the fused ranking (it still answers
+     `/graph/search` on its own).
 Result lists are fused with Reciprocal Rank Fusion — score += weight/(60+rank)
 — so consensus beats a single strong vote. Winners get context restored
 (clause path + neighboring sibling preview) before returning.
@@ -37,7 +42,7 @@ log = logging.getLogger("clhear.l1.retrieval")
 PARAGRAPH_TYPES = {"paragraph", "point", "subparagraph", "statement", "recital"}
 PARAGRAPH_MIN_CHARS = 120
 RRF_K = 60  # smoothing constant per the reference design
-RETRIEVER_WEIGHTS = {"ref": 2.0, "fts": 1.0, "like": 0.6}
+RETRIEVER_WEIGHTS = {"ref": 2.0, "fts": 1.0, "vec": 1.0, "vec:hash": 0.0, "like": 0.6}
 PER_SOURCE_CAP = 8
 
 
@@ -231,6 +236,39 @@ def _like_list(conn: Connection, query: str, limit: int) -> list[int]:
     return [r.id for r in rows]
 
 
+def _vec_list(engine: Engine, conn: Connection, query: str, limit: int) -> tuple[str, list[int]]:
+    """Nearest clauses by embedding, expressed as clause-grain unit ids (ranked).
+
+    Returns the leg name with the ids: a learned model (Titan/Cohere via Infer)
+    fuses at full weight as ``vec``; the offline hash embedder is lexical and
+    noisy on long clauses, so its leg is ``vec:hash`` and carries whatever
+    weight RETRIEVER_WEIGHTS gives it (zero by default — skipped entirely).
+    """
+    from app.clhear.platform import embeddings
+
+    try:
+        emb = embeddings.embedder()
+    except Exception:
+        log.debug("embedder unavailable", exc_info=True)
+        return "vec", []
+    name = "vec:hash" if emb.name == embeddings.HashEmbedder.name else "vec"
+    if RETRIEVER_WEIGHTS.get(name, 1.0) <= 0:
+        return name, []
+    try:
+        hits = embeddings.semantic_search(engine, query, limit=limit, emb=emb)
+    except Exception:  # the index is optional; the other legs still answer
+        log.debug("vector leg unavailable", exc_info=True)
+        return name, []
+    if not hits:
+        return name, []
+    rank = {cid: i for i, (cid, _) in enumerate(hits)}
+    rows = conn.execute(
+        sa.select(search_units.c.id, search_units.c.clause_id)
+        .where(search_units.c.clause_id.in_(list(rank)), search_units.c.grain == "clause")
+    ).all()
+    return name, [r.id for r in sorted(rows, key=lambda r: rank[r.clause_id])]
+
+
 def rrf(ranked_lists: dict[str, list[int]], k: int = RRF_K) -> list[tuple[int, float]]:
     """Reciprocal Rank Fusion: score += weight / (k + rank)."""
     scores: dict[int, float] = {}
@@ -254,9 +292,11 @@ def search(
     cap per source, restore context."""
     fetch = max(limit * 3, 60)
     with engine.connect() as conn:
+        vec_name, vec_ids = _vec_list(engine, conn, query, fetch)
         ranked = {
             "ref": _ref_list(conn, detect_refs(query), fetch),
             "fts": _fts_list(conn, query, fetch),
+            vec_name: vec_ids,
             "like": _like_list(conn, query, fetch),
         }
         fused = rrf(ranked)

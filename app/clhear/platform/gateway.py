@@ -22,6 +22,7 @@ from app.clhear.models import llm_calls
 from app.clhear.platform.task_classes import (
     CLAUDE_OPUS_5,
     CLAUDE_SONNET_5,
+    COHERE_EMBED_MULTI,
     DEEPSEEK_R1,
     GPT_OSS_120B,
     LLAMA_3_3_70B,
@@ -29,6 +30,7 @@ from app.clhear.platform.task_classes import (
     NOVA_LITE,
     NOVA_PRO,
     QWEN_3_5_32B,
+    TITAN_EMBED_V2,
 )
 from app.clhear.settings import get_settings
 
@@ -82,6 +84,9 @@ BEDROCK_PRICING: dict[str, tuple[float, float]] = {
     LLAMA_3_3_70B: (0.72, 0.72),
     QWEN_3_5_32B: (0.15, 0.60),
     DEEPSEEK_R1: (1.35, 5.40),
+    # embeddings: input tokens only (no generation)
+    TITAN_EMBED_V2: (0.02, 0.0),
+    COHERE_EMBED_MULTI: (0.10, 0.0),
 }
 # Rungs counted against the monthly premium cap (settings.clhear_frontier_monthly_cap_usd).
 PREMIUM_MODELS: frozenset[str] = frozenset({CLAUDE_OPUS_5})

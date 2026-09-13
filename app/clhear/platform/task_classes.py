@@ -22,8 +22,13 @@ LLAMA_3_3_70B = "meta.llama3-3-70b-instruct-v1:0"
 # Permitted only for non-derivation classes unless a client policy says otherwise.
 QWEN_3_5_32B = "qwen.qwen3-5-32b-instruct-v1:0"
 DEEPSEEK_R1 = "deepseek.r1-v1:0"
+# Embedding models (1024 dims) for the pgvector clause index — an index, not a determination.
+TITAN_EMBED_V2 = "amazon.titan-embed-text-v2:0"
+COHERE_EMBED_MULTI = "cohere.embed-multilingual-v3"
 
 MODEL_ORIGIN: dict[str, str] = {
+    TITAN_EMBED_V2: "US",
+    COHERE_EMBED_MULTI: "US",
     GPT_OSS_120B: "US",
     MISTRAL_LARGE_3: "EU",
     CLAUDE_SONNET_5: "US",
@@ -99,6 +104,8 @@ TASK_CLASS_LIST: tuple[TaskClass, ...] = (
               "Best-practice fills for blocks", data_class_default="members"),
     TaskClass("judge", "L0", "judging", False, _NONDERIVATION_LADDER, 0.85,
               "Second-model review / rubric judging (non-derivation)"),
+    TaskClass("embed", "L0", "embedding", False, (TITAN_EMBED_V2, COHERE_EMBED_MULTI), 0.0,
+              "Clause embeddings (1024 dims) for the pgvector index; rebuildable, never enters the record"),
 )
 
 TASK_CLASSES: dict[str, TaskClass] = {tc.id: tc for tc in TASK_CLASS_LIST}
@@ -106,6 +113,7 @@ DERIVATION_CLASSES: frozenset[str] = frozenset(tc.id for tc in TASK_CLASS_LIST i
 REQUIRED_TASK_CLASSES: tuple[str, ...] = (
     "l1_parse", "l1_change", "l2_extract", "l2_consolidate", "l2_change", "l3_decompose",
     "l3_characterize", "l4_enumerate", "l5_map", "l6_explain", "l7_score", "l8_fill", "judge",
+    "embed",
 )
 
 

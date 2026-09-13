@@ -153,6 +153,16 @@ tasks:
       - amazon.nova-lite-v1:0  # origin=US
       - meta.llama3-3-70b-instruct-v1:0  # origin=US
       - openai.gpt-oss-120b-1:0  # origin=US
+  embed:
+    layer: L0
+    shape: embedding
+    derivation: false
+    quality_threshold: 0.0
+    data_class_default: public
+    description: 'Clause embeddings (1024 dims) for the pgvector index; rebuildable, never enters the record'
+    ladder:
+      - amazon.titan-embed-text-v2:0  # origin=US
+      - cohere.embed-multilingual-v3  # origin=US
 policy:
   derivation_classes_forbid_origins: [CN]
   hosting: aws-bedrock

@@ -305,9 +305,9 @@ doc_nodes = sa.Table(
     sa.Index("doc_nodes_ref_idx", "source_version_id", "ref"),
 )
 
-# ARCH: HLD 6.2 specifies embedding vector(1024) (pgvector on Aurora). Embeddings
-# land with the P2 batch job; until Aurora is wired the column is JSON so the
-# SQLite fallback keeps dev/tests offline. Swap to Vector(1024) with m000N.
+# HLD v2 I7: `embedding` is vector(1024) on Aurora (pgvector, m0016) and packed
+# float32 on SQLite; platform.embeddings owns the column and rebuilds it from
+# the record (never the other way round).
 clauses = sa.Table(
     "clauses",
     metadata,
@@ -326,8 +326,13 @@ clauses = sa.Table(
     sa.Column("span_start", sa.Integer, nullable=True),
     sa.Column("span_end", sa.Integer, nullable=True),
     sa.Column("normative", sa.Boolean, nullable=False, default=False, server_default=sa.false()),
-    sa.Column("embedding", Json, nullable=True),
+    # HLD v2 I7 vector index: vector(1024) on Aurora (pgvector), packed float32
+    # on SQLite; `embedding_hash` = text_hash at embedding time so a rebuild
+    # only re-embeds what changed. An index, not the record (platform.embeddings).
+    sa.Column("embedding", sa.LargeBinary().with_variant(sa.Text, "postgresql"), nullable=True),
     sa.Column("embedding_model", sa.Text, nullable=True),
+    sa.Column("embedding_hash", sa.Text, nullable=True),
+    sa.Column("embedded_at", sa.DateTime(timezone=True), nullable=True),
     sa.Index("clauses_source_version_idx", "source_version_id"),
 )
 

@@ -751,6 +751,16 @@ def _persist(
     if degraded:
         log.warning("ingest of %s needed repair (hints=%s salvage=%d llm=%s) — fix the adapter",
                     meta.source_key, hints_used, recovered_spans, llm_assisted)
+    # Vector index (HLD v2 I7): embed the new version's public clauses. An index
+    # over the record, rebuilt nightly as well; a failure here never fails ingest.
+    try:
+        from app.clhear.platform import embeddings, graph
+
+        vec = embeddings.rebuild_index(engine, trigger="ingest", release=result.version_label)
+        summary["embeddings"] = {"embedded": vec["embedded"], "model": vec["model"]}
+        graph.invalidate(engine)
+    except Exception:  # pragma: no cover - the index is a projection; ingest succeeded
+        log.exception("embedding index update failed for %s", meta.source_key)
     outputs = recorder.finish("warning" if degraded else "succeeded", {**summary, "change": change_kind})
     log.info(
         "ingested %s %s: %d nodes / %d clauses (%s, coverage %.4f)",
