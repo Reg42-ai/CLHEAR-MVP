@@ -108,6 +108,30 @@ class Client:
     def oscal_components(self, release: str = "") -> dict:
         return self._request("GET", "/l6/export/oscal/components", params={"release": release or None})
 
+    # ---- interoperability (HLD v2 §1.1; item 16): JSON-LD, crosswalks, GraphQL ----
+
+    def jsonld(self, node_id: str) -> dict:
+        """Any public id (OBL-, BLK-, ACT-, PRF-, BLU-, WHY-) as a JSON-LD document with the CLHEAR context."""
+        return self._request("GET", f"/interop/jsonld/{node_id}")
+
+    def jsonld_blueprint(self, blueprint_id: str) -> dict:
+        return self._request("GET", f"/l6/blueprints/{blueprint_id}/export", params={"format": "jsonld"})
+
+    def crosswalks(self) -> dict:
+        """Frameworks, their rights basis and row counts. Licensed frameworks appear as identifiers only."""
+        return self._request("GET", "/interop/crosswalks")
+
+    def crosswalk(self, framework: str, ref: str | None = None) -> dict:
+        """One framework's rows, or the blocks behind one identifier (``framework`` like ``nist/csf-2.0``)."""
+        return self._request("GET", f"/interop/crosswalks/{framework}" + (f"/{ref}" if ref else ""))
+
+    def block_crosswalk(self, block_id: str) -> dict:
+        return self._request("GET", f"/interop/blocks/{block_id}/crosswalk")
+
+    def graphql(self, query: str, variables: dict | None = None, operation_name: str | None = None) -> dict:
+        """Run a GraphQL query over the open layers (depth ≤ 8, lists ≤ 200). Returns ``{data, errors?}``."""
+        return self._request("POST", "/graphql", body={"query": query, "variables": variables, "operationName": operation_name})
+
     def node(self, node_id: str) -> dict:
         """Any node (OBL-, BLK-, ACT-, PRF-, BLU-, LIC:…): why, history, who else, neighbours."""
         return self._request("GET", f"/explore/node/{urllib.parse.quote(node_id, safe=':/')}")

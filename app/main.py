@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
         from app.clhear.v1.console import router as console_router
         from app.clhear.v1.contributions import router as contributions_router
         from app.clhear.v1.conformance import router as conformance_router
+        from app.clhear.v1.interop import router as interop_router
 
         app.include_router(router)
         app.include_router(l1_router)
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
         app.include_router(console_router)
         app.include_router(contributions_router)  # /contribute, /contributions, /cla, /governance
         app.include_router(conformance_router)  # Annex E self-assessments, marks register, assessors
+        app.include_router(interop_router)  # crosswalks, JSON-LD, GraphQL
         app.include_router(app_api_router)
         app.include_router(auth_router)
         app.include_router(community_router)

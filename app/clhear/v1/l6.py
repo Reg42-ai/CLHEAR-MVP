@@ -9,7 +9,7 @@
                                                 activities, removal impact
     GET  /l6/blueprints/{id}/minimality         the minimality proof, independently re-verified
     GET  /l6/blueprints/{id}/diff?against=      diff against another blueprint id, or "now" (recompose)
-    GET  /l6/blueprints/{id}/export?format=     oscal (system-security-plan) | json
+    GET  /l6/blueprints/{id}/export?format=     oscal (system-security-plan) | jsonld | json
     POST /l6/compare                            compose two profiles (unstored) and diff them
     GET  /l6/profiles/{id}/blueprint            the current blueprint of a stored L4 profile (composed on demand)
     GET  /l6/export/oscal/components            L3 blocks as an OSCAL component-definition
@@ -192,8 +192,12 @@ def blueprint_export(blueprint_id: str, format: str = Query(default="oscal")) ->
         raise HTTPException(status_code=404, detail=f"unknown blueprint {blueprint_id}")
     if format == "json":
         return bp["composition"]
+    if format == "jsonld":
+        from app.clhear.interop import jsonld
+
+        return jsonld.blueprint(bp["composition"], blueprint_id=blueprint_id, row=bp)
     if format != "oscal":
-        raise HTTPException(status_code=422, detail="format must be oscal or json")
+        raise HTTPException(status_code=422, detail="format must be oscal, jsonld or json")
     return oscal.blueprint_ssp(bp["composition"], blueprint_id=blueprint_id)
 
 

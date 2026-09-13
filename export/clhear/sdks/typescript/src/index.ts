@@ -146,6 +146,20 @@ export class ClhearClient {
   blueprint(id: string): Promise<Record<string, unknown>> { return this.request("GET", `/l6/blueprints/${id}`); }
   oscalSsp(id: string): Promise<Record<string, unknown>> { return this.request("GET", `/l6/blueprints/${id}/export`, undefined, { format: "oscal" }); }
   oscalComponents(release?: string): Promise<Record<string, unknown>> { return this.request("GET", "/l6/export/oscal/components", undefined, { release }); }
+
+  // Interoperability (HLD v2 §1.1; item 16): JSON-LD, identifier crosswalks, GraphQL over the open layers.
+  jsonld(id: string): Promise<Record<string, unknown>> { return this.request("GET", `/interop/jsonld/${id}`); }
+  jsonldBlueprint(id: string): Promise<Record<string, unknown>> { return this.request("GET", `/l6/blueprints/${id}/export`, undefined, { format: "jsonld" }); }
+  crosswalks(): Promise<Record<string, unknown>> { return this.request("GET", "/interop/crosswalks"); }
+  /** One framework's rows (`nist/csf-2.0`), or the blocks behind one identifier when `ref` is given. */
+  crosswalk(framework: string, ref?: string): Promise<Record<string, unknown>> {
+    return this.request("GET", `/interop/crosswalks/${framework}${ref ? `/${encodeURIComponent(ref)}` : ""}`);
+  }
+  blockCrosswalk(blockId: string): Promise<Record<string, unknown>> { return this.request("GET", `/interop/blocks/${blockId}/crosswalk`); }
+  /** GraphQL over the open layers (depth ≤ 8, lists ≤ 200); resolves to `{ data, errors? }`. */
+  graphql(query: string, variables?: Record<string, unknown>, operationName?: string): Promise<Record<string, unknown>> {
+    return this.request("POST", "/graphql", { query, variables, operationName });
+  }
   node(id: string): Promise<Record<string, unknown>> { return this.request("GET", `/explore/node/${encodeURIComponent(id).replace(/%3A/g, ":")}`); }
   search(q: string): Promise<Record<string, unknown>> { return this.request("GET", "/explore/search", undefined, { q }); }
   compare(jurisdictions: string[], theme?: string): Promise<Record<string, unknown>> {

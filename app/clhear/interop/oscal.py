@@ -18,6 +18,7 @@ sets so the round trip can be checked.
 """
 from __future__ import annotations
 
+import re
 import uuid
 
 import sqlalchemy as sa
@@ -205,10 +206,89 @@ def import_blueprint(doc: dict) -> dict:
             "composition_hash": prop(sysc, "composition-hash"), "minimal": prop(sysc, "minimal") == "true"}
 
 
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+
+
+def _require(obj: dict, keys: tuple[str, ...], where: str, problems: list[str]) -> None:
+    for k in keys:
+        if k not in obj or obj[k] in (None, ""):
+            problems.append(f"{where}: missing {k}")
+
+
+def validate_ssp(doc: dict) -> list[str]:
+    """The structural checks an OSCAL 1.1.2 importer makes on a system-security-plan:
+    required properties present, uuids well-formed and unique, ``by-components`` referencing
+    components that exist, ``import-profile`` present. Empty list = imports without loss."""
+    problems: list[str] = []
+    ssp = doc.get("system-security-plan")
+    if not isinstance(ssp, dict):
+        return ["top level must be {'system-security-plan': {...}}"]
+    _require(ssp, ("uuid", "metadata", "import-profile", "system-characteristics", "system-implementation", "control-implementation"), "ssp", problems)
+    md = ssp.get("metadata") or {}
+    _require(md, ("title", "last-modified", "version", "oscal-version"), "metadata", problems)
+    if md.get("oscal-version") and not str(md["oscal-version"]).startswith("1.1"):
+        problems.append(f"metadata.oscal-version {md['oscal-version']} is not 1.1.x")
+    _require(ssp.get("import-profile") or {}, ("href",), "import-profile", problems)
+    sc = ssp.get("system-characteristics") or {}
+    _require(sc, ("system-ids", "system-name", "description", "system-information", "status", "authorization-boundary"), "system-characteristics", problems)
+    si = ssp.get("system-implementation") or {}
+    if "users" not in si or "components" not in si:
+        problems.append("system-implementation: users and components are required")
+    uuids: list[str] = [ssp.get("uuid", "")]
+    comp_uuids = set()
+    for c in si.get("components") or []:
+        _require(c, ("uuid", "type", "title", "description", "status"), f"component {c.get('title')}", problems)
+        uuids.append(c.get("uuid", ""))
+        comp_uuids.add(c.get("uuid"))
+    ci = ssp.get("control-implementation") or {}
+    _require(ci, ("description", "implemented-requirements"), "control-implementation", problems)
+    for ir in ci.get("implemented-requirements") or []:
+        _require(ir, ("uuid", "control-id"), "implemented-requirement", problems)
+        uuids.append(ir.get("uuid", ""))
+        for bc in ir.get("by-components") or []:
+            _require(bc, ("uuid", "component-uuid", "description"), f"by-component of {ir.get('control-id')}", problems)
+            uuids.append(bc.get("uuid", ""))
+            if bc.get("component-uuid") not in comp_uuids:
+                problems.append(f"by-component of {ir.get('control-id')} references unknown component {bc.get('component-uuid')}")
+    for u in uuids:
+        if not _UUID_RE.match(str(u)):
+            problems.append(f"malformed uuid {u!r}")
+    if len(set(uuids)) != len(uuids):
+        problems.append("duplicate uuids")
+    return problems
+
+
+def validate_component_definition(doc: dict) -> list[str]:
+    problems: list[str] = []
+    cd = doc.get("component-definition")
+    if not isinstance(cd, dict):
+        return ["top level must be {'component-definition': {...}}"]
+    _require(cd, ("uuid", "metadata"), "component-definition", problems)
+    _require(cd.get("metadata") or {}, ("title", "last-modified", "version", "oscal-version"), "metadata", problems)
+    uuids = [cd.get("uuid", "")]
+    for c in cd.get("components") or []:
+        _require(c, ("uuid", "type", "title", "description"), f"component {c.get('title')}", problems)
+        uuids.append(c.get("uuid", ""))
+        for impl in c.get("control-implementations") or []:
+            _require(impl, ("uuid", "source", "description", "implemented-requirements"), "control-implementation", problems)
+            uuids.append(impl.get("uuid", ""))
+            for ir in impl.get("implemented-requirements") or []:
+                _require(ir, ("uuid", "control-id", "description"), "implemented-requirement", problems)
+                uuids.append(ir.get("uuid", ""))
+    for u in uuids:
+        if not _UUID_RE.match(str(u)):
+            problems.append(f"malformed uuid {u!r}")
+    if len(set(uuids)) != len(uuids):
+        problems.append("duplicate uuids")
+    return problems
+
+
 def round_trip_ok(composition: dict) -> tuple[bool, list[str]]:
-    """Export -> import must reproduce items and satisfied-by sets exactly."""
-    back = import_blueprint(blueprint_ssp(composition))
-    problems = []
+    """Export -> import must reproduce items and satisfied-by sets exactly, and the export must
+    pass the importer-side structural checks."""
+    doc = blueprint_ssp(composition)
+    back = import_blueprint(doc)
+    problems = validate_ssp(doc)
     want_items = {i["block_id"] for i in composition.get("items") or []}
     if set(back["items"]) != want_items:
         problems.append(f"items differ: {sorted(set(back['items']) ^ want_items)}")

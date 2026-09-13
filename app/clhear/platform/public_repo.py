@@ -36,7 +36,7 @@ STATIC_DIR = REPO_ROOT / "export" / "clhear"
 GOLDEN_DIR = REPO_ROOT / "clhear-evals"
 
 STATIC_ENTRIES = ("README.md", "ROADMAP.md", "CONTRIBUTING.md", "LICENSES", "governance", "standard", "sdks",
-                  "evals", ".github", "conformance", "SECURITY.md")
+                  "evals", ".github", "conformance", "crosswalks", "SECURITY.md")
 VAULT_LAYERS = ("L2", "L3", "L5")
 
 _JSON_TYPES = {
@@ -147,6 +147,23 @@ def write_schemas(repo_dir: Path) -> list[Path]:
                                "title": "CLHEAR record schemas", "licence": "CC-BY-4.0",
                                "layers": {k: sorted(v) for k, v in sorted(index.items())}}, indent=2) + "\n", encoding="utf-8")
     written.append(idx)
+    return written
+
+
+def write_interop(engine: Engine, repo_dir: Path, release: str) -> list[Path]:
+    """Standard §8: the JSON-LD context next to the schemas, the crosswalks per framework, the GraphQL SDL."""
+    from app.clhear.interop import crosswalks, graphql_api, jsonld
+
+    written: list[Path] = []
+    ctx = repo_dir / "schema" / "context.jsonld"
+    ctx.parent.mkdir(parents=True, exist_ok=True)
+    ctx.write_text(json.dumps(jsonld.context_document(), indent=2) + "\n", encoding="utf-8")
+    written.append(ctx)
+    sdl = repo_dir / "schema" / "schema.graphql"
+    sdl.write_text(graphql_api.sdl(), encoding="utf-8")
+    written.append(sdl)
+    with engine.connect() as conn:
+        written += crosswalks.write(conn, repo_dir, release)
     return written
 
 
@@ -335,6 +352,6 @@ def write_release_notes(repo_dir: Path, release: str, *, snapshot: dict, attribu
 def build(engine: Engine, repo_dir: Path, release: str, *, snapshot: dict, attribution: list[dict] | None = None) -> dict:
     repo_dir.mkdir(parents=True, exist_ok=True)
     out = {"static": copy_static(repo_dir), "schema": write_schemas(repo_dir), "vault": write_vault(engine, repo_dir, release),
-           "evals": write_evals(engine, repo_dir)}
+           "evals": write_evals(engine, repo_dir), "interop": write_interop(engine, repo_dir, release)}
     out["release_notes"] = [write_release_notes(repo_dir, release, snapshot=snapshot, attribution=attribution or [])]
     return out
