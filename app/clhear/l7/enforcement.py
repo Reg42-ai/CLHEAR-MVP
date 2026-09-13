@@ -478,12 +478,19 @@ def link_events(engine: Engine, llm=None, *, source_key: str | None = None) -> d
         existing: dict[str, dict[str, dict]] = {}
         for r in conn.execute(sa.select(enforcement_links).where(enforcement_links.c.valid_to.is_(None))).mappings():
             existing.setdefault(r["event_id"], {})[r["obligation_id"]] = dict(r)
-        candidates_by_regulator: dict[str, list[dict]] = {}
+        all_candidates: list[dict] = []
         if llm is not None:
-            for r in conn.execute(sa.select(obligations.c.id, obligations.c.source_key, obligations.c.clause_ref,
-                                            obligations.c.title, obligations.c.jurisdiction)
-                                  .where(obligations.c.status.in_(("derived", "validated")))).mappings():
-                candidates_by_regulator.setdefault(r["jurisdiction"], []).append(dict(r))
+            all_candidates = [dict(r) for r in conn.execute(
+                sa.select(obligations.c.id, obligations.c.source_key, obligations.c.clause_ref, obligations.c.title,
+                          obligations.c.jurisdiction, obligations.c.regulator)
+                .where(obligations.c.status.in_(("derived", "validated")))).mappings()]
+
+        def _menu(ev: dict) -> list[dict]:
+            """The regulator's live obligations: same jurisdiction or same regulator; all when neither is recorded."""
+            reg = (ev.get("regulator") or "").lower()
+            mine = [c for c in all_candidates if c["jurisdiction"] == ev["jurisdiction"]
+                    or (reg and c.get("regulator") and (reg in c["regulator"].lower() or c["regulator"].lower() in reg))]
+            return mine or all_candidates
         # links of events that were invalidated since the last pass close with them (I2)
         live_ids = {ev["id"] for ev in events}
         for event_id, by_oid in existing.items():
@@ -513,7 +520,7 @@ def link_events(engine: Engine, llm=None, *, source_key: str | None = None) -> d
                     if prev is None or h["confidence"] > prev["confidence"]:
                         wanted[h["obligation_id"]] = {**h, "citation": c["text"]}
             if not wanted and llm is not None:
-                for h in _llm_links(llm, ev, candidates_by_regulator.get(ev["jurisdiction"], [])):
+                for h in _llm_links(llm, ev, _menu(ev)):
                     wanted[h["obligation_id"]] = h
                     stats["llm_links"] += 1
             if wanted:
