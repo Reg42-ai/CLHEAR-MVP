@@ -340,6 +340,33 @@ What is live in account 730649732189 / us-east-1 after the go-live push:
   | `l3_l5_referential` | 6 extraction misses | 0 | curated blocks/activities cite GDPR art. 6 and 32, which the extractor does not yield as obligations | same extractor change |
   | `l5_completeness` | 29 business-side orphans | 0 | activities like `ACT-AI-mtf-otf-trading-process` have no product/service that implies them | curated L4 ontology (`implies` edges) |
   | `l7_brier` | no published calibration run | beats baseline | too little enforcement-outcome history yet | accrues with the enforcement adapters |
+- **DR drill on Aurora** (HLD item 17): the 04:00 UTC `DrDrillRequested` event
+  now passes all three legs from the L0 fleet — `pg_dump` 17 → `pg_restore` into
+  `clhear_drill` on the same cluster (55 tables, 368k rows, migration ledger
+  equal, no dangling why-trails), graph projection checksum equal, and the
+  datalake replica sampled. RPO/RTO measured at 39 s against 24 h / 4 h targets.
+  What the first runs surfaced, fixed in `platform/dr.py` with tests: the DSN
+  (with password) rode in `pg_restore` argv and in the recorded failure — the
+  password now travels in `PGPASSWORD`; `pg_dump` 17 emits `SET transaction_timeout`
+  that PostgreSQL 16 rejects, making a complete restore exit 1 — that exact
+  skew (session `SET` of an unknown parameter) is tolerated, nothing else; and
+  the verification compared the restore with a live count taken minutes later,
+  so fleets writing during the drill read as a failed restore — each restored
+  count must now lie inside the bracket of source counts taken just before and
+  just after the dump, and the restored graph may match the pre-dump live
+  projection. `dr_drilled` on `/status.json` is met.
+- **Datalake replica**: `replication_enabled = true` — `reg42-clhear-datalake-replica`
+  in eu-west-1 (Object Lock, versioning, STANDARD_IA, 15-min RTC). The 540
+  objects (794 MB) that predate the rule were backfilled once with S3 Batch
+  Replication (job `670df634…`, 2,508 versions, 0 failed; role
+  `clhear-datalake-batch-replication`, created by hand, can be deleted).
+- **Status page**: `/status.json` names the release `latest.json` points at
+  (`2026.09.13`); it was `null` because the web role could `GetObject` but not
+  list `releases/`, and `_release` swallowed the AccessDenied. The role may
+  now list that prefix (`/v1/releases` works) and the status page reads the
+  pointer directly. Overall status stays `degraded` on `gates_green` alone
+  until the table below clears — `api_availability`, `freshness_tier_a`,
+  `derived_freshness` and `dr_drilled` are met.
 - **SES**: identities and DKIM verified, but production access was DENIED
   (case 178406808100114) — sandbox, verified recipients only. Cognito sign-in
   uses `COGNITO_DEFAULT` mail and is unaffected.
@@ -360,6 +387,11 @@ What is live in account 730649732189 / us-east-1 after the go-live push:
 - One-off job: `aws ecs run-task --cluster clhear-cluster --task-definition clhear-fleet-l0
   --launch-type FARGATE --network-configuration '...' --overrides '{"containerOverrides":
   [{"name":"worker","command":["-m","app.clhear.fleets","nightly","--release","<id>","--force"]}]}'`.
+- Run the DR drill now: send the EventBridge envelope by hand —
+  `aws sqs send-message --queue-url https://sqs.us-east-1.amazonaws.com/730649732189/clhear-fleet-l0
+  --message-body '{"event_id":"manual-dr-drill-<date>","layer":"l0","kind":"DrDrillRequested",
+  "subject_ref":"all","payload":{"neo4j_database":"drill"},"schema_version":1,"producer":"operator","ts":""}'`;
+  the result lands in `l0_platform.dr_drills` and on `/status.json` `dr` within ~5 min.
 - Rollback to snapshot mode: `record_cutover = false`, apply (fleets and web
   return to `webui/clhear-latest.db`; Aurora keeps everything written since).
 - Neo4j stays off (`neo4j_enabled = false`): `LocalGraph` rebuilt the full
