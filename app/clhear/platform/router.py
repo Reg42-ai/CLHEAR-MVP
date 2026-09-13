@@ -162,6 +162,11 @@ TASKS: dict[str, TaskSpec] = {
         latency_tolerance="nightly", domain="risk-quant",
         description="Number-echo risk commentary over formula outputs",
     ),
+    "l7.link": TaskSpec(
+        "l7.link", "graph_mapping", "medium", "medium", 0.85, "l7.link", "L7", task_class="l7_score",
+        latency_tolerance="nightly", domain="legal",
+        description="Closed-world enforcement notice → obligation linking, quote-bound",
+    ),
     "l8.fill": TaskSpec(
         "l8.fill", "structured_drafting", "medium", "medium", 0.85, "l8.fill", "L8", task_class="l8_fill",
         latency_tolerance="nightly", description="Endorsed fill drafting against a blueprint item",
@@ -201,6 +206,7 @@ SEED_QUALITY: dict[tuple[str, str], float] = {
     ("l5.activity_map", GPT_OSS_120B): 0.90,
     ("l6.rationale", CLAUDE_SONNET_5): 0.92,
     ("l7.narrative", GPT_OSS_120B): 0.89,
+    ("l7.link", GPT_OSS_120B): 0.90,
     ("l8.fill", CLAUDE_SONNET_5): 0.90,
     ("l0.revalidate", CLAUDE_SONNET_5): 0.93,
     ("l0.revalidate", CLAUDE_OPUS_5): 0.97,

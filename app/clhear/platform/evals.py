@@ -1536,6 +1536,79 @@ def l7_number_echo(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     return {"checked": checked, "failed": failed[:20]}, not failed
 
 
+L7_GOLDEN = Path(__file__).resolve().parents[3] / "clhear-evals" / "l7"
+
+
+@register_suite("l7_linker")
+def l7_linker(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """Enforcement linker precision ≥ 90 % on the golden notices
+    (clhear-evals/l7/linker): every predicted (source, clause) link must be one the
+    notice names. Recall is reported. Stored links are sanity-checked too: a live
+    link must point at a live event and a live obligation and carry its citation."""
+    from app.clhear.derived_models import obligations as _obligations
+    from app.clhear.l7.enforcement import index_from_rows, link_text
+    from app.clhear.l7.models import enforcement_events, enforcement_links
+
+    cases: list[dict] = []
+    for path in sorted((L7_GOLDEN / "linker").glob("*.json")):
+        data = json.loads(path.read_text())
+        for item in data.get("cases", []):
+            item.setdefault("file", path.name)
+            cases.append(item)
+    tp = fp = fn = 0
+    failures: list[dict] = []
+    for case in cases:
+        index = index_from_rows(case["registry"])
+        got = {(h["obligation_id"].split("OBL:", 1)[1].rsplit("#", 1)[0], h["clause_ref"])
+               for h in link_text(case["notice"], index, case.get("aliases"))}
+        want = {tuple(e) for e in case["expected"]}
+        tp += len(got & want)
+        fp += len(got - want)
+        fn += len(want - got)
+        if got != want:
+            failures.append({"id": case["id"], "extra": sorted(got - want), "missing": sorted(want - got)})
+    precision = tp / (tp + fp) if (tp + fp) else None
+    recall = tp / (tp + fn) if (tp + fn) else None
+    # stored links: referential integrity + a citation behind every deterministic link
+    dangling = uncited = live_links = 0
+    with engine.connect() as conn:
+        live_events = {r[0] for r in conn.execute(sa.select(enforcement_events.c.id).where(enforcement_events.c.valid_to.is_(None)))}
+        live_obs = {r[0] for r in conn.execute(sa.select(_obligations.c.id).where(_obligations.c.status.in_(("derived", "validated"))))}
+        for r in conn.execute(sa.select(enforcement_links).where(enforcement_links.c.valid_to.is_(None))).mappings():
+            live_links += 1
+            if r["event_id"] not in live_events or r["obligation_id"] not in live_obs:
+                dangling += 1
+            if r["method"] in ("citation", "instrument", "llm") and not (r["citation"] or "").strip():
+                uncited += 1
+    stats = {"cases": len(cases), "tp": tp, "fp": fp, "fn": fn, "precision": precision, "recall": recall,
+             "failures": failures[:20], "live_links": live_links, "dangling": dangling, "uncited": uncited, "threshold": 0.90}
+    passed = bool(cases) and precision is not None and precision >= 0.90 and dangling == 0 and uncited == 0
+    return stats, passed
+
+
+@register_suite("l7_brier")
+def l7_brier(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    """A calibration run for the current method version is published: the Brier
+    score on a held-out year, the base-rate baseline and the reliability table
+    (HLD v2 §4.7 'Brier score on held-out year published'). Reports whether the
+    fitted likelihood beats the baseline."""
+    from app.clhear.l7.models import METHOD_VERSION, WEIGHTS
+    from app.clhear.l7.score import latest_calibration
+
+    with engine.connect() as conn:
+        cal = latest_calibration(conn)
+    weights_ok = abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
+    if cal is None:
+        return {"method_version": METHOD_VERSION, "published": False, "weights_sum_to_one": weights_ok,
+                "reason": "no published calibration run"}, False
+    stats = {"method_version": METHOD_VERSION, "published": True, "calibration": cal["id"], "held_out_year": cal["held_out_year"],
+             "training_years": cal["training_years"], "n": cal["n"], "positives": cal["positives"], "brier": cal["brier"],
+             "baseline_brier": cal["baseline_brier"],
+             "beats_baseline": cal["brier"] is not None and cal["baseline_brier"] is not None and cal["brier"] <= cal["baseline_brier"],
+             "reliability": cal["reliability"], "parameters": cal["parameters"], "weights_sum_to_one": weights_ok}
+    return stats, cal["brier"] is not None and cal["n"] > 0 and weights_ok
+
+
 @register_suite("l8_k_anonymity")
 def l8_k_anonymity(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     from app.clhear.l8.cohorts import k_anonymity_ok

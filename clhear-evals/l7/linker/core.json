@@ -1,0 +1,135 @@
+{
+  "suite": "l7_linker",
+  "description": "Golden enforcement-notice → obligation links (HLD v2 §4.7). Each case is the text of a published outcome, the registry rows (source_key, clause_ref) live at the time, optional extra instrument aliases (what the DB adds from a source's short name / instrument), and the set of registry rows the notice cites as breached. The deterministic linker (app.clhear.l7.enforcement.link_text) is scored on precision over all predicted links; gate >= 0.90. Recall is reported. Nothing may link without a printed citation.",
+  "cases": [
+    {
+      "id": "fca-sysc-two-rules",
+      "notice": "The FCA has fined Northbridge Capital Ltd £4,650,000 for breaching SYSC 6.1.1R and SYSC 6.3.1R between January 2019 and March 2022.",
+      "registry": [
+        {"source_key": "fca/handbook/SYSC", "clause_ref": "SYSC 6.1.1"},
+        {"source_key": "fca/handbook/SYSC", "clause_ref": "SYSC 6.3.1"},
+        {"source_key": "fca/handbook/SYSC", "clause_ref": "SYSC 6.3.3"}
+      ],
+      "expected": [["fca/handbook/SYSC", "SYSC 6.1.1"], ["fca/handbook/SYSC", "SYSC 6.3.1"]]
+    },
+    {
+      "id": "fca-sysc-list-second-without-sourcebook",
+      "notice": "Final Notice: breaches of SYSC 4.1.1R, 4.1.2R and 6.1.1R.",
+      "registry": [
+        {"source_key": "fca/handbook/SYSC", "clause_ref": "SYSC 4.1.1"},
+        {"source_key": "fca/handbook/SYSC", "clause_ref": "SYSC 4.1.1A"},
+        {"source_key": "fca/handbook/SYSC", "clause_ref": "SYSC 4.1.2"},
+        {"source_key": "fca/handbook/SYSC", "clause_ref": "SYSC 6.1.1"}
+      ],
+      "expected": [["fca/handbook/SYSC", "SYSC 4.1.1"], ["fca/handbook/SYSC", "SYSC 4.1.2"], ["fca/handbook/SYSC", "SYSC 6.1.1"]]
+    },
+    {
+      "id": "fca-principle-not-in-registry",
+      "notice": "The firm breached Principle 11 by failing to deal with the regulator in an open and cooperative way. It was fined £1,100,000 on 14 May 2024.",
+      "registry": [
+        {"source_key": "fca/handbook", "clause_ref": "PRIN 2.1.1"},
+        {"source_key": "fca/handbook/SYSC", "clause_ref": "SYSC 6.1.1"}
+      ],
+      "expected": []
+    },
+    {
+      "id": "mlrs-regulations-with-subparagraph",
+      "notice": "The FCA found that the firm breached regulations 28(2) and 33 of the MLRs 2017 by failing to conduct customer due diligence and enhanced due diligence.",
+      "registry": [
+        {"source_key": "uksi/2017/692", "clause_ref": "regulation-27"},
+        {"source_key": "uksi/2017/692", "clause_ref": "regulation-28"},
+        {"source_key": "uksi/2017/692", "clause_ref": "regulation-33"},
+        {"source_key": "uksi/2017/692", "clause_ref": "regulation-35"}
+      ],
+      "expected": [["uksi/2017/692", "regulation-28"], ["uksi/2017/692", "regulation-33"]]
+    },
+    {
+      "id": "mlrs-long-title",
+      "notice": "Penalty of £2,300,000 for failings under regulation 19 of the Money Laundering, Terrorist Financing and Transfer of Funds (Information on the Payer) Regulations 2017.",
+      "registry": [
+        {"source_key": "uksi/2017/692", "clause_ref": "regulation-18"},
+        {"source_key": "uksi/2017/692", "clause_ref": "regulation-19"}
+      ],
+      "expected": [["uksi/2017/692", "regulation-19"]]
+    },
+    {
+      "id": "gdpr-article-subparagraph",
+      "notice": "Monetary penalty notice: infringement of Article 5(1)(f) of the UK GDPR and Article 32 of the UK GDPR (security of processing).",
+      "registry": [
+        {"source_key": "celex/32016R0679", "clause_ref": "art_5"},
+        {"source_key": "celex/32016R0679", "clause_ref": "art_6"},
+        {"source_key": "celex/32016R0679", "clause_ref": "art_32"}
+      ],
+      "expected": [["celex/32016R0679", "art_5"], ["celex/32016R0679", "art_32"]]
+    },
+    {
+      "id": "finra-rule-with-paragraph",
+      "notice": "FINRA fined the firm $350,000 for violating FINRA Rule 3110(a) and FINRA Rule 2010 (Letter of Acceptance, Waiver and Consent No. 2021069876501).",
+      "registry": [
+        {"source_key": "finra/rule/3110", "clause_ref": "3110"},
+        {"source_key": "finra/rule/3110", "clause_ref": "3110(a)"},
+        {"source_key": "finra/rule/3110", "clause_ref": "3110(b)"},
+        {"source_key": "finra/rule/2010", "clause_ref": "2010"}
+      ],
+      "expected": [["finra/rule/3110", "3110(a)"], ["finra/rule/2010", "2010"]]
+    },
+    {
+      "id": "finra-rules-list",
+      "notice": "Without admitting or denying the findings, the firm consented to the sanctions and to the entry of findings that it violated FINRA Rules 3110 and 4511.",
+      "registry": [
+        {"source_key": "finra/rule/3110", "clause_ref": "3110"},
+        {"source_key": "finra/rule/3110", "clause_ref": "3110(a)"},
+        {"source_key": "finra/rule/4511", "clause_ref": "4511"}
+      ],
+      "expected": [["finra/rule/3110", "3110"], ["finra/rule/4511", "4511"]]
+    },
+    {
+      "id": "sec-exchange-act-rule-cfr-section",
+      "notice": "The SEC's order finds that the broker-dealer violated Exchange Act Rule 15l-1 (Regulation Best Interest) and 17 CFR 248.30 by failing to act in retail customers' best interest.",
+      "registry": [
+        {"source_key": "cfr/17/reg-bi-sp", "clause_ref": "§ 240.15l-1"},
+        {"source_key": "cfr/17/reg-bi-sp", "clause_ref": "§ 248.30"},
+        {"source_key": "cfr/17/reg-bi-sp", "clause_ref": "§ 240.17a-14"}
+      ],
+      "expected": [["cfr/17/reg-bi-sp", "§ 240.15l-1"], ["cfr/17/reg-bi-sp", "§ 248.30"]]
+    },
+    {
+      "id": "sec-no-provision-only-figures",
+      "notice": "SEC Charges Investment Adviser With Misleading Clients. The adviser agreed to pay a $1.2 million civil penalty and disgorgement of $800,000 plus prejudgment interest on 30 April 2024 (Release No. IA-6592).",
+      "registry": [
+        {"source_key": "cfr/17/reg-bi-sp", "clause_ref": "§ 240.15l-1"},
+        {"source_key": "usc/15/exchange-act", "clause_ref": "78o"}
+      ],
+      "expected": []
+    },
+    {
+      "id": "db-alias-short-name",
+      "notice": "On 3 July 2023 the regulator publicly censured Beta Bank plc for failings under rule 2 of the Synthetic Principles and SYN PRIN 4.",
+      "aliases": {"Synthetic Principles": ["synthetic/prin"], "SYN PRIN": ["synthetic/prin"]},
+      "registry": [
+        {"source_key": "synthetic/prin", "clause_ref": "1"},
+        {"source_key": "synthetic/prin", "clause_ref": "2"},
+        {"source_key": "synthetic/prin", "clause_ref": "4"}
+      ],
+      "expected": [["synthetic/prin", "2"], ["synthetic/prin", "4"]]
+    },
+    {
+      "id": "instrument-not-ingested",
+      "notice": "The firm breached COBS 9.2.1R and COBS 9.2.2R (suitability).",
+      "registry": [
+        {"source_key": "fca/handbook/SYSC", "clause_ref": "SYSC 9.2.1"}
+      ],
+      "expected": []
+    },
+    {
+      "id": "whole-provision-cited-obligations-on-subparagraphs",
+      "notice": "FINRA found that the firm failed to establish a reasonable supervisory system in violation of FINRA Rule 3120.",
+      "registry": [
+        {"source_key": "finra/rule/3120", "clause_ref": "3120(a)"},
+        {"source_key": "finra/rule/3120", "clause_ref": "3120(b)"},
+        {"source_key": "finra/rule/3110", "clause_ref": "3110(a)"}
+      ],
+      "expected": [["finra/rule/3120", "3120(a)"], ["finra/rule/3120", "3120(b)"]]
+    }
+  ]
+}
