@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Map</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* Map (HLD v2 §5): the compliance program as an Obsidian-style graph. Full-height
+     canvas, a right-hand panel with Obsidian's four sections (Filters, Granularity,
+     Display, Forces) and an inspect card. State lives in the hash so a view is a link. */
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  #root { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  main { position: relative; z-index: 1; flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 332px; }
+  main.collapsed { grid-template-columns: 1fr 0px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } main.collapsed { grid-template-rows: 1fr 0px; }
+    .panel { max-height: 45vh; } }
+  .stage { position: relative; min-height: 0; }
+  .stage .gc-root { position: absolute; inset: 0; }
+  .hud { position: absolute; top: 10px; left: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; z-index: 2; }
+  .hud .chip { background: var(--panel-strong); border: 1px solid var(--edge-bright); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; display: inline-flex; gap: 8px; align-items: center; }
+  .hud .chip button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+  .hud .chip button:hover, .hud .chip button:focus-visible { color: var(--ink); }
+  .status { position: absolute; left: 12px; bottom: 10px; z-index: 2; font-family: var(--mono); font-size: 11.5px; color: var(--faint); background: var(--canvas); padding: 3px 8px; border-radius: 8px; opacity: 0.9; }
+  .status .warn { color: var(--warn); }
+  .toolbar { position: absolute; top: 10px; right: 12px; z-index: 2; display: flex; gap: 6px; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .btn.quiet { background: var(--panel-strong); border-color: var(--edge); color: var(--muted); }
+  .btn.quiet:hover, .btn.quiet:focus-visible { color: var(--ink); }
+  .btn.small { padding: 3px 10px; font-size: 12px; }
+  .panel { background: var(--panel); border-left: 1px solid var(--edge); overflow-y: auto; padding: 14px 16px 30px; font-size: 13px; }
+  main.collapsed .panel { display: none; }
+  .panel h2 { margin: 0 0 4px; font-size: 15px; }
+  .panel details { border-top: 1px solid var(--edge); padding: 8px 0; }
+  .panel details:last-of-type { border-bottom: 1px solid var(--edge); }
+  .panel summary { cursor: pointer; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); padding: 4px 0; list-style: none; display: flex; justify-content: space-between; }
+  .panel summary::-webkit-details-marker { display: none; }
+  .panel summary::after { content: "▾"; color: var(--faint); }
+  .panel details:not([open]) summary::after { content: "▸"; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0; }
+  .row label { flex: 1; }
+  .row output { font-family: var(--mono); font-size: 11.5px; color: var(--muted); min-width: 34px; text-align: right; }
+  input[type=range] { width: 130px; accent-color: var(--accent); }
+  input[type=text], input[type=search] { border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); width: 100%; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin: 6px 0; }
+  .checks label, .radios label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .radios { display: grid; gap: 4px; margin: 6px 0; }
+  .radios small { color: var(--faint); margin-left: auto; font-family: var(--mono); font-size: 10.5px; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted); margin-right: 6px; }
+  .badge.L1 { color: var(--l1); } .badge.L2 { color: var(--l2); } .badge.L3 { color: var(--l3); } .badge.L4 { color: var(--l4); } .badge.L5 { color: var(--l5); } .badge.L6 { color: var(--l6); }
+  .inspect { background: var(--panel-strong); border: 1px solid var(--edge-bright); border-radius: 12px; padding: 12px 14px; margin: 10px 0; }
+  .inspect h3 { margin: 0 0 4px; font-size: 14px; }
+  .inspect .mono { word-break: break-all; }
+  .inspect .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .gap { color: var(--bad); }
+  .hint { color: var(--faint); font-size: 12px; margin: 6px 0 0; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .expanded-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+  .expanded-list button { border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted); border-radius: 999px; font-size: 11px; padding: 1px 8px; cursor: pointer; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<script type="module">
+import React, { useState, useEffect, useRef, useMemo } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+import { createGraphCanvas, DEFAULT_FORCES, DEFAULT_DISPLAY } from "/static/graph-canvas.js";
+
+const html = htm.bind(React.createElement);
+const LAYERS = ["L1", "L2", "L3", "L4", "L5", "L6"];
+const LAYER_NAMES = { L1: "Sources", L2: "Obligations", L3: "Blocks", L4: "Applicability", L5: "Activities", L6: "Blueprints" };
+const PRESETS = [
+  ["programs", "Programs", "blueprints · instruments · block kinds"],
+  ["areas", "Areas", "+ individual blocks and activities"],
+  ["items", "Items", "+ individual obligations"],
+  ["everything", "Everything", "+ every clause"],
+];
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+/* ---- view state <-> hash: /map#BLU-000008?depth=2&g=areas&layers=L1,L2&expand=grp:kind:Process&sel=… */
+function parseHash() {
+  const raw = location.hash.slice(1);
+  const [focusPart, query = ""] = raw.split("?");
+  const q = new URLSearchParams(query);
+  const focus = decodeURIComponent(focusPart || "") || null;
+  const layers = (q.get("layers") || "").split(",").filter(Boolean).map((l) => l.toUpperCase());
+  return {
+    focus,
+    depth: Math.min(4, Math.max(1, parseInt(q.get("depth") || "2", 10) || 2)),
+    grouping: q.get("g") || (focus ? "items" : "programs"),
+    layers: layers.length ? layers : LAYERS,
+    expand: (q.get("expand") || "").split(",").filter(Boolean),
+    selected: q.get("sel") || null,
+  };
+}
+function writeHash(v) {
+  const q = new URLSearchParams();
+  q.set("depth", String(v.depth)); q.set("g", v.grouping);
+  if (v.layers.length && v.layers.length !== LAYERS.length) q.set("layers", v.layers.join(","));
+  if (v.expand.length) q.set("expand", v.expand.join(","));
+  if (v.selected) q.set("sel", v.selected);
+  const next = "#" + encodeURIComponent(v.focus || "") + "?" + q.toString();
+  if (location.hash !== next) location.hash = next;
+}
+
+/* ---- the canvas as a component: mounted once, fed data and options as they change */
+function GraphCanvas({ data, forces, display, onSelect, onFocus, onExpand, api }) {
+  const ref = useRef(null); const gc = useRef(null); const cbs = useRef({});
+  cbs.current = { onSelect, onFocus, onExpand };
+  useEffect(() => {
+    gc.current = createGraphCanvas(ref.current, {
+      forces, display,
+      onSelect: (n) => cbs.current.onSelect?.(n), onFocus: (n) => cbs.current.onFocus?.(n), onExpand: (n) => cbs.current.onExpand?.(n),
+    });
+    api?.(gc.current);
+    return () => { gc.current?.destroy(); api?.(null); };
+  }, []);
+  useEffect(() => { if (data && gc.current) gc.current.setData(data); }, [data]);
+  useEffect(() => { gc.current?.setOptions({ forces }); }, [forces]);
+  useEffect(() => { gc.current?.setOptions({ display }); }, [display]);
+  return html`<div ref=${ref} class="stage-canvas" style=${{ position: "absolute", inset: 0 }}></div>`;
+}
+
+function Slider({ id, label, min, max, step, value, onChange, format }) {
+  return html`<div class="row"><label for=${id}>${label}</label>
+    <input id=${id} type="range" min=${min} max=${max} step=${step} value=${value} onInput=${(e) => onChange(parseFloat(e.target.value))} />
+    <output for=${id}>${format ? format(value) : value}</output></div>`;
+}
+
+function Inspect({ node, view, setView, expandGroup, collapseGroup }) {
+  if (!node) return html`<p class="hint">Click a node to inspect it. Double-click a node to make it the focus, a group to open it, empty space to fit the view. Hover isolates a node and its neighbours; scroll to zoom, drag the background to pan.</p>`;
+  const isGroup = !!node.group;
+  const opened = view.expand.includes(node.id);
+  return html`<div class="inspect" aria-live="polite">
+    <h3><span class=${"badge " + node.layer}>${node.layer}</span>${node.label}</h3>
+    <div class="mono">${node.id}${node.stable_id && node.stable_id !== node.id ? " · " + node.stable_id : ""} · ${isGroup ? `group of ${node.members} ${node.kind === "group" ? "" : node.kind + "s"}`.trim() : node.kind}${node.status ? " · " + node.status : ""} · ${node.degree} connection${node.degree === 1 ? "" : "s"}${node.members && !isGroup ? ` · ${node.members} folded` : ""}</div>
+    ${node.gap ? html`<div class="gap" style=${{ marginTop: "6px" }}>Coverage gap: this blueprint has no block satisfying the obligation.</div>` : null}
+    <div class="actions">
+      ${(isGroup || node.members) ? (opened
+        ? html`<button class="btn small" onClick=${() => collapseGroup(node.id)}>Collapse group</button>`
+        : html`<button class="btn small" onClick=${() => expandGroup(node.id)}>Expand ${node.members} members</button>`) : null}
+      ${!node.id.startsWith("grp:") ? html`<button class="btn small quiet" onClick=${() => setView({ ...view, focus: node.id, selected: node.id, expand: [] })}>Focus here</button>` : null}
+      ${!node.id.startsWith("grp:") && node.href ? html`<a class="btn small quiet" href=${node.href}>Open in ${node.layer} browser</a>` : null}
+      ${!node.id.startsWith("grp:") ? html`<a class="btn small quiet" href=${"/explore#" + encodeURIComponent(node.id)}>Explore page</a>` : null}
+    </div>
+  </div>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [view, setViewState] = useState(parseHash);
+  const [data, setData] = useState(null); const [err, setErr] = useState(""); const [ms, setMs] = useState(null); const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [search, setSearch] = useState(""); const [matches, setMatches] = useState(null);
+  const [gapsOnly, setGapsOnly] = useState(false); const [hideOrphans, setHideOrphans] = useState(false);
+  const [display, setDisplay] = useState(DEFAULT_DISPLAY); const [forces, setForces] = useState(DEFAULT_FORCES);
+  const [panel, setPanel] = useState(window.innerWidth > 860);
+  const gcRef = useRef(null);
+
+  const setView = (v) => { writeHash(v); setViewState(v); };
+  useEffect(() => { const apply = () => setViewState(parseHash()); window.addEventListener("hashchange", apply); return () => window.removeEventListener("hashchange", apply); }, []);
+
+  useEffect(() => {
+    const q = new URLSearchParams();
+    if (view.focus) { q.set("focus", view.focus); q.set("depth", String(view.depth)); }
+    q.set("grouping", view.grouping);
+    if (view.layers.length !== LAYERS.length) q.set("layers", view.layers.join(","));
+    if (view.expand.length) q.set("expand", view.expand.join(","));
+    let live = true; setLoading(true); setErr("");
+    const t0 = performance.now();
+    fetch("/graph/subgraph?" + q.toString()).then(async (r) => {
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body));
+      if (!live) return;
+      setMs(Math.round(performance.now() - t0)); setData(body);
+    }).catch((e) => live && setErr(e.message)).finally(() => live && setLoading(false));
+    return () => { live = false; };
+  }, [view.focus, view.depth, view.grouping, view.layers.join(","), view.expand.join(",")]);
+
+  // client-side filters that need no new query
+  const shown = useMemo(() => {
+    if (!data) return null;
+    let nodes = data.nodes;
+    if (gapsOnly) nodes = nodes.filter((n) => n.gap || n.id === data.focus);
+    if (hideOrphans) nodes = nodes.filter((n) => n.degree > 0 || n.id === data.focus);
+    const ids = new Set(nodes.map((n) => n.id));
+    return { ...data, nodes, edges: data.edges.filter((e) => ids.has(e.from) && ids.has(e.to)) };
+  }, [data, gapsOnly, hideOrphans]);
+
+  // keep the selected node in sync with data and hash
+  useEffect(() => {
+    if (!shown) return;
+    const wanted = view.selected && shown.nodes.find((n) => n.id === view.selected);
+    if (wanted) { setSelected(wanted); requestAnimationFrame(() => gcRef.current?.select(wanted.id)); }
+    else if (selected && !shown.nodes.find((n) => n.id === selected.id)) setSelected(null);
+  }, [shown]);
+  useEffect(() => { setMatches(gcRef.current ? gcRef.current.highlight(search) : null); }, [search, shown]);
+
+  const expandGroup = (id) => setView({ ...view, expand: [...new Set([...view.expand, id])], selected: null });
+  const collapseGroup = (id) => setView({ ...view, expand: view.expand.filter((e) => e !== id), selected: null });
+  const focusNode = (n) => setView({ ...view, focus: n.id, selected: n.id, expand: [] });
+  const onSelect = (n) => { setSelected(n); const v = { ...view, selected: n ? n.id : null }; setViewState(v); writeHash(v); };
+  const focusLabel = data && data.focus ? (data.nodes.find((n) => n.id === data.focus) || {}).label : null;
+
+  const counts = shown ? LAYERS.map((l) => [l, shown.nodes.filter((n) => n.layer === l).length]) : [];
+  return html`<div style=${{ display: "contents" }}>
+    <header class="appbar">
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>map</span></div>
+      <div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink" href="/explore">Explore</a><a class="navlink active" href="/map">Map</a><a class="navlink" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink" href="/contribute">Contribute</a><a class="navlink" href="/conformance">Conformance</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main" class=${panel ? "" : "collapsed"}>
+      <h1 class="visually-hidden">Map of the compliance program graph</h1>
+      <section class="stage" aria-label="Graph">
+        <${GraphCanvas} data=${shown} forces=${forces} display=${display} api=${(g) => (gcRef.current = g)}
+          onSelect=${onSelect} onFocus=${focusNode} onExpand=${(n) => expandGroup(n.id)} />
+        <div class="hud">
+          ${view.focus ? html`<span class="chip"><span class="mono" style=${{ color: "var(--ink)" }}>Focus</span> ${focusLabel || view.focus}
+            <button aria-label="Drop focus and show the whole store" title="Show the whole store" onClick=${() => setView({ ...view, focus: null, grouping: "programs", expand: [], selected: null })}>×</button></span>`
+            : html`<span class="chip">Whole store · ${PRESETS.find((p) => p[0] === view.grouping)?.[1] || view.grouping}</span>`}
+          ${view.expand.length ? html`<span class="chip">${view.expand.length} group${view.expand.length > 1 ? "s" : ""} open
+            <button aria-label="Collapse all opened groups" onClick=${() => setView({ ...view, expand: [], selected: null })}>×</button></span>` : null}
+        </div>
+        <div class="toolbar">
+          <button class="btn quiet small" onClick=${() => gcRef.current?.fit()}>Reset view</button>
+          <button class="btn quiet small" aria-expanded=${panel} aria-controls="panel" onClick=${() => setPanel(!panel)}>${panel ? "Hide panel" : "Show panel"}</button>
+        </div>
+        <div class="status" role="status">
+          ${err ? html`<span class="warn">${err}</span>` : loading && !data ? "loading…" : shown
+            ? html`${shown.nodes.length} nodes · ${shown.edges.length} edges${ms !== null ? ` · ${ms} ms` : ""}${data.truncated ? html` · <span class="warn">truncated to the busiest ${data.nodes.length}; narrow the view</span>` : ""}${matches !== null && search ? ` · ${matches} match${matches === 1 ? "" : "es"}` : ""}` : ""}
+        </div>
+      </section>
+      <aside id="panel" class="panel" aria-label="Map controls">
+        <h2>Compliance program graph</h2>
+        <p class="hint" style=${{ margin: "0 0 10px" }}>Nodes are coloured by layer; folded groups carry a count and open on double-click. Every view is a link.</p>
+        <div class="gc-legend" aria-label="Layer colours">${LAYERS.map((l) => html`<span key=${l} class=${l}><i aria-hidden="true"></i>${l} ${LAYER_NAMES[l]}${counts.length ? ` · ${counts.find((c) => c[0] === l)[1]}` : ""}</span>`)}</div>
+
+        <${Inspect} node=${selected} view=${view} setView=${setView} expandGroup=${expandGroup} collapseGroup=${collapseGroup} />
+
+        <details open>
+          <summary>Filters</summary>
+          <label class="visually-hidden" for="search">Search nodes to highlight</label>
+          <input id="search" type="search" placeholder="Highlight nodes matching…" value=${search} onInput=${(e) => setSearch(e.target.value)} />
+          <div class="checks" style=${{ marginTop: "8px" }}>
+            ${LAYERS.map((l) => html`<label key=${l}><input type="checkbox" checked=${view.layers.includes(l)}
+              onChange=${(e) => { const next = e.target.checked ? [...view.layers, l] : view.layers.filter((x) => x !== l); setView({ ...view, layers: LAYERS.filter((x) => next.includes(x)) }); }} /><span class=${"badge " + l}>${l}</span>${LAYER_NAMES[l]}</label>`)}
+          </div>
+          <div class="checks">
+            <label><input type="checkbox" checked=${gapsOnly} onChange=${(e) => setGapsOnly(e.target.checked)} />Gaps only</label>
+            <label><input type="checkbox" checked=${hideOrphans} onChange=${(e) => setHideOrphans(e.target.checked)} />Hide orphans</label>
+          </div>
+        </details>
+
+        <details open>
+          <summary>Granularity</summary>
+          <div class="radios" role="radiogroup" aria-label="Granularity preset">
+            ${PRESETS.map(([id, name, desc]) => html`<label key=${id}><input type="radio" name="grouping" value=${id} checked=${view.grouping === id}
+              onChange=${() => setView({ ...view, grouping: id, expand: [], selected: null })} />${name}<small>${desc}</small></label>`)}
+          </div>
+          ${view.focus ? html`<${Slider} id="depth" label="Depth (hops from focus)" min="1" max="4" step="1" value=${view.depth} onChange=${(v) => setView({ ...view, depth: v })} />`
+            : html`<p class="hint">Depth applies to a focused view. Double-click a node or use "Focus here" to start a local graph.</p>`}
+          ${view.expand.length ? html`<div class="hint">Opened groups:</div><ul class="expanded-list">${view.expand.map((id) => html`<li key=${id}><button onClick=${() => collapseGroup(id)} aria-label=${"Collapse " + id}>${id} ×</button></li>`)}</ul>` : null}
+        </details>
+
+        <details>
+          <summary>Display</summary>
+          <${Slider} id="labels" label="Label density" min="0" max="2" step="0.1" value=${display.labels} onChange=${(v) => setDisplay({ ...display, labels: v })} format=${(v) => v.toFixed(1)} />
+          <div class="checks">
+            <label><input type="checkbox" checked=${display.arrows} onChange=${(e) => setDisplay({ ...display, arrows: e.target.checked })} />Arrows</label>
+            <label><input type="checkbox" checked=${display.sizeByDegree} onChange=${(e) => setDisplay({ ...display, sizeByDegree: e.target.checked })} />Size by links</label>
+          </div>
+        </details>
+
+        <details>
+          <summary>Forces</summary>
+          <${Slider} id="f-center" label="Center force" min="0" max="0.5" step="0.01" value=${forces.center} onChange=${(v) => setForces({ ...forces, center: v })} format=${(v) => v.toFixed(2)} />
+          <${Slider} id="f-repel" label="Repel force" min="0" max="600" step="10" value=${forces.repel} onChange=${(v) => setForces({ ...forces, repel: v })} />
+          <${Slider} id="f-link" label="Link force" min="0" max="1" step="0.05" value=${forces.linkStrength} onChange=${(v) => setForces({ ...forces, linkStrength: v })} format=${(v) => v.toFixed(2)} />
+          <${Slider} id="f-dist" label="Link distance" min="10" max="240" step="5" value=${forces.linkDistance} onChange=${(v) => setForces({ ...forces, linkDistance: v })} />
+          <div class="row"><button class="btn quiet small" onClick=${() => setForces(DEFAULT_FORCES)}>Reset forces</button></div>
+        </details>
+        <p class="hint">Keyboard: Tab into the graph to reach the node list (arrow keys move, Enter selects, F focuses). Data: <a href=${"/graph/subgraph?" + (view.focus ? `focus=${encodeURIComponent(view.focus)}&depth=${view.depth}&` : "") + "grouping=" + view.grouping}>this view as JSON</a>.</p>
+      </aside>
+    </main></div>`;
+}
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

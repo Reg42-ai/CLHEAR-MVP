@@ -410,6 +410,13 @@ def explore_page() -> HTMLResponse:
     return HTMLResponse((WEB_DIR / "explore.html").read_text(), headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
+@router.get("/map", response_class=HTMLResponse, include_in_schema=False)
+def map_page() -> HTMLResponse:
+    """The compliance program as an Obsidian-style graph (HLD v2 §5): global or
+    around one node, at a chosen granularity; drawn from GET /graph/subgraph."""
+    return HTMLResponse((WEB_DIR / "map.html").read_text(), headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
 @router.get("/explore/layers")
 def explore_layers() -> dict:
     with get_engine().connect() as conn:

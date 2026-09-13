@@ -73,6 +73,7 @@ export function createGraphCanvas(root, { onSelect, onFocus, onExpand, onHover, 
     hovered: null, selected: null, highlighted: null, transform: zoomIdentity,
     forces: { ...DEFAULT_FORCES, ...forces }, display: { ...DEFAULT_DISPLAY, ...display },
     theme: readTheme(), width: 0, height: 0, dpr: 1, sim: null, frame: 0, destroyed: false,
+    autoFit: false, // follow the first layout until it settles or the reader takes the wheel
   };
 
   // ---------------------------------------------------------------- sizing / theme
@@ -99,7 +100,7 @@ export function createGraphCanvas(root, { onSelect, onFocus, onExpand, onHover, 
     sim.force("collide").radius((d) => nodeRadius(d, state.display, compact) + 1.5);
   };
   const settle = (sim) => {
-    if (reducedMotion()) { sim.stop(); sim.tick(Math.min(300, 60 + state.nodes.length)); draw(); }
+    if (reducedMotion()) { sim.stop(); sim.tick(Math.min(300, 60 + state.nodes.length)); draw(); }  // one settled frame, no motion
     else sim.alpha(1).restart();
   };
   const buildSim = () => {
@@ -110,8 +111,8 @@ export function createGraphCanvas(root, { onSelect, onFocus, onExpand, onHover, 
       .force("x", forceX(0)).force("y", forceY(0))
       .force("collide", forceCollide())
       .alphaDecay(0.035).velocityDecay(0.35)
-      .on("tick", draw)
-      .on("end", draw);
+      .on("tick", () => { draw(); if (state.autoFit) fit(); })
+      .on("end", () => { if (state.autoFit) { fit(); state.autoFit = false; } draw(); });
     applyForces(sim);
     state.sim = sim;
     settle(sim);
@@ -137,6 +138,8 @@ export function createGraphCanvas(root, { onSelect, onFocus, onExpand, onHover, 
       const a = Math.random() * Math.PI * 2, r = 20 + Math.random() * 30;
       n.x = (anchor ? anchor.x : 0) + Math.cos(a) * r; n.y = (anchor ? anchor.y : 0) + Math.sin(a) * r;
     }
+    const fresh = nodes.filter((n) => !prev.has(n.id)).length;
+    const refocused = (data.focus || null) !== state.focus;
     state.nodes = nodes; state.links = links; state.byId = byId; state.neighbours = neighbours;
     state.focus = data.focus || null;
     if (state.selected && !byId.has(state.selected.id)) state.selected = null;
@@ -145,8 +148,11 @@ export function createGraphCanvas(root, { onSelect, onFocus, onExpand, onHover, 
     canvas.setAttribute("aria-label", `Graph: ${nodes.length} nodes, ${links.length} connections` +
       (focusLabel ? `, around ${focusLabel}` : "") + (data.truncated ? " (truncated to the busiest nodes)" : ""));
     renderList();
+    // a new view (first load, new focus, mostly new nodes) is fitted as it settles; opening
+    // one group keeps the reader's viewport
+    state.autoFit = !prev.size || refocused || fresh > nodes.length / 2;
     buildSim();
-    if (!prev.size) requestAnimationFrame(() => fit());
+    if (reducedMotion()) { fit(); state.autoFit = false; }
   }
 
   function setOptions(opts = {}) {
@@ -256,8 +262,8 @@ export function createGraphCanvas(root, { onSelect, onFocus, onExpand, onHover, 
       if (!show) continue;
       const px = 12 / t.k;
       ctx.font = `${Math.max(9, 12) / t.k}px Inter, -apple-system, Segoe UI, sans-serif`;
-      let alpha = forced ? 1 : Math.min(1, Math.max(0.35, (r * t.k - threshold + 4) / 8));
-      if (!forced && (activeSet || (hl && hl.size))) alpha *= DIM * 2;
+      if (!forced && (activeSet || (hl && hl.size))) continue; // hover / search: only the isolated set is labelled
+      const alpha = forced ? 1 : Math.min(1, Math.max(0.35, (r * t.k - threshold + 4) / 8));
       const text = truncate(n.label || n.id, forced ? 60 : 32) + (n.members ? ` (${n.members})` : "");
       const w = ctx.measureText(text).width;
       ctx.fillStyle = theme.canvas; ctx.globalAlpha = alpha * 0.75;
@@ -288,7 +294,7 @@ export function createGraphCanvas(root, { onSelect, onFocus, onExpand, onHover, 
       }
       return (!event.ctrlKey || event.type === "wheel") && !event.button;
     })
-    .on("zoom", (event) => { state.transform = event.transform; draw(); });
+    .on("zoom", (event) => { if (event.sourceEvent) state.autoFit = false; state.transform = event.transform; draw(); });
   const dragB = d3drag().container(canvas)
     .subject((event) => hit(event.x, event.y))
     .on("start", (event) => { event.subject.fx = event.subject.x; event.subject.fy = event.subject.y; if (!reducedMotion()) state.sim?.alphaTarget(0.3).restart(); })

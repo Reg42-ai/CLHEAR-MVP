@@ -30,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AXE_URL = "https://cdn.jsdelivr.net/npm/axe-core@4.10.2/axe.min.js"
-PAGES = ["/", "/explore", "/learn", "/watch", "/build", "/evals", "/stack", "/l1", "/l2", "/l3", "/l4", "/l5", "/l6", "/l7", "/l8", "/console", "/contribute", "/conformance", "/security", "/status"]
+PAGES = ["/", "/explore", "/map", "/learn", "/watch", "/build", "/evals", "/stack", "/l1", "/l2", "/l3", "/l4", "/l5", "/l6", "/l7", "/l8", "/console", "/contribute", "/conformance", "/security", "/status"]
 TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"]
 FAIL_IMPACTS = {"serious", "critical"}
 THEMES = ["dark", "light"]
@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
                 l7_score.score_items(make_engine(f"sqlite:///{ROOT / '.a11y-axe.db'}"))
             except Exception as exc:
                 print(f"a11y-axe: warning — could not score items for the l7 page audit: {exc}")
-            args.pages = [*PAGES, f"/l6#{bid}", f"/l7#{bid}"]
+            args.pages = [*PAGES, f"/l6#{bid}", f"/l7#{bid}", f"/map#{bid}"]
     try:
         findings = audit(base, args.pages, themes=[args.theme] if args.theme else THEMES)
     except Exception as exc:  # browser missing, CDN unreachable
