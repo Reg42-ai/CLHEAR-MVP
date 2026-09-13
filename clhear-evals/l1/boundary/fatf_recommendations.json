@@ -1,0 +1,27 @@
+{
+  "adapter": "fatf",
+  "source_key": "fatf/40-recommendations",
+  "title": "FATF Recommendations",
+  "url": "https://www.fatf-gafi.org/example.pdf",
+  "pages": [
+    "THE FATF RECOMMENDATIONS\nA. AML/CFT POLICIES AND COORDINATION\n1. Assessing risks and applying a risk-based approach\nCountries should identify, assess, and understand the money laundering and terrorist financing risks for the country, and should take action, including designating an authority or mechanism to coordinate actions to assess risks.\n2. National cooperation and coordination\nCountries should have national AML/CFT policies, informed by the risks identified, which should be regularly reviewed.\nINTERPRETIVE NOTE TO RECOMMENDATION 1\n1. The risk-based approach (RBA) is an effective way to combat money laundering and terrorist financing.\n2. Countries should apply a RBA."
+  ],
+  "clauses": [
+    {
+      "ref": "R.1",
+      "text": "Assessing risks and applying a risk-based approach Countries should identify, assess, and understand the money laundering and terrorist financing risks for the country, and should take action, including designating an authority or mechanism to coordinate actions to assess risks."
+    },
+    {
+      "ref": "R.2",
+      "text": "National cooperation and coordination Countries should have national AML/CFT policies, informed by the risks identified, which should be regularly reviewed."
+    },
+    {
+      "ref": "INR.1.1",
+      "text": "The risk-based approach (RBA) is an effective way to combat money laundering and terrorist financing."
+    },
+    {
+      "ref": "INR.1.2",
+      "text": "Countries should apply a RBA."
+    }
+  ]
+}

@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · L1 Sources</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* L1 browser (HLD v2 §4.1): sources by jurisdiction / regulator / instrument,
+     family tree, change timeline, rights badge, "watch this instrument". */
+  main { position: relative; z-index: 1; max-width: 1500px; margin: 22px auto; padding: 0 20px 70px; }
+  .layout { display: grid; grid-template-columns: 260px 1fr; gap: 18px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .facets { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 16px; align-self: start; position: sticky; top: 74px; }
+  .facets h4 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .facets h4:first-child { margin-top: 0; }
+  .facets input, .facets select { width: 100%; border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); }
+  .chip { display: inline-block; margin: 2px 4px 2px 0; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--edge); font-size: 12px; cursor: pointer; color: var(--muted); background: var(--panel-strong); }
+  .chip.on { color: var(--ink); border-color: var(--edge-bright); background: rgba(129,140,248,0.18); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-color: var(--edge-bright); background: var(--panel-strong); }
+  table.src { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.src th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.src td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .name { color: var(--accent); font-weight: 600; cursor: pointer; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; border: 1px solid transparent; }
+  .rights-public_domain, .rights-open_licence { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .rights-licensed { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .rights-derived_only { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .rights-byol_only { background: rgba(251,113,133,0.14); color: var(--bad); }
+  .badge.root { background: var(--ind-800); color: var(--ind-100); border-color: var(--edge); }
+  .badge.norm { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.kind-added { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.kind-amended { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .badge.kind-repealed { background: rgba(251,113,133,0.14); color: var(--bad); }
+  .panelx { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+  .panelx h2 { margin: 0 0 6px; font-size: 17px; }
+  .panelx h3 { margin: 18px 0 8px; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .watch { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; }
+  .watch.on { background: rgba(52,211,153,0.16); border-color: var(--ok); }
+  .timeline { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 2px solid var(--edge); }
+  .timeline li { position: relative; margin: 0 0 14px; font-size: 13.5px; }
+  .timeline li::before { content: ""; position: absolute; left: -24px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .timeline .when { font-size: 12px; color: var(--muted); }
+  .tree ul { list-style: none; padding-left: 18px; margin: 4px 0; border-left: 1px dashed var(--edge); }
+  .tree li { margin: 4px 0; font-size: 13.5px; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .score .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
+  .score .kpi b { display: block; font-size: 20px; }
+  .score .kpi span { font-size: 11.5px; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .crumbs a { cursor: pointer; }
+  pre.clause { white-space: pre-wrap; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px; font: 13px/1.5 var(--mono); }
+  .withheld { color: var(--warn); font-size: 13px; }
+  .spin { color: var(--muted); padding: 30px; text-align: center; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+
+// Watch identity: the community session when signed in, else a per-browser app id.
+function watcherId() {
+  let id = localStorage.getItem("clhear_watcher");
+  if (!id) { id = "web-" + Math.random().toString(36).slice(2, 12); localStorage.setItem("clhear_watcher", id); }
+  return id;
+}
+const headers = () => ({ "X-Watcher-Id": watcherId(), "Content-Type": "application/json" });
+const api = (p, opts = {}) =>
+  fetch(p, { ...opts, headers: { ...headers(), ...(opts.headers || {}) } }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.text()) || r.statusText);
+    return r.json();
+  });
+const qs = (o) => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+const fmt = (d) => (d ? String(d).slice(0, 10) : "—");
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const RIGHTS_LABEL = {
+  public_domain: "public domain", open_licence: "open licence", licensed: "licensed",
+  derived_only: "derived only — text not republished", byol_only: "bring your own licence",
+};
+const Rights = ({ basis }) => html`<span class=${"badge rights-" + basis} title=${RIGHTS_LABEL[basis] || basis}>${(basis || "").replace("_", " ")}</span>`;
+
+function WatchButton({ sourceKey, watching, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      if (watching) await api(`/l1/watchlists/${sourceKey}/unwatch`, { method: "POST" });
+      else await api("/l1/watchlists", { method: "POST", body: JSON.stringify({ source_key: sourceKey }) });
+      onChange(!watching);
+    } catch (e) { alert(e.message); } finally { setBusy(false); }
+  };
+  return html`<button class=${"watch" + (watching ? " on" : "")} disabled=${busy} onClick=${toggle}>
+    ${watching ? "✓ watching this instrument" : "☆ watch this instrument"}</button>`;
+}
+
+function Facets({ facets, filters, setFilters }) {
+  const set = (k, v) => setFilters({ ...filters, [k]: filters[k] === v ? "" : v });
+  const chips = (k, values) => html`<div>${(values || []).map((v) => html`<span key=${v} class=${"chip" + (filters[k] === v ? " on" : "")} onClick=${() => set(k, v)}>${v}</span>`)}</div>`;
+  return html`<aside class="facets">
+    <h4>Search</h4>
+    <input aria-label="Search sources" placeholder="instrument, regulator, key…" value=${filters.q} onInput=${(e) => setFilters({ ...filters, q: e.target.value })} />
+    <h4>Jurisdiction</h4>${chips("jurisdiction", facets.jurisdictions)}
+    <h4>Regulator</h4>
+    <select aria-label="Filter by regulator" value=${filters.regulator} onChange=${(e) => setFilters({ ...filters, regulator: e.target.value })}>
+      <option value="">any regulator</option>${(facets.regulators || []).map((r) => html`<option key=${r} value=${r}>${r}</option>`)}
+    </select>
+    <h4>Rights basis</h4>${chips("rights_basis", facets.rights_bases)}
+    <h4>Family</h4>
+    <select aria-label="Filter by family" value=${filters.family} onChange=${(e) => setFilters({ ...filters, family: e.target.value })}>
+      <option value="">any family</option>${(facets.families || []).map((f) => html`<option key=${f} value=${f}>${f}</option>`)}
+    </select>
+    <h4>State</h4>
+    <span class=${"chip" + (filters.ingested === "true" ? " on" : "")} onClick=${() => set("ingested", "true")}>ingested</span>
+    <span class=${"chip" + (filters.ingested === "false" ? " on" : "")} onClick=${() => set("ingested", "false")}>registry only</span>
+  </aside>`;
+}
+
+function SourceTable({ filters, watched, open, openFamily }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { setData(null); api(`/l1/sources?${qs({ ...filters, limit: 300 })}`).then(setData).catch(() => setData({ sources: [], total: 0, facets: {} })); }, [JSON.stringify(filters)]);
+  if (!data) return html`<div class="spin">Loading sources…</div>`;
+  if (!data.sources.length) return html`<div class="empty">No sources match.</div>`;
+  return html`<div>
+    <div class="meta"><span><b>${data.total}</b> sources</span></div>
+    <table class="src"><thead><tr><th>Instrument</th><th>Jurisdiction</th><th>Regulator</th><th>Family</th><th>Rights</th><th>Latest version</th><th></th></tr></thead>
+    <tbody>${data.sources.map((s) => html`<tr key=${s.key}>
+      <td><div class="name" onClick=${() => open(s.key)}>${s.instrument}</div><div class="mono">${s.key}</div></td>
+      <td>${s.jurisdiction}</td><td>${s.regulator}</td>
+      <td><a onClick=${() => openFamily(s.family)}>${s.family}</a> ${s.family_root && html`<span class="badge root">root</span>`}</td>
+      <td><${Rights} basis=${s.rights.basis} /></td>
+      <td>${s.latest_version ? html`<span>${s.latest_version.label}</span><div class="mono">as of ${fmt(s.latest_version.as_of_date)} · ${s.versions} version${s.versions === 1 ? "" : "s"}</div>` : html`<span class="mono">not yet ingested</span>`}</td>
+      <td>${watched.has(s.key) ? "★" : ""}</td>
+    </tr>`)}</tbody></table></div>`;
+}
+
+function Timeline({ changes, openClause }) {
+  if (!changes.length) return html`<div class="empty">No changes recorded yet.</div>`;
+  return html`<ul class="timeline">${changes.map((c) => html`<li key=${c.id}>
+    <span class=${"badge kind-" + c.kind}>${c.kind}</span> <b>${c.instrument || c.source}</b>
+    <span class="mono"> ${c.old_version ? c.old_version + " → " : ""}${c.new_version}</span>
+    <div class="when">effective ${c.effective_date ? html`<b>${c.effective_date}</b> <span class="mono">(${c.effective_date_basis})</span>` : "unknown"} · detected ${fmt(c.detected_at)}</div>
+    <div class="mono">${c.clause_refs.slice(0, 12).join(", ")}${c.clause_refs.length > 12 ? ` … +${c.clause_refs.length - 12}` : ""}
+      ${c.clause_ids.slice(0, 6).map((id) => html` <a key=${id} onClick=${() => openClause(id)}>#${id}</a>`)}</div>
+  </li>`)}</ul>`;
+}
+
+function SourcePage({ sourceKey, watched, setWatched, openFamily, openClause, back }) {
+  const [src, setSrc] = useState(null);
+  const [versions, setVersions] = useState([]);
+  useEffect(() => {
+    setSrc(null);
+    api(`/l1/sources/${sourceKey}`).then(setSrc).catch((e) => setSrc({ error: e.message }));
+    api(`/l1/sources/${sourceKey}/versions`).then((v) => setVersions(v.versions)).catch(() => setVersions([]));
+  }, [sourceKey]);
+  if (!src) return html`<div class="spin">Loading…</div>`;
+  if (src.error) return html`<div class="empty">${src.error}</div>`;
+  const watching = watched.has(sourceKey);
+  return html`<div>
+    <div class="crumbs"><a onClick=${back}>Sources</a> › <a onClick=${() => openFamily(src.family)}>${src.family_name || src.family}</a> › ${src.instrument}</div>
+    <section class="panelx">
+      <h2>${src.name}</h2>
+      <div class="meta"><span><b>${src.jurisdiction}</b></span><span>regulator <b>${src.regulator}</b></span><span>publisher <b>${src.publisher}</b></span><span>instrument <b>${src.instrument}</b></span><span>adapter <span class="mono">${src.adapter}</span></span></div>
+      <div class="meta"><${Rights} basis=${src.rights.basis} /> <span>${RIGHTS_LABEL[src.rights.basis]}</span> ${src.rights.licence_ref && html`<span class="mono">${src.rights.licence_ref}</span>`} <a href=${src.canonical_url} target="_blank" rel="noopener">official text ↗</a></div>
+      <${WatchButton} sourceKey=${sourceKey} watching=${watching} onChange=${(w) => { const n = new Set(watched); w ? n.add(sourceKey) : n.delete(sourceKey); setWatched(n); setSrc({ ...src, watchers: Math.max(0, (src.watchers || 0) + (w ? 1 : -1)) }); }} />
+      <span class="mono"> ${src.watchers} watcher${src.watchers === 1 ? "" : "s"}</span>
+      <h3>Versions</h3>
+      ${versions.length ? html`<table class="src"><thead><tr><th>Label</th><th>Kind</th><th>As of</th><th>Effective</th><th>Retrieved</th><th>Clauses</th><th>Hash</th></tr></thead>
+        <tbody>${versions.map((v) => html`<tr key=${v.id}><td>${v.label}</td><td>${v.kind}</td><td>${fmt(v.as_of_date)}</td><td>${fmt(v.effective_date)}</td><td>${fmt(v.retrieved_at)}</td><td>${v.clauses}</td><td class="mono">${(v.content_hash || "").slice(0, 12)}</td></tr>`)}</tbody></table>`
+        : html`<div class="mono">not yet ingested — registry entry only</div>`}
+      <h3>Change timeline</h3>
+      <${Timeline} changes=${src.recent_changes || []} openClause=${openClause} />
+      <h3>Rights history</h3>
+      <ul>${(src.rights.history || []).map((h, i) => html`<li key=${i}><${Rights} basis=${h.rights_basis} /> <span class="mono">${h.basis_ref} · ${h.recorded_by} · ${fmt(h.recorded_at)}</span></li>`)}</ul>
+      <h3>Scorecard</h3>
+      <div class="mono">${src.scorecard && src.scorecard.green ? html`<span class="ok">green</span>` : html`<span class="warn">not yet green</span>`} · ${Object.entries((src.scorecard && src.scorecard.suites) || {}).map(([k, v]) => `${k}: ${v.passed ? "pass" : "fail"}`).join(" · ") || "no evals run"}</div>
+    </section></div>`;
+}
+
+function ClausePage({ id, back, open }) {
+  const [c, setC] = useState(null);
+  useEffect(() => { setC(null); api(`/l1/clauses/${id}`).then(setC).catch((e) => setC({ error: e.message })); }, [id]);
+  if (!c) return html`<div class="spin">Loading clause…</div>`;
+  if (c.error) return html`<div class="empty">${c.error}</div>`;
+  return html`<div>
+    <div class="crumbs"><a onClick=${back}>Sources</a> › <a onClick=${() => open(c.source)}>${c.instrument}</a> › ${c.ref}</div>
+    <section class="panelx">
+      <h2>${c.instrument} · ${c.ref} ${c.normative && html`<span class="badge norm">normative</span>`}</h2>
+      <div class="meta"><span>version <b>${c.version}</b></span><span>as of <b>${fmt(c.as_of_date)}</b></span><span>span <span class="mono">[${c.span.start}, ${c.span.end})</span></span><span>path <span class="mono">${c.path || "—"}</span></span><${Rights} basis=${c.rights_basis} /></div>
+      ${c.text != null ? html`<pre class="clause">${c.text}</pre>` : html`<div class="withheld">Text withheld: ${c.text_withheld_reason}. Hash <span class="mono">${c.text_hash}</span>.</div>`}
+      <h3>Why</h3>
+      <div class="mono">derived by ${c.why.derived_by} · valid from ${fmt(c.why.valid_from)}${c.why.valid_to ? ` to ${fmt(c.why.valid_to)}` : ""} · record version ${c.why.version}</div>
+      <h3>Citations</h3>
+      ${c.citations.length ? html`<ul>${c.citations.map((x, i) => html`<li key=${i}><span class="mono">${x.raw}</span> — ${x.disposition}${x.reason ? html` <span class="mono">(${x.reason})</span>` : ""}</li>`)}</ul>` : html`<div class="mono">none mined</div>`}
+    </section></div>`;
+}
+
+function FamilyPage({ famKey, open, back }) {
+  const [tree, setTree] = useState(null);
+  useEffect(() => { setTree(null); api(`/l1/families/${famKey}`).then(setTree).catch((e) => setTree({ error: e.message })); }, [famKey]);
+  if (!tree) return html`<div class="spin">Loading family…</div>`;
+  if (tree.error) return html`<div class="empty">${tree.error}</div>`;
+  const node = (m) => html`<li key=${m.key || m.source_key}><span class="name" onClick=${() => open(m.key || m.source_key)}>${m.short_name || m.name || m.key}</span>
+    ${m.relation && html`<span class="mono"> ${m.relation}</span>`} ${m.rights_basis && html` <${Rights} basis=${m.rights_basis} />`} ${m.ingested === false && html`<span class="mono"> · not ingested</span>`}</li>`;
+  const members = tree.members || [];
+  const root = tree.root || members.find((m) => m.relation === "root");
+  const rest = members.filter((m) => m !== root && m.relation !== "root");
+  const sc = tree.scorecard || {};
+  return html`<div>
+    <div class="crumbs"><a onClick=${back}>Sources</a> › ${tree.name || famKey}</div>
+    <section class="panelx"><h2>${tree.name || famKey}</h2>
+      <div class="score">
+        <div class="kpi"><b class=${sc.passed ? "ok" : "bad"}>${sc.completeness != null ? Math.round(sc.completeness * 1000) / 10 + "%" : "—"}</b><span>family completeness (gate ≥ 99 %)</span></div>
+        <div class="kpi"><b>${sc.members ?? members.length}</b><span>members</span></div>
+        <div class="kpi"><b>${sc.ingested ?? "—"}</b><span>ingested</span></div>
+        <div class="kpi"><b class=${sc.open_candidates ? "warn" : ""}>${sc.open_candidates ?? 0}</b><span>open discovery candidates</span></div>
+      </div>
+      <h3>Family tree</h3>
+      <div class="tree"><ul>${root ? html`<li><span class="badge root">root</span> ${node(root)}<ul>${rest.map(node)}</ul></li>` : rest.map(node)}</ul></div>
+    </section></div>`;
+}
+
+function ChangesPage({ watchedOnly, openClause }) {
+  const [feed, setFeed] = useState(null);
+  const [since, setSince] = useState("");
+  useEffect(() => { setFeed(null); api(`/l1/changes?${qs({ since, watched: watchedOnly, limit: 300 })}`).then(setFeed).catch((e) => setFeed({ error: e.message, changes: [] })); }, [since, watchedOnly]);
+  return html`<section class="panelx"><h2>${watchedOnly ? "Changes on my watchlist" : "Change feed"}</h2>
+    <div class="meta"><label>effective since <input type="date" value=${since} onChange=${(e) => setSince(e.target.value)} /></label>${feed && html`<span><b>${feed.count ?? 0}</b> changes</span>`}</div>
+    ${feed ? (feed.error ? html`<div class="empty">${feed.error}</div>` : html`<${Timeline} changes=${feed.changes} openClause=${openClause} />`) : html`<div class="spin">Loading…</div>`}
+  </section>`;
+}
+
+function Scorecard() {
+  const [card, setCard] = useState(null);
+  useEffect(() => { api("/l1/scorecard").then(setCard).catch((e) => setCard({ error: e.message })); }, []);
+  if (!card) return html`<div class="spin">Loading scorecard…</div>`;
+  if (card.error) return html`<div class="empty">${card.error}</div>`;
+  const gate = card.gate || {};
+  // gate_status: suites that ran (with pass/fail), suites the gate names that
+  // never ran ("missing" — the layer is simply not publishable yet).
+  const suites = { ...(gate.suites || {}) };
+  for (const m of gate.missing || []) if (!suites[m]) suites[m] = { status: "missing", passed: false };
+  return html`<section class="panelx"><h2>L1 scorecard</h2>
+    <div class="score">
+      <div class="kpi"><b class=${gate.passed ? "ok" : "bad"}>${gate.passed ? "publishable" : "below gate"}</b><span>L1 publication gate (I10)${gate.missing && gate.missing.length ? ` · ${gate.missing.length} suite${gate.missing.length === 1 ? "" : "s"} not yet run` : ""}</span></div>
+      <div class="kpi"><b>${card.clauses.total}</b><span>clauses (${card.clauses.normative} normative)</span></div>
+      <div class="kpi"><b>${card.starter_corpus.ingested}/${card.starter_corpus.sources}</b><span>starter corpus ingested</span></div>
+      <div class="kpi"><b class=${card.families.passed ? "ok" : "warn"}>${card.families.families.length}</b><span>families (${card.families.passed ? "all ≥ 99 %" : "some incomplete"})</span></div>
+    </div>
+    <h3>Gate suites</h3>
+    <div class="mono">${Object.entries(gate.thresholds || {}).map(([k, v]) => `${k} ${v}`).join(" · ")}</div>
+    <table class="src"><thead><tr><th>Suite</th><th>Status</th><th>Detail</th></tr></thead><tbody>
+      ${Object.entries(suites).map(([k, v]) => html`<tr key=${k}><td class="mono">${k}</td><td class=${v && v.passed ? "ok" : (v && v.status === "missing" ? "warn" : "bad")}>${v ? (v.passed ? "pass" : v.status || "fail") : "—"}</td><td class="mono">${v && v.scores ? JSON.stringify(v.scores).slice(0, 160) : ""}</td></tr>`)}
+    </tbody></table>
+    <h3>Rights mix</h3>
+    <div>${Object.entries(card.rights_mix).map(([k, n]) => html`<span key=${k} style=${{ marginRight: 12 }}><${Rights} basis=${k} /> ${n}</span>`)}</div>
+    <h3>Starter corpus</h3>
+    <table class="src"><thead><tr><th>Instrument</th><th>Jurisdictions</th><th>Tier</th><th>Ingested</th><th>Missing</th></tr></thead><tbody>
+      ${card.starter_corpus.instruments.map((i) => html`<tr key=${i.instrument}><td>${i.instrument}</td><td>${i.jurisdictions.join(", ")}</td><td>${i.tier}</td><td>${i.ingested}/${i.sources}</td><td class="mono">${i.missing.slice(0, 4).join(", ")}${i.missing.length > 4 ? " …" : ""}</td></tr>`)}
+    </tbody></table>
+  </section>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [tab, setTab] = useState("sources");
+  const [view, setView] = useState({ page: "list" });
+  const [filters, setFilters] = useState({ q: "", jurisdiction: "", regulator: "", instrument: "", family: "", rights_basis: "", ingested: "" });
+  const [facets, setFacets] = useState({});
+  const [watched, setWatched] = useState(new Set());
+  useEffect(() => { api("/l1/sources?limit=1").then((d) => setFacets(d.facets)).catch(() => {}); }, []);
+  useEffect(() => { api("/l1/watchlists").then((w) => setWatched(new Set(w.watching.map((x) => x.source_key)))).catch(() => {}); }, []);
+  const open = (key) => { setTab("sources"); setView({ page: "source", key }); };
+  const openFamily = (key) => { setTab("sources"); setView({ page: "family", key }); };
+  const openClause = (id) => { setTab("sources"); setView({ page: "clause", id }); };
+  const back = () => setView({ page: "list" });
+
+  let body;
+  if (tab === "changes") body = html`<${ChangesPage} watchedOnly=${false} openClause=${openClause} />`;
+  else if (tab === "watchlist") body = html`<${ChangesPage} watchedOnly=${true} openClause=${openClause} />`;
+  else if (tab === "scorecard") body = html`<${Scorecard} />`;
+  else if (view.page === "source") body = html`<${SourcePage} sourceKey=${view.key} watched=${watched} setWatched=${setWatched} openFamily=${openFamily} openClause=${openClause} back=${back} />`;
+  else if (view.page === "family") body = html`<${FamilyPage} famKey=${view.key} open=${open} back=${back} />`;
+  else if (view.page === "clause") body = html`<${ClausePage} id=${view.id} back=${back} open=${open} />`;
+  else body = html`<div class="layout"><${Facets} facets=${facets} filters=${filters} setFilters=${setFilters} /><${SourceTable} filters=${filters} watched=${watched} open=${open} openFamily=${openFamily} /></div>`;
+
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L1 · sources of law</span></div>
+      <div class="spacer"></div>
+      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/sources">Explorer</a><a class="navlink active" href="/l1">L1</a>
+      <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main"><h1 class="visually-hidden">L1 — Sources and clauses</h1>
+      <div class="tabs">
+        ${[["sources", "Sources"], ["changes", "Change feed"], ["watchlist", `Watchlist (${watched.size})`], ["scorecard", "Scorecard"]].map(([k, label]) =>
+          html`<button key=${k} class=${tab === k ? "on" : ""} onClick=${() => { setTab(k); if (k === "sources") back(); }}>${label}</button>`)}
+      </div>
+      ${body}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "adapter": "sec_enforcement",
+  "source_key": "golden/sec_enforcement",
+  "title": "SEC enforcement actions",
+  "url": "https://example.invalid/golden",
+  "html": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\"><channel><title>SEC Litigation Releases</title><link>https://www.sec.gov/litigation/litreleases</link>\n<item><title>SEC v. Acme Advisors LLC</title><link>https://www.sec.gov/litigation/litreleases/lr-26012</link><pubDate>Tue, 30 Apr 2024 00:00:00 EDT</pubDate>\n<description>Lit. Rel. No. 26012. The SEC charged Acme Advisors LLC with violating Exchange Act Rule 15l-1 and 17 CFR 248.30; the firm agreed to pay a $1,200,000 civil penalty.</description></item>\n<item><title>SEC v. Jane Doe</title><link>https://www.sec.gov/litigation/litreleases/lr-26013</link><pubDate>Fri, 3 May 2024 00:00:00 EDT</pubDate>\n<description>Lit. Rel. No. 26013. Final judgment against Jane Doe, a former CFO, ordering disgorgement of $800,000 and barring her from serving as an officer or director.</description></item>\n</channel></rss>",
+  "clauses": [
+    {
+      "ref": "lr-26012",
+      "text": "SEC v. Acme Advisors LLC https://www.sec.gov/litigation/litreleases/lr-26012 Tue, 30 Apr 2024 00:00:00 EDT Lit. Rel. No. 26012. The SEC charged Acme Advisors LLC with violating Exchange Act Rule 15l-1 and 17 CFR 248.30; the firm agreed to pay a $1,200,000 civil penalty."
+    },
+    {
+      "ref": "lr-26013",
+      "text": "SEC v. Jane Doe https://www.sec.gov/litigation/litreleases/lr-26013 Fri, 3 May 2024 00:00:00 EDT Lit. Rel. No. 26013. Final judgment against Jane Doe, a former CFO, ordering disgorgement of $800,000 and barring her from serving as an officer or director."
+    }
+  ]
+}

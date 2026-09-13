@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · L8 Fills & benchmarks</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* L8 browser (HLD v2 §4.8, I9): what exists is public — which blocks carry fills and at
+     which maturity, which benchmark metrics publish for how many cohorts. The content
+     (fill text, cohort statistics) is member content and renders only in member or
+     instance mode; the agnostic view says so instead of pretending it is empty. */
+  main { position: relative; z-index: 1; max-width: 1500px; margin: 22px auto; padding: 0 20px 70px; }
+  .layout { display: grid; grid-template-columns: 300px 1fr; gap: 18px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .side { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 16px; align-self: start; position: sticky; top: 74px; }
+  .side h2, .panelx h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .side h2:first-child { margin-top: 0; }
+  label { font-size: 12px; color: var(--muted); display: block; margin: 8px 0 3px; }
+  input, select { border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); box-sizing: border-box; }
+  .side input, .side select { width: 100%; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-color: var(--edge-bright); background: var(--panel-strong); }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .name { color: var(--accent); font-weight: 600; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; text-align: left; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; border: 1px solid transparent; }
+  .badge.k { background: var(--panel-strong); color: var(--muted); border-color: var(--edge); }
+  .badge.m-draft { background: var(--ind-800); color: var(--ind-100); }
+  .badge.m-reviewed { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.m-endorsed { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.p-agent { background: var(--panel-strong); color: var(--muted); border-color: var(--edge); }
+  .badge.p-contributor { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .badge.p-member_benchmark { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.mode { background: rgba(129,140,248,0.16); color: var(--accent); border-color: var(--edge-bright); }
+  .panelx { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+  .panelx h2 { margin: 0 0 6px; font-size: 17px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .score .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
+  .score .kpi b { display: block; font-size: 20px; }
+  .score .kpi span { font-size: 11.5px; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .crumbs button { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+  .spin { color: var(--muted); padding: 30px; text-align: center; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; }
+  .gate { border: 1px dashed var(--edge-bright); border-radius: 12px; padding: 14px 16px; background: var(--panel-strong); font-size: 13.5px; }
+  .gate h3 { margin: 0 0 6px; font-size: 13px; letter-spacing: 0; text-transform: none; color: var(--ink); }
+  pre.fill { white-space: pre-wrap; font: inherit; font-size: 13.5px; line-height: 1.5; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 12px 14px; margin: 0; }
+  .hist { display: flex; align-items: flex-end; gap: 3px; height: 54px; }
+  .hist i { display: block; flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 1px; }
+  .why { font-size: 13px; } .why code { font-family: var(--mono); font-size: 12px; }
+  dl.method { display: grid; grid-template-columns: 220px 1fr; gap: 6px 14px; font-size: 13.5px; }
+  dl.method dt { color: var(--muted); } dl.method dd { margin: 0; }
+  ol.steps { padding-left: 20px; font-size: 13.5px; } ol.steps li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = (p, opts) => fetch(p, opts).then(async (r) => {
+  if (!r.ok) { const t = await r.text(); let d = t; try { d = JSON.parse(t).detail; } catch (e) {} const err = new Error(typeof d === "string" ? d : (d && d.message) || r.statusText); err.status = r.status; err.detail = d; throw err; }
+  return r.json();
+});
+const qs = (o) => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+const num = (v, d = 2) => (v == null ? "—" : Number(v).toFixed(d));
+const label = (k) => String(k || "").replace(/_/g, " ");
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const Maturity = ({ m }) => html`<span class=${"badge m-" + m}>${m}</span>`;
+const Prov = ({ p }) => html`<span class=${"badge p-" + p}>${label(p)}</span>`;
+const Kind = ({ k }) => html`<span class="badge k">${label(k)}</span>`;
+
+const MembersGate = ({ mode }) => html`<div class="gate" role="status">
+  <h3>Member content</h3>
+  <p>L8 fill content and benchmark statistics are open to members (HLD v2 I9 — open by mode, not by layer). This view shows what exists: which blocks carry fills, at which maturity, and which metrics publish for how many cohorts.</p>
+  <p>${mode && mode.signed_in ? "You are signed in but not a member of this deployment." : html`<a class="navlink" href="/contribute">Sign in</a> or ask a maintainer for membership.`} Mode: <span class="badge mode">${(mode && mode.mode) || "agnostic"}</span></p>
+</div>`;
+
+// ------------------------------------------------------------------ fills
+
+function FillContent({ f }) {
+  const c = f.content || {};
+  if (f.kind === "text") return html`<pre class="fill">${c.text || ""}</pre>`;
+  if (f.kind === "numeric") return html`<div class="score"><div class="kpi"><b>${c.value} ${c.unit}</b><span>${c.stated ? "stated in an obligation" : "default — no obligation states a figure"}</span></div>
+    <div class="kpi"><b>${(c.range || []).join(" – ")}</b><span>range</span></div><div class="kpi" style=${{ gridColumn: "1 / -1" }}><span>basis</span><div>${c.basis}</div></div></div>`;
+  if (f.kind === "item_set") return html`<table class="reg"><thead><tr><th>Item</th><th>Threshold</th><th>Note</th><th>Obligation</th></tr></thead>
+    <tbody>${(c.items || []).map((it, i) => html`<tr key=${i}><td>${it.name}</td><td>${it.threshold == null ? "—" : it.threshold}</td><td>${it.note}</td><td class="mono">${it.obligation || ""}</td></tr>`)}</tbody></table>`;
+  if (f.kind === "workflow") return html`<ol class="steps">${(c.steps || []).map((s, i) => html`<li key=${i}><b>${s.name}</b> — ${s.role} → ${s.output} ${s.obligation ? html`<span class="mono">${s.obligation}</span>` : null}</li>`)}</ol>`;
+  return html`<pre class="fill">${JSON.stringify(c, null, 2)}</pre>`;
+}
+
+function FillPage({ id, back }) {
+  const [f, setF] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { setF(null); api(`/l8/fills/${encodeURIComponent(id)}`).then(setF).catch((e) => setErr(String(e.message))); }, [id]);
+  if (err) return html`<div class="panelx"><div class="crumbs"><button onClick=${back}>← fills</button></div><p class="bad">${err}</p></div>`;
+  if (!f) return html`<div class="spin">Loading…</div>`;
+  return html`<div>
+    <div class="crumbs"><button onClick=${back}>← fills</button> · <span class="mono">${f.id}</span> v${f.version}</div>
+    <section class="panelx"><h2>${f.title}</h2>
+      <div class="meta"><span><${Maturity} m=${f.maturity} /></span><span><${Prov} p=${f.provenance} /></span><span><${Kind} k=${f.kind} /></span>
+        <span>block <a class="navlink" href=${"/l3#" + f.block_id}>${f.block_id}</a></span><span>slot <b>${label(f.slot)}</b></span>
+        <span>rubric <b>${f.rubric_score == null ? "—" : num(f.rubric_score, 3)}</b></span><span>model <b>${f.model}</b></span>
+        ${(f.jurisdictions || []).map((j) => html`<span key=${j} class="badge k">${j}</span>`)}</div>
+      <${FillContent} f=${f} />
+      ${f.drift ? html`<p class="warn">Re-derived after drift: ${f.drift.reason} (previous maturity ${f.drift.previous_maturity || "—"}).</p>` : null}
+    </section>
+    <section class="panelx"><h3>Traces to</h3><p class="mono">${(f.obligation_ids || []).join(" · ") || "—"}</p>
+      ${f.why ? html`<h3>Why</h3><div class="why"><p>${f.why.reasoning_summary}</p><p><code>${f.why.id}</code> · ${f.why.agent_id} · ${f.why.skill_version} · confidence ${num(f.why.confidence, 2)}</p></div>` : null}
+    </section>
+    <section class="panelx"><h3>Reviews (${(f.reviews || []).length})</h3>
+      ${(f.reviews || []).length ? html`<table class="reg"><thead><tr><th>Reviewer</th><th>Decision</th><th>Score</th><th>Rubric</th><th>Note</th></tr></thead>
+        <tbody>${f.reviews.map((r) => html`<tr key=${r.id}><td>${r.reviewer}</td><td>${r.decision}</td><td>${num(r.score, 3)}</td><td class="mono">${Object.entries(r.rubric || {}).map(([k, v]) => `${k}=${v}`).join(" ")}</td><td>${r.note}</td></tr>`)}</tbody></table>` : html`<p class="empty">No review yet — drafts become <i>reviewed</i> or <i>endorsed</i> (≥ 85 % rubric) through expert review.</p>`}
+    </section></div>`;
+}
+
+function Fills({ mode, openFill }) {
+  const [avail, setAvail] = useState(null);
+  const [rows, setRows] = useState(null);
+  const [block, setBlock] = useState(decodeURIComponent(location.hash.slice(1)).match(/^BLK-/) ? decodeURIComponent(location.hash.slice(1)) : "");
+  const [maturity, setMaturity] = useState("");
+  const [err, setErr] = useState("");
+  const member = mode && mode.mode !== "agnostic";
+  useEffect(() => { api("/l8/availability").then(setAvail).catch((e) => setErr(String(e.message))); }, []);
+  useEffect(() => {
+    if (!member) { setRows(null); return; }
+    api(`/l8/fills?${qs({ block, maturity })}`).then((r) => setRows(r.fills)).catch((e) => setErr(String(e.message)));
+  }, [member, block, maturity]);
+  return html`<div class="layout">
+    <aside class="side" aria-label="Fill filters">
+      <h2>Block</h2>
+      <label for="blk">Block id</label>
+      <select id="blk" value=${block} onChange=${(e) => { setBlock(e.target.value); history.replaceState(null, "", "#" + (e.target.value || "fills")); }}>
+        <option value="">All blocks</option>${((avail && avail.blocks) || []).map((b) => html`<option key=${b.block_id} value=${b.block_id}>${b.block_id} · ${b.fills} fill${b.fills === 1 ? "" : "s"}</option>`)}
+      </select>
+      <label for="mat">Maturity</label>
+      <select id="mat" value=${maturity} onChange=${(e) => setMaturity(e.target.value)}>
+        <option value="">any</option>${["draft", "reviewed", "endorsed"].map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+      </select>
+      <h2>Mode</h2><p><span class="badge mode">${(mode && mode.mode) || "…"}</span></p>
+    </aside>
+    <div>
+      ${err ? html`<p class="bad">${err}</p>` : null}
+      <section class="panelx"><h2>Fills available</h2>
+        <p class="mono">${avail ? avail.note : ""}</p>
+        ${avail && avail.blocks.length ? html`<table class="reg"><thead><tr><th>Block</th><th>Fills</th><th>Endorsed</th><th>Slots</th></tr></thead>
+          <tbody>${avail.blocks.filter((b) => !block || b.block_id === block).map((b) => html`<tr key=${b.block_id}><td><a class="navlink" href=${"/l3#" + b.block_id}>${b.block_id}</a></td><td>${b.fills}</td><td>${b.endorsed}</td>
+            <td>${b.slots.map((s, i) => html`<span key=${i} style=${{ marginRight: "8px" }}><${Kind} k=${s.slot} /> <${Maturity} m=${s.maturity} /></span>`)}</td></tr>`)}</tbody></table>` : html`<p class="empty">${avail ? "No fills drafted yet — the nightly fleet drafts one per standard slot of every current block." : "Loading…"}</p>`}
+      </section>
+      ${!member ? html`<${MembersGate} mode=${mode} />` : rows === null ? html`<div class="spin">Loading…</div> ` : html`<section class="panelx"><h2>Fill content</h2>
+        ${rows.length ? html`<table class="reg"><thead><tr><th>Fill</th><th>Block · slot</th><th>Kind</th><th>Maturity</th><th>Provenance</th><th>Rubric</th></tr></thead>
+          <tbody>${rows.map((f) => html`<tr key=${f.id}><td><button class="name" onClick=${() => openFill(f.id)}>${f.title}</button><div class="mono">${f.id} v${f.version}</div></td>
+            <td><span class="mono">${f.block_id}</span> · ${label(f.slot)}</td><td><${Kind} k=${f.kind} /></td><td><${Maturity} m=${f.maturity} /></td><td><${Prov} p=${f.provenance} /></td><td>${f.rubric_score == null ? "—" : num(f.rubric_score, 3)}</td></tr>`)}</tbody></table>` : html`<p class="empty">No fills match.</p>`}
+      </section>`}
+    </div></div>`;
+}
+
+// ------------------------------------------------------------------ benchmarks
+
+function Benchmarks({ mode }) {
+  const [sum, setSum] = useState(null);
+  const [rows, setRows] = useState(null);
+  const [metric, setMetric] = useState("");
+  const [err, setErr] = useState("");
+  const [form, setForm] = useState({ cohort_key: "", metric: "", value: "" });
+  const [sent, setSent] = useState("");
+  const member = mode && mode.mode !== "agnostic";
+  useEffect(() => { api("/l8/summary").then((s) => setSum(s.benchmarks)).catch((e) => setErr(String(e.message))); }, []);
+  useEffect(() => { if (!member) return; api(`/l8/benchmarks?${qs({ metric })}`).then((r) => setRows(r.aggregates)).catch((e) => setErr(String(e.message))); }, [member, metric, sent]);
+  const submit = (e) => {
+    e.preventDefault(); setSent("");
+    api("/l8/benchmarks/inputs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, value: Number(form.value) }) })
+      .then((r) => setSent(r.note)).catch((er) => setErr(String(er.message)));
+  };
+  return html`<div class="layout">
+    <aside class="side" aria-label="Benchmark filters">
+      <h2>Metric</h2>
+      <label for="met">Metric</label>
+      <select id="met" value=${metric} onChange=${(e) => setMetric(e.target.value)}>
+        <option value="">any</option>${((sum && sum.metrics) || []).map((m) => html`<option key=${m.metric} value=${m.metric}>${m.label}</option>`)}
+      </select>
+      <h2>Privacy</h2><p class="mono">k ≥ ${sum ? sum.k_min : 5} distinct members per cohort · Laplace ε = ${sum ? sum.epsilon : 1}</p>
+      <p class="mono">Observations are stored under an HMAC of your identity and are never served — only cohort aggregates leave L8.</p>
+    </aside>
+    <div>
+      ${err ? html`<p class="bad">${err}</p>` : null}
+      <section class="panelx"><h2>Metrics publishing</h2>
+        ${sum ? html`<table class="reg"><thead><tr><th>Metric</th><th>Unit</th><th>Cohorts publishing</th><th>Cohorts collecting</th></tr></thead>
+          <tbody>${sum.metrics.map((m) => html`<tr key=${m.metric}><td>${m.label}<div class="mono">${m.metric}</div></td><td>${m.unit}</td><td>${m.published_cohorts}</td><td>${m.cohorts_collecting}</td></tr>`)}</tbody></table>` : html`<p class="spin">Loading…</p>`}
+      </section>
+      ${!member ? html`<${MembersGate} mode=${mode} />` : html`<section class="panelx"><h2>Cohort aggregates</h2>
+        ${rows === null ? html`<p class="spin">Loading…</p>` : rows.length ? rows.map((a) => html`<div key=${a.id} class="panelx" style=${{ margin: "10px 0" }}>
+          <div class="meta"><span class="mono">${a.id} v${a.version}</span><span>cohort <b>${a.cohort_key}</b></span><span><b>${a.label}</b></span><span>n = <b>${a.n}</b> (k ${a.k_threshold})</span><span>ε <b>${a.epsilon}</b></span></div>
+          <div class="score"><div class="kpi"><b>${num(a.statistics.mean, 1)} ${a.unit}</b><span>mean (noised)</span></div><div class="kpi"><b>${num(a.statistics.p50, 1)}</b><span>p50 (bucket midpoint)</span></div>
+            <div class="kpi"><b>${num(a.statistics.p90, 1)}</b><span>p90 (bucket midpoint)</span></div><div class="kpi"><b>${num(a.statistics.min_bucket, 0)} – ${num(a.statistics.max_bucket, 0)}</b><span>occupied range</span></div></div>
+          ${a.statistics.histogram ? html`<div class="hist" role="img" aria-label=${"noised histogram, " + a.statistics.histogram.length + " buckets"}>${a.statistics.histogram.map((c, i) => html`<i key=${i} style=${{ height: `${Math.max(2, (c / Math.max(...a.statistics.histogram, 1)) * 100)}%` }}></i>`)}</div>` : null}
+        </div>`) : html`<p class="empty">No cohort has reached k = ${sum ? sum.k_min : 5} distinct members yet. Nothing below k is published — not even n.</p>`}
+      </section>
+      <section class="panelx"><h2>Contribute an observation</h2>
+        <form onSubmit=${submit} aria-label="Benchmark observation">
+          <label for="ck">Cohort key</label><input id="ck" placeholder="UK|payments|retail" value=${form.cohort_key} onInput=${(e) => setForm({ ...form, cohort_key: e.target.value })} required />
+          <label for="fm">Metric</label><select id="fm" value=${form.metric} onChange=${(e) => setForm({ ...form, metric: e.target.value })} required>
+            <option value="">choose…</option>${((sum && sum.metrics) || []).map((m) => html`<option key=${m.metric} value=${m.metric}>${m.label} (${m.unit})</option>`)}</select>
+          <label for="fv">Value</label><input id="fv" type="number" step="any" value=${form.value} onInput=${(e) => setForm({ ...form, value: e.target.value })} required />
+          <p><button class="btn" type="submit">Submit</button></p>
+        </form>
+        ${sent ? html`<p class="ok" role="status">${sent}</p>` : null}
+      </section>`}
+    </div></div>`;
+}
+
+// ------------------------------------------------------------------ method
+
+function MethodTab() {
+  const [s, setS] = useState(null);
+  useEffect(() => { api("/l8/summary").then(setS); }, []);
+  if (!s) return html`<div class="spin">Loading…</div>`;
+  const f = s.fills, m = s.method;
+  return html`<div>
+    <section class="panelx"><h2>Fills</h2>
+      <div class="score">${Object.entries(f.by_maturity).map(([k, v]) => html`<div key=${k} class="kpi"><b>${v}</b><span>${k}</span></div>`)}
+        <div class="kpi"><b>${f.endorsed_mean_rubric == null ? "—" : num(f.endorsed_mean_rubric, 3)}</b><span>mean rubric of endorsed (gate ≥ ${m.rubric_min})</span></div></div>
+      <dl class="method"><dt>Kinds</dt><dd>${m.kinds.join(", ")}</dd><dt>Provenance</dt><dd>${m.provenances.map(label).join(", ")}</dd>
+        <dt>Rubric criteria</dt><dd>${m.rubric_criteria.map(label).join(", ")} — each 0..1, mean ≥ ${m.rubric_min} endorses</dd>
+        <dt>Drift</dt><dd>A fill whose block or obligation text changes is re-derived as a new draft version; the previous version stays on the record.</dd>
+        <dt>Traceability</dt><dd>Every fill names its L3 block and the obligations that require it; the <code>l8_traceability</code> gate demands 100 %.</dd></dl>
+    </section>
+    <section class="panelx"><h2>Benchmarks</h2>
+      <dl class="method"><dt>k-anonymity</dt><dd>A cohort publishes only with ≥ ${m.k_min} distinct members; below k nothing is published, not even n.</dd>
+        <dt>Differential privacy</dt><dd>Laplace(1/ε) noise on a fixed histogram over the metric's catalogue bounds; mean and percentiles are post-processing on the bucket grid, so no raw value is echoed.</dd>
+        <dt>Differencing</dt><dd>Two cohorts on one metric whose member sets differ by fewer than k are never both published.</dd>
+        <dt>Gate</dt><dd><code>l8_reidentification</code>: k-anonymity, raw echo, differencing and identity-in-store checks over every current aggregate.</dd>
+        <dt>Method</dt><dd><code>${m.version}</code></dd></dl>
+    </section></div>`;
+}
+
+// ------------------------------------------------------------------ app
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [mode, setMode] = useState(null);
+  const initial = decodeURIComponent(location.hash.slice(1));
+  const [tab, setTab] = useState(["benchmarks", "method"].includes(initial) ? initial : "fills");
+  const [view, setView] = useState(/^FIL-/.test(initial) ? { page: "fill", id: initial } : { page: "list" });
+  useEffect(() => { api("/l8/mode").then(setMode).catch(() => setMode({ mode: "agnostic", signed_in: false })); }, []);
+  const openFill = (id) => { setView({ page: "fill", id }); history.replaceState(null, "", "#" + id); };
+  const back = () => { setView({ page: "list" }); history.replaceState(null, "", "#" + tab); };
+  useEffect(() => {
+    const apply = () => {
+      const h = decodeURIComponent(location.hash.slice(1));
+      if (/^FIL-/.test(h)) setView({ page: "fill", id: h });
+      else if (["fills", "benchmarks", "method"].includes(h)) { setTab(h); setView({ page: "list" }); }
+    };
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  let body;
+  if (view.page === "fill") body = html`<${FillPage} id=${view.id} back=${back} />`;
+  else if (tab === "benchmarks") body = html`<${Benchmarks} mode=${mode} />`;
+  else if (tab === "method") body = html`<${MethodTab} />`;
+  else body = html`<${Fills} mode=${mode} openFill=${openFill} />`;
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L8 · fills & benchmarks</span></div>
+      <div class="spacer"></div>
+      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink" href="/l6">L6</a><a class="navlink" href="/l7">L7</a><a class="navlink active" href="/l8">L8</a>
+      <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main"><h1 class="visually-hidden">L8 — Fills and member benchmarks</h1>
+      <div class="tabs">
+        ${[["fills", "Fills"], ["benchmarks", "Benchmarks"], ["method", "Method & gates"]].map(([k, l]) =>
+          html`<button key=${k} class=${tab === k && view.page === "list" ? "on" : ""} onClick=${() => { setTab(k); setView({ page: "list" }); history.replaceState(null, "", "#" + k); }}>${l}</button>`)}
+      </div>
+      ${body}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

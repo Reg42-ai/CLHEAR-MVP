@@ -1,0 +1,262 @@
+{
+  "suite": "l4_applicability",
+  "description": "Golden applicability predicates (HLD v2 §4.4). Each case is an L2 obligation (jurisdiction + the structured subject / condition L2 produced, or the duty sentence when L2 has not split it) and the set of applies_to predicates L4 must derive, in the shared predicate language ({attribute: value | [any-of] | '*' | bool}). Precision and recall are computed over predicates across all cases; gate >= 0.95 each. Values are ontology names from curated/l4_ontology.json.",
+  "cases": [
+    {
+      "id": "uk-firm-client-money",
+      "obligation": {
+        "jurisdiction": "UK",
+        "subject": "A firm",
+        "condition": "that holds client money",
+        "statement": "A firm that holds client money must reconcile its client money records at least once every business day."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "UK"
+        },
+        {
+          "authorisations": "*"
+        },
+        {
+          "products": "client money holding"
+        }
+      ],
+      "note": "'A firm' names a regulated organisation without saying which authorisation: any authorisation ('*'), never an invented licence."
+    },
+    {
+      "id": "eu-casp-custody",
+      "obligation": {
+        "jurisdiction": "EU",
+        "subject": "Crypto-asset service providers providing custody and administration of crypto-assets on behalf of clients",
+        "condition": "",
+        "statement": "Crypto-asset service providers providing custody and administration of crypto-assets on behalf of clients shall keep a register of positions."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "EU"
+        },
+        {
+          "authorisations": "CASP (MiCA)"
+        },
+        {
+          "crypto_services": true
+        },
+        {
+          "products": [
+            "crypto custody",
+            "custody of client assets"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "uk-emi-safeguarding",
+      "obligation": {
+        "jurisdiction": "UK",
+        "subject": "An electronic money institution",
+        "condition": "",
+        "statement": "An electronic money institution must safeguard funds received in exchange for electronic money that has been issued."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "UK"
+        },
+        {
+          "authorisations": "E-money institution (Electronic Money Regulations 2011)"
+        },
+        {
+          "products": "e-money issuance"
+        }
+      ]
+    },
+    {
+      "id": "eu-dora-financial-entity",
+      "obligation": {
+        "jurisdiction": "EU",
+        "subject": "Financial entities",
+        "condition": "",
+        "statement": "Financial entities shall have in place an internal governance and control framework that ensures an effective and prudent management of ICT risk."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "EU"
+        },
+        {
+          "financial_entity_dora": true
+        }
+      ]
+    },
+    {
+      "id": "eu-gdpr-controller",
+      "obligation": {
+        "jurisdiction": "EU",
+        "subject": "The controller",
+        "condition": "where a type of processing is likely to result in a high risk",
+        "statement": "Where a type of processing is likely to result in a high risk to the rights and freedoms of natural persons, the controller shall carry out a data protection impact assessment."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "EU"
+        },
+        {
+          "data_footprint": "*"
+        }
+      ]
+    },
+    {
+      "id": "eu-investment-firm-retail-cfds",
+      "obligation": {
+        "jurisdiction": "EU",
+        "subject": "Investment firms",
+        "condition": "when marketing, distributing or selling contracts for differences to retail clients",
+        "statement": "Investment firms shall not market, distribute or sell contracts for differences to retail clients without leverage limits."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "EU"
+        },
+        {
+          "authorisations": "MiFID II investment firm authorisation"
+        },
+        {
+          "customer_base": "retail"
+        },
+        {
+          "products": "CFDs and leveraged derivatives"
+        }
+      ]
+    },
+    {
+      "id": "us-broker-dealer-finra-supervision",
+      "obligation": {
+        "jurisdiction": "US",
+        "subject": "Each member",
+        "condition": "",
+        "statement": "Each member shall establish and maintain a system to supervise the activities of each associated person."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "US"
+        },
+        {
+          "authorisations": "FINRA member firm"
+        }
+      ]
+    },
+    {
+      "id": "us-broker-dealer-customer-protection",
+      "obligation": {
+        "jurisdiction": "US",
+        "subject": "Every broker or dealer",
+        "condition": "that carries customer accounts",
+        "statement": "Every broker or dealer shall promptly obtain and thereafter maintain the physical possession or control of all fully-paid securities and excess margin securities carried for the account of customers."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "US"
+        },
+        {
+          "authorisations": "SEC-registered broker-dealer (Exchange Act s.15(b))"
+        }
+      ]
+    },
+    {
+      "id": "uk-payment-institution-distance",
+      "obligation": {
+        "jurisdiction": "UK",
+        "subject": "A payment service provider",
+        "condition": "where the framework contract is concluded at a distance through electronic means",
+        "statement": "Where the framework contract is concluded at a distance, a payment service provider must provide the information in a durable medium."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "UK"
+        },
+        {
+          "authorisations": [
+            "Authorised payment institution (Payment Services Regulations 2017)",
+            "E-money institution (Electronic Money Regulations 2011)"
+          ]
+        },
+        {
+          "channels": "online and mobile app"
+        }
+      ]
+    },
+    {
+      "id": "uk-scope-clause-jurisdiction-only",
+      "note": "A generic duty with no subject cue narrows by jurisdiction only; inventing a licence here would be a precision failure.",
+      "obligation": {
+        "jurisdiction": "UK",
+        "subject": "",
+        "condition": "",
+        "statement": "Records required by this chapter must be retained for at least five years."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "UK"
+        }
+      ]
+    },
+    {
+      "id": "eu-intermediary-tied-agents",
+      "obligation": {
+        "jurisdiction": "EU",
+        "subject": "Investment firms",
+        "condition": "that appoint tied agents",
+        "statement": "Investment firms that appoint tied agents shall remain fully and unconditionally responsible for any action or omission of the tied agent."
+      },
+      "expected_predicates": [
+        {
+          "jurisdictions": "EU"
+        },
+        {
+          "authorisations": "MiFID II investment firm authorisation"
+        },
+        {
+          "channels": "introducing brokers and intermediaries"
+        }
+      ]
+    },
+    {
+      "id": "xx-unknown-jurisdiction-no-edge",
+      "note": "A synthetic source in an unknown jurisdiction gets no jurisdiction predicate (the ontology does not know it) but keeps subject cues.",
+      "obligation": {
+        "jurisdiction": "XX",
+        "subject": "A firm",
+        "condition": "",
+        "statement": "A firm must appoint a money laundering reporting officer."
+      },
+      "expected_predicates": [
+        {
+          "authorisations": "*"
+        }
+      ]
+    }
+  ],
+  "expected_obligations": [
+    {
+      "id": "eu-casp-profile-sees-mica-not-emrs",
+      "note": "Evaluated only when the listed obligations are present in the store (source keys from the L1 registry).",
+      "attributes": {
+        "jurisdictions": [
+          "EU"
+        ],
+        "authorisations": [
+          "CASP (MiCA)"
+        ],
+        "products": [
+          "crypto custody"
+        ],
+        "crypto_services": true,
+        "financial_entity_dora": true
+      },
+      "must_include_sources": [
+        "celex/32023R1114"
+      ],
+      "must_exclude_sources": [
+        "uksi/2011/99"
+      ]
+    }
+  ]
+}

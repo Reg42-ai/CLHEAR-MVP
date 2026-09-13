@@ -1,0 +1,21 @@
+{
+  "adapter": "bis_basel",
+  "source_key": "bis/basel/CRE20",
+  "title": "Basel Framework CRE20",
+  "url": "https://www.bis.org/basel_framework/chapter/CRE/20.htm",
+  "html": "<html><head><title>CRE20 - Standardised approach: individual exposures</title></head><body>\n<h1>CRE20 Standardised approach: individual exposures</h1>\n<h2>Exposures to sovereigns</h2>\n<p>CRE20.1 Exposures to sovereigns and their central banks will be risk weighted as follows.</p>\n<p>CRE20.2 At national discretion, a lower risk weight may be applied to banks' exposures to their sovereign of incorporation denominated in domestic currency and funded in that currency.</p>\n<h2>Exposures to banks</h2>\n<p>CRE20.16 For the purposes of calculating capital requirements, a bank exposure is defined as a claim on any financial institution that is licensed to take deposits from the public.</p>\n</body></html>",
+  "clauses": [
+    {
+      "ref": "CRE20.1",
+      "text": "Exposures to sovereigns and their central banks will be risk weighted as follows."
+    },
+    {
+      "ref": "CRE20.2",
+      "text": "At national discretion, a lower risk weight may be applied to banks' exposures to their sovereign of incorporation denominated in domestic currency and funded in that currency."
+    },
+    {
+      "ref": "CRE20.16",
+      "text": "For the purposes of calculating capital requirements, a bank exposure is defined as a claim on any financial institution that is licensed to take deposits from the public."
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+# requirements.lock — exact pins for CI and the release job (HLD v2 §7.1 dependency pinning).
+#
+# requirements.txt states the minimums developers need; this file is what builds run:
+#   pip install -r requirements.lock
+# Regenerate from a clean venv on Python 3.12 (the CI interpreter):
+#   python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt \
+#     && pip freeze --exclude-editable | grep -v -E '^(pip|setuptools|wheel)==' | sort -f > requirements.lock  (keep this header)
+# tests/test_supply_chain.py fails when a requirement is not pinned here or a pin is not exact.
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+beautifulsoup4==4.15.0
+boto3==1.43.93
+botocore==1.43.93
+certifi==2026.7.22
+cffi==2.1.1
+click==8.5.0
+cryptography==50.0.1
+fastapi==0.141.1
+graphql-core==3.2.12
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.19
+iniconfig==2.3.0
+jmespath==1.1.0
+mangum==0.22.0
+neo4j==6.3.0
+packaging==26.3
+pgvector==0.5.0
+pluggy==1.6.0
+psycopg-binary==3.3.5
+psycopg==3.3.5
+pycparser==3.0
+pydantic-settings==2.15.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+Pygments==2.21.0
+PyJWT==2.14.0
+pypdf==6.18.1
+pytest==9.1.1
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+pytz==2026.3.post1
+PyYAML==6.0.3
+s3transfer==0.19.2
+sentry-sdk==2.69.1
+six==1.17.0
+soupsieve==2.9.2
+SQLAlchemy==2.0.52
+starlette==1.6.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.7.0
+uvicorn==0.52.4

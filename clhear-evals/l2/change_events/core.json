@@ -1,0 +1,149 @@
+{
+  "suite": "l2_change_inference",
+  "description": "Golden L1 clause changes replayed through app.clhear.l2.change.infer_clause_change (HLD v2 §4.2). Each case gives the clause text before/after an L1 version change and the L2 change kind the registry must infer: added (new duty), updated (substantive wording change to an existing duty), revoked (duty withdrawn or clause removed), none (editorial or non-normative). expected_effective_date checks l1.change_detect date handling on the new text.",
+  "cases": [
+    {
+      "id": "add-new-duty-clause",
+      "ref": "4.1",
+      "old_text": null,
+      "new_text": "A firm must report every suspicious transaction to the competent authority within 3 business days of forming the suspicion, and must retain the report for 5 years.",
+      "expected_kind": "added",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "add-non-duty-clause",
+      "ref": "1.1",
+      "old_text": null,
+      "new_text": "This chapter applies to firms carrying on regulated activities from an establishment in the United Kingdom, including their appointed representatives.",
+      "expected_kind": "none"
+    },
+    {
+      "id": "remove-duty-clause",
+      "ref": "7.2",
+      "old_text": "An authorised person must not hold client money in an account that is not a designated client bank account, and must reconcile client money records at least once every business day.",
+      "new_text": null,
+      "expected_kind": "revoked",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "period-changed",
+      "ref": "4.2",
+      "old_text": "A firm must notify the regulator of any change to its senior management within 10 business days of the change taking effect, providing the information specified in the annex.",
+      "new_text": "A firm must notify the regulator of any change to its senior management within 5 business days of the change taking effect, providing the information specified in the annex.",
+      "expected_kind": "updated",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "modal-softened-to-guidance",
+      "note": "The registry holds binding obligations (must / shall / required). A 'must' downgraded to guidance 'should' is no longer an obligation: revoked, not updated.",
+      "ref": "5.3",
+      "old_text": "A payment institution must carry out an independent review of its safeguarding arrangements at least annually and must provide the review to the regulator on request.",
+      "new_text": "A payment institution should carry out an independent review of its safeguarding arrangements at least annually and should provide the review to the regulator on request.",
+      "expected_kind": "revoked",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "modal-must-to-shall",
+      "ref": "5.4",
+      "old_text": "A payment institution must carry out an independent review of its safeguarding arrangements at least annually and must provide the review to the regulator on request.",
+      "new_text": "A payment institution shall carry out an independent review of its safeguarding arrangements at least annually and shall provide the review to the regulator on request.",
+      "expected_kind": "updated",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "editorial-typo",
+      "ref": "6.1",
+      "old_text": "A firm must ensure that its financial promotions are fair, clear and not misleading, and must keep records of each approved financial promotion for at least 6 years from the date of approval.",
+      "new_text": "A firm must ensure that its financial promotions are fair, clear and not misleading, and must keep records of each approved financial promotion for at least 6 years from the date of the approval.",
+      "expected_kind": "none",
+      "expected_materiality": "editorial"
+    },
+    {
+      "id": "whitespace-only",
+      "ref": "6.2",
+      "old_text": "A firm must establish, implement and maintain adequate policies and procedures sufficient to ensure compliance of the firm with its obligations under the regulatory system.",
+      "new_text": "A firm must establish,  implement and maintain adequate policies and procedures\nsufficient to ensure compliance of the firm with its obligations under the regulatory system.",
+      "expected_kind": "none"
+    },
+    {
+      "id": "duty-introduced-into-descriptive-clause",
+      "ref": "2.4",
+      "old_text": "The register of controllers is maintained by the regulator and is available for inspection during ordinary business hours at the regulator's principal office.",
+      "new_text": "The register of controllers is maintained by the regulator. A firm must notify the regulator of every change in its controllers within 14 days of becoming aware of the change.",
+      "expected_kind": "added",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "duty-removed-clause-kept",
+      "ref": "2.5",
+      "old_text": "A firm must submit its annual controllers report to the regulator by 31 March each year, covering all controllers as at 31 December of the preceding year.",
+      "new_text": "The annual controllers report was previously submitted to the regulator by 31 March each year; from 2027 controller information is collected through the regulator's online portal.",
+      "expected_kind": "revoked",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "subject-changed",
+      "ref": "8.1",
+      "old_text": "A credit institution must hold own funds equal to at least 8 per cent of its total risk exposure amount at all times, calculated in accordance with Part Three.",
+      "new_text": "An investment firm must hold own funds equal to at least 8 per cent of its total risk exposure amount at all times, calculated in accordance with Part Three.",
+      "expected_kind": "updated",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "condition-added",
+      "ref": "8.2",
+      "old_text": "A firm must disclose the total remuneration of its material risk takers in its annual report, broken down by business area and by fixed and variable components.",
+      "new_text": "Where its total assets exceed EUR 5 billion, a firm must disclose the total remuneration of its material risk takers in its annual report, broken down by business area and by fixed and variable components.",
+      "expected_kind": "updated",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "amount-changed-with-effective-date",
+      "ref": "9.1",
+      "old_text": "A firm must hold professional indemnity insurance with a limit of indemnity of at least EUR 1,000,000 for a single claim and EUR 1,500,000 in aggregate per year.",
+      "new_text": "A firm must hold professional indemnity insurance with a limit of indemnity of at least EUR 1,300,380 for a single claim and EUR 1,924,560 in aggregate per year. This rule comes into force on 1 January 2027.",
+      "expected_kind": "updated",
+      "expected_materiality": "substantive",
+      "expected_effective_date": "2027-01-01"
+    },
+    {
+      "id": "non-duty-descriptive-rewording",
+      "ref": "1.2",
+      "old_text": "In this chapter, 'client' means a person to whom a firm provides, intends to provide or has provided a service in the course of carrying on a regulated activity.",
+      "new_text": "In this chapter, 'client' means any person to whom a firm provides, intends to provide or has provided a service in the course of carrying on a regulated activity or an ancillary service.",
+      "expected_kind": "none"
+    },
+    {
+      "id": "substantial-rewrite-same-duty",
+      "ref": "3.3",
+      "old_text": "A firm must have in place robust governance arrangements, including a clear organisational structure with well defined, transparent and consistent lines of responsibility.",
+      "new_text": "A firm must have in place robust governance arrangements, including a clear organisational structure with well defined, transparent and consistent lines of responsibility, effective processes to identify, manage, monitor and report the risks it is or might be exposed to, and adequate internal control mechanisms including sound administrative and accounting procedures and remuneration policies consistent with sound and effective risk management.",
+      "expected_kind": "updated",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "prohibition-to-permission",
+      "note": "A prohibition replaced by a permission ('may') withdraws the obligation: revoked.",
+      "ref": "10.4",
+      "old_text": "A firm must not pay or accept any fee, commission or non-monetary benefit in connection with the provision of an investment service to a client, other than a fee paid by the client.",
+      "new_text": "A firm may pay or accept a fee, commission or non-monetary benefit in connection with the provision of an investment service to a client where the payment is designed to enhance the quality of the service and is disclosed to the client.",
+      "expected_kind": "revoked",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "prohibition-narrowed",
+      "ref": "10.5",
+      "old_text": "A firm must not pay or accept any fee, commission or non-monetary benefit in connection with the provision of an investment service to a client, other than a fee paid by the client.",
+      "new_text": "A firm must not pay or accept any fee, commission or non-monetary benefit in connection with the provision of portfolio management to a retail client, other than a fee paid by the client.",
+      "expected_kind": "updated",
+      "expected_materiality": "substantive"
+    },
+    {
+      "id": "unchanged-identical",
+      "ref": "11.1",
+      "old_text": "A firm must keep records of all services, activities and transactions undertaken by it which are sufficient to enable the regulator to fulfil its supervisory tasks.",
+      "new_text": "A firm must keep records of all services, activities and transactions undertaken by it which are sufficient to enable the regulator to fulfil its supervisory tasks.",
+      "expected_kind": "none"
+    }
+  ]
+}

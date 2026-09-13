@@ -1,0 +1,101 @@
+{
+  "suite": "l6_reference",
+  "description": "Expert-authored reference programs for the POC profiles (HLD v2 §4.6). Each case maps the blocks a compliance expert would put in the program to the obligations that justify them; agreement is the F1 between the composed program and the reference over the obligations the reference addresses, with blocks whose justification is not live in the store reported as out of scope. Annex G (Meridian Markets) golden programs are a handoff artefact and slot in as a further file in this folder once received.",
+  "cases": [
+    {
+      "id": "uk-emi",
+      "name": "UK e-money institution — MLRs 2017 + UK GDPR programme",
+      "author": "Reg42 compliance review, 2026-09",
+      "requires_sources": ["uksi/2017/692", "celex/32016R0679"],
+      "attributes": {
+        "jurisdictions": ["UK"],
+        "authorisations": ["E-money institution (Electronic Money Regulations 2011)"],
+        "products": ["e-money issuance", "payment accounts", "card programmes"],
+        "customer_base": ["retail", "SME"],
+        "data_footprint": "large-scale personal data",
+        "crypto_services": false,
+        "financial_entity_dora": false
+      },
+      "activities": null,
+      "expected": {
+        "BLK-CDD-PROGRAMME": ["OBL:uksi/2017/692#regulation-27", "OBL:uksi/2017/692#regulation-28"],
+        "BLK-EDD-HIGH-RISK": ["OBL:uksi/2017/692#regulation-33"],
+        "BLK-BUSINESS-RISK-ASSESSMENT": ["OBL:uksi/2017/692#regulation-18"],
+        "BLK-AML-GOVERNANCE": ["OBL:uksi/2017/692#regulation-19", "OBL:uksi/2017/692#regulation-21"],
+        "BLK-RECORDS-RETENTION": ["OBL:uksi/2017/692#regulation-40", "OBL:celex/32016R0679#art_30"],
+        "BLK-PRIVACY-BY-DESIGN": ["OBL:celex/32016R0679#art_5", "OBL:celex/32016R0679#art_6", "OBL:celex/32016R0679#art_25", "OBL:celex/32016R0679#art_35", "OBL:celex/32016R0679#art_37"],
+        "BLK-BREACH-RESPONSE": ["OBL:celex/32016R0679#art_33"],
+        "BLK-INFOSEC-BASELINE": ["OBL:celex/32016R0679#art_32"]
+      },
+      "forbidden_blocks": ["BLK-CRYPTO-CUSTODY", "BLK-ICT-RESILIENCE"]
+    },
+    {
+      "id": "eu-casp",
+      "name": "EU crypto-asset service provider — MiCA + DORA + AMLR + GDPR programme",
+      "author": "Reg42 compliance review, 2026-09",
+      "requires_sources": ["celex/32023R1114", "celex/32022R2554", "celex/32024R1624", "celex/32016R0679"],
+      "attributes": {
+        "jurisdictions": ["EU"],
+        "authorisations": ["CASP (MiCA)"],
+        "products": ["crypto custody", "crypto exchange"],
+        "customer_base": ["retail", "professional"],
+        "data_footprint": "large-scale personal data",
+        "crypto_services": true,
+        "financial_entity_dora": true
+      },
+      "activities": null,
+      "expected": {
+        "BLK-CRYPTO-CUSTODY": ["OBL:celex/32023R1114#art_62", "OBL:celex/32023R1114#art_68", "OBL:celex/32023R1114#art_70"],
+        "BLK-ICT-RESILIENCE": ["OBL:celex/32022R2554#art_5", "OBL:celex/32022R2554#art_6", "OBL:celex/32022R2554#art_28"],
+        "BLK-BREACH-RESPONSE": ["OBL:celex/32022R2554#art_17", "OBL:celex/32022R2554#art_19", "OBL:celex/32016R0679#art_33"],
+        "BLK-CDD-PROGRAMME": ["OBL:celex/32024R1624#art_20"],
+        "BLK-PRIVACY-BY-DESIGN": ["OBL:celex/32016R0679#art_5", "OBL:celex/32016R0679#art_6", "OBL:celex/32016R0679#art_25", "OBL:celex/32016R0679#art_35", "OBL:celex/32016R0679#art_37"],
+        "BLK-INFOSEC-BASELINE": ["OBL:celex/32016R0679#art_32"],
+        "BLK-RECORDS-RETENTION": ["OBL:celex/32016R0679#art_30"]
+      },
+      "forbidden_blocks": ["BLK-EDD-HIGH-RISK", "BLK-BUSINESS-RISK-ASSESSMENT"]
+    },
+    {
+      "id": "uk-retail-broker",
+      "name": "UK retail equities broker with client money — MLRs 2017 programme",
+      "author": "Reg42 compliance review, 2026-09",
+      "requires_sources": ["uksi/2017/692"],
+      "attributes": {
+        "jurisdictions": ["UK"],
+        "authorisations": ["UK MiFID investment firm (Part 4A permission)", "Client money permission (CASS)"],
+        "products": ["equities brokerage", "client money holding"],
+        "customer_base": ["retail"],
+        "data_footprint": "",
+        "crypto_services": false,
+        "financial_entity_dora": false
+      },
+      "activities": null,
+      "expected": {
+        "BLK-CDD-PROGRAMME": ["OBL:uksi/2017/692#regulation-27", "OBL:uksi/2017/692#regulation-28"],
+        "BLK-EDD-HIGH-RISK": ["OBL:uksi/2017/692#regulation-33"],
+        "BLK-BUSINESS-RISK-ASSESSMENT": ["OBL:uksi/2017/692#regulation-18"],
+        "BLK-AML-GOVERNANCE": ["OBL:uksi/2017/692#regulation-19", "OBL:uksi/2017/692#regulation-21"],
+        "BLK-RECORDS-RETENTION": ["OBL:uksi/2017/692#regulation-40"]
+      },
+      "forbidden_blocks": ["BLK-CRYPTO-CUSTODY", "BLK-ICT-RESILIENCE", "BLK-PRIVACY-BY-DESIGN"]
+    },
+    {
+      "id": "uk-emi-onboarding-only",
+      "name": "UK EMI — onboarding and monitoring activities only (activity-scoped program)",
+      "author": "Reg42 compliance review, 2026-09",
+      "requires_sources": ["uksi/2017/692"],
+      "attributes": {
+        "jurisdictions": ["UK"],
+        "authorisations": ["E-money institution (Electronic Money Regulations 2011)"],
+        "products": ["e-money issuance", "payment accounts"],
+        "customer_base": ["retail"],
+        "data_footprint": ""
+      },
+      "activities": ["ACT-ONBOARD-CUSTOMER", "ACT-MONITOR-TRANSACTIONS"],
+      "expected": {
+        "BLK-CDD-PROGRAMME": ["OBL:uksi/2017/692#regulation-27", "OBL:uksi/2017/692#regulation-28"]
+      },
+      "forbidden_blocks": ["BLK-EDD-HIGH-RISK", "BLK-CRYPTO-CUSTODY", "BLK-PRIVACY-BY-DESIGN"]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "adapter": "iosco",
+  "source_key": "iosco/objectives-principles",
+  "title": "IOSCO Objectives and Principles",
+  "url": "https://www.iosco.org/library/pubdocs/pdf/IOSCOPD561.pdf",
+  "pages": [
+    "A. Principles Relating to the Regulator\n1. The responsibilities of the Regulator should be clear and objectively stated.\n2. The Regulator should be operationally independent and accountable in the exercise of its functions and powers.\nB. Principles for Self-Regulation\n9. Where the regulatory system makes use of Self-Regulatory Organizations (SROs) that exercise some direct oversight responsibility for their respective areas of competence, such SROs should be subject to the oversight of the Regulator."
+  ],
+  "clauses": [
+    {
+      "ref": "P.1",
+      "text": "The responsibilities of the Regulator should be clear and objectively stated."
+    },
+    {
+      "ref": "P.2",
+      "text": "The Regulator should be operationally independent and accountable in the exercise of its functions and powers."
+    },
+    {
+      "ref": "P.9",
+      "text": "Where the regulatory system makes use of Self-Regulatory Organizations (SROs) that exercise some direct oversight responsibility for their respective areas of competence, such SROs should be subject to the oversight of the Regulator."
+    }
+  ]
+}

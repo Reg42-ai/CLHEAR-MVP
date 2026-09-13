@@ -1,0 +1,23 @@
+{
+  "adapter": "mas",
+  "source_key": "sg/mas-aml-sfa04-n02",
+  "title": "MAS Notice SFA04-N02",
+  "url": "https://www.mas.gov.sg/example.pdf",
+  "pages": [
+    "4 Risk Assessment and Risk Mitigation\n4.1 A CMI shall take appropriate steps to identify, assess and understand its money laundering and terrorism financing risks in relation to its customers, the countries or jurisdictions its customers are from or in, and the products, services, transactions and delivery channels of the CMI.\n4.2 The appropriate steps referred to in paragraph 4.1 shall include documenting the CMI's risk assessments.\n6 Customer Due Diligence\n6.1 No CMI shall open or maintain an anonymous account or an account in a fictitious name."
+  ],
+  "clauses": [
+    {
+      "ref": "4.1",
+      "text": "A CMI shall take appropriate steps to identify, assess and understand its money laundering and terrorism financing risks in relation to its customers, the countries or jurisdictions its customers are from or in, and the products, services, transactions and delivery channels of the CMI."
+    },
+    {
+      "ref": "4.2",
+      "text": "The appropriate steps referred to in paragraph 4.1 shall include documenting the CMI's risk assessments."
+    },
+    {
+      "ref": "6.1",
+      "text": "No CMI shall open or maintain an anonymous account or an account in a fictitious name."
+    }
+  ]
+}

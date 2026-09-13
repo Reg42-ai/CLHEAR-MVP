@@ -1,0 +1,23 @@
+{
+  "adapter": "irs_gov",
+  "source_key": "irs/qi-agreement",
+  "title": "Rev. Proc. 2022-43",
+  "url": "https://www.irs.gov/pub/irs-drop/rp-22-43.pdf",
+  "pages": [
+    "SECTION 1. PURPOSE\n.01 This revenue procedure sets forth the final qualified intermediary (QI) withholding agreement.\n.02 The QI agreement in this revenue procedure applies to QI agreements effective on or after January 1, 2023.\nSECTION 3. EFFECTIVE DATE\n.01 This revenue procedure is effective January 1, 2023."
+  ],
+  "clauses": [
+    {
+      "ref": "sec1.01",
+      "text": "This revenue procedure sets forth the final qualified intermediary (QI) withholding agreement."
+    },
+    {
+      "ref": "sec1.02",
+      "text": "The QI agreement in this revenue procedure applies to QI agreements effective on or after January 1, 2023."
+    },
+    {
+      "ref": "sec3.01",
+      "text": "This revenue procedure is effective January 1, 2023."
+    }
+  ]
+}

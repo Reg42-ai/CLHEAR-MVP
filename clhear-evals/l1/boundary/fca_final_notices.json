@@ -1,0 +1,21 @@
+{
+  "adapter": "fca_enforcement",
+  "source_key": "golden/fca_enforcement",
+  "title": "FCA final notices",
+  "url": "https://example.invalid/golden",
+  "html": "<html><head><title>Final notices | FCA</title></head><body>\n<nav><a href=\"/\">Home</a> <a href=\"/news\">News</a></nav>\n<h1>Final notices</h1>\n<ul class=\"search-results\">\n<li class=\"search-item\"><h3><a href=\"/publication/final-notices/northbridge-capital-2024.pdf\">Northbridge Capital Ltd</a></h3>\n<p class=\"date\">12 March 2024</p>\n<p>The FCA fined Northbridge Capital Ltd £4,650,000 for breaching SYSC 6.1.1R and SYSC 6.3.1R between January 2019 and March 2022.</p></li>\n<li class=\"search-item\"><h3><a href=\"/publication/final-notices/john-smith-2023.pdf\">Mr John Smith</a></h3>\n<p class=\"date\">3 July 2023</p>\n<p>Prohibition order against Mr John Smith, a former director, for lack of integrity in breach of Principle 1 (APER).</p></li>\n<li class=\"search-item\"><h3><a href=\"/publication/final-notices/beta-bank-2022.pdf\">Beta Bank plc</a></h3>\n<p class=\"date\">1 February 2022</p>\n<p>Public censure of Beta Bank plc for failings under regulations 28(2) and 33 of the MLRs 2017.</p></li>\n</ul>\n<footer>© FCA</footer>\n</body></html>",
+  "clauses": [
+    {
+      "ref": "northbridge-capital-2024",
+      "text": "Northbridge Capital Ltd 12 March 2024 The FCA fined Northbridge Capital Ltd £4,650,000 for breaching SYSC 6.1.1R and SYSC 6.3.1R between January 2019 and March 2022."
+    },
+    {
+      "ref": "john-smith-2023",
+      "text": "Mr John Smith 3 July 2023 Prohibition order against Mr John Smith, a former director, for lack of integrity in breach of Principle 1 (APER)."
+    },
+    {
+      "ref": "beta-bank-2022",
+      "text": "Beta Bank plc 1 February 2022 Public censure of Beta Bank plc for failings under regulations 28(2) and 33 of the MLRs 2017."
+    }
+  ]
+}

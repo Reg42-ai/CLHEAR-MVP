@@ -1,0 +1,23 @@
+{
+  "adapter": "isa",
+  "source_key": "il/securities-law-5728",
+  "title": "Securities Law 5728-1968",
+  "url": "https://www.isa.gov.il/example.pdf",
+  "pages": [
+    "Chapter A: Interpretation\n1. In this Law -\n\"security\" means certificates issued in series by a company, a cooperative society or any other corporation.\nChapter E: Prospectus\n15. No offer to the public shall be made except in accordance with a prospectus whose publication the Authority has permitted.\n15A. Notwithstanding section 15, an offer to the public may be made without a prospectus in the cases set out in this section."
+  ],
+  "clauses": [
+    {
+      "ref": "s1",
+      "text": "In this Law -\n\"security\" means certificates issued in series by a company, a cooperative society or any other corporation."
+    },
+    {
+      "ref": "s15",
+      "text": "No offer to the public shall be made except in accordance with a prospectus whose publication the Authority has permitted."
+    },
+    {
+      "ref": "s15A",
+      "text": "Notwithstanding section 15, an offer to the public may be made without a prospectus in the cases set out in this section."
+    }
+  ]
+}

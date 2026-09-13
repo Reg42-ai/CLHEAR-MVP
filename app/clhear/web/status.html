@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Status</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* Public status page (HLD v2 §7.1): SLOs with their current value, per-layer
+     freshness against the ≤ 24 h / 48 h targets, per-layer gate status, the release
+     in force. Reads /status.json — the same document the Upptime probe polls, so
+     the page and the uptime history can never disagree. */
+  main { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: clamp(26px, 4vw, 36px); margin: 0 0 6px; letter-spacing: -0.02em; }
+  .lead { color: var(--muted); margin: 0 0 16px; max-width: 820px; }
+  .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 18px 20px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 17px; }
+  .overall { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+  .dot.operational { background: var(--ok); } .dot.degraded { background: var(--warn); } .dot.outage { background: var(--bad); }
+  .overall b { font-size: 20px; text-transform: capitalize; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; border: 1px solid var(--edge); color: var(--muted); white-space: nowrap; }
+  .badge.ok { color: var(--ok); border-color: var(--ok); } .badge.bad { color: var(--bad); border-color: var(--bad); } .badge.empty { color: var(--faint); }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .note { color: var(--muted); font-size: 13px; }
+  .empty { color: var(--muted); font-size: 13.5px; padding: 12px 0; }
+  .kpis { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 6px 12px; font-size: 12.5px; color: var(--muted); }
+  .kpi b { color: var(--ink); margin-right: 4px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const age = (s) => s == null ? "—" : s < 3600 ? `${Math.round(s / 60)} min` : s < 86400 * 2 ? `${(s / 3600).toFixed(1)} h` : `${(s / 86400).toFixed(1)} d`;
+const pct = (r) => r == null ? "—" : `${(r * 100).toFixed(r >= 0.99 ? 2 : 1)} %`;
+const slo = (s) => s.unit === "seconds" ? `≤ ${age(s.target)}` : `≥ ${pct(s.target)}`;
+const cur = (s) => s.unit === "seconds" ? age(s.current) : pct(s.current);
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [st, setSt] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = () => fetch("/status.json").then((r) => r.json()).then(setSt).catch((e) => setErr(String(e)));
+  useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, []);
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark"><b>CLHEAR</b><span>status</span></div><div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink" href="/explore">Explore</a><a class="navlink" href="/evals">Evals</a><a class="navlink" href="/security">Security</a><a class="navlink active" href="/status">Status</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main">
+      <h1>Is CLHEAR up, current and green?</h1>
+      <p class="lead">Service objectives with their live values, freshness of every layer against its target, and the evaluation gates on the release in force. Measured from the data itself, not from a heartbeat.</p>
+      ${err ? html`<p class="empty" role="alert">Could not load status: ${err}</p>` : null}
+      ${!st ? html`<p class="empty">Loading…</p>` : html`
+        <section class="card" aria-labelledby="overall">
+          <div class="overall"><span class=${"dot " + st.status} aria-hidden="true"></span><b id="overall">${st.status}</b>
+            <span class="note">release <span class="mono">${(st.release && st.release.id) || "live"}</span> · as of ${new Date(st.generated_at).toLocaleString()}</span></div>
+          <div class="kpis">${Object.entries(st.last_24h.fleet_runs).map(([f, n]) => html`<span key=${f} class="kpi"><b>${n}</b>${f} runs / 24 h</span>`)}
+            ${Object.entries(st.last_24h.audit).map(([a, n]) => html`<span key=${a} class="kpi"><b>${n}</b>${a}</span>`)}</div>
+        </section>
+        <section class="card" aria-labelledby="slos">
+          <h2 id="slos">Service level objectives</h2>
+          <table class="reg"><thead><tr><th scope="col">Objective</th><th scope="col">Target</th><th scope="col">Now</th><th scope="col">Met</th><th scope="col">Measured by</th></tr></thead>
+          <tbody>${st.slos.map((s) => html`<tr key=${s.name}><td>${s.description}</td><td>${slo(s)}</td><td>${cur(s)}</td><td><span class=${"badge " + (s.met ? "ok" : "bad")}>${s.met ? "met" : "missed"}</span></td><td class="mono">${s.measured_by}</td></tr>`)}</tbody></table>
+        </section>
+        <div class="grid">
+          <section class="card" aria-labelledby="fresh">
+            <h2 id="fresh">Freshness by layer</h2>
+            <table class="reg"><thead><tr><th scope="col">Layer</th><th scope="col">Newest row</th><th scope="col">Age</th><th scope="col">Target</th><th scope="col">State</th></tr></thead>
+            <tbody>${Object.entries(st.freshness).map(([l, f]) => html`<tr key=${l}><td><b>${l}</b></td><td class="mono">${f.latest ? f.latest.slice(0, 16).replace("T", " ") : "—"}</td><td>${age(f.age_seconds)}</td><td>≤ ${age(f.slo_seconds)}</td>
+              <td>${f.empty ? html`<span class="badge empty">no rows</span>` : html`<span class=${"badge " + (f.ok ? "ok" : "bad")}>${f.ok ? "fresh" : "stale"}</span>`}</td></tr>`)}</tbody></table>
+          </section>
+          <section class="card" aria-labelledby="gates">
+            <h2 id="gates">Evaluation gates</h2>
+            <table class="reg"><thead><tr><th scope="col">Layer</th><th scope="col">Gate</th><th scope="col">Suites</th></tr></thead>
+            <tbody>${Object.entries(st.gates).map(([l, g]) => html`<tr key=${l}><td><b>${l}</b></td><td><span class=${"badge " + (g.passed ? "ok" : "bad")}>${g.passed ? "passed" : g.missing.length ? "not run" : "failed"}</span></td>
+              <td>${Object.entries(g.suites).map(([s, ok]) => html`<span key=${s} class=${"badge " + (ok ? "ok" : "bad")} style="margin:2px">${s}</span>`)}${g.missing.map((s) => html`<span key=${s} class="badge empty" style="margin:2px">${s}</span>`)}</td></tr>`)}</tbody></table>
+            <p class="note">Method and per-suite scores: <a class="navlink" href="/evals">evals dashboard</a>. Raw series: <a class="navlink" href="/metrics">/metrics</a>.</p>
+          </section>
+        </div>
+        <section class="card" aria-labelledby="dr">
+          <h2 id="dr">Disaster-recovery drill</h2>
+          ${!st.dr || st.dr.age_seconds === null ? html`<p class="empty">No restore drill recorded yet.</p>` : html`
+            <div class="kpis"><span class="kpi"><b><span class=${"badge " + (st.dr.passed ? "ok" : "bad")}>${st.dr.status}</span></b>last drill</span>
+              <span class="kpi"><b>${age(st.dr.age_seconds)} ago</b>finished ${new Date(st.dr.finished_at).toLocaleString()} (target ≤ ${age(st.dr.max_age_seconds)})</span>
+              <span class="kpi"><b>${age(st.dr.rpo_seconds)}</b>recovery point (target ≤ ${age(st.dr.targets.rpo_seconds)})</span>
+              <span class="kpi"><b>${age(st.dr.rto_seconds)}</b>recovery time (target ≤ ${age(st.dr.targets.rto_seconds)})</span></div>
+            <p class="note">${Object.entries(st.dr.checks || {}).map(([k, ok]) => html`<span key=${k} class=${"badge " + (ok ? "ok" : "bad")} style="margin:2px">${k}</span>`)}
+              — record restored into a scratch database and compared row-for-row; graph projection rebuilt from the restored record and checksum-matched; datalake replica sampled in the second region.</p>`}
+        </section>
+        <p class="note">Uptime history is kept by an independent Upptime probe of <span class="mono">/status.json</span> (five-minute cadence, 30-day availability). Disaster-recovery restores of Postgres and the Neo4j projection are rehearsed nightly by a scheduled job; the last drill result is part of the SOC 2 evidence pack on the <a class="navlink" href="/security">security page</a>.</p>`}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

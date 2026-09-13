@@ -1,0 +1,130 @@
+/* ============ CLHEAR shared design language — futurist dark-first ============
+   Indigo / pearl / mint (Solon reference) as glass + luminous edges.
+   Linked by stack.html and sources.html; light theme via [data-theme=light]. */
+:root {
+  --ind-950: #07071a; --ind-900: #0c0c26; --ind-800: #14143a; --ind-700: #4338ca;
+  --ind-500: #6366f1; --ind-400: #818cf8; --ind-200: #c7d2fe; --ind-100: #e0e7ff;
+  --mint-400: #34d399; --mint-600: #059669;
+  --amber-400: #fbbf24; --amber-600: #d97706;
+  --rose-400: #fb7185; --rose-600: #e11d48;
+  --canvas: var(--ind-950);
+  --panel: rgba(255,255,255,0.035);
+  --panel-strong: rgba(255,255,255,0.06);
+  --edge: rgba(129,140,248,0.22);
+  --edge-bright: rgba(129,140,248,0.55);
+  /* --faint is the dimmest text we allow: 6.7:1 on --canvas and still 4.5:1 on a
+     card (--panel-strong) nested in a --panel over the accent glow (WCAG 1.4.3) */
+  --ink: #eef0ff; --muted: #9c9fc6; --faint: #9093bb;
+  --accent: var(--ind-400); --on-accent: #0b0b1f;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --glow: 0 0 24px rgba(99,102,241,0.18);
+  /* status hues used by both apps */
+  --ok: var(--mint-400); --warn: var(--amber-400); --bad: var(--rose-400);
+}
+[data-theme="light"] {
+  --canvas: #f6f5f1;
+  --panel: rgba(255,255,255,0.72);
+  --panel-strong: #ffffff;
+  --edge: #e3e1d8;
+  --edge-bright: #c7d2fe;
+  --ink: #17163a; --muted: #6b6a8a; --faint: #5f5e82;
+  --accent: #4f46e5; --on-accent: #ffffff;
+  --glow: 0 4px 20px rgba(30,27,75,0.07);
+  /* darker status hues: the 400/600 shades fail 4.5:1 on a light canvas */
+  --ok: #047857; --warn: #92400e; --bad: #be123c;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--canvas); color: var(--ink);
+  font: 15px/1.55 "Inter", -apple-system, "Segoe UI", Roboto, Helvetica, sans-serif;
+  min-height: 100vh;
+}
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(900px 500px at 80% -10%, rgba(99,102,241,0.13), transparent 60%),
+    radial-gradient(700px 500px at 10% 110%, rgba(5,150,105,0.08), transparent 60%);
+}
+[data-theme="light"] body::before { opacity: 0.5; }
+a { color: var(--accent); text-decoration: none; }
+/* links inside running text must not rely on colour alone (1.4.1) */
+p a, li a, td a, small a, .foot a, .empty a, .meta a, dd a { text-decoration: underline; text-underline-offset: 2px; }
+a.btn, a.navlink, a.chip, a.mode, a.bigbtn { text-decoration: none; }
+::selection { background: rgba(99,102,241,0.35); }
+
+/* ------------------------------------------------ accessibility (WCAG 2.2 AA) */
+/* keyboard-first: every focusable element shows a visible ring (2.4.7 / 2.4.11) */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+button:focus-visible, [role="button"]:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+/* skip link (2.4.1 bypass blocks): hidden until focused */
+.skip { position: absolute; left: 8px; top: -60px; z-index: 100; padding: 8px 14px; border-radius: 8px;
+        background: var(--accent); color: var(--on-accent); font-weight: 700; transition: top .15s; }
+.skip:focus { top: 8px; }
+/* text for screen readers only */
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+                   clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* minimum target size for pointer controls (2.5.8) */
+button, .navlink, .chip, .themebtn { min-height: 24px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+/* ------------------------------------------------------------ shared chrome */
+header.appbar {
+  position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 16px;
+  padding: 13px 26px; backdrop-filter: blur(14px);
+  background: color-mix(in srgb, var(--canvas) 72%, transparent);
+  border-bottom: 1px solid var(--edge);
+}
+.wordmark { display: flex; align-items: baseline; gap: 10px; cursor: pointer; user-select: none; }
+.wordmark b {
+  font-size: 17px; letter-spacing: 0.22em; font-weight: 800;
+  background: linear-gradient(90deg, var(--ind-200), var(--ind-400) 60%, var(--mint-400));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+[data-theme="light"] .wordmark b {
+  background: linear-gradient(90deg, var(--ind-700), var(--ind-500));
+  -webkit-background-clip: text; background-clip: text;
+}
+.wordmark span { font-size: 11.5px; color: var(--muted); letter-spacing: 0.08em; }
+.appbar .spacer { flex: 1; }
+.navlink { font-size: 13px; color: var(--muted); padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+.navlink:hover { color: var(--ink); background: var(--panel-strong); }
+.navlink.active { color: var(--ink); background: var(--panel-strong); border: 1px solid var(--edge); }
+.themebtn {
+  border: 1px solid var(--edge); background: var(--panel); color: var(--muted);
+  border-radius: 999px; padding: 5px 14px; font-size: 12px; cursor: pointer;
+}
+
+/* ------------------------------------------------------------- shared atoms */
+.panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 20px 22px; }
+.panel h4 {
+  margin: 0 0 12px; font-size: 11.5px; letter-spacing: 0.2em; color: var(--faint);
+  text-transform: uppercase; font-weight: 700;
+}
+.chip {
+  font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--edge);
+  border-radius: 999px; padding: 3px 11px; color: var(--muted); background: var(--panel-strong);
+}
+.led { display: inline-flex; align-items: center; gap: 7px; border-radius: 999px; padding: 3px 12px;
+       font-size: 11px; font-weight: 700; letter-spacing: 0.14em; }
+.led i { width: 7px; height: 7px; border-radius: 50%; }
+.led.live { background: rgba(52,211,153,0.12); color: var(--ok); }
+.led.live i { background: var(--ok); box-shadow: 0 0 9px var(--ok); animation: ledblink 2.4s infinite; }
+.led.demo, .led.derived, .led.curated { background: rgba(251,191,36,0.12); color: var(--warn); }
+.led.demo i, .led.derived i, .led.curated i { background: var(--warn); }
+.led.computed { background: rgba(129,140,248,0.14); color: var(--accent); }
+.led.computed i { background: var(--accent); }
+.led.locked { background: rgba(251,113,133,0.10); color: var(--bad); }
+.led.locked i { background: var(--bad); }
+.led.validated { background: rgba(52,211,153,0.12); color: var(--ok); }
+.led.validated i { background: var(--ok); }
+@keyframes ledblink { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+.bigbtn {
+  display: inline-block; background: linear-gradient(92deg, var(--ind-700), var(--ind-500));
+  color: white; border: none; border-radius: 12px; padding: 11px 22px; font-size: 14px;
+  font-weight: 600; cursor: pointer; box-shadow: var(--glow);
+}
+.bigbtn:hover { filter: brightness(1.12); }
+.spin { text-align: center; color: var(--faint); padding: 60px 0; font-family: var(--mono);
+        letter-spacing: 0.2em; animation: ledblink 1.6s infinite; }

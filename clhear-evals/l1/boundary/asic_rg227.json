@@ -1,0 +1,23 @@
+{
+  "adapter": "asic",
+  "source_key": "au/asic-rg227",
+  "title": "ASIC RG 227",
+  "url": "https://download.asic.gov.au/example.pdf",
+  "pages": [
+    "A Overview\nRG 227.1 This guide is for issuers of over-the-counter (OTC) contracts for difference (CFDs) and similar products offered to retail investors.\nRG 227.2 It sets out seven disclosure benchmarks that issuers should address in their Product Disclosure Statement.\nB Disclosure benchmarks\nRG 227.20 Benchmark 1 — Client qualification: the issuer maintains and applies a written client qualification policy."
+  ],
+  "clauses": [
+    {
+      "ref": "RG 227.1",
+      "text": "This guide is for issuers of over-the-counter (OTC) contracts for difference (CFDs) and similar products offered to retail investors."
+    },
+    {
+      "ref": "RG 227.2",
+      "text": "It sets out seven disclosure benchmarks that issuers should address in their Product Disclosure Statement."
+    },
+    {
+      "ref": "RG 227.20",
+      "text": "Benchmark 1 — Client qualification: the issuer maintains and applies a written client qualification policy."
+    }
+  ]
+}

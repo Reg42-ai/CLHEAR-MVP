@@ -1,0 +1,17 @@
+[
+  {
+    "id": "FACT:mlr-cdd-velocity",
+    "text": "UK MLRs customer-due-diligence clauses are among the highest-churn obligations in the CLHEAR corpus.",
+    "version": "facts-v1"
+  },
+  {
+    "id": "FACT:mica-casp-scope",
+    "text": "MiCA CASP authorisation (Arts 59/62) is the EU crypto-services permission type; it is not a banking licence.",
+    "version": "facts-v1"
+  },
+  {
+    "id": "FACT:coverage-gap-weight",
+    "text": "CLHEAR risk-v1 weights coverage deficit at 0.6, churn pressure at 0.3, and unreviewed-derived ratio at 0.1.",
+    "version": "facts-v1"
+  }
+]

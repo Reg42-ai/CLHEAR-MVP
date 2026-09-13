@@ -1,0 +1,20 @@
+{
+  "name": "@clhear/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript client for the CLHEAR open compliance standard API",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" } },
+  "files": ["dist", "src", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": { "node": ">=18" },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "homepage": "https://clhear.org/build",
+  "keywords": ["compliance", "regulation", "clhear", "oscal"]
+}

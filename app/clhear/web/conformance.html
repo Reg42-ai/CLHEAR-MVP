@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Conformance</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* Conformance program (standard §7, Annex E): the four levels, the self-assessment
+     form for CL1/CL2 with live automated checks, the public register of marks (the
+     only authoritative list), the accredited assessor register, and the verifier
+     queue. Evidence references only — never artefacts or client data (I5). */
+  main { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: clamp(26px, 4vw, 36px); margin: 0 0 6px; letter-spacing: -0.02em; }
+  .lead { color: var(--muted); margin: 0 0 16px; max-width: 820px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .tab[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
+  .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 18px 20px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 17px; }
+  .card h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .grid { display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 12.5px; color: var(--muted); margin: 10px 0 4px; }
+  input, select, textarea { width: 100%; box-sizing: border-box; background: var(--panel-strong); color: var(--ink); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 10px; font: inherit; font-size: 13.5px; }
+  textarea { min-height: 70px; resize: vertical; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 7px 16px; font-size: 13px; cursor: pointer; text-decoration: none; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .btn.danger { background: rgba(251,113,133,0.14); border-color: var(--bad); }
+  .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; border: 1px solid var(--edge); color: var(--muted); white-space: nowrap; }
+  .badge.ok, .badge.granted { color: var(--ok); border-color: var(--ok); }
+  .badge.bad, .badge.withdrawn, .badge.declined { color: var(--bad); border-color: var(--bad); }
+  .badge.warn, .badge.expired, .badge.submitted, .badge.changes_requested { color: var(--warn); border-color: var(--warn); }
+  .badge.lvl { color: var(--accent); border-color: var(--edge-bright); font-weight: 600; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .name { color: var(--accent); font-weight: 600; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; text-align: left; }
+  .kpis { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 6px 12px; font-size: 12.5px; color: var(--muted); }
+  .kpi b { color: var(--ink); margin-right: 4px; }
+  .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
+  .note { color: var(--muted); font-size: 13px; }
+  .banner { border: 1px solid var(--warn); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; background: rgba(251,191,36,0.08); }
+  .check { display: flex; gap: 8px; align-items: baseline; font-size: 13px; padding: 4px 0; border-bottom: 1px dashed var(--edge); }
+  .check code { font-family: var(--mono); font-size: 12px; }
+  .levels { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+  .level { border: 1px solid var(--edge); border-radius: 12px; padding: 12px 14px; background: var(--panel-strong); font-size: 13.5px; }
+  .level b { display: block; font-size: 15px; margin-bottom: 4px; }
+  .level span { color: var(--muted); font-size: 12px; }
+  .item { border: 1px solid var(--edge); border-radius: 10px; padding: 8px 10px; margin: 6px 0; font-size: 13px; }
+  .item .hd { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .item .hd b { font-size: 13px; }
+  .item select, .item input { width: auto; min-width: 160px; font-size: 12.5px; padding: 5px 8px; }
+  .item .ev { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .empty { color: var(--muted); font-size: 13.5px; padding: 12px 0; }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .crumbs button { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+  dl.kv { display: grid; grid-template-columns: 170px 1fr; gap: 4px 12px; font-size: 13.5px; margin: 8px 0; }
+  dl.kv dt { color: var(--muted); } dl.kv dd { margin: 0; }
+  blockquote.stmt { border-left: 3px solid var(--edge-bright); margin: 8px 0; padding: 4px 12px; font-size: 13.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = async (url, opts) => {
+  const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
+  const text = await r.text();
+  let body = text; try { body = JSON.parse(text); } catch (e) {}
+  if (!r.ok) { const d = body && body.detail; throw Object.assign(new Error(typeof d === "string" ? d : (d && d.message) || r.statusText), { status: r.status }); }
+  return body;
+};
+const fmt = (d) => (d ? String(d).slice(0, 10) : "—");
+const today = () => new Date().toISOString().slice(0, 10);
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const Lvl = ({ l }) => html`<span class="badge lvl">${l}</span>`;
+const St = ({ s }) => html`<span class=${"badge " + s}>${String(s).replace(/_/g, " ")}</span>`;
+
+// ------------------------------------------------------------------ levels
+
+function Levels({ meta }) {
+  if (!meta) return html`<p class="empty">Loading…</p>`;
+  const byLevel = (l) => meta.criteria.filter((c) => c.level === l);
+  return html`<div>
+    <section class="card"><h2>Four levels, one register</h2>
+      <div class="levels">${meta.levels.map((l) => html`<div key=${l.level} class="level"><b>${l.mark}</b><span>${l.verification}</span><p style=${{ margin: "8px 0 0" }}>${l.summary}</p></div>`)}</div>
+      <p class="note" style=${{ marginTop: "10px" }}>Criteria version ${meta.version}. Marks are valid ${meta.validity_months} months and are granted only through this program (<a href="/governance">trademark policy</a>). Full texts: Annex E, the assessor guide and the marks policy ship in the public repo under <code>conformance/</code>.</p>
+    </section>
+    ${meta.levels.map((l) => html`<section key=${l.level} class="card"><h2><${Lvl} l=${l.level} /> ${l.name} — criteria</h2>
+      <table class="reg"><thead><tr><th>Id</th><th>Criterion</th><th>Evidence</th><th>Verified by</th></tr></thead>
+        <tbody>${byLevel(l.level).map((c) => html`<tr key=${c.id}><td class="mono">${c.id}</td><td><b>${c.title}</b><div class="note">${c.requirement}</div></td><td class="note">${c.evidence}</td><td>${c.verification}${c.automated_check ? html`<div class="mono">check: ${c.automated_check}</div>` : null}</td></tr>`)}</tbody></table>
+    </section>`)}</div>`;
+}
+
+// ------------------------------------------------------------------ self-assessment form
+
+function ItemRow({ it, bpItem, level, onChange }) {
+  const set = (patch) => onChange({ ...it, ...patch });
+  const ev = it.evidence || [];
+  const addEv = () => set({ evidence: [...ev, { ref: "", kind: "policy", obligation_ids: bpItem ? bpItem.obligations_satisfied || [] : [] }] });
+  const setEv = (i, patch) => set({ evidence: ev.map((e, j) => (j === i ? { ...e, ...patch } : e)) });
+  return html`<div class="item">
+    <div class="hd"><span class="mono">${it.item_id}</span><b>${bpItem ? bpItem.name : ""}</b>${bpItem ? html`<span class="badge">${bpItem.kind}</span>` : null}
+      <select aria-label=${"status of " + it.item_id} value=${it.status} onChange=${(e) => set({ status: e.target.value })}><option value="operated">operated</option><option value="out_of_scope">out of scope</option></select>
+      ${it.status === "operated" ? html`<input aria-label=${"owner of " + it.item_id} placeholder="owner (role)" value=${it.owner || ""} onInput=${(e) => set({ owner: e.target.value })} />`
+        : html`<input aria-label=${"reason " + it.item_id} placeholder="reason — a fact about the organisation" style=${{ minWidth: "320px" }} value=${it.reason || ""} onInput=${(e) => set({ reason: e.target.value })} />`}</div>
+    ${level === "CL2" && it.status === "operated" ? html`<div class="ev">
+      ${ev.map((e, i) => html`<span key=${i} style=${{ display: "inline-flex", gap: "4px" }}><input aria-label="evidence reference" placeholder="doc id / URL / hash" value=${e.ref} onInput=${(x) => setEv(i, { ref: x.target.value })} />
+        <select aria-label="evidence kind" value=${e.kind} onChange=${(x) => setEv(i, { kind: x.target.value })}>${["policy", "procedure_record", "system_configuration", "appointment", "minutes", "register", "report", "training_record", "other"].map((k) => html`<option key=${k} value=${k}>${k.replace(/_/g, " ")}</option>`)}</select></span>`)}
+      <button type="button" class="btn quiet" onClick=${addEv}>+ evidence</button>
+      ${bpItem && bpItem.obligations_satisfied && bpItem.obligations_satisfied.length ? html`<span class="mono">traces to ${bpItem.obligations_satisfied.length} obligation(s)</span>` : null}</div>` : null}
+  </div>`;
+}
+
+function SelfAssessment({ me, onSubmitted }) {
+  const [form, setForm] = useState({ organization: "", program: "", scope: "", release: "latest", blueprint_id: decodeURIComponent(location.hash.slice(1)).match(/^BLU-/) ? decodeURIComponent(location.hash.slice(1)) : "",
+    profile_confirmed: false, level_claimed: "CL1", items: [], change_tracking: { watchlist_id: "", last_reconciled_release: "" }, reconciliation_days: 30,
+    last_review: { date: today(), reviewer_role: "", outcome: "" }, signatory: { name: "", role: "", date: today() } });
+  const [bp, setBp] = useState(null);
+  const [bpErr, setBpErr] = useState("");
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState("");
+  const set = (patch) => setForm({ ...form, ...patch });
+  const loadBp = async () => {
+    setBpErr(""); setBp(null);
+    try {
+      const b = await api(`/l6/blueprints/${encodeURIComponent(form.blueprint_id)}`);
+      const items = (b.composition && b.composition.items || []).map((it) => ({ item_id: it.id, name: it.name || it.block_name || it.block_id, kind: it.kind, obligations_satisfied: it.obligations_satisfied || [] }));
+      setBp({ ...b, items });
+      setForm({ ...form, release: b.release || form.release, items: items.map((it) => ({ item_id: it.item_id, status: "operated", owner: "", evidence: [] })) });
+    } catch (e) { setBpErr(e.message); }
+  };
+  const submit = async (e) => {
+    e.preventDefault(); setErr(""); setResult(null);
+    const body = { ...form, reconciliation_days: Number(form.reconciliation_days) };
+    if (form.level_claimed === "CL1") { delete body.change_tracking; delete body.reconciliation_days; delete body.last_review; body.items = body.items.map((it) => ({ ...it, evidence: undefined })); }
+    try { const r = await api("/conformance/self-assessments", { method: "POST", body: JSON.stringify(body) }); setResult(r); onSubmitted && onSubmitted(r); history.replaceState(null, "", "#" + r.id); }
+    catch (ex) { setErr(ex.message); }
+  };
+  if (!me) return html`<div class="banner" role="status">Sign in to submit a self-assessment — <a href="/auth/google">Google</a> or <a href="/stack#signin">email link</a>. The levels and the register are open to everyone.</div>`;
+  if (result) return html`<${Result} r=${result} back=${() => setResult(null)} />`;
+  const bpItem = (id) => bp && bp.items.find((it) => it.item_id === id);
+  return html`<form class="card" onSubmit=${submit} aria-label="Annex E self-assessment">
+    <h2>Annex E self-assessment</h2>
+    <p class="note">Evidence goes in as <em>references</em> (document ids, URLs, hashes) — never the documents themselves. The program stores the form, the checks and the decision; nothing is deleted.</p>
+    <div class="grid" style=${{ gridTemplateColumns: "1fr 1fr" }}>
+      <div><label for="org">Organisation</label><input id="org" required value=${form.organization} onInput=${(e) => set({ organization: e.target.value })} />
+        <label for="prg">Program</label><input id="prg" required placeholder="e.g. AML/CTF program" value=${form.program} onInput=${(e) => set({ program: e.target.value })} /></div>
+      <div><label for="lvl">Level claimed</label><select id="lvl" value=${form.level_claimed} onChange=${(e) => set({ level_claimed: e.target.value })}><option value="CL1">CL1 Mapped</option><option value="CL2">CL2 Traceable</option></select>
+        <label for="rel">CLHEAR release</label><input id="rel" required value=${form.release} onInput=${(e) => set({ release: e.target.value })} /></div>
+    </div>
+    <label for="scope">Scope — entities, business lines, jurisdictions; exclusions with reasons (E.1.3)</label>
+    <textarea id="scope" required minlength="40" value=${form.scope} onInput=${(e) => set({ scope: e.target.value })}></textarea>
+    <label for="bp">Blueprint (BLU- id from <a href="/l6">L6</a>)</label>
+    <div class="row" style=${{ marginTop: 0 }}><input id="bp" required pattern="BLU-[0-9]{6}" style=${{ maxWidth: "220px" }} value=${form.blueprint_id} onInput=${(e) => set({ blueprint_id: e.target.value })} /><button type="button" class="btn quiet" onClick=${loadBp} disabled=${!/^BLU-\d{6}$/.test(form.blueprint_id)}>Load items</button>
+      ${bp ? html`<span class="note">${bp.items.length} items · coverage ${bp.composition && bp.composition.coverage_summary ? `${bp.composition.coverage_summary.covered}/${bp.composition.coverage_summary.total}` : "—"} · ${bp.status}</span>` : null}</div>
+    ${bpErr ? html`<div class="err" role="alert">${bpErr}</div>` : null}
+    <label style=${{ display: "flex", gap: "8px", alignItems: "center" }}><input type="checkbox" style=${{ width: "auto" }} checked=${form.profile_confirmed} onChange=${(e) => set({ profile_confirmed: e.target.checked })} /> I confirm the profile's predicates describe the organisation (E.1.2)</label>
+    <h3>Item mapping (E.2)</h3>
+    ${form.items.length ? form.items.map((it, i) => html`<${ItemRow} key=${it.item_id} it=${it} bpItem=${bpItem(it.item_id)} level=${form.level_claimed} onChange=${(n) => set({ items: form.items.map((x, j) => (j === i ? n : x)) })} />`)
+      : html`<p class="empty">Load the blueprint to list its items.</p>`}
+    ${form.level_claimed === "CL2" ? html`<h3>Change and governance (E.4, E.5)</h3>
+      <div class="grid" style=${{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+        <div><label for="wl">Watchlist / feed / SDK reference</label><input id="wl" value=${form.change_tracking.watchlist_id} onInput=${(e) => set({ change_tracking: { ...form.change_tracking, watchlist_id: e.target.value } })} /></div>
+        <div><label for="lr">Last reconciled release</label><input id="lr" value=${form.change_tracking.last_reconciled_release} onInput=${(e) => set({ change_tracking: { ...form.change_tracking, last_reconciled_release: e.target.value } })} /></div>
+        <div><label for="rd">Reconciliation window (days, ≤ 30)</label><input id="rd" type="number" min="0" max="365" value=${form.reconciliation_days} onInput=${(e) => set({ reconciliation_days: e.target.value })} /></div>
+        <div><label for="rvd">Last review date</label><input id="rvd" type="date" value=${form.last_review.date} onInput=${(e) => set({ last_review: { ...form.last_review, date: e.target.value } })} /></div>
+        <div><label for="rvr">Reviewer role</label><input id="rvr" value=${form.last_review.reviewer_role} onInput=${(e) => set({ last_review: { ...form.last_review, reviewer_role: e.target.value } })} /></div>
+        <div><label for="rvo">Outcome</label><input id="rvo" value=${form.last_review.outcome} onInput=${(e) => set({ last_review: { ...form.last_review, outcome: e.target.value } })} /></div>
+      </div>` : null}
+    <h3>Accountable signatory (E.5.2)</h3>
+    <div class="grid" style=${{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+      <div><label for="sn">Name</label><input id="sn" required value=${form.signatory.name} onInput=${(e) => set({ signatory: { ...form.signatory, name: e.target.value } })} /></div>
+      <div><label for="sr">Role</label><input id="sr" required value=${form.signatory.role} onInput=${(e) => set({ signatory: { ...form.signatory, role: e.target.value } })} /></div>
+      <div><label for="sd">Date</label><input id="sd" type="date" required value=${form.signatory.date} onInput=${(e) => set({ signatory: { ...form.signatory, date: e.target.value } })} /></div>
+    </div>
+    <div class="row"><button class="btn" type="submit" disabled=${!form.items.length || !form.profile_confirmed}>Submit and run the checks</button><span class="note">Submitted as ${me.email}</span></div>
+    ${err ? html`<div class="err" role="alert">${err}</div>` : null}
+  </form>`;
+}
+
+function Checks({ checks }) {
+  return html`<div>${checks.map((c) => html`<div key=${c.criterion} class="check"><span class=${"badge " + (c.ok ? "ok" : "bad")}>${c.ok ? "ok" : "fail"}</span><code>${c.criterion}</code><${Lvl} l=${c.level} /><b>${c.title}</b><span class="note">${c.detail}</span></div>`)}</div>`;
+}
+
+function Result({ r, back }) {
+  return html`<section class="card"><div class="crumbs">${back ? html`<button onClick=${back}>← form</button> · ` : null}<span class="mono">${r.id}</span></div>
+    <h2>${r.organization} — ${r.program} <${St} s=${r.status} /></h2>
+    <dl class="kv"><dt>Level claimed</dt><dd><${Lvl} l=${r.level_claimed} /></dd><dt>Level the checks support</dt><dd>${r.level_supported ? html`<${Lvl} l=${r.level_supported} />` : html`<span class="badge bad">none yet</span>`}</dd>
+      ${r.level_granted ? html`<dt>Granted</dt><dd><${Lvl} l=${r.level_granted} /> · register <a href=${"#" + r.mark_id}>${r.mark_id}</a></dd>` : null}
+      <dt>Release · blueprint</dt><dd>${r.release} · <span class="mono">${r.blueprint_id}</span></dd>
+      ${r.decided_by ? html`<dt>Decision</dt><dd>${r.status.replace(/_/g, " ")} by ${r.decided_by} on ${fmt(r.decided_at)}${r.decision_note ? " — " + r.decision_note : ""}</dd>` : null}</dl>
+    <h3>Automated checks (Annex E §E.4)</h3><${Checks} checks=${r.checks || []} />
+    <p class="note" style=${{ marginTop: "10px" }}>A program verifier now reads the mapping and exclusions and grants at most the level the checks support. You will see the decision here.</p>
+  </section>`;
+}
+
+// ------------------------------------------------------------------ register
+
+function Register({ open }) {
+  const [rows, setRows] = useState(null);
+  const [q, setQ] = useState("");
+  useEffect(() => { api(`/conformance/register${q ? "?organization=" + encodeURIComponent(q) : ""}`).then((r) => setRows(r.marks)); }, [q]);
+  return html`<section class="card"><h2>Register of marks</h2>
+    <p class="note">The only authoritative list of CLHEAR conformance marks. Withdrawn and expired marks stay listed. Verify any claim by its register id.</p>
+    <label for="q">Organisation</label><input id="q" style=${{ maxWidth: "320px" }} placeholder="search…" value=${q} onInput=${(e) => setQ(e.target.value)} />
+    ${rows === null ? html`<p class="empty">Loading…</p>` : rows.length ? html`<table class="reg" style=${{ marginTop: "10px" }}><thead><tr><th>Id</th><th>Mark</th><th>Organisation · program</th><th>Release · blueprint</th><th>Valid</th><th>Status</th></tr></thead>
+      <tbody>${rows.map((m) => html`<tr key=${m.id} id=${m.id}><td><button class="name" onClick=${() => open(m.id)}>${m.id}</button></td><td><${Lvl} l=${m.level} /> ${m.mark}</td><td><b>${m.organization}</b><div class="note">${m.program}</div></td><td class="mono">${m.release}<br/>${m.blueprint_id}</td><td>${fmt(m.valid_from)} → ${fmt(m.valid_to)}</td><td><${St} s=${m.status} /></td></tr>`)}</tbody></table>`
+      : html`<p class="empty">No marks granted yet. The first CL1 self-assessment by a design partner is the item 15 acceptance criterion.</p>`}
+  </section>`;
+}
+
+function MarkPage({ id, back }) {
+  const [m, setM] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { api(`/conformance/register/${id}`).then(setM).catch((e) => setErr(e.message)); }, [id]);
+  if (err) return html`<section class="card"><div class="crumbs"><button onClick=${back}>← register</button></div><p class="err">${err}</p></section>`;
+  if (!m) return html`<p class="empty">Loading…</p>`;
+  return html`<section class="card"><div class="crumbs"><button onClick=${back}>← register</button> · <span class="mono">${m.id}</span></div>
+    <h2><${Lvl} l=${m.level} /> ${m.mark} <${St} s=${m.status} /></h2>
+    <blockquote class="stmt">${m.statement}</blockquote>
+    <dl class="kv"><dt>Organisation</dt><dd>${m.organization}</dd><dt>Program</dt><dd>${m.program}</dd><dt>Scope</dt><dd>${m.scope}</dd><dt>Release · blueprint</dt><dd>${m.release} · <span class="mono">${m.blueprint_id}</span></dd>
+      <dt>Granted</dt><dd>${fmt(m.granted_at)} by ${m.assessor_id ? `accredited assessor #${m.assessor_id} (report ${m.report_ref}), recorded by ${m.granted_by}` : `program verifier ${m.granted_by}`}</dd>
+      ${m.period_start ? html`<dt>Assessed period</dt><dd>${fmt(m.period_start)} → ${fmt(m.period_end)}</dd>` : null}
+      <dt>Valid</dt><dd>${fmt(m.valid_from)} → ${fmt(m.valid_to)}</dd>
+      ${m.withdrawn_at ? html`<dt>Withdrawn</dt><dd>${fmt(m.withdrawn_at)} by ${m.withdrawn_by} — ${m.withdrawal_reason}</dd>` : null}
+      ${m.assessment_id ? html`<dt>Self-assessment</dt><dd class="mono">${m.assessment_id}</dd>` : null}</dl>
+  </section>`;
+}
+
+function Assessors() {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api("/conformance/assessors").then((r) => setRows(r.assessors)); }, []);
+  return html`<section class="card"><h2>Accredited assessors</h2>
+    <p class="note">CL3 and CL4 assessments are ISAE 3000 (Revised) engagements by assessors on this register, independent of the organisation and of Reg42. Accreditation is granted by the steering group for 24 months.</p>
+    ${rows === null ? html`<p class="empty">Loading…</p>` : rows.length ? html`<table class="reg"><thead><tr><th>#</th><th>Assessor</th><th>Firm</th><th>Jurisdiction</th><th>Licence</th><th>Valid to</th><th>Status</th></tr></thead>
+      <tbody>${rows.map((a) => html`<tr key=${a.id}><td class="mono">${a.id}</td><td>${a.name}</td><td>${a.firm}</td><td>${a.jurisdiction}</td><td class="mono">${a.licence_ref}</td><td>${fmt(a.valid_to)}</td><td><${St} s=${a.active ? "granted" : "withdrawn"} /></td></tr>`)}</tbody></table>`
+      : html`<p class="empty">No assessors accredited yet. Assessors: read <code>conformance/ASSESSOR_GUIDE.md</code> § 7 and write to conformance@clhear.org.</p>`}
+  </section>`;
+}
+
+// ------------------------------------------------------------------ mine + verifier queue
+
+function Mine({ open }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api("/conformance/self-assessments").then((r) => setRows(r.assessments)).catch(() => setRows([])); }, []);
+  if (rows === null) return html`<p class="empty">Loading…</p>`;
+  if (!rows.length) return html`<p class="empty">You have not submitted a self-assessment yet.</p>`;
+  return html`<table class="reg"><thead><tr><th>Id</th><th>Organisation · program</th><th>Claimed</th><th>Supported</th><th>Status</th><th>Submitted</th></tr></thead>
+    <tbody>${rows.map((r) => html`<tr key=${r.id}><td><button class="name" onClick=${() => open(r.id)}>${r.id}</button></td><td>${r.organization}<div class="note">${r.program}</div></td><td><${Lvl} l=${r.level_claimed} /></td><td>${r.level_supported ? html`<${Lvl} l=${r.level_supported} />` : "—"}</td><td><${St} s=${r.status} /></td><td>${fmt(r.created_at)}</td></tr>`)}</tbody></table>`;
+}
+
+function Queue({ open }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api("/conformance/queue").then((r) => setRows(r.assessments)).catch(() => setRows([])); }, []);
+  if (rows === null) return html`<p class="empty">Loading…</p>`;
+  return html`<section class="card"><h2>Awaiting verification (${rows.length})</h2>
+    ${rows.length ? html`<table class="reg"><thead><tr><th>Id</th><th>Organisation · program</th><th>Claimed</th><th>Supported</th><th>Submitted</th></tr></thead>
+      <tbody>${rows.map((r) => html`<tr key=${r.id}><td><button class="name" onClick=${() => open(r.id)}>${r.id}</button></td><td>${r.organization}<div class="note">${r.program}</div></td><td><${Lvl} l=${r.level_claimed} /></td><td>${r.level_supported ? html`<${Lvl} l=${r.level_supported} />` : html`<span class="badge bad">none</span>`}</td><td>${fmt(r.created_at)}</td></tr>`)}</tbody></table>` : html`<p class="empty">Nothing waiting.</p>`}
+  </section>`;
+}
+
+function AssessmentPage({ id, back, verifier }) {
+  const [r, setR] = useState(null);
+  const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
+  useEffect(() => { api(`/conformance/self-assessments/${id}`).then(setR).catch((e) => setErr(e.message)); }, [id]);
+  const decide = async (decision) => { setErr(""); try { setR(await api(`/conformance/self-assessments/${id}/decision`, { method: "POST", body: JSON.stringify({ decision, note }) })); } catch (e) { setErr(e.message); } };
+  if (err && !r) return html`<section class="card"><div class="crumbs"><button onClick=${back}>← back</button></div><p class="err">${err}</p></section>`;
+  if (!r) return html`<p class="empty">Loading…</p>`;
+  const items = (r.form && r.form.items) || [];
+  return html`<div><${Result} r=${r} back=${back} />
+    <section class="card"><h3>Mapping (${items.length} items)</h3>
+      <table class="reg"><thead><tr><th>Item</th><th>Status</th><th>Owner / reason</th><th>Evidence refs</th></tr></thead>
+        <tbody>${items.map((it) => html`<tr key=${it.item_id}><td class="mono">${it.item_id}</td><td>${it.status.replace(/_/g, " ")}</td><td>${it.status === "operated" ? it.owner : it.reason}</td><td class="mono">${(it.evidence || []).map((e) => e.ref).join(" · ")}</td></tr>`)}</tbody></table>
+    </section>
+    ${verifier && r.status === "submitted" ? html`<section class="card" aria-label="Verifier decision"><h2>Decision</h2>
+      <label for="dn">Note (visible to the submitter)</label><textarea id="dn" value=${note} onInput=${(e) => setNote(e.target.value)}></textarea>
+      <div class="row"><button class="btn" disabled=${!r.level_supported} onClick=${() => decide("grant")}>Grant ${r.level_supported || ""}</button><button class="btn quiet" onClick=${() => decide("request_changes")}>Request changes</button><button class="btn danger" onClick=${() => decide("decline")}>Decline</button></div>
+      ${err ? html`<div class="err" role="alert">${err}</div>` : null}</section>` : null}
+  </div>`;
+}
+
+// ------------------------------------------------------------------ app
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [meta, setMeta] = useState(null);
+  const [me, setMe] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const initial = decodeURIComponent(location.hash.slice(1));
+  const [tab, setTab] = useState(["levels", "assess", "register", "assessors", "mine", "queue"].includes(initial) ? initial : "levels");
+  const [open, setOpen] = useState(/^CF[AM]-/.test(initial) ? initial : "");
+  useEffect(() => { api("/conformance/levels").then(setMeta); api("/conformance/whoami").then(setMe); api("/conformance/summary").then(setSummary); }, []);
+  useEffect(() => {
+    const apply = () => { const h = decodeURIComponent(location.hash.slice(1)); if (/^CF[AM]-/.test(h)) setOpen(h); else if (["levels", "assess", "register", "assessors", "mine", "queue"].includes(h)) { setTab(h); setOpen(""); } };
+    window.addEventListener("hashchange", apply); return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  const go = (t) => { setTab(t); setOpen(""); history.replaceState(null, "", "#" + t); };
+  const openId = (id) => { setOpen(id); history.replaceState(null, "", "#" + id); };
+  let body;
+  if (open && /^CFM-/.test(open)) body = html`<${MarkPage} id=${open} back=${() => go("register")} />`;
+  else if (open && /^CFA-/.test(open)) body = html`<${AssessmentPage} id=${open} back=${() => go(me && me.verifier ? "queue" : "mine")} verifier=${me && me.verifier} />`;
+  else if (tab === "assess") body = html`<${SelfAssessment} me=${me && me.signed_in ? me : null} />`;
+  else if (tab === "register") body = html`<${Register} open=${openId} />`;
+  else if (tab === "assessors") body = html`<${Assessors} />`;
+  else if (tab === "mine") body = html`<${Mine} open=${openId} />`;
+  else if (tab === "queue") body = html`<${Queue} open=${openId} />`;
+  else body = html`<${Levels} meta=${meta} />`;
+  const tabs = [["levels", "Levels & criteria"], ["assess", "Self-assess"], ["register", "Register"], ["assessors", "Assessors"]];
+  if (me && me.signed_in) tabs.push(["mine", "My submissions"]);
+  if (me && me.verifier) tabs.push(["queue", "Verifier queue"]);
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark"><b>CLHEAR</b><span>conformance</span></div><div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink" href="/explore">Explore</a><a class="navlink" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink" href="/contribute">Contribute</a><a class="navlink active" href="/conformance">Conformance</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main">
+      <h1>Say how your program stands. Prove it.</h1>
+      <p class="lead">Four conformance levels against the CLHEAR standard — CL1 Mapped and CL2 Traceable by verified self-assessment, CL3 Assessed and CL4 Automated by accredited independent assessors under ISAE 3000. One public register; marks only through the program.</p>
+      ${summary ? html`<div class="kpis">${Object.entries(summary.marks_granted).map(([l, n]) => html`<span key=${l} class="kpi"><b>${n}</b>${l}</span>`)}<span class="kpi"><b>${summary.pending_verification}</b>awaiting verification</span><span class="kpi"><b>${summary.accredited_assessors}</b>accredited assessors</span></div>` : null}
+      <div class="tabs" role="tablist" aria-label="Sections">${tabs.map(([k, l]) => html`<button key=${k} class="tab" role="tab" aria-pressed=${tab === k && !open} aria-selected=${tab === k && !open} onClick=${() => go(k)}>${l}</button>`)}</div>
+      ${body}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

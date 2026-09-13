@@ -1,0 +1,25 @@
+fastapi>=0.115
+uvicorn>=0.30
+sqlalchemy>=2.0
+psycopg[binary]>=3.1   # Aurora Postgres record (HLD v2 I7); SQLite stays the offline fallback
+pgvector>=0.3
+neo4j>=5.20              # query-graph projection (HLD v2 I7); in-process LocalGraph when CLHEAR_NEO4J_URI is unset
+pydantic>=2.7
+pydantic-settings>=2.3
+httpx>=0.27
+boto3>=1.34
+PyYAML>=6.0
+beautifulsoup4>=4.12
+mangum>=0.17
+pypdf>=5.0
+PyJWT[crypto]>=2.8    # Cognito id-token verification (HLD v2 §5 identity)
+graphql-core>=3.2     # /graphql over the open layers (standard §8); schema in app/clhear/interop/graphql_api.py
+sentry-sdk>=2.0       # error tracking to self-hosted GlitchTip (HLD v2 §3 observability); inert without SENTRY_DSN
+
+# optional L1 renderers (HLD v2 §4.1): publisher pages that need a browser.
+# Install on the L1 fleet image only; adapters fall back to plain HTTP when absent.
+# crawl4ai>=0.4
+# docling>=2.0
+
+# dev/test
+pytest>=8.2

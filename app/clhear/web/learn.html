@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Learn</title>
+<meta name="description" content="Tours of the eight CLHEAR layers, the obligation of the week, playgrounds, a learning path with a badge, and quizzes." />
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  main { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: clamp(26px, 4vw, 36px); margin: 0 0 6px; letter-spacing: -0.02em; }
+  .lead { color: var(--muted); margin: 0 0 22px; max-width: 700px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 18px 20px; }
+  .card h2 { margin: 0 0 6px; font-size: 17px; }
+  .card h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .card p { color: var(--muted); font-size: 13.5px; margin: 0 0 10px; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+  .steps { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+  .steps li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--edge); }
+  .steps li:last-child { border-bottom: none; }
+  .steps .n { font-family: var(--mono); color: var(--accent); font-weight: 700; }
+  .steps .t { font-weight: 600; } .steps .b { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .steps a { font-size: 12.5px; }
+  .path li { grid-template-columns: 28px 1fr auto; align-items: center; }
+  .done { color: var(--ok); } .todo { color: var(--faint); }
+  .badge { display: flex; gap: 14px; align-items: center; border: 1px dashed var(--edge-bright); border-radius: 14px; padding: 12px 14px; margin-top: 12px; }
+  .badge .medal { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; background: var(--panel-strong); border: 2px solid var(--edge); color: var(--faint); }
+  .badge.earned .medal { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+  .ootw { border-left: 3px solid var(--accent); padding-left: 14px; }
+  .ootw blockquote { margin: 8px 0; font-size: 14px; color: var(--ink); }
+  .meta { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .q { border: 1px solid var(--edge); border-radius: 12px; padding: 10px 12px; margin-top: 8px; background: var(--panel-strong); }
+  .q p { color: var(--ink); margin: 0 0 6px; font-weight: 600; font-size: 13.5px; }
+  .q label { display: block; font-size: 13px; padding: 4px 0; cursor: pointer; }
+  .q .why { color: var(--muted); font-size: 12.5px; margin-top: 6px; border-left: 3px solid var(--edge-bright); padding-left: 8px; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  .pg textarea { width: 100%; min-height: 90px; font: 12.5px var(--mono); background: var(--panel-strong); color: var(--ink); border: 1px solid var(--edge); border-radius: 10px; padding: 8px; }
+  .kpis { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 8px 12px; min-width: 110px; }
+  .kpi b { display: block; font-size: 18px; } .kpi span { font-size: 11.5px; color: var(--muted); }
+  .list { font-size: 12.5px; margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  .err { color: var(--bad); font-size: 13px; }
+  .foot { color: var(--faint); font-size: 12px; text-align: center; margin-top: 30px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const learner = (() => { let id = localStorage.getItem("clhear_learner"); if (!id) { id = crypto.randomUUID(); localStorage.setItem("clhear_learner", id); } return id; })();
+const api = async (url, opts) => {
+  const r = await fetch(url, { headers: { "Content-Type": "application/json", "X-Learner-Id": learner }, ...opts });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body));
+  return body;
+};
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+function Tour({ id, onDone }) {
+  const [tour, setTour] = useState(null);
+  const [i, setI] = useState(0);
+  useEffect(() => { api(`/learn/tours/${id}`).then(setTour); }, [id]);
+  if (!tour) return html`<p>Loading tour…</p>`;
+  const step = tour.steps[i];
+  const last = i === tour.steps.length - 1;
+  return html`<div>
+    <h2>${tour.title}</h2><p>${tour.summary}</p>
+    <ol class="steps" aria-label="Tour steps"><li><span class="n">${i + 1}/${tour.steps.length}</span><div><div class="t">${step.title}</div><div class="b">${step.body}</div><a href=${step.href}>See it in the layer →</a></div></li></ol>
+    <div style=${{ display: "flex", gap: "8px", marginTop: "10px" }}>
+      <button class="btn quiet" disabled=${i === 0} onClick=${() => setI(i - 1)}>Back</button>
+      ${last ? html`<button class="btn" onClick=${() => onDone(id)}>Finish tour</button>` : html`<button class="btn" onClick=${() => setI(i + 1)}>Next</button>`}
+    </div>
+  </div>`;
+}
+
+function Quiz({ id, onPassed }) {
+  const [quiz, setQuiz] = useState(null);
+  const [answers, setAnswers] = useState({});
+  const [result, setResult] = useState(null);
+  useEffect(() => { api(`/learn/quizzes/${id}`).then(setQuiz); setAnswers({}); setResult(null); }, [id]);
+  if (!quiz) return html`<p>Loading quiz…</p>`;
+  const submit = async () => { const r = await api(`/learn/quizzes/${id}/grade`, { method: "POST", body: JSON.stringify({ answers }) }); setResult(r); if (r.passed) onPassed(r); };
+  const res = (qid) => result?.results.find((x) => x.id === qid);
+  return html`<div>
+    <h2>${quiz.title}</h2><p>Pass mark ${Math.round(quiz.pass_mark * 100)}%. Every answer explains the invariant it teaches.</p>
+    ${quiz.questions.map((q) => html`<fieldset class="q" key=${q.id}><legend class="visually-hidden">${q.prompt}</legend><p>${q.prompt}</p>
+      ${q.options.map((o, k) => html`<label key=${k}><input type="radio" name=${id + q.id} checked=${answers[q.id] === k} onChange=${() => setAnswers({ ...answers, [q.id]: k })} /> ${o}</label>`)}
+      ${res(q.id) ? html`<div class="why"><span class=${res(q.id).correct ? "ok" : "bad"}>${res(q.id).correct ? "Correct." : "Not quite."}</span> ${res(q.id).why}</div>` : null}
+    </fieldset>`)}
+    <div style=${{ marginTop: "10px" }}><button class="btn" onClick=${submit} disabled=${Object.keys(answers).length < quiz.questions.length}>Check answers</button>
+      ${result ? html`<span style=${{ marginLeft: "10px" }} class=${result.passed ? "ok" : "bad"}>${result.correct}/${result.total} — ${result.passed ? "passed" : "try again"}</span>` : null}</div>
+  </div>`;
+}
+
+function Playground({ onUsed }) {
+  const [a, setA] = useState(JSON.stringify({ jurisdictions: ["UK"], authorisations: ["UK MiFID investment firm (Part 4A permission)", "Dealing in investments as agent"], products: ["equities brokerage"], customer_base: ["retail"] }, null, 1));
+  const [b, setB] = useState(JSON.stringify({ jurisdictions: ["UK"], authorisations: ["UK MiFID investment firm (Part 4A permission)", "Dealing in investments as agent", "Client money permission (CASS)"], products: ["equities brokerage", "client money holding"], customer_base: ["retail"] }, null, 1));
+  const [out, setOut] = useState(null); const [err, setErr] = useState("");
+  const run = async () => { setErr(""); try { setOut(await api("/learn/playground/predicates", { method: "POST", body: JSON.stringify({ attributes: JSON.parse(a), compare_with: JSON.parse(b) }) })); onUsed(); } catch (e) { setErr(e.message); } };
+  return html`<div class="pg">
+    <h2>Predicate playground</h2><p>Two attribute sets, the real L4 predicates. What starts binding, what stops.</p>
+    <label for="pa" class="meta">Before</label><textarea id="pa" value=${a} onInput=${(e) => setA(e.target.value)}></textarea>
+    <label for="pb" class="meta">After</label><textarea id="pb" value=${b} onInput=${(e) => setB(e.target.value)}></textarea>
+    <div style=${{ marginTop: "8px" }}><button class="btn" onClick=${run}>Run predicates</button></div>
+    ${err ? html`<div class="err" role="alert">${err}</div>` : null}
+    ${out ? html`<div>
+      <div class="kpis"><div class="kpi"><b>${out.count}</b><span>bind before</span></div><div class="kpi"><b class="ok">+${out.starts_binding.length}</b><span>start binding</span></div><div class="kpi"><b class="bad">−${out.stops_binding.length}</b><span>stop binding</span></div><div class="kpi"><b class=${out.valid ? "ok" : "bad"}>${out.valid ? "valid" : "invalid"}</b><span>profile (before)</span></div></div>
+      ${out.starts_binding.length ? html`<ul class="list">${out.starts_binding.slice(0, 12).map((o) => html`<li key=${o.obligation_id}><a href=${"/explore#" + o.obligation_id}>${o.obligation_id}</a> ${o.title} <span class="meta">${o.jurisdiction}</span></li>`)}</ul>` : null}
+      ${!out.count && !out.starts_binding.length ? html`<p class="meta">No live obligations carry L4 predicates yet on this instance — the playground is honest about an empty registry.</p>` : null}
+    </div>` : null}
+  </div>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [tours, setTours] = useState([]); const [ootw, setOotw] = useState(null); const [path, setPath] = useState(null); const [pgs, setPgs] = useState([]);
+  const [view, setView] = useState(null); // {kind, id}
+  const refresh = () => api("/learn/path").then(setPath);
+  useEffect(() => { api("/learn/tours").then((d) => setTours(d.tours)); api("/learn/obligation-of-the-week").then(setOotw); api("/learn/playgrounds").then((d) => setPgs(d.playgrounds)); refresh(); }, []);
+  const finishTour = async (id) => { await api(`/learn/path/${id}/complete`, { method: "POST", body: JSON.stringify({ kind: "tour" }) }); setView(null); refresh(); };
+  const usedPlayground = async () => { await api(`/learn/path/playground:predicates/complete`, { method: "POST", body: JSON.stringify({ kind: "playground" }) }); refresh(); };
+  const ob = ootw?.obligation;
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark"><b>CLHEAR</b><span>learn</span></div><div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink" href="/explore">Explore</a><a class="navlink active" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink" href="/contribute">Contribute</a><a class="navlink" href="/conformance">Conformance</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main">
+      <h1>Learn how CLHEAR reads regulation.</h1>
+      <p class="lead">Short tours of the eight layers, one obligation each week read the CLHEAR way, playgrounds on the real data, and a learning path that ends in a badge.</p>
+      ${view ? html`<section class="card" style=${{ marginBottom: "14px" }}>
+        ${view.kind === "tour" ? html`<${Tour} id=${view.id} onDone=${finishTour} />` : view.kind === "quiz" ? html`<${Quiz} id=${view.id} onPassed=${refresh} />` : html`<${Playground} onUsed=${usedPlayground} />`}
+        <div style=${{ marginTop: "10px" }}><button class="btn quiet" onClick=${() => setView(null)}>Close</button></div>
+      </section>` : null}
+      <div class="grid">
+        <section class="card" aria-labelledby="ootw"><h3 id="ootw">Obligation of the week · ${ootw?.week || ""}</h3>
+          ${ob ? html`<div class="ootw"><div class="meta">${ob.obligation_id} · ${ob.jurisdiction} · ${ob.regulator || ob.source.short_name || ob.source_key}</div>
+            <h2>${ob.title}</h2><blockquote>${ob.statement}</blockquote>
+            <ul class="list">${ob.read_it_this_way.map((l, i) => html`<li key=${i}>${l}</li>`)}</ul>
+            <div style=${{ marginTop: "8px" }}><a class="btn quiet" href=${ob.hrefs.explore}>Why and history</a> <a class="btn quiet" href=${ob.hrefs.source}>The clause</a></div></div>`
+          : html`<p>${ootw?.empty_reason || "Loading…"}</p>`}
+        </section>
+        <section class="card" aria-labelledby="pathh"><h3 id="pathh">Learning path</h3>
+          ${path ? html`<ol class="steps path">${path.steps.map((s, i) => html`<li key=${s.id}><span class="n">${i + 1}</span><div><div class="t">${s.title}</div><div class="b">${s.kind}${s.score != null ? ` · ${Math.round(s.score * 100)}%` : ""}</div></div>
+            ${s.done ? html`<span class="done" aria-label="done">✓</span>` : html`<button class="btn quiet" onClick=${() => setView({ kind: s.kind, id: s.id.replace("playground:", "") })}>Open</button>`}</li>`)}</ol>
+          <div class=${"badge" + (path.badge.earned ? " earned" : "")}><div class="medal" aria-hidden="true">R</div><div><b>${path.badge.title}</b><div class="b" style=${{ color: "var(--muted)", fontSize: "13px" }}>${path.badge.earned ? `Earned ${path.badge.earned_at?.slice(0, 10)}` : `${path.done}/${path.total} steps — ${path.badge.description}`}</div></div></div>` : html`<p>Loading…</p>`}
+        </section>
+        <section class="card" aria-labelledby="toursh"><h3 id="toursh">Tours</h3>
+          ${tours.map((t) => html`<div key=${t.id} style=${{ marginBottom: "10px" }}><h2>${t.title}</h2><p>${t.summary}</p><button class="btn quiet" onClick=${() => setView({ kind: "tour", id: t.id })}>Start · ${t.steps} steps</button></div>`)}
+        </section>
+        <section class="card" aria-labelledby="pgh"><h3 id="pgh">Playgrounds</h3>
+          ${pgs.map((p) => html`<div key=${p.id} style=${{ marginBottom: "10px" }}><h2>${p.title}</h2><p>${p.what}</p>${p.id === "predicates" ? html`<button class="btn quiet" onClick=${() => setView({ kind: "playground", id: p.id })}>Open</button>` : html`<a class="btn quiet" href=${p.href}>Open</a>`}</div>`)}
+        </section>
+      </div>
+      <p class="foot">CLHEAR is a derivation, not legal advice. <a href="/disclaimer">Disclaimer</a> · <a href="/terms">Terms</a> · <a href="/evals">Public evals</a></p>
+    </main></div>`;
+}
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

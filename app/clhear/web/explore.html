@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Explore</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* Explore (HLD v2 §5): graph + list per layer; every node has why, history,
+     who else needs this, request a change; one-click cross-jurisdiction compare. */
+  main { position: relative; z-index: 1; max-width: 1400px; margin: 22px auto; padding: 0 20px 70px; }
+  .layout { display: grid; grid-template-columns: 300px 1fr; gap: 18px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .side { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 16px; align-self: start; position: sticky; top: 74px; }
+  .side h4, .panelx h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .side h4:first-child { margin-top: 0; }
+  input, select { border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); width: 100%; }
+  .layers { list-style: none; margin: 0; padding: 0; }
+  .layers li { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--edge); font-size: 13px; }
+  .layers b { font-family: var(--mono); color: var(--accent); }
+  .panelx { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+  .panelx h2 { margin: 0 0 6px; font-size: 17px; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted); margin-right: 6px; }
+  .badge.L1 { color: #93c5fd; } .badge.L2 { color: var(--accent); } .badge.L3 { color: var(--ok); } .badge.L4 { color: var(--warn); } .badge.L5 { color: #f0abfc; } .badge.L6 { color: #fda4af; }
+  .hits { list-style: none; margin: 0; padding: 0; }
+  .hits li { padding: 8px 0; border-bottom: 1px solid var(--edge); font-size: 13.5px; cursor: pointer; }
+  .hits li:hover, .hits li:focus-visible { color: var(--accent); }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
+  svg.constellation { width: 100%; height: 420px; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 12px; }
+  svg text { fill: var(--ink); font-size: 11px; pointer-events: none; }
+  svg line { stroke: var(--edge-bright); stroke-width: 1.2; }
+  svg circle { cursor: pointer; }
+  svg circle:focus { outline: none; stroke: var(--ink); stroke-width: 3; }
+  .why { font-size: 13px; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  .why code { font-family: var(--mono); font-size: 11.5px; }
+  .timeline { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 2px solid var(--edge); }
+  .timeline li { position: relative; margin: 0 0 12px; font-size: 13px; }
+  .timeline li::before { content: ""; position: absolute; left: -24px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  textarea { width: 100%; min-height: 80px; border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; background: var(--panel-strong); color: var(--ink); font: inherit; font-size: 13px; }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .gap { color: var(--bad); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-color: var(--edge-bright); background: var(--panel-strong); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = async (url, opts) => {
+  const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body));
+  return body;
+};
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+const Layer = ({ l }) => html`<span class=${"badge " + l}>${l}</span>`;
+
+function Constellation({ graph, open }) {
+  const focus = graph.nodes.find((n) => n.id === graph.focus) || graph.nodes[0];
+  const others = graph.nodes.filter((n) => n.id !== focus.id).slice(0, 40);
+  const W = 900, H = 420, cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 60;
+  const pos = { [focus.id]: [cx, cy] };
+  others.forEach((n, i) => { const a = (2 * Math.PI * i) / others.length; pos[n.id] = [cx + R * Math.cos(a), cy + R * Math.sin(a)]; });
+  const color = { L1: "#93c5fd", L2: "#818cf8", L3: "#34d399", L4: "#fbbf24", L5: "#f0abfc", L6: "#fda4af" };
+  return html`<figure>
+    <svg class="constellation" viewBox=${`0 0 ${W} ${H}`} role="img" aria-label=${`Constellation around ${focus.label}: ${others.length} connected nodes`}>
+      ${graph.edges.filter((e) => pos[e.from] && pos[e.to]).map((e, i) => html`<line key=${i} x1=${pos[e.from][0]} y1=${pos[e.from][1]} x2=${pos[e.to][0]} y2=${pos[e.to][1]} />`)}
+      ${[focus, ...others].map((n) => html`<g key=${n.id}>
+        <circle cx=${pos[n.id][0]} cy=${pos[n.id][1]} r=${n.id === focus.id ? 16 : 9} fill=${color[n.layer] || "#8b8fb8"} tabIndex="0" role="button"
+          aria-label=${`${n.layer} ${n.kind}: ${n.label}`} onClick=${() => open(n.id)} onKeyDown=${(e) => { if (e.key === "Enter" || e.key === " ") open(n.id); }} />
+        <text x=${pos[n.id][0] + 12} y=${pos[n.id][1] - 10}>${(n.label || n.id).slice(0, 34)}</text></g>`)}
+    </svg>
+    <figcaption class="mono">Focus in the centre; one hop each way across layers. Click or press Enter on a node to move the focus.</figcaption>
+  </figure>`;
+}
+
+function RequestChange({ node, spec }) {
+  const [text, setText] = useState(""); const [done, setDone] = useState(null); const [err, setErr] = useState("");
+  if (!spec) return null;
+  const submit = async () => {
+    try {
+      const body = spec.url.includes("modification-requests") ? { ...spec.body, proposed_value: text, rationale: text } :
+        { ...spec.body, title: `Change request: ${node.id}`, body: text };
+      const r = await api(spec.url, { method: spec.method, body: JSON.stringify(body) }); setDone(r); setErr("");
+    } catch (e) { setErr(e.message); }
+  };
+  return html`<div>
+    <h3>Request a change</h3>
+    <p class="mono">Goes to the approval console as a proposal (I12: contributions never write directly). The ${spec.layer} row is untouched until reviewers accept.${spec.signed_in ? " Sign in first (/auth)." : ""}</p>
+    <label class="visually-hidden" for="rc">Describe the change</label>
+    <textarea id="rc" value=${text} onInput=${(e) => setText(e.target.value)} placeholder="What is wrong or missing, and the evidence for it"></textarea>
+    <div style=${{ marginTop: "8px" }}><button class="btn" disabled=${!text.trim()} onClick=${submit}>Submit request</button>
+      ${done ? html`<span class="ok" style=${{ marginLeft: "10px" }}>Submitted${done.id ? " · " + done.id : done.proposal_id ? " · " + done.proposal_id : ""}</span>` : null}
+      ${err ? html`<span class="bad" style=${{ marginLeft: "10px" }} role="alert">${err}</span>` : null}</div>
+  </div>`;
+}
+
+function NodePage({ id, open }) {
+  const [page, setPage] = useState(null); const [err, setErr] = useState("");
+  useEffect(() => { setPage(null); api("/explore/node/" + encodeURIComponent(id)).then(setPage).catch((e) => setErr(e.message)); }, [id]);
+  if (err) return html`<div class="panelx bad" role="alert">${err}</div>`;
+  if (!page) return html`<div class="empty">Loading ${id}…</div>`;
+  const n = page.node;
+  return html`<div>
+    <section class="panelx">
+      <h2><${Layer} l=${n.layer} /> ${n.label}</h2>
+      <div class="mono">${n.id}${n.stable_id ? " · " + n.stable_id : ""} · ${page.kind}${n.status ? " · " + n.status : ""}</div>
+      <div style=${{ marginTop: "10px" }}><a class="btn quiet" href=${n.href}>Open in ${n.layer} browser</a></div>
+      <${Constellation} graph=${{ focus: n.id, nodes: [n, ...page.neighbours], edges: page.edges }} open=${open} />
+    </section>
+    <div class="grid2">
+      <section class="panelx"><h3>Why</h3>
+        ${page.why.length ? page.why.map((w) => html`<div class="why" key=${w.id}><div>${w.reasoning_summary}</div>
+          <div class="mono">${w.layer} · ${w.agent_id} · ${w.model_manifest?.model || "deterministic"} · confidence ${w.confidence ?? "—"} · ${w.created_at?.slice(0, 19)}</div>
+          ${w.evidence_refs?.length ? html`<div>evidence: ${w.evidence_refs.slice(0, 8).map((e) => html`<code key=${e} style=${{ marginRight: "6px", cursor: "pointer" }} onClick=${() => open(e)}>${e}</code>`)}</div>` : null}</div>`)
+          : html`<div class="mono">No why-trail recorded for this node (curated seed or pre-v2 row).</div>`}
+        <h3>Who else needs this</h3>
+        <div class="mono">${page.who_else.count} stored profile(s) · ${page.who_else.blueprints.length} current blueprint(s)</div>
+        <ul class="hits">${page.who_else.profiles.slice(0, 10).map((p) => html`<li key=${p.id} tabIndex="0" onClick=${() => open(p.id)}>${p.name || p.id} <span class="mono">${p.id}</span></li>`)}</ul>
+      </section>
+      <section class="panelx"><h3>History</h3>
+        ${page.history.length ? html`<ul class="timeline">${page.history.map((h, i) => html`<li key=${i}><b>${h.event}</b>${h.effective_date ? " · effective " + h.effective_date : ""} <span class="mono">${h.when ? String(h.when).slice(0, 19) : ""}</span>
+          ${h.detail && Object.keys(h.detail).length ? html`<div class="mono">${JSON.stringify(h.detail).slice(0, 220)}</div>` : null}</li>`)}</ul>` : html`<div class="mono">No changes recorded.</div>`}
+        <h3>Neighbours</h3>
+        <ul class="hits">${page.neighbours.slice(0, 30).map((m) => html`<li key=${m.id} tabIndex="0" onClick=${() => open(m.id)} onKeyDown=${(e) => { if (e.key === "Enter") open(m.id); }}><${Layer} l=${m.layer} />${m.label} <span class="mono">${m.id}</span></li>`)}</ul>
+        <${RequestChange} node=${n} spec=${page.request_change} />
+      </section>
+    </div>
+  </div>`;
+}
+
+function Compare() {
+  const [jurs, setJurs] = useState("uk,eu"); const [q, setQ] = useState(""); const [res, setRes] = useState(null); const [err, setErr] = useState("");
+  const run = () => api(`/explore/compare?jurisdictions=${encodeURIComponent(jurs)}${q ? "&q=" + encodeURIComponent(q) : ""}`).then((r) => { setRes(r); setErr(""); }).catch((e) => setErr(e.message));
+  useEffect(() => { run(); }, []);
+  return html`<section class="panelx">
+    <h2>Cross-jurisdiction compare</h2>
+    <p class="mono">Concept and equivalence groups with members in two or more jurisdictions; gaps are jurisdictions with no equivalent — shown, never hidden.</p>
+    <div style=${{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+      <label>Jurisdictions <input value=${jurs} onInput=${(e) => setJurs(e.target.value)} style=${{ width: "160px" }} /></label>
+      <label>Filter <input value=${q} onInput=${(e) => setQ(e.target.value)} style=${{ width: "220px" }} /></label>
+      <button class="btn" onClick=${run}>Compare</button>
+    </div>
+    ${err ? html`<div class="bad" role="alert">${err}</div>` : null}
+    ${res ? html`<table class="reg" style=${{ marginTop: "12px" }}><thead><tr><th>Concept</th>${res.jurisdictions.map((j) => html`<th key=${j}>${j.toUpperCase()}</th>`)}</tr></thead>
+      <tbody>${res.groups.map((g) => html`<tr key=${g.group}><td><b>${g.name}</b><div class="mono">${g.basis}</div></td>
+        ${res.jurisdictions.map((j) => html`<td key=${j}>${(g.members[j] || []).length ? g.members[j].map((m) => html`<div key=${m.derivation_key || m.stable_id} style=${{ cursor: "pointer" }} onClick=${() => (location.hash = m.stable_id || m.derivation_key)}>${m.title || m.stable_id}</div>`) : html`<span class="gap">gap</span>`}</td>`)}</tr>`)}</tbody></table>` : null}
+    ${res && !res.count ? html`<div class="empty">No cross-jurisdiction groups yet for these jurisdictions.</div>` : null}
+  </section>`;
+}
+
+function Home({ open }) {
+  const [layers, setLayers] = useState(null); const [q, setQ] = useState(""); const [hits, setHits] = useState([]);
+  useEffect(() => { api("/explore/layers").then((r) => setLayers(r.layers)).catch(() => {}); }, []);
+  useEffect(() => { if (q.trim().length < 2) { setHits([]); return; } const t = setTimeout(() => api("/explore/search?q=" + encodeURIComponent(q)).then((r) => setHits(r.hits)).catch(() => {}), 200); return () => clearTimeout(t); }, [q]);
+  return html`<div class="layout">
+    <aside class="side">
+      <h4>Search any id or name</h4>
+      <label class="visually-hidden" for="q">Search</label>
+      <input id="q" value=${q} onInput=${(e) => setQ(e.target.value)} placeholder="OBL-000012, client money, BLK-CDD…" autoFocus />
+      <h4>Layers (list view)</h4>
+      ${layers ? html`<ul class="layers">${Object.entries(layers).map(([l, v]) => html`<li key=${l}><span><b>${l}</b> <a href=${v.href}>browser</a> · <a href=${v.api}>API</a></span><span>${v.count}</span></li>`)}</ul>` : null}
+    </aside>
+    <section>
+      <div class="panelx"><h2>Explore the derivation</h2>
+        <p class="mono">Every node — source, clause, obligation, block, activity, profile, licence, blueprint — resolves to one page with why, history, who else needs it and a request-a-change button. Paste an id in the URL hash: <code>/explore#OBL-000001</code>.</p>
+        ${hits.length ? html`<ul class="hits">${hits.map((h) => html`<li key=${h.id} tabIndex="0" onClick=${() => open(h.id)} onKeyDown=${(e) => { if (e.key === "Enter") open(h.id); }}><${Layer} l=${h.layer} />${h.label} <span class="mono">${h.id}</span></li>`)}</ul>`
+          : q.trim().length >= 2 ? html`<div class="empty">Nothing matches “${q}”.</div>` : null}
+      </div>
+    </section>
+  </div>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [tab, setTab] = useState("home");
+  const [focus, setFocus] = useState(null);
+  const open = (id) => { location.hash = id; };
+  useEffect(() => {
+    const apply = () => { const h = decodeURIComponent(location.hash.slice(1)); if (h === "compare") { setTab("compare"); setFocus(null); } else if (h) { setTab("node"); setFocus(h); } else { setTab("home"); setFocus(null); } };
+    apply(); window.addEventListener("hashchange", apply); return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>explore</span></div>
+      <div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink" href="/">Start</a><a class="navlink active" href="/explore">Explore</a><a class="navlink" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink" href="/contribute">Contribute</a><a class="navlink" href="/conformance">Conformance</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main"><h1 class="visually-hidden">Explore the CLHEAR derivation graph</h1>
+      <div class="tabs">
+        <button class=${tab === "home" ? "on" : ""} onClick=${() => (location.hash = "")}>Search & layers</button>
+        <button class=${tab === "compare" ? "on" : ""} onClick=${() => (location.hash = "compare")}>Compare jurisdictions</button>
+        ${focus ? html`<button class="on">${focus}</button>` : null}
+      </div>
+      ${tab === "compare" ? html`<${Compare} />` : tab === "node" ? html`<${NodePage} id=${focus} open=${open} />` : html`<${Home} open=${open} />`}
+    </main></div>`;
+}
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

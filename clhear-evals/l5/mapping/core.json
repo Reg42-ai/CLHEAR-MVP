@@ -1,0 +1,141 @@
+{
+  "suite": "l5_mapping",
+  "description": "Golden activity mappings (HLD v2 §4.5). Each case is an L2 obligation (duty sentence, or the structured determination L2 produced) and the compliance activity + action type the deterministic L5 mapper must choose; cases with no expected activity must fall through to the block fallback ('Operate <block>'). Accuracy across cases; gate >= 0.92. expected_maps are profile attribute sets and the business / compliance activities the live junction must place on the activity map.",
+  "cases": [
+    {
+      "id": "uk-cdd-identify-verify",
+      "obligation": {"jurisdiction": "UK", "statement": "A relevant person must identify the customer and verify the customer's identity on the basis of documents or information obtained from a reliable source which is independent of the customer."},
+      "expected": {"action_type": "screen", "activity": "ACT-SCREEN-CUSTOMERS"}
+    },
+    {
+      "id": "uk-beneficial-owner",
+      "obligation": {"jurisdiction": "UK", "statement": "Where the customer is beneficially owned by another person, the relevant person must identify the beneficial owner and take reasonable measures to verify the identity of the beneficial owner."},
+      "expected": {"action_type": "screen", "activity": "ACT-SCREEN-CUSTOMERS"}
+    },
+    {
+      "id": "uk-edd-pep",
+      "obligation": {"jurisdiction": "UK", "statement": "A relevant person must apply enhanced customer due diligence measures and enhanced ongoing monitoring in any business relationship with a politically exposed person."},
+      "expected": {"action_type": "investigate", "activity": "ACT-HIGH-RISK-RELATIONSHIPS"}
+    },
+    {
+      "id": "uk-high-risk-third-country",
+      "obligation": {"jurisdiction": "UK", "statement": "A relevant person must apply enhanced due diligence measures in any business relationship with a person established in a high-risk third country."},
+      "expected": {"action_type": "investigate", "activity": "ACT-HIGH-RISK-RELATIONSHIPS"}
+    },
+    {
+      "id": "uk-ongoing-monitoring",
+      "obligation": {"jurisdiction": "UK", "statement": "A relevant person must conduct ongoing monitoring of a business relationship, including scrutiny of transactions undertaken throughout the course of the relationship."},
+      "expected": {"action_type": "monitor", "activity": "ACT-MONITOR-TRANSACTIONS"}
+    },
+    {
+      "id": "uk-training",
+      "obligation": {"jurisdiction": "UK", "statement": "A relevant person must take appropriate measures to ensure that its relevant employees are made aware of the law relating to money laundering and terrorist financing and are regularly given training in how to recognise and deal with transactions which may be related to money laundering."},
+      "expected": {"action_type": "train", "activity": "ACT-TRAIN-STAFF"}
+    },
+    {
+      "id": "gdpr-breach-notification",
+      "obligation": {"jurisdiction": "EU", "statement": "In the case of a personal data breach, the controller shall without undue delay and, where feasible, not later than 72 hours after having become aware of it, notify the personal data breach to the supervisory authority."},
+      "expected": {"action_type": "notify", "activity": "ACT-RESPOND-TO-INCIDENTS"}
+    },
+    {
+      "id": "dora-major-incident",
+      "obligation": {"jurisdiction": "EU", "statement": "Financial entities shall report major ICT-related incidents to the relevant competent authority."},
+      "expected": {"action_type": "notify", "activity": "ACT-RESPOND-TO-INCIDENTS"}
+    },
+    {
+      "id": "uk-senior-management-approval",
+      "obligation": {"jurisdiction": "UK", "statement": "The policies, controls and procedures adopted by a relevant person must be approved by its senior management."},
+      "expected": {"action_type": "attest", "activity": "ACT-ATTEST-GOVERNANCE"}
+    },
+    {
+      "id": "gdpr-dpo-designation",
+      "obligation": {"jurisdiction": "EU", "statement": "The controller and the processor shall designate a data protection officer where the core activities consist of processing operations which require regular and systematic monitoring of data subjects on a large scale."},
+      "expected": {"action_type": "attest", "activity": "ACT-ATTEST-GOVERNANCE"}
+    },
+    {
+      "id": "uk-business-risk-assessment",
+      "obligation": {"jurisdiction": "UK", "statement": "A relevant person must take appropriate steps to identify and assess the risks of money laundering and terrorist financing to which its business is subject, and keep an up-to-date record in writing of that risk assessment."},
+      "expected": {"action_type": "assess", "activity": "ACT-RUN-RISK-ASSESSMENT"}
+    },
+    {
+      "id": "gdpr-dpia",
+      "obligation": {"jurisdiction": "EU", "statement": "Where a type of processing is likely to result in a high risk to the rights and freedoms of natural persons, the controller shall, prior to the processing, carry out an assessment of the impact of the envisaged processing operations on the protection of personal data."},
+      "expected": {"action_type": "assess", "activity": "ACT-RUN-RISK-ASSESSMENT"}
+    },
+    {
+      "id": "uk-record-keeping",
+      "obligation": {"jurisdiction": "UK", "statement": "A relevant person must keep the records specified in this regulation for the period of five years beginning on the date on which the relevant person knows, or has reasonable grounds to believe, that the transaction has been completed."},
+      "expected": {"action_type": "record", "activity": "ACT-KEEP-RECORDS"}
+    },
+    {
+      "id": "gdpr-records-of-processing",
+      "obligation": {"jurisdiction": "EU", "statement": "Each controller shall maintain a record of processing activities under its responsibility."},
+      "expected": {"action_type": "record", "activity": "ACT-KEEP-RECORDS"}
+    },
+    {
+      "id": "dora-resilience-testing",
+      "obligation": {"jurisdiction": "EU", "statement": "Financial entities shall establish, maintain and review a sound and comprehensive digital operational resilience testing programme as an integral part of the ICT risk-management framework."},
+      "expected": {"action_type": "test", "activity": "ACT-TEST-ICT-RESILIENCE"}
+    },
+    {
+      "id": "dora-third-party-register",
+      "obligation": {"jurisdiction": "EU", "statement": "Financial entities shall maintain and update at entity level a register of information in relation to all contractual arrangements on the use of ICT services provided by ICT third-party service providers."},
+      "expected": {"action_type": "record", "activity": "ACT-KEEP-RECORDS"},
+      "note": "A register of information is a record-keeping duty first; the ICT resilience activity operates the same block through its own anchors."
+    },
+    {
+      "id": "mica-crypto-segregation",
+      "obligation": {"jurisdiction": "EU", "statement": "Crypto-asset service providers providing custody and administration of crypto-assets on behalf of clients shall segregate holdings of crypto-assets on behalf of their clients from their own holdings."},
+      "expected": {"action_type": "control", "activity": "ACT-SAFEGUARD-CRYPTO"}
+    },
+    {
+      "id": "gdpr-security-of-processing",
+      "obligation": {"jurisdiction": "EU", "statement": "The controller and the processor shall implement appropriate technical and organisational measures to ensure a level of security appropriate to the risk, including the pseudonymisation and encryption of personal data."},
+      "expected": {"action_type": "control", "activity": "ACT-SECURE-SYSTEMS"}
+    },
+    {
+      "id": "us-suspicious-activity-report",
+      "obligation": {"jurisdiction": "US", "statement": "Every broker or dealer shall file with FinCEN a report of any suspicious transaction relevant to a possible violation of law or regulation."},
+      "expected": {"action_type": "report", "activity": "ACT-REPORT-TO-AUTHORITIES"}
+    },
+    {
+      "id": "generic-policy-duty-falls-to-block",
+      "obligation": {"jurisdiction": "UK", "statement": "A firm must establish and maintain a written anti-money laundering policy."},
+      "expected": {"action_type": null, "activity": null},
+      "note": "No activity cue: the mapper must fall through to the block the obligation requires (Operate <block>), never invent an activity."
+    },
+    {
+      "id": "generic-conflicts-policy-falls-to-block",
+      "obligation": {"jurisdiction": "EU", "statement": "Investment firms shall establish, implement and maintain an effective conflicts of interest policy set out in writing."},
+      "expected": {"action_type": null, "activity": null}
+    },
+    {
+      "id": "generic-best-execution-falls-to-block",
+      "obligation": {"jurisdiction": "EU", "statement": "Investment firms shall take all sufficient steps to obtain, when executing orders, the best possible result for their clients."},
+      "expected": {"action_type": null, "activity": null}
+    }
+  ],
+  "expected_maps": [
+    {
+      "id": "uk-emi",
+      "attributes": {"jurisdictions": ["UK"], "authorisations": ["E-money institution (Electronic Money Regulations 2011)"], "products": ["e-money issuance", "payment accounts", "card programmes"], "customer_base": ["retail", "SME"], "data_footprint": "large-scale personal data"},
+      "business": ["ACT-ONBOARD-CUSTOMER", "ACT-MOVE-CLIENT-FUNDS", "ACT-MARKET-PRODUCTS", "ACT-PROCESS-PERSONAL-DATA"],
+      "compliance": ["ACT-SCREEN-CUSTOMERS", "ACT-MONITOR-TRANSACTIONS", "ACT-KEEP-RECORDS", "ACT-RESPOND-TO-INCIDENTS"],
+      "not_business": ["ACT-CUSTODY-CRYPTO", "ACT-HANDLE-ORDERS", "ACT-ADVISE-AND-MANAGE"]
+    },
+    {
+      "id": "eu-casp",
+      "attributes": {"jurisdictions": ["EU"], "authorisations": ["CASP (MiCA)"], "products": ["crypto custody", "crypto exchange"], "customer_base": ["retail", "professional"], "data_footprint": "large-scale personal data", "crypto_services": true, "financial_entity_dora": true},
+      "business": ["ACT-ONBOARD-CUSTOMER", "ACT-CUSTODY-CRYPTO", "ACT-HANDLE-ORDERS", "ACT-OUTSOURCE-ICT"],
+      "compliance": ["ACT-SAFEGUARD-CRYPTO", "ACT-TEST-ICT-RESILIENCE", "ACT-RESPOND-TO-INCIDENTS"],
+      "not_business": ["ACT-MOVE-CLIENT-FUNDS", "ACT-ADVISE-AND-MANAGE"]
+    },
+    {
+      "id": "uk-retail-broker",
+      "attributes": {"jurisdictions": ["UK"], "authorisations": ["UK MiFID investment firm (Part 4A permission)", "Client money permission (CASS)"], "products": ["equities brokerage", "client money holding"], "customer_base": ["retail"]},
+      "business": ["ACT-ONBOARD-CUSTOMER", "ACT-HANDLE-ORDERS", "ACT-MOVE-CLIENT-FUNDS", "ACT-MARKET-PRODUCTS"],
+      "compliance": ["ACT-SCREEN-CUSTOMERS", "ACT-MONITOR-TRANSACTIONS"],
+      "not_business": ["ACT-CUSTODY-CRYPTO", "ACT-ADVISE-AND-MANAGE"]
+    }
+  ]
+}

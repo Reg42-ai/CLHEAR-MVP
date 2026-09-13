@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Approval console</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  main { position: relative; z-index: 1; max-width: 1080px; margin: 28px auto; padding: 0 20px 60px; }
+  .identity { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+  .identity input { border: 1px solid var(--edge); border-radius: 8px; padding: 8px 12px; font-size: 14px; width: 300px;
+                    background: var(--panel-strong); color: var(--ink); }
+  .identity input::placeholder { color: var(--faint); }
+  .identity label { font-size: 13px; color: var(--muted); }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .stat { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 22px; color: var(--ink); }
+  .stat span { font-size: 12px; color: var(--muted); }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px; padding: 6px 16px;
+                 font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.active { background: linear-gradient(92deg, var(--ind-700), var(--ind-500)); border-color: var(--ind-500);
+                        color: var(--on-accent); }
+  .filters { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+  .filters select { border: 1px solid var(--edge); border-radius: 8px; padding: 6px 10px; background: var(--panel-strong); color: var(--ink); }
+  .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+  .card .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  .kind { font-weight: 600; color: var(--accent); }
+  .subject { font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: 13px; color: var(--muted); }
+  .title { margin: 6px 0 4px; }
+  .rationale { margin: 8px 0 4px; }
+  pre.draft { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 8px; padding: 10px 12px;
+              font-size: 12px; overflow-x: auto; max-height: 200px; }
+  .badge { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 12px; margin-left: 6px; }
+  .badge.low { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .badge.none { background: rgba(251,113,133,0.14); color: var(--bad); }
+  .badge.proposed { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.approved, .badge.reproduced, .badge.accepted { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.rejected, .badge.escalated { background: rgba(251,113,133,0.14); color: var(--bad); }
+  .badge.superseded { background: var(--panel-strong); color: var(--muted); }
+  .actions { display: flex; gap: 8px; flex-direction: column; align-items: stretch; min-width: 130px; }
+  .actions button { border: none; border-radius: 8px; padding: 8px 16px; font-size: 14px; cursor: pointer; font-weight: 600; }
+  .actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .approve { background: linear-gradient(92deg, #059669, #10b981); color: var(--on-accent); box-shadow: var(--glow); }
+  .reject { background: transparent; color: var(--bad); border: 1px solid var(--bad) !important; }
+  .ghost { background: transparent; color: var(--accent); border: 1px solid var(--edge) !important; }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .meta a { text-decoration: underline; text-underline-offset: 2px; }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .error { background: rgba(251,113,133,0.14); color: var(--bad); border: 1px solid rgba(251,113,133,0.35);
+           border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
+  .notice { background: rgba(52,211,153,0.14); color: var(--ok); border: 1px solid rgba(52,211,153,0.35);
+            border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
+  textarea.note { width: 100%; min-height: 48px; border: 1px solid var(--edge); border-radius: 8px; padding: 6px 8px;
+                  background: var(--panel-strong); color: var(--ink); font: inherit; font-size: 13px; margin-top: 8px; }
+  .diff { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; font-size: 13px; }
+  .diff div { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; }
+  .diff small { display: block; color: var(--faint); margin-bottom: 4px; }
+  .foot { font-size: 12px; color: var(--muted); margin-top: 28px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const TABS = [
+  ["queue", "Low-confidence queue"],
+  ["requests", "Modification requests"],
+  ["contributions", "Contribution reviews"],
+  ["edits", "Human edits"],
+];
+const LAYERS = ["", "L2", "L3", "L4", "L5"];
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("clhear_theme", theme);
+  }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const fmt = (v) => (v === null || v === undefined ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v));
+const conf = (c) => (c === null || c === undefined ? "no confidence" : Number(c).toFixed(3));
+
+function Summary({ s }) {
+  if (!s) return null;
+  const low = Object.values(s.low_confidence || {}).reduce((a, b) => a + b, 0);
+  const edits = s.human_edits || {};
+  return html`
+    <div class="summary" aria-label="Console summary">
+      <div class="stat"><b>${low}</b><span>below threshold ${Object.entries(s.low_confidence || {}).map(([k, v]) => `${k} ${v}`).join(" · ")}</span></div>
+      <div class="stat"><b>${s.modification_requests}</b><span>modification requests pending</span></div>
+      <div class="stat"><b>${s.contribution_reviews}</b><span>contributions awaiting review</span></div>
+      <div class="stat"><b>${(edits.accepted || 0) + (edits.reproduced || 0)}</b><span>human edits standing · ${edits.escalated || 0} escalated</span></div>
+    </div>`;
+}
+
+function Queue({ user, notify, fail }) {
+  const [layer, setLayer] = useState("");
+  const [data, setData] = useState(null);
+  const [notes, setNotes] = useState({});
+  const load = () => fetch(`/console/queue${layer ? `?layer=${layer}` : ""}`).then((r) => r.json()).then(setData).catch((e) => fail(String(e)));
+  useEffect(() => { load(); }, [layer]);
+  const validate = async (item) => {
+    const r = await fetch(`/console/queue/${item.layer}/${encodeURIComponent(item.subject_ref)}/validate`, {
+      method: "POST", headers: { "X-Reg42-User": user, "Content-Type": "application/json" },
+      body: JSON.stringify({ note: notes[item.subject_ref] || "" }),
+    });
+    if (!r.ok) { fail((await r.json()).detail || r.statusText); return; }
+    const out = await r.json();
+    notify(`Validated ${item.public_id} as ${user} (edit ${out.edit_id}). The next cycle must reproduce it or escalate.`);
+    load();
+  };
+  if (!data) return html`<div class="empty">Loading…</div>`;
+  return html`
+    <div>
+      <div class="filters">
+        <label for="layer">Layer</label>
+        <select id="layer" value=${layer} onChange=${(e) => setLayer(e.target.value)}>
+          ${LAYERS.map((l) => html`<option value=${l}>${l || "all"}</option>`)}
+        </select>
+        <span>thresholds ${Object.entries(data.thresholds).map(([k, v]) => `${k} < ${v}`).join(" · ")} · ${data.total} item(s)</span>
+      </div>
+      ${data.items.length === 0 && html`<div class="empty">Nothing below threshold${layer ? ` in ${layer}` : ""}. Every live determination clears its layer's bar or has been validated by a named maintainer.</div>`}
+      ${data.items.map((it) => html`
+        <div class="card" key=${it.layer + it.subject_ref}>
+          <div class="row">
+            <div style=${{ flex: 1 }}>
+              <span class="kind">${it.layer} · ${it.table}</span>
+              <span class=${"badge " + (it.confidence === null ? "none" : "low")}>${conf(it.confidence)} vs ${it.threshold}</span>
+              <div class="subject">${it.public_id}</div>
+              <div class="title">${it.title}</div>
+              <div class="meta">${it.context} · <a href=${it.href}>open in the ${it.layer} browser</a></div>
+              <textarea class="note" aria-label=${"Validation note for " + it.public_id} placeholder="why this stands (optional, recorded with your name)"
+                        value=${notes[it.subject_ref] || ""} onInput=${(e) => setNotes({ ...notes, [it.subject_ref]: e.target.value })}></textarea>
+            </div>
+            <div class="actions">
+              <button class="approve" disabled=${!user} onClick=${() => validate(it)}>Validate as is</button>
+              <a class="btn ghost" href=${it.href} style=${{ textAlign: "center", padding: "8px 16px", borderRadius: "8px", border: "1px solid var(--edge)" }}>Request a change</a>
+            </div>
+          </div>
+        </div>`)}
+    </div>`;
+}
+
+function Diff({ p }) {
+  const d = p.draft || {};
+  if (p.kind === "human_edit_conflict") {
+    const e = d.edit || {};
+    return html`<div class="diff">
+      <div><small>accepted by ${e.accepted_by} on basis ${(e.basis_hash || "").slice(0, 8)}</small>${e.field ? `${e.field} = ` : ""}${fmt(e.after)}</div>
+      <div><small>new derivation on basis ${(d.current_basis_hash || "").slice(0, 8)}</small>${fmt(d.current_value)}</div>
+    </div>`;
+  }
+  if ("proposed_value" in d) {
+    return html`<div class="diff">
+      <div><small>current ${d.field}</small>${fmt(d.current_value)}</div>
+      <div><small>proposed ${d.field}</small>${fmt(d.proposed_value)}</div>
+    </div>`;
+  }
+  if (p.kind === "l2_review") {
+    return html`<div class="diff">
+      <div><small>second-model verdict</small>${d.verdict} (confidence ${fmt(d.confidence)})</div>
+      <div><small>determination</small>${fmt(d.determination)}</div>
+    </div>`;
+  }
+  return html`<pre class="draft" tabindex="0">${JSON.stringify(d, null, 2)}</pre>`;
+}
+
+function Proposals({ user, notify, fail, contributions }) {
+  const [status, setStatus] = useState("proposed");
+  const [items, setItems] = useState(null);
+  const load = () => fetch(`/console/${contributions ? "contributions" : "requests"}?status=${status}`).then((r) => r.json()).then(setItems).catch((e) => fail(String(e)));
+  useEffect(() => { load(); }, [status, contributions]);
+  const decide = async (p, action) => {
+    const r = await fetch(`/console/proposals/${p.id}/${action}`, { method: "POST", headers: { "X-Reg42-User": user } });
+    if (!r.ok) { fail((await r.json()).detail || r.statusText); return; }
+    const out = await r.json();
+    notify(out.edit_error ? `Decided, but not applied: ${out.edit_error}` :
+      out.edit ? `${action === "approve" ? "Approved and applied" : "Decided"} — human edit ${out.edit.edit_id || ""} recorded under ${user}.` :
+      `${action === "approve" ? "Approved" : "Rejected"} as ${user}.`);
+    load();
+  };
+  const help = contributions
+    ? "Contributions never write directly (I12): a submission becomes a proposal, a named reviewer accepts it here, and the accepted change enters the record with attribution."
+    : "Requests from the layer browsers and escalations from the second-model review. Approving applies the change through the record write path (versioned, why-trailed, nothing deleted) and stores it as a human edit; for a review escalation, approve = the reviewer was right (obligation rejected), reject = the obligation stands (expert verdict correct).";
+  return html`
+    <div>
+      <p class="meta" style=${{ marginBottom: "12px" }}>${help}</p>
+      <div class="filters">
+        ${["proposed", "approved", "rejected"].map((s) => html`<button class=${"navlink" + (s === status ? " active" : "")} onClick=${() => setStatus(s)}>${s}</button>`)}
+      </div>
+      ${items === null && html`<div class="empty">Loading…</div>`}
+      ${items && items.length === 0 && html`<div class="empty">No ${status} ${contributions ? "contributions" : "requests"}.</div>`}
+      ${(items || []).map((p) => html`
+        <div class="card" key=${p.id}>
+          <div class="row">
+            <div style=${{ flex: 1 }}>
+              <span class="kind">${p.layer} · ${p.kind}</span><span class=${"badge " + p.status}>${p.status}</span>
+              <div class="subject">${p.subject_ref}</div>
+              ${p.rationale && html`<div class="rationale">${p.rationale}</div>`}
+              <${Diff} p=${p} />
+              <div class="meta">
+                ${p.draft && p.draft.requester ? `requested by ${p.draft.requester} · ` : ""}confidence ${fmt(p.confidence)} · created ${p.created_at}
+                ${p.approver && html` · decided by <b>${p.approver}</b> at ${p.decided_at}`}
+              </div>
+            </div>
+            ${p.status === "proposed" && html`
+              <div class="actions">
+                <button class="approve" disabled=${!user} onClick=${() => decide(p, "approve")}>${p.kind === "l2_review" ? "Agree: incorrect" : p.kind === "human_edit_conflict" ? "Re-accept edit" : "Approve & apply"}</button>
+                <button class="reject" disabled=${!user} onClick=${() => decide(p, "reject")}>${p.kind === "l2_review" ? "Obligation stands" : p.kind === "human_edit_conflict" ? "Derivation stands" : "Reject"}</button>
+              </div>`}
+          </div>
+        </div>`)}
+    </div>`;
+}
+
+function Edits({ user, notify, fail }) {
+  const [status, setStatus] = useState("");
+  const [items, setItems] = useState(null);
+  const load = () => fetch(`/console/edits${status ? `?status=${status}` : ""}`).then((r) => r.json()).then(setItems).catch((e) => fail(String(e)));
+  useEffect(() => { load(); }, [status]);
+  const reproduce = async () => {
+    const r = await fetch(`/console/edits/reproduce`, { method: "POST", headers: { "X-Reg42-User": user } });
+    if (!r.ok) { fail((await r.json()).detail || r.statusText); return; }
+    const out = await r.json();
+    notify(`Checked ${out.checked} edit(s): ${out.intact} intact, ${out.reproduced} reproduced, ${out.escalated} escalated.`);
+    load();
+  };
+  return html`
+    <div>
+      <p class="meta" style=${{ marginBottom: "12px" }}>Every accepted decision is kept with the basis it was taken on. After each layer's nightly step the edit is checked: same basis and value intact — nothing to do; same basis, value lost — re-asserted (<em>reproduced</em>); basis changed — <em>escalated</em> to Modification requests as a conflict.</p>
+      <div class="filters">
+        ${["", "accepted", "reproduced", "escalated", "superseded"].map((s) => html`<button class=${"navlink" + (s === status ? " active" : "")} onClick=${() => setStatus(s)}>${s || "all"}</button>`)}
+        <span class="spacer" style=${{ flex: 1 }}></span>
+        <button class="navlink" disabled=${!user} onClick=${reproduce}>Run reproduce-or-escalate now</button>
+      </div>
+      ${items === null && html`<div class="empty">Loading…</div>`}
+      ${items && items.length === 0 && html`<div class="empty">No human edits${status ? ` with status ${status}` : ""} yet.</div>`}
+      ${(items || []).map((e) => html`
+        <div class="card" key=${e.id}>
+          <span class="kind">${e.id} · ${e.layer} · ${e.kind}</span><span class=${"badge " + e.status}>${e.status}</span>
+          <div class="subject">${e.table_name} ${e.subject_ref}${e.field ? ` · ${e.field}` : ""}</div>
+          ${e.kind === "field_edit" && html`<div class="diff"><div><small>before</small>${fmt(e.before)}</div><div><small>after</small>${fmt(e.after)}</div></div>`}
+          <div class="meta">accepted by <b>${e.accepted_by}</b> at ${e.accepted_at} on basis ${(e.basis_hash || "").slice(0, 8) || "—"}
+            · checked ${e.checks}×${e.last_outcome ? ` · last: ${e.last_outcome}` : ""}
+            ${e.proposal_id ? ` · proposal ${e.proposal_id}` : ""}</div>
+        </div>`)}
+    </div>`;
+}
+
+function App() {
+  const [user, setUser] = useState(localStorage.getItem("reg42_user") || "");
+  const [tab, setTab] = useState(location.hash.replace("#", "") || "queue");
+  const [summary, setSummary] = useState(null);
+  const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const [theme, toggleTheme] = useTheme();
+  const loadSummary = () => fetch("/console/summary").then((r) => r.json()).then(setSummary).catch((e) => setError(String(e)));
+  useEffect(() => { loadSummary(); }, [tab, notice]);
+  useEffect(() => { localStorage.setItem("reg42_user", user); }, [user]);
+  useEffect(() => { location.hash = tab; }, [tab]);
+  const notify = (m) => { setError(null); setNotice(m); };
+  const fail = (m) => { setNotice(null); setError(m); };
+  const props = { user, notify, fail };
+  return html`
+    <div>
+      <header class="appbar">
+        <div class="wordmark"><b>CLHEAR</b><span>Approval console — agents propose, humans ratify, and what humans ratify sticks</span></div>
+        <div class="spacer"></div>
+        <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a>
+        <a class="navlink" href="/evals">Evals</a><a class="navlink" href="/review">Proposals</a>
+        <span class="navlink active">Console</span>
+        <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+      </header>
+      <main id="main"><h1 class="visually-hidden">Approval console</h1>
+      ${error && html`<div class="error" role="alert">${error}</div>`}
+      ${notice && html`<div class="notice" role="status">${notice}</div>`}
+      <div class="identity">
+        <label for="who">Acting as</label>
+        <input id="who" placeholder="maintainer identity (e.g. avner@reg42.ai)" value=${user} onInput=${(e) => setUser(e.target.value)} />
+        <span class="meta">Decisions are recorded under this name; only maintainers may decide.</span>
+      </div>
+      <${Summary} s=${summary} />
+      <div class="tabs" role="tablist">
+        ${TABS.map(([id, label]) => html`<button role="tab" aria-selected=${tab === id} class=${tab === id ? "active" : ""} onClick=${() => setTab(id)}>${label}</button>`)}
+      </div>
+      ${tab === "queue" && html`<${Queue} ...${props} />`}
+      ${tab === "requests" && html`<${Proposals} ...${props} contributions=${false} />`}
+      ${tab === "contributions" && html`<${Proposals} ...${props} contributions=${true} />`}
+      ${tab === "edits" && html`<${Edits} ...${props} />`}
+      <p class="foot">HLD v2 I4: low-confidence determinations wait for a named human; nothing a human accepted is overwritten silently — it is reproduced on the same basis or escalated back here when the basis moves.</p>
+      </main>
+    </div>`;
+}
+
+createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
