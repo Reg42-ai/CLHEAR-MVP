@@ -87,10 +87,16 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     consolidation = draft_and_propose(engine, llm)
     registry_consolidation = l2_consolidate(engine)
     reviews = review_obligations(engine, llm)
+    # I4: what a maintainer accepted must survive the cycle — re-asserted on the
+    # same basis, escalated to the console when the basis moved.
+    from app.clhear.platform import console
+
+    human_edits = {"L2": console.reproduce_human_edits(engine, layer="L2")}
     blocks = generate_blocks(engine, llm)
     decomposition = l3_decompose(engine)
     harmonisation = l3_harmonize(engine)
     characterisation = l3_characterize(engine, llm)
+    human_edits["L3"] = console.reproduce_human_edits(engine, layer="L3")
     licenses = extract_licenses(engine, llm)
     # L4 (HLD v2 §4.4): register-backed ontology, applicability predicates, profile re-validation.
     from app.clhear.l4.ontology import build_ontology
@@ -100,11 +106,13 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     ontology = build_ontology(engine)
     predicates = extract_predicates(engine, llm)
     profile_revalidation = revalidate_profiles(engine)
+    human_edits["L4"] = console.reproduce_human_edits(engine, layer="L4")
     # L5 (HLD v2 §4.5): deterministic mapping of every obligation, router refinement, junction build, orphan check.
     from app.clhear.l5.check import check_junction
 
     activities = map_activities(engine, llm)
     junction = check_junction(engine)
+    human_edits["L5"] = console.reproduce_human_edits(engine, layer="L5")
     # L6 (HLD v2 §4.6): composers for every stored profile (diff engine supersedes
     # changed blueprints and publishes clhear.l6.changed), explainers on the
     # current blueprints (rubric-gated), citation-checked program rationale.
@@ -164,6 +172,7 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "l2_changes": l2_changes,
         "registry_consolidation": registry_consolidation,
         "reviews": reviews,
+        "human_edits": {lay: {k: v for k, v in out.items() if k != "details"} for lay, out in human_edits.items()},
         "curated": seeded,
         "concepts": concepts_seed,
         "consolidation": consolidation,
@@ -205,7 +214,9 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         f"{sum(e['accepted'] for e in explanations)} explanations refined; "
         f"{sum(1 for g in gates.values() if g.get('passed'))}/{len(gates)} eval gates green; "
         f"graph projection {projections['graph'].get('status')} ({projections['graph'].get('nodes', 0)} nodes / "
-        f"{projections['graph'].get('edges', 0)} edges), {projections['index'].get('embedded', 0)} clauses re-embedded"
+        f"{projections['graph'].get('edges', 0)} edges), {projections['index'].get('embedded', 0)} clauses re-embedded; "
+        f"human edits: {sum(o['reproduced'] for o in human_edits.values())} reproduced, "
+        f"{sum(o['escalated'] for o in human_edits.values())} escalated"
     )
     import time
 
