@@ -848,6 +848,34 @@ def persist_tree(
     return clause_rows
 
 
+def backfill_normative(engine: Engine, *, batch: int = 2000) -> dict:
+    """Stamp ``clauses.normative`` on clause rows ingested before the flag existed
+    (m0009). Deterministic over the stored clause text — the same classifier the
+    parser applies at ingest — so it is a projection of the record, not a
+    re-derivation, and running it twice changes nothing."""
+    examined = flipped = 0
+    with engine.begin() as conn:
+        rows = conn.execute(
+            sa.select(clauses.c.id, clauses.c.text, clauses.c.normative)
+            .where(clauses.c.valid_to.is_(None))
+            .order_by(clauses.c.id)
+        ).all()
+        updates: list[dict] = []
+        for cid, text, current in rows:
+            examined += 1
+            wanted = spans.is_normative(text or "")
+            if bool(current) != wanted:
+                updates.append({"cid": cid, "normative": wanted})
+        for i in range(0, len(updates), batch):
+            chunk = updates[i:i + batch]
+            conn.execute(
+                clauses.update().where(clauses.c.id == sa.bindparam("cid")).values(normative=sa.bindparam("normative")),
+                chunk,
+            )
+            flipped += len(chunk)
+    return {"examined": examined, "flipped": flipped}
+
+
 def _path_crumb(node: DocNode) -> str:
     """Spine crumb for clauses.path: 'TITLE VI — …' when both exist."""
     label = (node.label or "").strip()

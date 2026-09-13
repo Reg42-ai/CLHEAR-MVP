@@ -76,8 +76,11 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     from app.clhear.l3.decompose import decompose as l3_decompose
     from app.clhear.l3.harmonize import harmonize as l3_harmonize
 
+    from app.clhear.l1.pipeline import backfill_normative
+
     started = datetime.now(timezone.utc)
     seeded = curated.seed(engine)
+    normative = backfill_normative(engine)  # clauses ingested before m0009 carry no flag until touched
     extraction = run_extraction(engine)
     triage = triage_duties(engine, llm)
     structured = refine_structured(engine, llm)
@@ -207,6 +210,7 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "index": _embeddings.rebuild_index(engine, release=nightly_release, trigger="nightly"),
     }
     outputs = {
+        "normative": normative,
         "extraction": extraction,
         "triage": triage,
         "projections": {"graph": {k: projections["graph"].get(k) for k in ("backend", "nodes", "edges", "status", "duration_ms")},

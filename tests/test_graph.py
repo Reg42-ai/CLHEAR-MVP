@@ -285,6 +285,21 @@ def test_bedrock_embedder_invokes_titan_per_text_and_is_selectable(monkeypatch):
     assert sorted(b["inputText"] for _, b in calls) == ["a", "b", "c"]
     assert all(m == "amazon.titan-embed-text-v2:0" and b["dimensions"] == 1024 for m, b in calls)
 
+    class _Throttled(_Runtime):
+        n = 0
+
+        def invoke_model(self, **kw):
+            self.n += 1
+            if self.n < 3:
+                exc = Exception("Too many requests")
+                exc.response = {"Error": {"Code": "ThrottlingException"}}
+                raise exc
+            return super().invoke_model(**kw)
+
+    naps = []
+    emb = embeddings.BedrockEmbedder(client=_Throttled(), workers=1, sleep=naps.append)
+    assert len(emb.embed(["x"])[0]) == 1024 and len(naps) == 2
+
     monkeypatch.setenv("CLHEAR_EMBEDDING_PROVIDER", "bedrock")
     from app.clhear.settings import get_settings
 

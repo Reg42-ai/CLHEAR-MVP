@@ -20,7 +20,7 @@ case "$KIND" in
     PROJECT="${CODEBUILD_PROJECT:-clhear-workers-image}"; KEY="build/workers-source.zip"; REPO="clhear-workers"
     ZIP="$(mktemp -d)/workers-source.zip"
     echo "== packaging build context =="
-    zip -qr "$ZIP" Dockerfile requirements.txt app migrations -x '*/__pycache__/*' '*.pyc'
+    zip -qr "$ZIP" Dockerfile requirements.txt app migrations clhear-evals -x '*/__pycache__/*' '*.pyc'
     ;;
   infer)
     PROJECT="${CODEBUILD_PROJECT:-clhear-infer-image}"; KEY="build/infer-source.zip"; REPO="clhear-infer"

@@ -153,6 +153,21 @@ def test_spans_index_the_canonical_text_and_normative_flags(engine, tmp_path):
     assert by_ref["s1"].span_start <= by_ref["1"].span_start and by_ref["s1"].span_end >= by_ref["4"].span_end
 
 
+def test_backfill_normative_restamps_pre_m0009_rows_and_is_idempotent(engine, tmp_path):
+    """Clauses ingested before the flag existed sit at FALSE; the backfill applies
+    the same deterministic classifier to the stored text and then does nothing."""
+    adapter = SyntheticAdapter(V2, "2026-06-01")
+    pipeline.ingest(engine, adapter, pipeline.LocalStore(tmp_path / "lake"))
+    with engine.begin() as conn:
+        conn.execute(clauses.update().values(normative=False))
+    first = pipeline.backfill_normative(engine)
+    assert first["examined"] > 0 and first["flipped"] > 0
+    with engine.connect() as conn:
+        by_ref = {r.ref: r.normative for r in conn.execute(sa.select(clauses.c.ref, clauses.c.normative))}
+    assert by_ref["1"] is True and by_ref["4"] is False
+    assert pipeline.backfill_normative(engine)["flipped"] == 0
+
+
 def test_llm_refinement_is_quote_bound(engine, tmp_path):
     """An `l1.change` answer must quote the clause; a hallucinated date is ignored."""
     from datetime import date

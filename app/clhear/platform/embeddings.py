@@ -131,22 +131,38 @@ class BedrockEmbedder:
     the model name stored beside each vector is the Bedrock id. Titan embeds one
     text per call, so a batch fans out over a small thread pool."""
 
-    def __init__(self, *, model: str = TITAN_EMBED_V2, region: str | None = None, client=None, workers: int = 8):
+    def __init__(self, *, model: str = TITAN_EMBED_V2, region: str | None = None, client=None, workers: int = 4,
+                 max_attempts: int = 8, sleep=time.sleep):
         self.model = self.name = model
         self._client, self._region, self._workers = client, region, max(1, workers)
+        self._max_attempts, self._sleep = max_attempts, sleep
 
     def _rt(self):
         if self._client is None:
             import boto3
+            from botocore.config import Config
 
-            self._client = boto3.client("bedrock-runtime", region_name=self._region or "us-east-1")
+            # Titan's account-level TPS is modest; retries here are our own backoff.
+            self._client = boto3.client("bedrock-runtime", region_name=self._region or "us-east-1",
+                                        config=Config(retries={"max_attempts": 0}, read_timeout=60))
         return self._client
 
     def _one(self, text: str) -> list[float]:
         import json
 
         body = json.dumps({"inputText": text[:8000], "dimensions": DIM, "normalize": True})
-        resp = self._rt().invoke_model(modelId=self.model, body=body, contentType="application/json", accept="application/json")
+        for attempt in range(self._max_attempts):
+            try:
+                resp = self._rt().invoke_model(modelId=self.model, body=body, contentType="application/json",
+                                               accept="application/json")
+                break
+            except Exception as exc:  # throttling / transient: exponential backoff with jitter
+                name = getattr(exc, "response", {}).get("Error", {}).get("Code", "") or type(exc).__name__
+                if name not in {"ThrottlingException", "ServiceUnavailableException", "ModelNotReadyException",
+                                "InternalServerException", "ReadTimeoutError", "ConnectionError"} \
+                        or attempt == self._max_attempts - 1:
+                    raise
+                self._sleep(min(30.0, 0.5 * (2 ** attempt)) * (0.5 + 0.5 * ((hash(text) >> 3) % 1000) / 1000))
         vec = json.loads(resp["body"].read()).get("embedding") or []
         if len(vec) != DIM:
             raise RuntimeError(f"bedrock embeddings: wrong shape ({len(vec)})")

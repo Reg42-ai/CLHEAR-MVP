@@ -17,6 +17,8 @@ RUN apt-get update \
 
 COPY app ./app
 COPY migrations ./migrations
+# Golden sets the eval gates read from disk (evals.py: clhear-evals/<layer>/...).
+COPY clhear-evals ./clhear-evals
 
 # `python` as entrypoint so ECS command overrides can run one-off jobs (record load,
 # nightly stack, probes) in the same image; the long-running worker is the default.
