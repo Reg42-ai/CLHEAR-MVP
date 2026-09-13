@@ -143,6 +143,11 @@ TASKS: dict[str, TaskSpec] = {
         latency_tolerance="nightly", domain="legal",
         description="Applicability predicate from an obligation's subject/condition, closed-world over the L4 ontology",
     ),
+    "solon.intake": TaskSpec(
+        "solon.intake", "extraction", "low", "medium", 0.85, "solon.intake", "L4", task_class="l4_enumerate",
+        latency_tolerance="interactive", domain="legal",
+        description="Front door: read an organisation description into L4 attributes, closed-world over the ontology",
+    ),
     "l5.activity_map": TaskSpec(
         "l5.activity_map", "graph_mapping", "medium", "medium", 0.84, "l5.map", "L5", task_class="l5_map",
         latency_tolerance="nightly", domain="legal",

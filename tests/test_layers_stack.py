@@ -303,9 +303,12 @@ def test_unknown_items_404(client, engine):
 
 
 def test_ui_shells_served(client):
+    # HLD v2 §5: "/" is the Solon front door; the Stack UI moved to /stack.
     home = client.get("/").text
-    assert "the compliance stack" in home
-    assert "Eval Studio" in home or "nav(\"/eval\")" in home
-    assert "AI Ops" in home or "nav(\"/ops\")" in home
+    assert "Describe your organization" in home
+    stack = client.get("/stack").text
+    assert "the compliance stack" in stack
+    assert "Eval Studio" in stack or "nav(\"/eval\")" in stack
+    assert "AI Ops" in stack or "nav(\"/ops\")" in stack
     assert client.get("/static/theme.css").status_code == 200
     assert client.get("/sources").status_code == 200

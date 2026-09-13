@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · Describe your organization</title>
+<meta name="description" content="CLHEAR turns a description of your organisation into a leanest complete compliance programme, with every item traced to the law that requires it." />
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* Solon front door (HLD v2 §5): one field, two or three questions, a blueprint
+     narrated layer by layer. Evidence is one click away on every step. */
+  main { position: relative; z-index: 1; max-width: 980px; margin: 0 auto; padding: 40px 20px 80px; }
+  .hero { text-align: center; margin: 28px 0 26px; }
+  .hero h1 { font-size: clamp(28px, 5vw, 44px); margin: 0 0 10px; letter-spacing: -0.02em; }
+  .hero p { color: var(--muted); margin: 0 auto; max-width: 640px; font-size: 16px; }
+  .field { display: flex; gap: 10px; align-items: stretch; background: var(--panel); border: 1px solid var(--edge-bright); border-radius: 16px; padding: 10px; box-shadow: var(--glow); }
+  .field textarea { flex: 1; min-height: 64px; border: none; background: transparent; color: var(--ink); font: inherit; font-size: 16px; padding: 10px 12px; resize: vertical; }
+  .field textarea:focus { outline: none; }
+  .field:focus-within { border-color: var(--accent); }
+  .go { border: none; border-radius: 12px; background: var(--accent); color: var(--on-accent); font-weight: 700; padding: 0 22px; font-size: 15px; cursor: pointer; }
+  .go[disabled] { opacity: 0.5; cursor: default; }
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; justify-content: center; }
+  .chip { border: 1px solid var(--edge); background: var(--panel); color: var(--muted); border-radius: 999px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; }
+  .chip:hover, .chip:focus-visible { color: var(--ink); border-color: var(--edge-bright); }
+  .panelx { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 20px 22px; margin-top: 18px; }
+  .panelx h2 { margin: 0 0 6px; font-size: 18px; }
+  .panelx h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .facts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .fact { border: 1px solid var(--edge); border-radius: 10px; padding: 6px 10px; font-size: 13px; background: var(--panel-strong); }
+  .fact b { color: var(--accent); font-weight: 600; margin-right: 4px; }
+  .fact .cue { color: var(--faint); font-size: 11.5px; margin-left: 6px; font-family: var(--mono); }
+  .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; margin-top: 10px; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--edge); border-radius: 12px; padding: 10px 12px; background: var(--panel-strong); cursor: pointer; font-size: 13.5px; }
+  .opt.sug { border-color: var(--edge-bright); }
+  .opt input { margin-top: 3px; }
+  .opt .d { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .opt .tag { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ok); margin-left: 6px; }
+  .unavail { margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+  .unavail summary { cursor: pointer; }
+  .why { font-size: 13px; color: var(--muted); border-left: 3px solid var(--edge-bright); padding: 4px 10px; margin: 10px 0; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 7px 18px; font-size: 13.5px; cursor: pointer; }
+  .btn.quiet { background: var(--panel); border-color: var(--edge); color: var(--muted); }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+  .narr { list-style: none; margin: 0; padding: 0; }
+  .narr li { display: grid; grid-template-columns: 46px 1fr auto; gap: 12px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--edge); }
+  .narr li:last-child { border-bottom: none; }
+  .narr .lyr { font-family: var(--mono); font-weight: 700; color: var(--accent); }
+  .narr .lyr.pending { color: var(--faint); }
+  .narr .t { font-weight: 600; }
+  .narr .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .narr .ms { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .narr .ev a { font-size: 12px; margin-right: 8px; }
+  .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: p 1.1s infinite; margin-right: 6px; vertical-align: middle; }
+  @keyframes p { 0%, 100% { opacity: 0.3 } 50% { opacity: 1 } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; }
+  .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
+  .kpi b { display: block; font-size: 20px; } .kpi span { font-size: 11.5px; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
+  .modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 36px; }
+  .mode { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 14px 16px; text-decoration: none; color: var(--ink); display: block; }
+  .mode:hover, .mode:focus-visible { border-color: var(--edge-bright); }
+  .mode b { display: block; margin-bottom: 4px; } .mode span { color: var(--muted); font-size: 13px; }
+  .foot { color: var(--faint); font-size: 12px; text-align: center; margin-top: 30px; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<script type="module">
+import React, { useState, useEffect, useRef } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = async (url, opts) => {
+  const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body));
+  return body;
+};
+const show = (v) => (Array.isArray(v) ? v.join(", ") : v === true ? "yes" : v === false ? "no" : v == null || v === "" ? "—" : String(v));
+const LAYERS = [["L4", "Profile"], ["L1", "Sources"], ["L2", "Obligations"], ["L5", "Activities"], ["L3", "Blocks"], ["L6", "Blueprint"]];
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+function Facts({ attributes, evidence }) {
+  const keys = Object.keys(attributes || {});
+  if (!keys.length) return html`<div class="fact">Nothing recognised yet — Solon will ask.</div>`;
+  const cue = (k, v) => (evidence || []).find((e) => e.attribute === k && String(e.value) === String(v))?.cue;
+  return html`<div class="facts">
+    ${keys.flatMap((k) => (Array.isArray(attributes[k]) ? attributes[k] : [attributes[k]]).map((v) =>
+      html`<span class="fact" key=${k + v}><b>${k.replace("_", " ")}</b>${show(v)}${cue(k, v) ? html`<span class="cue">“${cue(k, v)}”</span>` : null}</span>`))}
+  </div>`;
+}
+
+function Question({ q, onAnswer, busy }) {
+  const [picked, setPicked] = useState(() => new Set(q.suggested || []));
+  useEffect(() => { setPicked(new Set(q.suggested || [])); }, [q]);
+  const multi = q.type === "list";
+  const toggle = (label) => setPicked((s) => { const n = new Set(multi ? s : []); n.has(label) ? n.delete(label) : n.add(label); return n; });
+  const suggested = new Set(q.suggested || []);
+  return html`<section class="panelx" aria-labelledby="qh">
+    <h2 id="qh">${q.question}</h2>
+    <div class="why">${q.why}</div>
+    <fieldset style=${{ border: "none", padding: 0, margin: 0 }}>
+      <legend class="visually-hidden">${q.question}</legend>
+      <div class="options">
+        ${q.options.map((o) => html`<label class=${"opt" + (suggested.has(o.label) ? " sug" : "")} key=${o.label}>
+          <input type=${multi ? "checkbox" : "radio"} name="q" checked=${picked.has(o.label)} onChange=${() => toggle(o.label)} />
+          <span><span>${o.label}</span>${suggested.has(o.label) ? html`<span class="tag">suggested</span>` : null}
+            ${o.detail ? html`<div class="d">${o.detail}</div>` : null}
+            ${o.permits?.length ? html`<div class="d">permits: ${o.permits.slice(0, 4).join(", ")}${o.permits.length > 4 ? "…" : ""}</div>` : null}
+            ${o.register?.url ? html`<div class="d"><a href=${o.register.url} target="_blank" rel="noopener">register: ${o.register.key}</a></div>` : null}
+          </span></label>`)}
+      </div>
+    </fieldset>
+    ${q.unavailable?.length ? html`<details class="unavail"><summary>${q.unavailable.length} option(s) not offered — they would make an impossible permutation</summary>
+      <ul>${q.unavailable.slice(0, 12).map((o) => html`<li key=${o.label}><b>${o.label}</b>: ${(o.blocked_by || []).join("; ")}</li>`)}</ul></details>` : null}
+    <div class="row">
+      <button class="btn" disabled=${busy || (!picked.size && !q.optional)} onClick=${() => onAnswer([...picked])}>Continue</button>
+      ${q.optional ? html`<button class="btn quiet" disabled=${busy} onClick=${() => onAnswer([])}>Skip</button>` : null}
+      <span style=${{ color: "var(--faint)", fontSize: "12.5px" }}>${q.questions_left} question(s) at most</span>
+    </div>
+  </section>`;
+}
+
+function Narrative({ steps, running }) {
+  const byLayer = Object.fromEntries(steps.filter((s) => s.layer !== "done").map((s) => [s.layer, s]));
+  const done = steps.find((s) => s.layer === "done");
+  return html`<section class="panelx" aria-live="polite">
+    <h2>${done ? "Your blueprint" : html`<span class="pulse" aria-hidden="true"></span>Solon is working through the layers`}</h2>
+    <ol class="narr">
+      ${LAYERS.map(([code, label]) => { const s = byLayer[code]; return html`<li key=${code}>
+        <span class=${"lyr" + (s ? "" : " pending")}>${code}</span>
+        <div><div class="t">${s ? s.title : label + (running ? " …" : "")}</div>
+          ${s?.status === "error" ? html`<div class="sub bad">${(s.detail || []).map((e) => e.message).join(" ")}</div>` : null}
+          ${s?.detail?.sample?.length ? html`<div class="sub">${s.detail.sample.slice(0, 3).map((o) => o.title).join(" · ")}</div>` : null}
+          ${s?.detail?.sources?.length ? html`<div class="sub">${s.detail.sources.slice(0, 4).map((o) => o.name).join(" · ")}</div>` : null}
+          ${s?.evidence?.length ? html`<div class="ev">${s.evidence.map((e) => html`<a key=${e} href=${e}>evidence →</a>`)}</div>` : null}
+        </div>
+        <span class="ms">${s ? s.ms + " ms" : ""}</span></li>`; })}
+    </ol>
+    ${done ? html`<div>
+      <div class="kpis">
+        <div class="kpi"><b>${done.total_ms} ms</b><span>${done.within_budget ? "within the 60 s budget" : "over the 60 s budget"}</span></div>
+        <div class="kpi"><b>${byLayer.L6?.detail?.coverage_summary?.covered ?? "—"}/${byLayer.L6?.detail?.coverage_summary?.total ?? "—"}</b><span>obligations covered</span></div>
+        <div class="kpi"><b class=${byLayer.L6?.detail?.coverage_summary?.gaps ? "bad" : "ok"}>${byLayer.L6?.detail?.coverage_summary?.gaps ?? "—"}</b><span>gaps (never hidden)</span></div>
+        <div class="kpi"><b class=${byLayer.L6?.detail?.minimality?.minimal ? "ok" : "warn"}>${byLayer.L6?.detail?.minimality?.minimal ? "minimal" : "check"}</b><span>minimality proof</span></div>
+      </div>
+      <div class="row">
+        <a class="btn" href=${"/l6#" + done.detail.blueprint_id}>Open blueprint ${done.detail.blueprint_id}</a>
+        <a class="btn quiet" href=${"/l6/blueprints/" + done.detail.blueprint_id + "/export?format=oscal"}>Export OSCAL</a>
+        <a class="btn quiet" href=${"/explore#" + done.detail.blueprint_id}>Explore the evidence chain</a>
+        <a class="btn quiet" href=${"/watch#" + done.detail.profile_id}>Watch changes for this profile</a>
+      </div>
+      <p class="foot">No account, no key, no paywall: the agnostic blueprint is open by design. Evidence for every item is one click away.</p>
+    </div>` : null}
+  </section>`;
+}
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [text, setText] = useState("");
+  const [examples, setExamples] = useState([]);
+  const [state, setState] = useState(null); // intake / question state
+  const [asked, setAsked] = useState([]);
+  const [steps, setSteps] = useState([]);
+  const [running, setRunning] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const es = useRef(null);
+  useEffect(() => { api("/solon/examples").then((r) => setExamples(r.examples || [])).catch(() => {}); }, []);
+  useEffect(() => () => es.current?.close(), []);
+
+  const start = async () => {
+    if (!text.trim()) return;
+    setBusy(true); setError(""); setSteps([]); setAsked([]);
+    try { setState(await api("/solon/intake", { method: "POST", body: JSON.stringify({ text }) })); }
+    catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+  const build = async (attributes) => {
+    setRunning(true); setSteps([]);
+    try {
+      const prof = await api("/solon/profile", { method: "POST", body: JSON.stringify({ attributes, name: text.slice(0, 80) }) });
+      if (typeof EventSource !== "undefined") {
+        const src = new EventSource(`/solon/build/stream?profile_id=${encodeURIComponent(prof.profile_id)}`);
+        es.current = src;
+        src.addEventListener("step", (ev) => setSteps((s) => [...s, JSON.parse(ev.data)]));
+        src.addEventListener("end", () => { src.close(); setRunning(false); });
+        src.onerror = async () => { src.close(); const out = await api("/solon/build", { method: "POST", body: JSON.stringify({ profile_id: prof.profile_id }) }); setSteps(out.steps); setRunning(false); };
+      } else {
+        const out = await api("/solon/build", { method: "POST", body: JSON.stringify({ profile_id: prof.profile_id }) });
+        setSteps(out.steps); setRunning(false);
+      }
+    } catch (e) { setError(e.message); setRunning(false); }
+  };
+  const onAnswer = async (value) => {
+    setBusy(true); setError("");
+    try {
+      const next = await api("/solon/answer", { method: "POST", body: JSON.stringify({ attributes: state.attributes, attribute: state.attribute, value, asked, merge: !!state.merge }) });
+      setAsked(next.asked); setState({ ...state, ...next });
+      if (next.complete) build(next.attributes);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  };
+  useEffect(() => { if (state && state.complete && !steps.length && !running) build(state.attributes); }, [state?.complete]);
+
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark"><b>CLHEAR</b><span>describe · ask · compose</span></div>
+      <div class="spacer"></div>
+      <nav aria-label="Modes"><a class="navlink active" href="/">Start</a><a class="navlink" href="/explore">Explore</a><a class="navlink" href="/learn">Learn</a><a class="navlink" href="/watch">Watch</a><a class="navlink" href="/build">Build on it</a><a class="navlink" href="/stack">Stack</a></nav>
+      <button class="themebtn" onClick=${toggleTheme} aria-label="Toggle colour theme">${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main">
+      <div class="hero">
+        <h1>Describe your organization.</h1>
+        <p>Solon reads it against the licence ontology, asks the two or three things it still needs, and composes the leanest complete compliance programme — every item traced to the clause that requires it.</p>
+      </div>
+      <form class="field" onSubmit=${(e) => { e.preventDefault(); start(); }}>
+        <label class="visually-hidden" for="describe">Describe your organization</label>
+        <textarea id="describe" value=${text} placeholder="e.g. We are a global retail equities broker holding client money, FCA authorised in the UK, with EU and US licences." onInput=${(e) => setText(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) start(); }}></textarea>
+        <button class="go" type="submit" disabled=${busy || !text.trim()}>${busy ? "Reading…" : "Ask Solon"}</button>
+      </form>
+      <div class="examples" role="list">${examples.map((x) => html`<button type="button" class="chip" role="listitem" key=${x.id} onClick=${() => setText(x.text)}>${x.label}</button>`)}</div>
+      ${error ? html`<div class="err" role="alert">${error}</div>` : null}
+      ${state ? html`<section class="panelx"><h3>What Solon read (closed world: only ontology values become facts)</h3><${Facts} attributes=${state.attributes} evidence=${state.evidence} /></section>` : null}
+      ${state && !state.complete ? html`<${Question} q=${state} onAnswer=${onAnswer} busy=${busy} />` : null}
+      ${steps.length || running ? html`<${Narrative} steps=${steps} running=${running} />` : null}
+      <div class="modes">
+        <a class="mode" href="/explore"><b>Explore</b><span>Graph and list per layer; why, history, who else needs this; compare jurisdictions.</span></a>
+        <a class="mode" href="/learn"><b>Learn</b><span>Tours of the eight layers, the obligation of the week, playgrounds and quizzes.</span></a>
+        <a class="mode" href="/watch"><b>Watch</b><span>Change feed with effective dates; watch instruments or a profile like yours.</span></a>
+        <a class="mode" href="/build"><b>Build on it</b><span>API keys in one click, SDKs, OSCAL and JSON-LD exports, public evals.</span></a>
+      </div>
+      <p class="foot">CLHEAR is a derivation, not legal advice. <a href="/disclaimer">Disclaimer</a> · <a href="/terms">Terms</a> · <a href="/evals">Public evals</a></p>
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

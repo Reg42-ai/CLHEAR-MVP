@@ -71,8 +71,9 @@ def layer_lineage(layer: str, item_id: str) -> dict:
     return body
 
 
-@router.get("/", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/stack", response_class=HTMLResponse, include_in_schema=False)
 def stack_home() -> HTMLResponse:
+    """The eight-layer Stack view; the front door at "/" is Solon (app/clhear/v1/solon.py)."""
     # no-cache: the app shell must always match the deployed API/corpus.
     return HTMLResponse(
         (WEB_DIR / "stack.html").read_text(),
