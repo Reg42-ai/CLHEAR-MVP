@@ -29,8 +29,11 @@ from app.clhear.platform.task_classes import (
     MISTRAL_LARGE_3,
     NOVA_LITE,
     NOVA_PRO,
+    PROCUREMENT_CLEAN_ORIGINS,
     QWEN_3_5_32B,
+    TASK_CLASSES,
     TITAN_EMBED_V2,
+    origin_of,
 )
 from app.clhear.settings import get_settings
 
@@ -213,6 +216,7 @@ class InferProvider:
         except (KeyError, IndexError, TypeError) as exc:
             raise InferError(f"malformed infer response: {str(data)[:200]}") from exc
         used_model = str(data.get("model") or model)
+        self._assert_procurement_clean(task_class, used_model)
         usage = data.get("usage") or {}
         in_tok = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
         out_tok = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
@@ -225,6 +229,22 @@ class InferProvider:
             text=text, model=used_model, provider=self.name,
             input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost,
         )
+
+    @staticmethod
+    def _assert_procurement_clean(task_class: str | None, used_model: str) -> None:
+        """I6: a derivation class must never be answered by a model outside the
+        procurement-clean set. Infer routes by task class and may ignore the
+        requested model, so the check is on what it reports having run; the
+        call fails and nothing is written rather than silently accepting."""
+        spec = TASK_CLASSES.get(task_class or "")
+        if spec is None or not spec.derivation:
+            return
+        origin = origin_of(used_model)
+        if origin not in PROCUREMENT_CLEAN_ORIGINS:
+            raise InferError(
+                f"procurement policy: derivation task {task_class!r} was answered by {used_model!r} "
+                f"(origin {origin}); Infer must route clhear derivation classes to the clean ladder"
+            )
 
     def route_explain(self, task_class: str) -> dict:
         """`GET /route/explain?task_class=` — the ladder Infer will apply and the

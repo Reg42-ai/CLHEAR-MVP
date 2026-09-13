@@ -76,6 +76,39 @@ def test_complete_prefers_infer_cost_when_reported():
     assert res.cost_usd == pytest.approx(0.0042)
 
 
+def test_derivation_answered_by_non_clean_model_fails_closed():
+    """Observed live: Infer routed l2_extract to its default 'classify' tier and ran qwen3-32b,
+    reporting the catalog short name. I6 says the call fails; nothing is written."""
+    p, _ = _provider([
+        _Resp(200, {"model": "qwen3-32b", "choices": [{"message": {"content": '{"ok": true}'}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost_usd": 4e-06}})
+    ])
+    with pytest.raises(InferError, match="procurement policy.*l2_extract.*qwen3-32b"):
+        p.complete(model=tc.GPT_OSS_120B, prompt="p", system=None, max_tokens=8, task_class="l2_extract")
+
+    # Unknown origin fails closed too (only US/EU pass).
+    p, _ = _provider([
+        _Resp(200, {"model": "mystery-9b", "choices": [{"message": {"content": "{}"}}], "usage": {}})
+    ])
+    with pytest.raises(InferError, match="origin unknown"):
+        p.complete(model=tc.GPT_OSS_120B, prompt="p", system=None, max_tokens=8, task_class="l3_characterize")
+
+    # Infer short names for clean families are accepted.
+    for short in ("claude-haiku-45", "llama4-scout", "nova-2-sonic", "titan-embed-v2"):
+        assert tc.origin_of(short) == "US", short
+    p, _ = _provider([
+        _Resp(200, {"model": "claude-haiku-45", "choices": [{"message": {"content": "{}"}}], "usage": {}})
+    ])
+    assert p.complete(model=tc.GPT_OSS_120B, prompt="p", system=None, max_tokens=8, task_class="l2_extract").model == "claude-haiku-45"
+
+    # Non-derivation classes and calls without a task class are not gated by origin.
+    non_derivation = next(t.id for t in tc.TASK_CLASS_LIST if not t.derivation)
+    p, _ = _provider([
+        _Resp(200, {"model": "qwen3-32b", "choices": [{"message": {"content": "{}"}}], "usage": {}})
+    ])
+    assert p.complete(model=tc.NOVA_LITE, prompt="p", system=None, max_tokens=8, task_class=non_derivation).model == "qwen3-32b"
+
+
 def test_http_errors_raise_infer_error():
     p, _ = _provider([_Resp(429, {"error": "rate limited"})])
     with pytest.raises(InferError):
