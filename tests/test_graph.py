@@ -268,6 +268,33 @@ def test_infer_embedder_calls_the_embeddings_endpoint_with_the_task_class():
     assert body["dimensions"] == 1024 and body["input"] == ["a", "b"] and headers["authorization"] == "Bearer tok"
 
 
+def test_bedrock_embedder_invokes_titan_per_text_and_is_selectable(monkeypatch):
+    import io
+    import json as _json
+
+    calls = []
+
+    class _Runtime:
+        def invoke_model(self, *, modelId, body, contentType, accept):
+            calls.append((modelId, _json.loads(body)))
+            return {"body": io.BytesIO(_json.dumps({"embedding": [0.5] * 1024}).encode())}
+
+    emb = embeddings.BedrockEmbedder(client=_Runtime(), workers=2)
+    out = emb.embed(["a", "b", "c"])
+    assert len(out) == 3 and all(len(v) == 1024 for v in out) and emb.name == "amazon.titan-embed-text-v2:0"
+    assert sorted(b["inputText"] for _, b in calls) == ["a", "b", "c"]
+    assert all(m == "amazon.titan-embed-text-v2:0" and b["dimensions"] == 1024 for m, b in calls)
+
+    monkeypatch.setenv("CLHEAR_EMBEDDING_PROVIDER", "bedrock")
+    from app.clhear.settings import get_settings
+
+    get_settings.cache_clear()
+    try:
+        assert isinstance(embeddings.embedder(), embeddings.BedrockEmbedder)
+    finally:
+        get_settings.cache_clear()
+
+
 # --------------------------------------------------------------------------- api + worker
 
 

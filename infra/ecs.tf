@@ -83,7 +83,7 @@ resource "aws_ecs_task_definition" "fleet" {
         # Query graph: empty URI -> in-process projection over Postgres (same answers, no Bolt).
         { name = "CLHEAR_NEO4J_URI", value = local.neo4j_uri },
         { name = "CLHEAR_NEO4J_USER", value = "neo4j" },
-        { name = "CLHEAR_EMBEDDING_PROVIDER", value = "infer" },
+        { name = "CLHEAR_EMBEDDING_PROVIDER", value = "bedrock" }, # the pinned Infer image has no /embeddings route
         # Evals mirror into self-hosted Langfuse (langfuse.tf); empty host = off.
         { name = "LANGFUSE_HOST", value = local.langfuse_url },
         { name = "CLHEAR_MAINTAINERS", value = var.maintainers },

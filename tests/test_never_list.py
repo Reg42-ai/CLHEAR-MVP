@@ -52,13 +52,23 @@ def test_only_infer_provider_in_prod(monkeypatch):
     ]
     assert real == ["InferProvider"]
     vendor_hosts = ("api.anthropic.com", "api.openai.com", "api.x.ai", "ollama.com", "generativelanguage.googleapis.com", "bedrock-runtime")
+    # One documented exemption: clause embeddings (a rebuildable projection, never
+    # record content) may call Titan/Cohere embed models on Bedrock directly while
+    # the pinned Infer image has no /embeddings route. IAM pins the callable models.
+    embed_exempt = REPO / "app" / "clhear" / "platform" / "embeddings.py"
     offenders = []
     for path in (REPO / "app").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         for host in vendor_hosts:
-            if host in text:
+            if host in text and not (path == embed_exempt and host == "bedrock-runtime"):
                 offenders.append(f"{path.relative_to(REPO)}: {host}")
     assert offenders == []
+    iam = (REPO / "infra" / "iam.tf").read_text(encoding="utf-8")
+    embed_stmt = iam[iam.index('Sid      = "EmbeddingModels"'):]
+    assert "local.embedding_model_arns" in embed_stmt.split("},")[0]
+    arns = iam[iam.index("embedding_model_arns = ["):].split("]")[0]
+    assert "foundation-model/amazon.titan-embed-text-v2:0" in arns and "foundation-model/cohere.embed-multilingual-v3" in arns
+    assert not any(bad in arns for bad in ("anthropic.", "mistral.", "openai.", "meta.", "nova", "*"))
 
 
 def test_no_gateway_calls_outside_router():

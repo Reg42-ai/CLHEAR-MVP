@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     clhear_neo4j_uri: str = ""  # bolt://clhear-neo4j.clhear.local:7687
     clhear_neo4j_user: str = "neo4j"
     clhear_neo4j_password: str = ""
-    clhear_embedding_provider: str = "auto"  # auto | infer | hash
+    clhear_embedding_provider: str = "auto"  # auto | infer | bedrock | hash
     clhear_embedding_model: str = "amazon.titan-embed-text-v2:0"
 
     # Snapshot mode for the scheduled fleet: the corpus SQLite lives in S3

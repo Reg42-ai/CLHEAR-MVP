@@ -124,14 +124,55 @@ class InferEmbedder:
         return out
 
 
+class BedrockEmbedder:
+    """Titan Text Embeddings v2 straight from Bedrock (``bedrock-runtime``), for
+    accounts whose Infer router has no ``/embeddings`` route yet. Same model, same
+    1024-dim cosine space and the same non-derivation posture as the Infer path:
+    the model name stored beside each vector is the Bedrock id. Titan embeds one
+    text per call, so a batch fans out over a small thread pool."""
+
+    def __init__(self, *, model: str = TITAN_EMBED_V2, region: str | None = None, client=None, workers: int = 8):
+        self.model = self.name = model
+        self._client, self._region, self._workers = client, region, max(1, workers)
+
+    def _rt(self):
+        if self._client is None:
+            import boto3
+
+            self._client = boto3.client("bedrock-runtime", region_name=self._region or "us-east-1")
+        return self._client
+
+    def _one(self, text: str) -> list[float]:
+        import json
+
+        body = json.dumps({"inputText": text[:8000], "dimensions": DIM, "normalize": True})
+        resp = self._rt().invoke_model(modelId=self.model, body=body, contentType="application/json", accept="application/json")
+        vec = json.loads(resp["body"].read()).get("embedding") or []
+        if len(vec) != DIM:
+            raise RuntimeError(f"bedrock embeddings: wrong shape ({len(vec)})")
+        return list(map(float, vec))
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        if len(texts) == 1 or self._workers == 1:
+            return [self._one(t) for t in texts]
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(self._workers, len(texts))) as pool:
+            return list(pool.map(self._one, texts))
+
+
 def embedder(*, provider: str | None = None) -> Embedder:
-    """Infer when configured (or forced), else the hash embedder."""
+    """Infer or Bedrock when configured (or forced), else the hash embedder."""
     from app.clhear.settings import get_settings
 
     s = get_settings()
     choice = provider or s.clhear_embedding_provider
     if choice == "hash":
         return HashEmbedder()
+    if choice == "bedrock":
+        return BedrockEmbedder(model=s.clhear_embedding_model or TITAN_EMBED_V2, region=s.aws_region or None)
     if choice == "infer" or (choice == "auto" and s.infer_base_url and s.infer_token and s.infer_token != "CHANGEME"):
         return InferEmbedder(s.infer_base_url, s.infer_token, model=s.clhear_embedding_model or TITAN_EMBED_V2,
                              employee_id=s.infer_employee_id, data_class=s.infer_data_class)

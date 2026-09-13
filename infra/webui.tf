@@ -99,6 +99,12 @@ resource "aws_iam_role_policy" "webui_db" {
         Effect   = "Allow"
         Action   = ["ssm:GetParameter", "ssm:GetParameters"]
         Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/clhear/*"
+      },
+      {
+        # Query-side embedding for the vector leg of hybrid search (same model as the index).
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeModel"]
+        Resource = local.embedding_model_arns
       }
     ]
   })
@@ -175,6 +181,7 @@ resource "aws_lambda_function" "webui" {
       CLHEAR_DATABASE_URL_SSM_PARAM   = var.database_url_ssm_param
       INFER_BASE_URL                  = local.deploy_private_net ? local.infer_base_url : ""
       INFER_EMPLOYEE_ID               = "clhear"
+      CLHEAR_EMBEDDING_PROVIDER       = "bedrock"
       CLHEAR_RELEASES_S3_PREFIX       = "s3://${aws_s3_bucket.deploy.bucket}/releases"
       CLHEAR_APP_KEYS                 = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key"
       REG42_CLHEAR_ENABLED            = "true"

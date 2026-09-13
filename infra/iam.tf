@@ -102,6 +102,21 @@ resource "aws_iam_role_policy" "worker_task" {
           StringEquals = { "cloudwatch:namespace" = "CLHEAR" }
         }
       },
+      {
+        # Clause embeddings (a projection, not a derivation): the pinned Infer image
+        # has no /embeddings route, so the index is built straight from Titan v2.
+        Sid      = "EmbeddingModels"
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeModel"]
+        Resource = local.embedding_model_arns
+      },
     ]
   })
+}
+
+locals {
+  embedding_model_arns = [
+    "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0",
+    "arn:aws:bedrock:${var.aws_region}::foundation-model/cohere.embed-multilingual-v3",
+  ]
 }
