@@ -53,6 +53,16 @@ resource "aws_iam_role_policy" "worker_task" {
         Resource = [aws_s3_bucket.datalake.arn, "${aws_s3_bucket.datalake.arn}/*"]
       },
       {
+        # DR drill (item 17): read the replication rule and sample the replica — read-only, never write to it.
+        Sid    = "DrDrillReplicaRead"
+        Effect = "Allow"
+        Action = ["s3:GetReplicationConfiguration", "s3:GetBucketVersioning", "s3:GetObject", "s3:ListBucket"]
+        Resource = concat(
+          [aws_s3_bucket.datalake.arn],
+          var.replication_enabled ? [aws_s3_bucket.datalake_replica[0].arn, "${aws_s3_bucket.datalake_replica[0].arn}/*"] : [],
+        )
+      },
+      {
         Sid    = "SnapshotDb"
         Effect = "Allow"
         Action = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]

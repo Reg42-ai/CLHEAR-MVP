@@ -143,3 +143,72 @@ def test_disclosure_gate(engine, monkeypatch):
     for wf in (REPO / ".github" / "workflows").glob("*.yml"):
         text = wf.read_text(encoding="utf-8")
         assert "git push" not in text.replace("git push --tags", ""), wf.name
+
+
+def test_no_offense_defense_schema_terms(client):
+    """§9 / §4.5: offense/defense is a narrative metaphor and never a schema, vocabulary
+    or API term. Table and column names, side/kind enumerations, the curated catalog's
+    keys and values, the GraphQL SDL, the JSON-LD context and every OpenAPI path and
+    schema name are checked; regulatory *text* about criminal offences is not schema."""
+    import json
+    import re
+
+    import sqlalchemy as sa
+
+    from app.clhear.interop import graphql_api, jsonld
+    from app.clhear.l5.models import FORBIDDEN_SCHEMA_TERMS, SIDES
+    from app.clhear.models import metadata
+    from app.clhear.platform import record
+
+    pattern = re.compile(r"\b(?:" + "|".join(FORBIDDEN_SCHEMA_TERMS) + r")(?:s|ive|ively)?\b", re.I)
+    offenders: list[str] = []
+
+    def check(label: str, value):
+        if isinstance(value, str) and pattern.search(value):
+            offenders.append(f"{label}: {value!r}")
+
+    for table in list(metadata.tables.values()) + record.layer_tables():
+        check(f"table {table.fullname}", table.name)
+        for col in table.columns:
+            check(f"column {table.fullname}.{col.name}", col.name)
+        for c in table.constraints:
+            if isinstance(c, sa.CheckConstraint):
+                check(f"check {table.fullname}", str(c.sqltext))
+    for side in SIDES:
+        check("side", side)
+    curated_dir = REPO / "app" / "clhear" / "curated"
+    for path in curated_dir.glob("*.json"):
+        def walk(node, where):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    check(f"{where}.{k} (key)", k)
+                    if k in ("side", "kind", "action_type", "status", "type", "key", "id"):
+                        check(f"{where}.{k}", v if isinstance(v, str) else "")
+                    walk(v, f"{where}.{k}")
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    walk(v, f"{where}[{i}]")
+        walk(json.loads(path.read_text()), path.name)
+    for line in graphql_api.sdl().splitlines():
+        if not line.strip().startswith('"'):  # doc strings may describe the metaphor; names may not carry it
+            check("graphql sdl", line)
+    for term in jsonld.context_document()["@context"]:
+        check("jsonld term", term)
+    spec = client.get("/openapi.json").json()
+    for p in spec["paths"]:
+        check("openapi path", p)
+    for name in (spec.get("components") or {}).get("schemas", {}):
+        check("openapi schema", name)
+    for path in (REPO / "export" / "clhear").rglob("*.schema.json"):
+        def walk_schema(node, where):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if k == "properties" and isinstance(v, dict):
+                        for prop in v:
+                            check(f"{where}.{prop}", prop)
+                    walk_schema(v, where)
+            elif isinstance(node, list):
+                for v in node:
+                    walk_schema(v, where)
+        walk_schema(json.loads(path.read_text()), path.name)
+    assert not offenders, offenders

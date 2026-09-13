@@ -15,8 +15,17 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
 from app.clhear.derived_models import activities, attribute_schema, blocks, sample_profiles
+from app.clhear.platform import audit
 
 CURATED_DIR = Path(__file__).parent
+_SEED_ACTOR = audit.Actor(actor="system:curated-seed", kind="system")
+
+
+def _audited(conn, table, row_id: str, created: bool) -> None:
+    """The catalog bypasses record.write (it is authored, not derived) but still owes
+    the audit log one entry per row it touches (HLD v2 §7.1)."""
+    audit.log(conn, "write" if created else "update", resource=f"{table.schema}.{table.name}", resource_id=row_id,
+              detail={"source": "curated catalog", "status": "curated"}, actor=audit.current_actor() if audit.current_actor().kind != "anonymous" else _SEED_ACTOR)
 
 
 @lru_cache
@@ -48,6 +57,7 @@ def seed(engine: Engine) -> dict:
                 conn.execute(blocks.update().where(blocks.c.id == item["id"]).values(**values))
             else:
                 conn.execute(blocks.insert().values(id=item["id"], **values))
+            _audited(conn, blocks, item["id"], created=not exists)
             counts["blocks"] += 1
         from app.clhear.derived_models import l3_kinds
         from app.clhear.l3.kinds import kinds_catalog
@@ -71,6 +81,7 @@ def seed(engine: Engine) -> dict:
                 conn.execute(activities.update().where(activities.c.id == item["id"]).values(**values))
             else:
                 conn.execute(activities.insert().values(id=item["id"], **values))
+            _audited(conn, activities, item["id"], created=not exists)
             counts["activities"] += 1
         for item in load("l4_attribute_schema"):
             exists = conn.execute(
@@ -81,6 +92,7 @@ def seed(engine: Engine) -> dict:
                 conn.execute(attribute_schema.update().where(attribute_schema.c.key == item["key"]).values(**values))
             else:
                 conn.execute(attribute_schema.insert().values(key=item["key"], **values))
+            _audited(conn, attribute_schema, item["key"], created=not exists)
             counts["attributes"] += 1
         for item in load("l4_sample_profiles"):
             exists = conn.execute(
@@ -95,6 +107,7 @@ def seed(engine: Engine) -> dict:
                 conn.execute(sample_profiles.update().where(sample_profiles.c.id == item["id"]).values(**values))
             else:
                 conn.execute(sample_profiles.insert().values(id=item["id"], **values))
+            _audited(conn, sample_profiles, item["id"], created=not exists)
             counts["profiles"] += 1
     # HLD v2 §4.5: the junction edges derive from the catalog just seeded (no outbox event at startup).
     from app.clhear.l5.map import build_junction

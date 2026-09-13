@@ -263,6 +263,42 @@ def cognito_start(provider: str = ""):
     return RedirectResponse(f"{settings.clhear_cognito_domain.rstrip('/')}/oauth2/authorize?{urlencode(params)}")
 
 
+def saml_provider_for(email: str) -> str | None:
+    """Cognito SAML provider name for an email's domain, or None when the domain has no
+    enterprise IdP (the user then signs in with email / Google like everyone else)."""
+    domain = email.rsplit("@", 1)[-1].strip().lower() if "@" in email else email.strip().lower()
+    if not domain:
+        return None
+    mapping = get_settings().saml_domain_map
+    # exact domain first, then parent domains (sub.acme.example -> acme.example)
+    parts = domain.split(".")
+    for i in range(len(parts) - 1):
+        hit = mapping.get(".".join(parts[i:]))
+        if hit:
+            return hit
+    return None
+
+
+@router.get("/sso")
+def sso_start(email: str = ""):
+    """Enterprise SSO (HLD v2 §7.1): route to the SAML IdP federated for the email's
+    domain. 404 when the domain has none, so the sign-in form can fall back cleanly."""
+    if not email or "@" not in email:
+        raise HTTPException(status_code=422, detail="email is required")
+    provider = saml_provider_for(email)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="no enterprise SSO for this domain — sign in with email or Google")
+    return cognito_start(provider=provider)
+
+
+@router.get("/sso/domains")
+def sso_domains() -> dict:
+    """Which domains have enterprise SSO (public: the sign-in form uses it to offer the
+    SSO button before the user types a password they do not have)."""
+    return {"providers": sorted({v for v in get_settings().saml_domain_map.values()}),
+            "domains": sorted(get_settings().saml_domain_map)}
+
+
 @router.get("/cognito/callback")
 def cognito_callback(code: str = "", state: str = ""):
     from app.clhear.app_auth import cognito_enabled, verify_cognito_token
@@ -284,7 +320,14 @@ def cognito_callback(code: str = "", state: str = ""):
     claims = verify_cognito_token(token_resp.json().get("id_token", ""))
     if claims is None:
         raise HTTPException(status_code=401, detail="Cognito token could not be verified")
-    user = upsert_user(get_engine(), claims["email"], display_name=claims.get("name", ""), provider="cognito",
+    # federated users carry the IdP in `identities`; keep it so the audit log can tell SAML from Google
+    provider = "cognito"
+    for ident in claims.get("identities") or []:
+        if isinstance(ident, dict) and ident.get("providerType") == "SAML":
+            provider = f"saml:{ident.get('providerName', '')}"
+        elif isinstance(ident, dict) and ident.get("providerName"):
+            provider = f"cognito:{ident['providerName']}"
+    user = upsert_user(get_engine(), claims["email"], display_name=claims.get("name", ""), provider=provider,
                        provider_sub=claims.get("sub", ""))
     return _set_session(RedirectResponse("/stack#/contribute"), user)
 

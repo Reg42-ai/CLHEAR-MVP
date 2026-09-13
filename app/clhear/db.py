@@ -78,6 +78,11 @@ def run_migrations(engine: Engine) -> list[int]:
             except Exception:  # pragma: no cover - extension not available on this host
                 log.warning("pgvector extension unavailable; embeddings stay JSON")
         schema_migrations.create(conn, checkfirst=True)
+        # The audit ledger is L0 rails: data migrations that seed through record.write
+        # (m0012 …) must already be able to account for themselves (HLD v2 §7.1).
+        from app.clhear.platform.audit import audit_log
+
+        audit_log.create(conn, checkfirst=True)
         applied = {row.version for row in conn.execute(sa.select(schema_migrations.c.version))}
 
     import migrations as migrations_pkg
@@ -94,9 +99,15 @@ def run_migrations(engine: Engine) -> list[int]:
         if version in applied:
             continue
         module = importlib.import_module(f"migrations.{name}")
-        with engine.begin() as conn:
-            module.upgrade(conn)
-            conn.execute(schema_migrations.insert().values(version=version, name=name))
+        from app.clhear.platform import audit
+
+        token = audit.bind_actor(audit.system_actor(f"migration:{name}"))
+        try:
+            with engine.begin() as conn:
+                module.upgrade(conn)
+                conn.execute(schema_migrations.insert().values(version=version, name=name))
+        finally:
+            audit.reset_actor(token)
         log.info("applied migration %s", name)
         newly_applied.append(version)
     return newly_applied

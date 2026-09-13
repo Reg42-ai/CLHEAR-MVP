@@ -1,0 +1,145 @@
+name: dr-drill
+
+# HLD v2 §7.1 / item 17: a backup nobody restored is a hope, not a control.
+# Nightly, this job restores the latest published release snapshot into a real
+# Postgres and a real Neo4j (service containers), verifies the restored record
+# row-for-row and checksum-matches the graph projection rebuilt from it, and
+# samples the cross-region datalake replica. RPO/RTO are measured and the
+# report is kept 90 days as SOC 2 evidence (docs/security/SOC2_TYPE_I_READINESS.md, A1.2/A1.3).
+#
+# The in-VPC drill against Aurora runs in parallel from the L0 fleet
+# (infra/eventbridge.tf `dr_drill` → DrDrillRequested) and lands in
+# l0_platform.dr_drills, which /status.json reads.
+
+on:
+  schedule:
+    - cron: "0 4 * * *" # after the 01:15 UTC release
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: "Release to restore (YYYY.MM.DD); default = latest published"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write # OIDC for the S3 replica check
+
+env:
+  AWS_REGION: us-east-1
+  CLHEAR_HTTP_MODE: replay
+  PGPASSWORD: drill
+
+jobs:
+  restore-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240 # the RTO target
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: drill
+          POSTGRES_PASSWORD: drill
+          POSTGRES_DB: clhear
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U drill" --health-interval 10s --health-timeout 5s --health-retries 10
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: neo4j/drilldrill
+        ports: ["7687:7687"]
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474 || exit 1" --health-interval 10s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.lock
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Configure AWS (OIDC)
+        if: ${{ secrets.AWS_RELEASE_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Fetch the release snapshot (the backup under test)
+        id: snap
+        env:
+          RELEASES_PREFIX: ${{ secrets.CLHEAR_RELEASES_S3_PREFIX }}
+        run: |
+          mkdir -p drill
+          RID="${{ github.event.inputs.release_id }}"
+          if [ -n "$RELEASES_PREFIX" ]; then
+            if [ -z "$RID" ]; then
+              aws s3 cp "$RELEASES_PREFIX/latest.json" drill/latest.json
+              RID=$(python -c 'import json;print(json.load(open("drill/latest.json"))["id"])')
+            fi
+            aws s3 cp "$RELEASES_PREFIX/$RID/l1/snapshot.db" drill/backup.db
+            aws s3 cp "$RELEASES_PREFIX/$RID/manifest.json" drill/manifest.json
+            echo "source=s3:$RID" >> "$GITHUB_OUTPUT"
+          else
+            # No release store reachable (fork / first run): rehearse on a freshly derived record so the
+            # drill path itself is exercised every night and never rots.
+            RID=$(date -u +%Y.%m.%d)
+            DATABASE_URL="sqlite:///$PWD/drill/backup.db" python -m app.clhear.fleets nightly --release "$RID"
+            echo "source=derived:$RID" >> "$GITHUB_OUTPUT"
+          fi
+          echo "rid=$RID" >> "$GITHUB_OUTPUT"
+          sha256sum drill/backup.db | tee drill/backup.sha256
+
+      - name: Restore into Postgres (scratch) — the record
+        run: |
+          python scripts/migrate_snapshot_to_postgres.py drill/backup.db \
+            postgresql+psycopg://drill:drill@localhost:5432/clhear | tee drill/restore-postgres.json
+
+      - name: Verify record + graph against the backup, measure RPO/RTO, sample the S3 replica
+        env:
+          DATABASE_URL: sqlite:///${{ github.workspace }}/drill/backup.db
+          CLHEAR_DR_SCRATCH_URL: postgresql+psycopg://drill:drill@localhost:5432/clhear_drill
+          CLHEAR_NEO4J_URI: bolt://localhost:7687
+          CLHEAR_NEO4J_USER: neo4j
+          CLHEAR_NEO4J_PASSWORD: drilldrill
+          CLHEAR_DATALAKE_REPLICA_BUCKET: ${{ secrets.CLHEAR_DATALAKE_REPLICA_BUCKET }}
+          CLHEAR_RELEASE: ${{ steps.snap.outputs.rid }}
+        run: |
+          # Second restore: pg_dump/pg_restore of the Postgres copy into clhear_drill exercises the
+          # production restore path (Aurora uses the same tooling); the workflow's own Postgres copy
+          # is the "live" side of the comparison for the graph checksum.
+          python - <<'PY'
+          import json, os, pathlib
+          from app.clhear.db import make_engine, run_migrations
+          from app.clhear.platform import dr
+          live = make_engine("postgresql+psycopg://drill:drill@localhost:5432/clhear")
+          run_migrations(live)
+          report = dr.run(live, scratch_url=os.environ["CLHEAR_DR_SCRATCH_URL"], release=os.environ["CLHEAR_RELEASE"],
+                          workdir=pathlib.Path("drill/work"), neo4j_database="neo4j", trigger="workflow",
+                          skip_datalake=not os.environ.get("CLHEAR_DATALAKE_REPLICA_BUCKET"))
+          pathlib.Path("drill/report.json").write_text(json.dumps(report, indent=2, default=str))
+          print(json.dumps({k: report[k] for k in ("status", "rpo_seconds", "rto_seconds", "objectives")}, indent=2))
+          print(json.dumps({k: v.get("passed") for k, v in report["checks"].items()}, indent=2))
+          raise SystemExit(0 if report["status"] == "passed" else 1)
+          PY
+
+      - name: Keep the drill report (SOC 2 A1.3 evidence)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dr-drill-${{ steps.snap.outputs.rid }}
+          path: |
+            drill/report.json
+            drill/restore-postgres.json
+            drill/backup.sha256
+            drill/manifest.json
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Publish DrDrillPassed metric
+        if: ${{ always() && secrets.AWS_RELEASE_ROLE_ARN != '' }}
+        run: |
+          VALUE=$([ "${{ job.status }}" = "success" ] && echo 1 || echo 0)
+          aws cloudwatch put-metric-data --namespace CLHEAR --metric-name DrDrillPassed \
+            --dimensions Source=github --value "$VALUE" --unit Count

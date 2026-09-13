@@ -14,6 +14,7 @@ mangum>=0.17
 pypdf>=5.0
 PyJWT[crypto]>=2.8    # Cognito id-token verification (HLD v2 §5 identity)
 graphql-core>=3.2     # /graphql over the open layers (standard §8); schema in app/clhear/interop/graphql_api.py
+sentry-sdk>=2.0       # error tracking to self-hosted GlitchTip (HLD v2 §3 observability); inert without SENTRY_DSN
 
 # optional L1 renderers (HLD v2 §4.1): publisher pages that need a browser.
 # Install on the L1 fleet image only; adapters fall back to plain HTTP when absent.

@@ -89,6 +89,25 @@ class Settings(BaseSettings):
     clhear_cognito_user_pool_id: str = ""
     clhear_cognito_client_id: str = ""
     clhear_cognito_domain: str = ""  # hosted UI, https://<prefix>-auth.auth.<region>.amazoncognito.com
+    # HLD v2 §7.1 enterprise SSO: SAML IdPs federated into the pool, as a JSON map
+    # {"AcmeBank": ["acme.example", "acme-group.example"]} (infra/cognito.tf publishes it).
+    # /auth/sso?email= picks the IdP by domain; empty = no enterprise SSO.
+    clhear_saml_domains: str = ""
+
+    @property
+    def saml_domain_map(self) -> dict[str, str]:
+        """lower-case email domain -> Cognito SAML provider name."""
+        import json
+
+        try:
+            raw = json.loads(self.clhear_saml_domains) if self.clhear_saml_domains.strip() else {}
+        except ValueError:
+            return {}
+        out: dict[str, str] = {}
+        for name, domains in (raw or {}).items():
+            for d in domains if isinstance(domains, list) else [domains]:
+                out[str(d).strip().lower().lstrip("@")] = str(name)
+        return out
 
     # HLD v2 I7 projections: Neo4j query graph (empty = in-process projection) and
     # the clause embedding index (auto = Infer when configured, else hash-v1).

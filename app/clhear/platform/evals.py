@@ -101,6 +101,9 @@ def run_suite(engine: Engine, suite: str, source_key: str | None = None, release
     artifact = artifacts_dir / f"{suite}{'-' + safe_key if safe_key else ''}-{stamp}.json"
     artifact.write_text(json.dumps(record, indent=2, default=str))
     log.info("suite %s passed=%s -> %s", suite, passed, artifact)
+    from app.clhear.platform import langfuse
+
+    langfuse.export_run(record)  # maintainers' view; the public dashboard reads gates.publish_summary
     return record
 
 

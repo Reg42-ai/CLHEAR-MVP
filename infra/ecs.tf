@@ -66,6 +66,8 @@ resource "aws_ecs_task_definition" "fleet" {
         { name = "CLHEAR_EVENTS_DLQ_URL", value = aws_sqs_queue.events_dlq.url },
         { name = "CLHEAR_EVENT_BUS_NAME", value = aws_cloudwatch_event_bus.clhear.name },
         { name = "CLHEAR_DATALAKE_BUCKET", value = aws_s3_bucket.datalake.bucket },
+        # DR drill (item 17): the L0 fleet samples the cross-region replica nightly.
+        { name = "CLHEAR_DATALAKE_REPLICA_BUCKET", value = var.replication_enabled ? aws_s3_bucket.datalake_replica[0].bucket : "" },
         { name = "REG42_CLHEAR_ENABLED", value = "true" },
         { name = "CLHEAR_SNAPSHOT_S3_URI", value = var.aurora_enabled ? "" : "s3://${aws_s3_bucket.deploy.bucket}/webui/clhear-latest.db" },
         { name = "CLHEAR_RELEASES_S3_PREFIX", value = "s3://${aws_s3_bucket.deploy.bucket}/releases" },
@@ -79,11 +81,16 @@ resource "aws_ecs_task_definition" "fleet" {
         { name = "CLHEAR_NEO4J_URI", value = local.neo4j_uri },
         { name = "CLHEAR_NEO4J_USER", value = "neo4j" },
         { name = "CLHEAR_EMBEDDING_PROVIDER", value = "infer" },
+        # Evals mirror into self-hosted Langfuse (langfuse.tf); empty host = off.
+        { name = "LANGFUSE_HOST", value = local.langfuse_url },
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
         { name = "INFER_TOKEN", valueFrom = aws_ssm_parameter.infer_token.arn },
         { name = "CLHEAR_NEO4J_PASSWORD", valueFrom = aws_ssm_parameter.neo4j_password.arn },
+        { name = "SENTRY_DSN", valueFrom = aws_ssm_parameter.sentry_dsn.arn }, # "CHANGEME" is treated as unset by errors.init
+        { name = "LANGFUSE_PUBLIC_KEY", valueFrom = aws_ssm_parameter.langfuse_public_key.arn },
+        { name = "LANGFUSE_SECRET_KEY", valueFrom = aws_ssm_parameter.langfuse_secret_key.arn },
       ]
       logConfiguration = {
         logDriver = "awslogs"

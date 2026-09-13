@@ -39,7 +39,7 @@ from app.clhear.l1.models import (
     sources,
     watchlists,
 )
-from app.clhear.platform import record
+from app.clhear.platform import audit, record
 
 router = APIRouter(prefix="/l1", tags=["l1"])
 
@@ -296,6 +296,9 @@ def clause_detail(clause_id: int) -> dict:
             raise HTTPException(status_code=404, detail="unknown clause")
         src = conn.execute(sa.select(sources).where(sources.c.id == row["source_id"])).mappings().one()
         republish = l1_rights.republishable(src["rights_basis"]) and bool(row["public_ok"])
+        if republish:
+            audit.log_licensed_read(conn, source_key=src["key"], rights_basis=src["rights_basis"], clause_ids=[clause_id], route="/l1/clauses/{id}")
+            conn.commit()
         cites = [
             {"raw": c["raw_text"], "disposition": c["disposition"], "reason": c["reason"], "resolved_source_id": c["resolved_source_id"]}
             for c in conn.execute(sa.select(citations).where(citations.c.from_clause_id == clause_id)).mappings()

@@ -245,7 +245,16 @@ def write(
     if jurisdictions is not None:
         values["jurisdictions"] = jurisdictions
     conn.execute(table.insert().values(**values))
+    _audit_write(conn, table, values, trail_id, "write")
     return values
+
+
+def _audit_write(conn: Connection, table: sa.Table, values: dict, trail_id: str, action: str) -> None:
+    """Every write through this path lands in the audit log (HLD v2 §7.1) in the same
+    transaction, so a row and its audit entry commit or roll back together."""
+    from app.clhear.platform import audit
+
+    audit.log_write(conn, table, values, why_trail_id=trail_id, action=action)
 
 
 def invalidate(
@@ -279,6 +288,7 @@ def invalidate(
             .where(cond)
             .values(valid_to=until, version=(r.get("version") or 1) + 1, review=review, why_trail_id=trail_id)
         )
+        _audit_write(conn, table, {**dict(r), "version": (r.get("version") or 1) + 1}, trail_id, "invalidate")
         count += 1
     return count
 

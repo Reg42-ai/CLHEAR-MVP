@@ -1,0 +1,76 @@
+# Upptime (https://upptime.js.org) — the independent availability probe behind the
+# "API availability 99.9 % / 30 days" SLO on /status (HLD v2 §7.1; item 17).
+#
+# Lives in its own public repository (reg42-ai/clhear-status) so that a CLHEAR
+# outage cannot take the status history down with it; this file is the source of
+# truth for that repository and is copied there by the release pipeline. The
+# probes read the same JSON the status page renders, so what Upptime records is
+# exactly what the page says.
+
+owner: reg42-ai
+repo: clhear-status
+user-agent: reg42-ai
+
+sites:
+  - name: CLHEAR API
+    url: https://clhear.reg42.ai/status.json
+    method: GET
+    expectedStatusCodes: [200]
+    maxResponseTime: 2000
+    # /status.json answers 503 on "outage" — i.e. when Tier-A freshness or a gate is
+    # missed — so freshness and gate regressions count against availability too.
+  - name: CLHEAR web (Solon front door)
+    url: https://clhear.reg42.ai/
+    method: GET
+    expectedStatusCodes: [200]
+    maxResponseTime: 3000
+  - name: CLHEAR public read API
+    url: https://clhear.reg42.ai/l1/sources
+    method: GET
+    expectedStatusCodes: [200]
+    maxResponseTime: 2000
+  - name: CLHEAR GraphQL
+    url: https://clhear.reg42.ai/interop/graphql
+    method: POST
+    headers:
+      - "Content-Type: application/json"
+    body: '{"query":"{ frameworks { key } }"}'
+    expectedStatusCodes: [200]
+  - name: CLHEAR community (Discourse)
+    url: https://community.clhear.org
+    method: GET
+    expectedStatusCodes: [200]
+
+# Five-minute cadence; 30-day availability and response-time graphs are what the
+# SLO table on /status links to as "measured by".
+workflowSchedule:
+  uptime: "*/5 * * * *"
+  responseTime: "0 23 * * *"
+  staticSite: "0 1 * * *"
+  summary: "0 0 * * *"
+  graphs: "0 0 * * *"
+
+status-website:
+  cname: uptime.clhear.reg42.ai
+  name: CLHEAR uptime
+  introTitle: "**CLHEAR** availability, measured independently."
+  introMessage: "Five-minute probes of the public API and web app over 30 days. Freshness, gates and DR drill results live on [clhear.reg42.ai/status](https://clhear.reg42.ai/status); the security posture on [/security](https://clhear.reg42.ai/security)."
+  navbar:
+    - title: Status
+      href: /
+    - title: CLHEAR status page
+      href: https://clhear.reg42.ai/status
+    - title: Security
+      href: https://clhear.reg42.ai/security
+    - title: Incidents
+      href: https://github.com/reg42-ai/clhear-status/issues?q=is%3Aissue+label%3A%22status%22
+  theme: light
+
+# Incidents are GitHub issues opened automatically by Upptime; the incident
+# response policy (docs/security/policies/INCIDENT_RESPONSE.md) requires a
+# post-incident note on the same issue within five business days.
+assignees:
+  - avnerreg42
+notifications:
+  - type: slack
+    channel: "#clhear-ops"

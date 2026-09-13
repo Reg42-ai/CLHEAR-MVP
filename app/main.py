@@ -30,6 +30,13 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="CLHEAR", lifespan=lifespan)
     if get_settings().reg42_clhear_enabled:
+        from app.clhear.platform import errors
+
+        errors.init(component="web")  # GlitchTip via SENTRY_DSN; inert when unset
+        from app.clhear.platform.audit_middleware import AuditMiddleware
+
+        app.add_middleware(AuditMiddleware)  # HLD v2 §7.1: actor binding + every mutating request audited
+
         from app.clhear.accounts import router as auth_router
         from app.clhear.app_api import router as app_api_router
         from app.clhear.community import router as community_router
@@ -55,6 +62,7 @@ def create_app() -> FastAPI:
         from app.clhear.v1.contributions import router as contributions_router
         from app.clhear.v1.conformance import router as conformance_router
         from app.clhear.v1.interop import router as interop_router
+        from app.clhear.v1.security import router as security_router
 
         app.include_router(router)
         app.include_router(l1_router)
@@ -71,6 +79,7 @@ def create_app() -> FastAPI:
         app.include_router(contributions_router)  # /contribute, /contributions, /cla, /governance
         app.include_router(conformance_router)  # Annex E self-assessments, marks register, assessors
         app.include_router(interop_router)  # crosswalks, JSON-LD, GraphQL
+        app.include_router(security_router)  # security.txt, /security, /status, /metrics, /audit
         app.include_router(app_api_router)
         app.include_router(auth_router)
         app.include_router(community_router)

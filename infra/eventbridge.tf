@@ -163,6 +163,32 @@ resource "aws_cloudwatch_event_target" "graph_rebuild_to_sqs" {
   })
 }
 
+# Nightly DR drill (HLD v2 §7.1, item 17): the L0 fleet pg_dumps the record,
+# pg_restores it into the scratch database on the same cluster, rebuilds the
+# graph projection into the Neo4j `drill` database and samples the cross-region
+# datalake replica. RPO/RTO land in l0_platform.dr_drills; a failed drill
+# publishes DrDrillPassed=0 (alarm in observability.tf).
+resource "aws_cloudwatch_event_rule" "dr_drill" {
+  name                = "${var.name_prefix}-dr-drill"
+  schedule_expression = "cron(0 4 * * ? *)" # after the 01:15 release and the 03:00 Aurora backup window
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
+}
+
+resource "aws_cloudwatch_event_target" "dr_drill_to_sqs" {
+  rule = aws_cloudwatch_event_rule.dr_drill.name
+  arn  = local.fleet_queue["l0"].arn
+  input = jsonencode({
+    event_id       = "schedule-dr-drill"
+    layer          = "l0"
+    kind           = "DrDrillRequested"
+    subject_ref    = "all"
+    payload        = { neo4j_database = "drill" }
+    schema_version = 1
+    producer       = "eventbridge"
+    ts             = ""
+  })
+}
+
 # Nightly named release (semantic date). The L0 fleet snapshots the record,
 # gates each layer on its evals and writes a pin-able manifest.
 resource "aws_cloudwatch_event_rule" "eod_publish" {

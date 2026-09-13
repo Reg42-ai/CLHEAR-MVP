@@ -26,8 +26,10 @@ from app.clhear.l1.models import (
     source_versions,
     sources,
 )
+from app.clhear.l1 import rights as l1_rights
 from app.clhear.l1.public import clause_refs_select, clauses_public_select, nodes_public_select, nodes_refs_select
 from app.clhear.models import eval_runs, events, runs
+from app.clhear.platform import audit
 
 router = APIRouter()
 
@@ -270,6 +272,10 @@ def node_inspector(node_id: int) -> dict:
         ).one()
         source = conn.execute(sa.select(sources).where(sources.c.id == version.source_id)).one()
         public = bool(node.public_ok)
+        if public and (node.raw_text or node.source_fragment):
+            audit.log_licensed_read(conn, source_key=source.key, rights_basis=getattr(source, "rights_basis", "") or "",
+                                        clause_ids=[node_id], route="/api/clhear/nodes/{id}")
+            conn.commit()
         ancestors = []
         parent_id = node.parent_id
         while parent_id is not None:
@@ -355,8 +361,10 @@ def source_clauses(
         if version is None:
             return {"source": key, "version": None, "clauses": [], "total": 0}
 
-        # Restricted discipline: text flows only through clauses_public_select.
-        base = clauses_public_select() if source.license == "open" else clause_refs_select()
+        # Restricted discipline (I8): text flows only through clauses_public_select, and only
+        # when the file is open *and* the rights basis allows republication.
+        open_text = source.license == "open" and l1_rights.republishable(getattr(source, "rights_basis", "") or "")
+        base = clauses_public_select() if open_text else clause_refs_select()
         rows = conn.execute(
             base.where(clauses.c.source_version_id == version.id)
             .order_by(clauses.c.ordering)
@@ -366,13 +374,18 @@ def source_clauses(
         total = conn.execute(
             sa.select(sa.func.count()).select_from(clauses).where(clauses.c.source_version_id == version.id)
         ).scalar_one()
+        if open_text and rows:
+            audit.log_licensed_read(conn, source_key=key, rights_basis=getattr(source, "rights_basis", "") or "",
+                                        clause_ids=[r.id for r in rows], route="/api/clhear/sources/{key}/clauses")
+            conn.commit()
     return {
         "source": key,
         "version": version.version_label,
         "retrieved_at": str(version.retrieved_at),
         "s3_uri": version.s3_uri,
         "content_hash": version.content_hash,
-        "locked": source.license != "open",
+        "locked": not open_text,
+        "rights_basis": getattr(source, "rights_basis", None),
         "total": total,
         "clauses": [
             {

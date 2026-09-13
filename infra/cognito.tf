@@ -3,8 +3,9 @@
 # the public may use Google or email). The web tier verifies the pool's RS256
 # id tokens against its JWKS (app/clhear/app_auth.py) and mints the same
 # stateless session it uses for magic-link logins, so every mode of the UI
-# sees one user identity. SAML (enterprise) is added by item 17 on the same
-# pool. API keys per org live in the database (community.api_keys).
+# sees one user identity. Enterprise SAML IdPs federate into the same pool
+# (var.saml_identity_providers; /auth/sso routes by email domain). API keys per
+# org live in the database (community.api_keys).
 #
 # Deployed with the web UI (local.deploy_webui); no-op otherwise.
 
@@ -122,6 +123,53 @@ resource "aws_cognito_identity_provider" "google" {
   }
 }
 
+# Enterprise SSO (HLD v2 §7.1; item 17): one SAML 2.0 IdP per enterprise, keyed by
+# the provider name the web tier passes as `identity_provider` (see
+# app/clhear/accounts.py `/auth/sso`). Metadata comes from the enterprise's IdP
+# (Entra ID, Okta, Ping…) as a URL or an inline XML document; email is the only
+# attribute CLHEAR needs, so that is all we ask for. Sign-out is IdP-initiated
+# SLO when the IdP publishes a logout endpoint.
+variable "saml_identity_providers" {
+  description = "Enterprise SAML IdPs: name => { metadata_url | metadata_xml, email_domains, sign_out }"
+  type = map(object({
+    metadata_url  = optional(string, "")
+    metadata_xml  = optional(string, "")
+    email_domains = list(string)
+    sign_out      = optional(bool, true)
+  }))
+  default = {}
+}
+
+resource "aws_cognito_identity_provider" "saml" {
+  for_each      = local.deploy_cognito ? var.saml_identity_providers : {}
+  user_pool_id  = aws_cognito_user_pool.clhear[0].id
+  provider_name = each.key
+  provider_type = "SAML"
+
+  provider_details = merge(
+    each.value.metadata_url != "" ? { MetadataURL = each.value.metadata_url } : { MetadataFile = each.value.metadata_xml },
+    {
+      IDPSignout              = tostring(each.value.sign_out)
+      EncryptedResponses      = "false"
+      RequestSigningAlgorithm = "rsa-sha256"
+    },
+  )
+
+  attribute_mapping = {
+    email = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
+    name  = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"
+  }
+}
+
+# The web tier routes `/auth/sso?email=` to the right IdP by domain; published as a
+# public SSM parameter (domains and provider names are not secrets).
+resource "aws_ssm_parameter" "cognito_saml_domains" {
+  count = local.deploy_cognito ? 1 : 0
+  name  = "/clhear/COGNITO_SAML_DOMAINS"
+  type  = "String"
+  value = jsonencode({ for name, idp in var.saml_identity_providers : name => idp.email_domains })
+}
+
 resource "aws_cognito_user_pool_client" "web" {
   count        = local.deploy_cognito ? 1 : 0
   name         = "${var.name_prefix}-web"
@@ -133,7 +181,7 @@ resource "aws_cognito_user_pool_client" "web" {
   allowed_oauth_scopes                 = ["openid", "email", "profile"]
   callback_urls                        = local.cognito_callbacks
   logout_urls                          = local.cognito_logouts
-  supported_identity_providers         = concat(["COGNITO"], length(aws_cognito_identity_provider.google) > 0 ? ["Google"] : [])
+  supported_identity_providers         = concat(["COGNITO"], length(aws_cognito_identity_provider.google) > 0 ? ["Google"] : [], keys(aws_cognito_identity_provider.saml))
   prevent_user_existence_errors        = "ENABLED"
   enable_token_revocation              = true
 
@@ -151,7 +199,7 @@ resource "aws_cognito_user_pool_client" "web" {
     refresh_token = "days"
   }
 
-  depends_on = [aws_cognito_identity_provider.google]
+  depends_on = [aws_cognito_identity_provider.google, aws_cognito_identity_provider.saml]
 }
 
 # Published so the web tier can verify tokens (issuer + JWKS) without any

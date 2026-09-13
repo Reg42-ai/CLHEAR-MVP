@@ -281,6 +281,17 @@ def handle_graph_rebuild(engine: Engine, gateway: Gateway, envelope: Envelope) -
     return out
 
 
+def handle_dr_drill(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """HLD v2 §7.1 (item 17): nightly restore drill — backup the record, restore it
+    into the scratch target, verify record + graph + datalake replica, log RPO/RTO."""
+    from app.clhear.platform import dr
+
+    payload = envelope.payload or {}
+    return dr.run(engine, release=payload.get("release", ""), scratch_url=payload.get("scratch_url"),
+                  neo4j_database=payload.get("neo4j_database"), trigger="event",
+                  skip_datalake=bool(payload.get("skip_datalake", False)))
+
+
 def l6_on_changed(engine: Engine, payload: dict, *, layer: str) -> dict:
     from app.clhear.l6.diff import on_lower_layer_changed
 
@@ -292,6 +303,7 @@ HANDLERS = {
     "AdapterRunRequested": handle_adapter_run,
     "PublishReleaseRequested": handle_publish_release,
     "GraphRebuildRequested": handle_graph_rebuild,
+    "DrDrillRequested": handle_dr_drill,
     "CommunityWrite": handle_community_write,
     "clhear.l1.changed": handle_l1_changed,
     "clhear.l2.changed": handle_l2_changed,
@@ -302,7 +314,7 @@ HANDLERS = {
 
 # Scheduled kinds re-fire with the same envelope id by design (EventBridge
 # static input); their work is naturally idempotent (unchanged -> no-op run).
-_ALWAYS_RUN = {"AdapterRunRequested", "PublishReleaseRequested", "GraphRebuildRequested"}
+_ALWAYS_RUN = {"AdapterRunRequested", "PublishReleaseRequested", "GraphRebuildRequested", "DrDrillRequested"}
 
 
 def _already_handled(engine: Engine, event_id: str) -> bool:
@@ -375,6 +387,9 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
+    from app.clhear.platform import errors
+
+    errors.init(component=f"fleet-{os.environ.get('CLHEAR_FLEET', 'L0').lower()}")
 
     snapshot_uri = settings.clhear_snapshot_s3_uri
     if snapshot_uri:
