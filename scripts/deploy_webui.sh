@@ -14,9 +14,14 @@ ZIP="deploy/webui-${STAMP}.zip"
 
 echo "== packaging lambda zip =="
 rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR"
-# boto3 ships with the Lambda runtime; uvicorn/pytest are dev-only.
+# Same dependency set as the fleets (requirements.txt), minus what the Lambda
+# runtime ships (boto3) and dev-only tools (uvicorn, pytest). Wheels are resolved
+# for the Lambda platform so a macOS/arm64 operator machine produces a valid zip.
+grep -Ev '^\s*(#|$)|^(boto3|uvicorn|pytest)\b' requirements.txt | sed 's/#.*//' > "$BUILD_DIR/.lambda-requirements.txt"
 $PYTHON -m pip install -q --target "$BUILD_DIR" \
-    fastapi sqlalchemy "pydantic>=2.7" pydantic-settings httpx PyYAML beautifulsoup4 mangum
+    --platform manylinux2014_x86_64 --implementation cp --python-version 3.12 --only-binary=:all: \
+    -r "$BUILD_DIR/.lambda-requirements.txt"
+rm -f "$BUILD_DIR/.lambda-requirements.txt"
 cp -r app migrations "$BUILD_DIR/"
 find "$BUILD_DIR" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 (cd "$BUILD_DIR" && zip -qr "../../$ZIP" .)

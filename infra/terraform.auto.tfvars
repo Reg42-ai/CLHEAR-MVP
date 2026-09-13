@@ -8,5 +8,5 @@ aurora_enabled              = false
 schedules_enabled           = true
 clhear_hostname             = "clhear.reg42.ai"
 webui_db_key                = "webui/clhear-latest.db"
-webui_zip_key               = "webui/webui-20260831T111256Z.zip"
-webui_zip_sha256            = "17kvzHNwZRd8II0qDg9g6U7QnPPPsEpb//KJmPva6Po="
+webui_zip_key               = "webui/webui-20260913T092244Z.zip"
+webui_zip_sha256            = "29Hm52zgL8/VAJ0BGOGX2q+yXUsdjQsxaZ0x/5Gyss4="
