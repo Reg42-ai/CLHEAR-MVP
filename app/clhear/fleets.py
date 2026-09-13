@@ -135,6 +135,17 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         comp = dict(bp["composition"], blueprint_id=bp["blueprint_id"])
         explanations.append(refine_explanations(engine, llm, comp))
         rationales.append(narrate_blueprint(engine, llm, comp))
+    # L7 (HLD v2 §4.7): enforcement outcomes read from the L1 enforcement sources,
+    # linked to obligations by printed citation, then the calibrated scorer —
+    # calibration on the held-out year first so every score names its run.
+    from app.clhear.l7 import enforcement as l7_enforcement
+    from app.clhear.l7 import score as l7_score
+
+    l7 = {"events": l7_enforcement.ingest_events(engine)}
+    l7["links"] = l7_enforcement.link_events(engine, llm)
+    l7["calibration"] = l7_score.calibrate(engine)
+    l7["obligation_scores"] = l7_score.score_obligations(engine)
+    l7["item_scores"] = l7_score.score_items(engine)
     risk_items = layer_service.risk_items(engine)[:4]
     narratives = [narrate_risk(engine, llm, it) for it in risk_items]
     cohorts = refresh_cohorts(engine)
@@ -146,7 +157,7 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "l3_l5_referential", "l4_validity", "l4_applicability", "l4_grounding",
         "l5_completeness", "l5_mapping", "l5_precision",
         "l6_completeness", "l6_minimality", "l6_reference", "l6_explanation", "l6_citation",
-        "l7_number_echo", "l8_k_anonymity",
+        "l7_linker", "l7_brier", "l7_number_echo", "l8_k_anonymity",
     ):
         try:
             gates[suite] = ev.run_suite(engine, suite, release=started.strftime("%Y%m%dT%H%M%SZ"))
@@ -194,6 +205,10 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
         "explanations": explanations,
         "rationales": rationales,
         "narratives": [{"written": n.get("written"), "id": n.get("id")} for n in narratives],
+        "l7": {"events": l7["events"], "links": l7["links"],
+               "calibration": {k: l7["calibration"].get(k) for k in ("status", "id", "held_out_year", "brier", "baseline_brier", "beats_baseline")},
+               "obligation_scores": {k: v for k, v in l7["obligation_scores"].items() if k != "bands"},
+               "item_scores": l7["item_scores"]},
         "cohorts": cohorts,
         "gates": {k: {"passed": v.get("passed")} for k, v in gates.items()},
     }

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CLHEAR · L7 Risk & priorities</title>
+<link rel="stylesheet" href="/static/theme.css" />
+<style>
+  /* L7 browser (HLD v2 §4.7): priority view over a blueprint, enforcement explorer
+     ("who was fined for this obligation, when, how much"), the published method and
+     the calibration that backs the likelihood. */
+  main { position: relative; z-index: 1; max-width: 1500px; margin: 22px auto; padding: 0 20px 70px; }
+  .layout { display: grid; grid-template-columns: 300px 1fr; gap: 18px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .side { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 16px; align-self: start; position: sticky; top: 74px; }
+  .side h4, .panelx h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .side h4:first-child { margin-top: 0; }
+  label { font-size: 12px; color: var(--muted); display: block; margin: 8px 0 3px; }
+  input, select { border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; font-size: 13px; background: var(--panel-strong); color: var(--ink); box-sizing: border-box; }
+  .side input, .side select { width: 100%; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--edge); background: var(--panel); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; color: var(--muted); }
+  .tabs button.on { color: var(--ink); border-color: var(--edge-bright); background: var(--panel-strong); }
+  table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
+  table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+  .name { color: var(--accent); font-weight: 600; cursor: pointer; background: none; border: 0; padding: 0; font: inherit; text-align: left; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; white-space: nowrap; border: 1px solid transparent; }
+  .badge.jur { background: var(--ind-800); color: var(--ind-100); border-color: var(--edge); }
+  .badge.b-critical { background: rgba(251,113,133,0.18); color: var(--bad); }
+  .badge.b-high { background: rgba(251,191,36,0.16); color: var(--warn); }
+  .badge.b-medium { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.b-low { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.k { background: var(--panel-strong); color: var(--muted); border-color: var(--edge); }
+  .badge.m-citation { background: rgba(52,211,153,0.14); color: var(--ok); }
+  .badge.m-instrument { background: rgba(129,140,248,0.16); color: var(--accent); }
+  .badge.m-llm { background: rgba(251,191,36,0.14); color: var(--warn); }
+  .badge.m-human { background: var(--ind-800); color: var(--ind-100); }
+  .panelx { background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+  .panelx h2 { margin: 0 0 6px; font-size: 17px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); margin: 6px 0 10px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .bar { position: relative; height: 8px; background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 999px; overflow: hidden; min-width: 90px; }
+  .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); }
+  .bar.b-critical i { background: var(--bad); } .bar.b-high i { background: var(--warn); } .bar.b-low i { background: var(--ok); }
+  .dims { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+  .dim { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .dim b { display: block; font-size: 18px; } .dim span { color: var(--muted); font-size: 11.5px; }
+  .dim .w { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+  .score { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .score .kpi { background: var(--panel-strong); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; }
+  .score .kpi b { display: block; font-size: 20px; }
+  .score .kpi span { font-size: 11.5px; color: var(--muted); }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .crumbs { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .crumbs button { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+  .spin { color: var(--muted); padding: 30px; text-align: center; }
+  .btn { border: 1px solid var(--edge-bright); background: rgba(129,140,248,0.16); color: var(--ink); border-radius: 999px; padding: 6px 16px; font-size: 13px; cursor: pointer; }
+  .why { font-size: 13px; } .why code { font-family: var(--mono); font-size: 12px; }
+  .quote { border-left: 3px solid var(--edge-bright); padding: 4px 10px; margin: 6px 0; font-size: 13px; color: var(--muted); font-style: italic; }
+  .amount { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  dl.method { display: grid; grid-template-columns: 220px 1fr; gap: 6px 14px; font-size: 13.5px; }
+  dl.method dt { color: var(--muted); } dl.method dd { margin: 0; }
+  .reliab td, .reliab th { text-align: right; } .reliab td:first-child, .reliab th:first-child { text-align: left; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div id="root"></div>
+<!-- no-build frontend: React 18 + htm, per repo convention -->
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const api = (p) => fetch(p).then(async (r) => {
+  if (!r.ok) { const t = await r.text(); let d = t; try { d = JSON.parse(t).detail; } catch (e) {} throw new Error(typeof d === "string" ? d : (d && d.message) || r.statusText); }
+  return r.json();
+});
+const qs = (o) => Object.entries(o).filter(([, v]) => v !== "" && v != null && v !== false).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+const fmt = (d) => (d ? String(d).slice(0, 10) : "—");
+const num = (v, d = 2) => (v == null ? "—" : Number(v).toFixed(d));
+const money = (v, cur) => (v == null ? "—" : `${cur || ""} ${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`.trim());
+const label = (k) => k.replace(/_/g, " ");
+
+function useTheme() {
+  const [theme, setTheme] = useState(localStorage.getItem("clhear_theme") || "dark");
+  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("clhear_theme", theme); }, [theme]);
+  return [theme, () => setTheme(theme === "dark" ? "light" : "dark")];
+}
+
+const Band = ({ b }) => html`<span class=${"badge b-" + b}>${b}</span>`;
+const Kind = ({ k }) => html`<span class="badge k">${k}</span>`;
+const Method = ({ m }) => html`<span class=${"badge m-" + m}>${m}</span>`;
+const Bar = ({ v, band }) => html`<div class=${"bar b-" + (band || "")} role="img" aria-label=${"composite " + num(v, 3)}><i style=${{ width: `${Math.round((v || 0) * 100)}%` }}></i></div>`;
+const ObCard = ({ c, id }) => c ? html`<span><span class="mono">${c.stable_id || c.id}</span> ${c.source_key} ${c.clause_ref} <span class="badge jur">${c.jurisdiction}</span> — ${c.title}</span>` : html`<span class="mono">${id}</span>`;
+
+// ------------------------------------------------------------------ priority view
+
+function Priorities({ openScore, openObligation }) {
+  const [bps, setBps] = useState([]);
+  const [pick, setPick] = useState(decodeURIComponent(location.hash.slice(1)).match(/^BLU-/) ? decodeURIComponent(location.hash.slice(1)) : "");
+  const [data, setData] = useState(null);
+  const [obs, setObs] = useState(null);
+  const [band, setBand] = useState("");
+  const [err, setErr] = useState("");
+  useEffect(() => { api("/l6/blueprints?status=current&limit=50").then((r) => { setBps(r.items || []); if (!pick && r.items && r.items[0]) setPick(r.items[0].blueprint_id); }).catch((e) => setErr(String(e.message))); }, []);
+  useEffect(() => {
+    if (!pick) { api(`/l7/scores?${qs({ kind: "obligation", band, limit: 200 })}`).then(setObs).catch((e) => setErr(String(e.message))); return; }
+    setData(null); setErr("");
+    api(`/l7/blueprints/${encodeURIComponent(pick)}/priorities?${qs({ band })}`).then(setData).catch((e) => setErr(String(e.message)));
+  }, [pick, band]);
+  const items = data ? data.items : [];
+  return html`<div class="layout">
+    <aside class="side" aria-label="Priority filters">
+      <h4>Blueprint</h4>
+      <label for="bp">Current blueprint</label>
+      <select id="bp" value=${pick} onChange=${(e) => { setPick(e.target.value); history.replaceState(null, "", "#" + (e.target.value || "priorities")); }}>
+        <option value="">All obligations (base priorities)</option>
+        ${bps.map((b) => html`<option key=${b.blueprint_id} value=${b.blueprint_id}>${b.blueprint_id} ${b.profile_id ? "· " + b.profile_id : ""}</option>`)}
+      </select>
+      <label for="band">Band</label>
+      <select id="band" value=${band} onChange=${(e) => setBand(e.target.value)}>
+        <option value="">any</option>${["critical", "high", "medium", "low"].map((b) => html`<option key=${b} value=${b}>${b}</option>`)}
+      </select>
+      ${data ? html`<h4>Bands</h4><div>${Object.entries(data.bands || {}).map(([b, n]) => html`<div key=${b}><${Band} b=${b} /> <span class="mono">${n}</span></div>`)}</div>
+        <h4>Openness</h4><p class="mono">${data.openness && data.openness.open}</p><p class="mono">${data.openness && data.openness.closed}</p>` : null}
+    </aside>
+    <section aria-live="polite">
+      ${err ? html`<div class="empty bad">${err}</div>` : null}
+      ${pick ? html`<div class="panelx"><h2>Priority view · ${pick}</h2>
+        <div class="meta"><span>items <b>${data ? data.count : "…"}</b></span><span>method <b>${data ? data.method_version : ""}</b></span>${data && data.unscored_items && data.unscored_items.length ? html`<span class="warn">unscored ${data.unscored_items.length}</span>` : null}</div>
+        ${!data ? html`<div class="spin">Loading…</div>` : !items.length ? html`<div class="empty">No item scores yet for this blueprint — the nightly scorer publishes them after the composer.</div>` :
+        html`<table class="reg"><thead><tr><th scope="col">Item</th><th scope="col">Band</th><th scope="col">Composite</th><th scope="col">History</th><th scope="col">Likelihood</th><th scope="col">Financial</th><th scope="col">Obligations</th></tr></thead>
+          <tbody>${items.map((s) => html`<tr key=${s.id}>
+            <td><button class="name" onClick=${() => openScore(s.id)}>${s.item.name || s.subject_ref}</button><div class="mono">${s.subject_ref} · ${s.item.kind} · ${s.item.basis}</div></td>
+            <td><${Band} b=${s.band} /></td>
+            <td><${Bar} v=${s.composite} band=${s.band} /><span class="mono">${num(s.composite, 3)}</span></td>
+            <td class="mono">${num(s.dimensions.enforcement_history, 2)}</td><td class="mono">${num(s.dimensions.likelihood, 2)}</td><td class="mono">${num(s.dimensions.financial_impact, 2)}</td>
+            <td>${(s.obligations || []).map((o) => html`<div key=${o.id}><button class="name" onClick=${() => openObligation(o.id)}>${o.card ? (o.card.stable_id || o.id) : o.id}</button> ${o.band ? html`<${Band} b=${o.band} />` : null} <span class="mono">${o.card ? o.card.source_key + " " + o.card.clause_ref : ""}</span></div>`)}</td>
+          </tr>`)}</tbody></table>`}</div>`
+      : html`<div class="panelx"><h2>Base priorities · all obligations</h2>
+        <div class="meta"><span>scored <b>${obs ? obs.count : "…"}</b></span><span>method <b>${obs ? obs.method_version : ""}</b></span></div>
+        ${!obs ? html`<div class="spin">Loading…</div>` : !obs.items.length ? html`<div class="empty">No scores yet.</div>` :
+        html`<table class="reg"><thead><tr><th scope="col">Obligation</th><th scope="col">Band</th><th scope="col">Composite</th><th scope="col">Outcomes</th><th scope="col">Total</th></tr></thead>
+          <tbody>${obs.items.map((s) => html`<tr key=${s.id}>
+            <td><button class="name" onClick=${() => openScore(s.id)}>${s.obligation ? (s.obligation.stable_id || s.subject_ref) : s.subject_ref}</button><div class="mono">${s.obligation ? s.obligation.source_key + " " + s.obligation.clause_ref + " — " + s.obligation.title : ""}</div></td>
+            <td><${Band} b=${s.band} /></td><td><${Bar} v=${s.composite} band=${s.band} /><span class="mono">${num(s.composite, 3)}</span></td>
+            <td class="mono">${s.evidence.event_count}</td><td class="amount mono">${money(s.evidence.total_amount)}</td></tr>`)}</tbody></table>`}</div>`}
+    </section></div>`;
+}
+
+// ------------------------------------------------------------------ score page
+
+function ScorePage({ id, back, openEvent, openObligation }) {
+  const [s, setS] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { setS(null); api(`/l7/scores/${encodeURIComponent(id)}`).then(setS).catch((e) => setErr(String(e.message))); }, [id]);
+  if (err) return html`<div class="empty bad">${err}</div>`;
+  if (!s) return html`<div class="spin">Loading…</div>`;
+  const w = s.weights || {};
+  return html`<div>
+    <div class="crumbs"><button onClick=${back}>← back</button> · ${s.id}</div>
+    <div class="panelx"><h2>${s.subject_kind === "item" ? "Item" : "Obligation"} score · <${Band} b=${s.band} /> ${num(s.composite, 3)}</h2>
+      <div class="meta"><span>subject <b>${s.subject_ref}</b></span>${s.blueprint_id ? html`<span>blueprint <b>${s.blueprint_id}</b></span>` : null}<span>method <b>${s.method_version}</b></span><span>calibration <b class="mono">${s.calibration_set_ref}</b></span><span>valid from <b>${fmt(s.valid_from)}</b></span><span>confidence <b>${num(s.confidence, 2)}</b></span></div>
+      ${s.obligation ? html`<p><${ObCard} c=${s.obligation} id=${s.subject_ref} /> <button class="btn" onClick=${() => openObligation(s.subject_ref)}>enforcement for this obligation</button></p>` : null}
+      <h3>Dimensions (weight × value)</h3>
+      <div class="dims">${Object.entries(s.dimensions).map(([k, v]) => html`<div class="dim" key=${k}><span>${label(k)}</span><b>${num(v, 3)}</b><span class="w">× ${w[k]} = ${num((w[k] || 0) * v, 3)}</span></div>`)}</div>
+      <h3>Evidence</h3>
+      <dl class="method">${Object.entries(s.evidence).filter(([k]) => !["events", "obligation_scores"].includes(k)).map(([k, v]) => html`<dt key=${"t" + k}>${label(k)}</dt><dd key=${"d" + k}>${Array.isArray(v) ? v.join(", ") : typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}</dd>`)}</dl>
+      ${s.evidence.events && s.evidence.events.length ? html`<p>outcomes: ${s.evidence.events.map((e) => html`<button key=${e} class="name" onClick=${() => openEvent(e)}>${e}</button>${" "}`)}</p>` : null}
+      ${s.calibration ? html`<h3>Calibration run</h3><p class="mono">${s.calibration.id} · held-out ${s.calibration.held_out_year} · Brier ${num(s.calibration.brier, 4)} vs baseline ${num(s.calibration.baseline_brier, 4)} · n ${s.calibration.n}</p>` : null}
+      <h3>Why</h3>${(s.why || []).map((w2) => html`<p class="why" key=${w2.id}><code>${w2.id}</code> ${w2.reasoning_summary} <span class="mono">${w2.agent_id} · ${w2.skill_version}</span></p>`)}
+      <h3>History</h3>
+      <table class="reg"><thead><tr><th scope="col">Score</th><th scope="col">Status</th><th scope="col">Composite</th><th scope="col">Band</th><th scope="col">Valid</th></tr></thead>
+        <tbody>${(s.history || []).map((h) => html`<tr key=${h.id}><td class="mono">${h.id}</td><td>${h.status}</td><td class="mono">${num(h.composite, 3)}</td><td><${Band} b=${h.band} /></td><td class="mono">${fmt(h.valid_from)} → ${fmt(h.valid_to) === "—" ? "now" : fmt(h.valid_to)}</td></tr>`)}</tbody></table>
+    </div>
+    ${s.enforcement ? html`<div class="panelx"><h2>Linked enforcement (${s.enforcement.length})</h2><${EventTable} items=${s.enforcement} openEvent=${openEvent} /></div>` : null}
+  </div>`;
+}
+
+// ------------------------------------------------------------------ enforcement explorer
+
+function EventTable({ items, openEvent }) {
+  if (!items.length) return html`<div class="empty">No enforcement outcomes match.</div>`;
+  return html`<table class="reg"><thead><tr><th scope="col">Date</th><th scope="col">Regulator</th><th scope="col">Respondent</th><th scope="col">Outcome</th><th scope="col">Amount</th><th scope="col">Cited</th></tr></thead>
+    <tbody>${items.map((e) => html`<tr key=${e.id}>
+      <td class="mono">${fmt(e.decided_on)}</td><td>${e.regulator} <span class="badge jur">${e.jurisdiction}</span></td>
+      <td><button class="name" onClick=${() => openEvent(e.id)}>${e.respondent || e.title || e.id}</button><div class="mono">${e.id} · ${e.respondent_type}</div></td>
+      <td><${Kind} k=${e.kind} /></td><td class="amount mono">${money(e.amount, e.currency)}</td>
+      <td>${(e.links || (e.link ? [e.link] : [])).map((l) => html`<div key=${l.id}><${Method} m=${l.method} /> <span class="mono">${l.obligation ? (l.obligation.stable_id || l.obligation_id) + " " + l.obligation.source_key + " " + l.obligation.clause_ref : l.obligation_id}</span></div>`)}
+        ${!(e.links || []).length && !e.link && e.cited_refs && e.cited_refs.length ? html`<div class="mono">${e.cited_refs.map((c) => c.text).join("; ")} (unresolved)</div>` : null}</td>
+    </tr>`)}</tbody></table>`;
+}
+
+function Explorer({ openEvent, initialObligation }) {
+  const [f, setF] = useState({ regulator: "", jurisdiction: "", kind: "", since: "", q: "", obligation: initialObligation || "" });
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { setData(null); setErr(""); api(`/l7/enforcement?${qs({ ...f, limit: 300 })}`).then(setData).catch((e) => setErr(String(e.message))); }, [f]);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return html`<div class="layout">
+    <aside class="side" aria-label="Enforcement filters">
+      <h4>Who, when, how much</h4>
+      <label for="ob">Obligation (OBL- id or source#ref)</label><input id="ob" value=${f.obligation} onChange=${set("obligation")} placeholder="OBL-000001" />
+      <label for="reg">Regulator</label><input id="reg" value=${f.regulator} onChange=${set("regulator")} placeholder="FCA, SEC, FINRA…" />
+      <label for="jur">Jurisdiction</label><input id="jur" value=${f.jurisdiction} onChange=${set("jurisdiction")} placeholder="UK" />
+      <label for="kind">Outcome</label><select id="kind" value=${f.kind} onChange=${set("kind")}><option value="">any</option>${["fine", "censure", "prohibition", "restitution", "undertaking", "suspension", "other"].map((k) => html`<option key=${k} value=${k}>${k}</option>`)}</select>
+      <label for="since">Since</label><input id="since" type="date" value=${f.since} onChange=${set("since")} />
+      <label for="q">Search</label><input id="q" value=${f.q} onChange=${set("q")} placeholder="respondent, title, summary" />
+    </aside>
+    <section aria-live="polite">
+      <div class="panelx"><h2>Enforcement explorer</h2>
+        <div class="meta"><span>outcomes <b>${data ? data.count : "…"}</b></span><span>total amount <b>${data ? money(data.total_amount) : ""}</b></span></div>
+        ${err ? html`<div class="empty bad">${err}</div>` : !data ? html`<div class="spin">Loading…</div>` : html`<${EventTable} items=${data.items} openEvent=${openEvent} />`}
+      </div></section></div>`;
+}
+
+function EventPage({ id, back, openScore }) {
+  const [e, setE] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => { setE(null); api(`/l7/enforcement/${encodeURIComponent(id)}`).then(setE).catch((x) => setErr(String(x.message))); }, [id]);
+  if (err) return html`<div class="empty bad">${err}</div>`;
+  if (!e) return html`<div class="spin">Loading…</div>`;
+  return html`<div>
+    <div class="crumbs"><button onClick=${back}>← back</button> · ${e.id}</div>
+    <div class="panelx"><h2>${e.title || e.respondent}</h2>
+      <div class="meta"><span>regulator <b>${e.regulator}</b> <span class="badge jur">${e.jurisdiction}</span></span><span>decided <b>${fmt(e.decided_on)}</b></span><span>outcome <${Kind} k=${e.kind} /></span><span>amount <b>${money(e.amount, e.currency)}</b></span><span>respondent <b>${e.respondent}</b> (${e.respondent_type})</span>${e.notice_ref ? html`<span>ref <b class="mono">${e.notice_ref}</b></span>` : null}</div>
+      <p>${e.summary}</p>
+      ${e.url ? html`<p><a href=${e.url} target="_blank" rel="noopener">source listing ↗</a> <span class="mono">${e.source_key} · ${e.clause_ref}</span></p>` : null}
+      <h3>Breached obligations (${(e.links || []).length})</h3>
+      ${(e.links || []).length ? (e.links || []).map((l) => html`<div key=${l.id}><${Method} m=${l.method} /> <${ObCard} c=${l.obligation} id=${l.obligation_id} /> <span class="mono">conf ${num(l.confidence, 2)}</span><div class="quote">“${l.citation}”</div></div>`) : html`<p class="mono">no provision in the registry is cited by this notice${e.cited_refs && e.cited_refs.length ? " — printed citations: " + e.cited_refs.map((c) => c.text).join("; ") : ""}</p>`}
+      <h3>Versions</h3>
+      <table class="reg"><thead><tr><th scope="col">Version</th><th scope="col">Valid</th><th scope="col">Amount</th><th scope="col">Outcome</th><th scope="col">Text hash</th></tr></thead>
+        <tbody>${(e.versions || []).map((v) => html`<tr key=${v.version}><td class="mono">${v.version}</td><td class="mono">${fmt(v.valid_from)} → ${fmt(v.valid_to) === "—" ? "now" : fmt(v.valid_to)}</td><td class="amount mono">${money(v.amount)}</td><td>${v.kind}</td><td class="mono">${String(v.text_hash).slice(0, 12)}</td></tr>`)}</tbody></table>
+      <h3>Why</h3>${(e.why || []).map((w) => html`<p class="why" key=${w.id}><code>${w.id}</code> ${w.reasoning_summary} <span class="mono">${w.agent_id} · ${w.skill_version}</span></p>`)}
+    </div></div>`;
+}
+
+// ------------------------------------------------------------------ method + scorecard
+
+function MethodTab() {
+  const [m, setM] = useState(null);
+  const [card, setCard] = useState(null);
+  const [cals, setCals] = useState(null);
+  useEffect(() => { api("/l7/method").then(setM).catch(() => setM({ error: true })); api("/l7/scorecard").then(setCard).catch(() => setCard({ error: true })); api("/l7/calibrations").then(setCals).catch(() => setCals({ items: [] })); }, []);
+  if (!m) return html`<div class="spin">Loading…</div>`;
+  if (m.error) return html`<div class="empty">method unavailable</div>`;
+  const cal = m.latest_calibration;
+  return html`<div>
+    <div class="panelx"><h2>Published method · ${m.method_version}</h2>
+      <p>The score is not a black box: every score carries these weights, the dimensions it used and the calibration run its likelihood came from.</p>
+      <h3>Dimension weights</h3>
+      <table class="reg"><thead><tr><th scope="col">Dimension</th><th scope="col">Weight</th><th scope="col">What it measures</th></tr></thead>
+        <tbody>${m.dimensions.map((d) => html`<tr key=${d.key}><td><b>${label(d.key)}</b></td><td class="mono">${d.weight}</td><td>${d.note}</td></tr>`)}</tbody></table>
+      <h3>Composite and bands</h3>
+      <dl class="method"><dt>composite</dt><dd>${m.composite}</dd><dt>bands</dt><dd>${m.bands.map((b) => html`<span key=${b.band}><${Band} b=${b.band} /> ≥ ${b.from} </span>`)}</dd>
+        <dt>likelihood</dt><dd>${m.likelihood}</dd><dt>fitted parameters</dt><dd class="mono">a = ${m.parameters.a}, b = ${m.parameters.b}, c = ${m.parameters.c}</dd>
+        <dt>recency half-life</dt><dd>${m.half_life_years} years</dd><dt>attention window</dt><dd>${m.attention_window_years} years</dd>
+        <dt>open</dt><dd>${m.openness.open}</dd><dt>closed</dt><dd>${m.openness.closed}</dd></dl>
+    </div>
+    <div class="panelx"><h2>Calibration · Brier on a held-out year</h2>
+      ${!cal ? html`<p class="warn">No published calibration run yet — the nightly scorer publishes one once linked enforcement outcomes span more than one year.</p>` :
+      html`<div class="score">
+        <div class="kpi"><b>${num(cal.brier, 4)}</b><span>Brier score, held-out ${cal.held_out_year}</span></div>
+        <div class="kpi"><b>${num(cal.baseline_brier, 4)}</b><span>base-rate baseline</span></div>
+        <div class="kpi"><b class=${cal.brier <= cal.baseline_brier ? "ok" : "warn"}>${cal.brier <= cal.baseline_brier ? "beats" : "trails"}</b><span>fitted vs baseline</span></div>
+        <div class="kpi"><b>${cal.n}</b><span>obligations scored · ${cal.positives} with an outcome</span></div>
+        <div class="kpi"><b>${(cal.training_years || []).join(", ") || "—"}</b><span>training years</span></div>
+      </div>
+      <h3>Reliability</h3>
+      ${cal.reliability && cal.reliability.length ? html`<table class="reg reliab"><thead><tr><th scope="col">Predicted bin</th><th scope="col">n</th><th scope="col">mean predicted</th><th scope="col">observed</th></tr></thead>
+        <tbody>${cal.reliability.map((r) => html`<tr key=${r.bin}><td class="mono">${r.bin}</td><td class="mono">${r.n}</td><td class="mono">${num(r.predicted, 3)}</td><td class="mono">${num(r.observed, 3)}</td></tr>`)}</tbody></table>` : html`<p class="mono">no bins</p>`}
+      <p class="mono">${cal.id}</p>`}
+      ${cals && cals.items && cals.items.length > 1 ? html`<h3>Earlier runs</h3><table class="reg"><thead><tr><th scope="col">Run</th><th scope="col">Held-out</th><th scope="col">Brier</th><th scope="col">Baseline</th><th scope="col">n</th></tr></thead>
+        <tbody>${cals.items.slice(1).map((c) => html`<tr key=${c.id}><td class="mono">${c.id}</td><td class="mono">${c.held_out_year}</td><td class="mono">${num(c.brier, 4)}</td><td class="mono">${num(c.baseline_brier, 4)}</td><td class="mono">${c.n}</td></tr>`)}</tbody></table>` : null}
+    </div>
+    ${card && !card.error ? html`<div class="panelx"><h2>Scorecard</h2>
+      <div class="score">
+        <div class="kpi"><b class=${card.gate && card.gate.passed ? "ok" : "warn"}>${card.gate && card.gate.passed ? "open" : "held"}</b><span>L7 gate (${Object.keys(card.thresholds || {}).join(", ")})</span></div>
+        <div class="kpi"><b>${card.events}</b><span>live enforcement outcomes</span></div>
+        <div class="kpi"><b>${card.links}</b><span>event → obligation links</span></div>
+        ${Object.entries(card.bands || {}).map(([k, v]) => html`<div class="kpi" key=${k}><b>${Object.values(v).reduce((a, b) => a + b, 0)}</b><span>${k} scores · ${Object.entries(v).map(([b, n]) => `${b} ${n}`).join(", ")}</span></div>`)}
+      </div>
+      ${card.gate && card.gate.suites ? html`<h3>Suites</h3><table class="reg"><thead><tr><th scope="col">Suite</th><th scope="col">Passed</th><th scope="col">Ran</th></tr></thead><tbody>${Object.entries(card.gate.suites).map(([k, v]) => html`<tr key=${k}><td class="mono">${k}</td><td class=${v && v.passed ? "ok" : "bad"}>${v ? (v.passed ? "pass" : "fail") : "not run"}</td><td class="mono">${v ? fmt(v.ran_at) : "—"}</td></tr>`)}</tbody></table>` : null}
+    </div>` : null}
+  </div>`;
+}
+
+// ------------------------------------------------------------------ app
+
+function App() {
+  const [theme, toggleTheme] = useTheme();
+  const [tab, setTab] = useState("priorities");
+  const [view, setView] = useState({ page: "list" });
+  const openScore = (id) => { setView({ page: "score", id }); history.replaceState(null, "", "#" + id); };
+  const openEvent = (id) => { setView({ page: "event", id }); history.replaceState(null, "", "#" + id); };
+  const openObligation = (id) => { setTab("enforcement"); setView({ page: "list", obligation: id }); history.replaceState(null, "", "#enforcement"); };
+  const back = () => { setView({ page: "list" }); history.replaceState(null, "", "#" + tab); };
+  // Deep links: /l7#RSK-… a score, #ENF-… an outcome, #BLU-… a blueprint's priorities, #priorities / #enforcement / #method a tab.
+  useEffect(() => {
+    const apply = () => {
+      const h = decodeURIComponent(location.hash.slice(1));
+      if (/^RSK-/.test(h)) setView({ page: "score", id: h });
+      else if (/^ENF-/.test(h)) { setTab("enforcement"); setView({ page: "event", id: h }); }
+      else if (/^BLU-/.test(h)) { setTab("priorities"); setView({ page: "list" }); }
+      else if (["priorities", "enforcement", "method"].includes(h)) { setTab(h); setView({ page: "list" }); }
+    };
+    apply(); window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  let body;
+  if (view.page === "score") body = html`<${ScorePage} id=${view.id} back=${back} openEvent=${openEvent} openObligation=${openObligation} />`;
+  else if (view.page === "event") body = html`<${EventPage} id=${view.id} back=${back} openScore=${openScore} />`;
+  else if (tab === "enforcement") body = html`<${Explorer} openEvent=${openEvent} initialObligation=${view.obligation || ""} />`;
+  else if (tab === "method") body = html`<${MethodTab} />`;
+  else body = html`<${Priorities} openScore=${openScore} openObligation=${openObligation} />`;
+  return html`<div>
+    <header class="appbar">
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L7 · risk & priorities</span></div>
+      <div class="spacer"></div>
+      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink" href="/l6">L6</a><a class="navlink active" href="/l7">L7</a>
+      <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+    </header>
+    <main id="main"><h1 class="visually-hidden">L7 — Risk and priorities</h1>
+      <div class="tabs">
+        ${[["priorities", "Priority view"], ["enforcement", "Enforcement explorer"], ["method", "Method & calibration"]].map(([k, l]) =>
+          html`<button key=${k} class=${tab === k && view.page === "list" ? "on" : ""} onClick=${() => { setTab(k); setView({ page: "list" }); history.replaceState(null, "", "#" + k); }}>${l}</button>`)}
+      </div>
+      ${body}
+    </main></div>`;
+}
+
+createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

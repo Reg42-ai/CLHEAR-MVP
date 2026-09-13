@@ -30,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AXE_URL = "https://cdn.jsdelivr.net/npm/axe-core@4.10.2/axe.min.js"
-PAGES = ["/", "/explore", "/learn", "/watch", "/build", "/evals", "/stack", "/l1", "/l2", "/l3", "/l4", "/l5", "/l6", "/console"]
+PAGES = ["/", "/explore", "/learn", "/watch", "/build", "/evals", "/stack", "/l1", "/l2", "/l3", "/l4", "/l5", "/l6", "/l7", "/console"]
 TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"]
 FAIL_IMPACTS = {"serious", "critical"}
 THEMES = ["dark", "light"]
