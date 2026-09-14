@@ -167,8 +167,8 @@ locals {
       scrape_interval = "60s"
     }]
     remote_write = [{
-      url    = "${aws_prometheus_workspace.clhear[0].prometheus_endpoint}api/v1/remote_write"
-      sigv4  = { region = var.aws_region }
+      url          = "${aws_prometheus_workspace.clhear[0].prometheus_endpoint}api/v1/remote_write"
+      sigv4        = { region = var.aws_region }
       queue_config = { max_samples_per_send = 1000, max_shards = 10, capacity = 2500 }
     }]
   }) : ""
@@ -251,13 +251,13 @@ resource "aws_iam_role_policy" "grafana_read" {
 }
 
 resource "aws_grafana_workspace" "clhear" {
-  count                    = local.deploy_observability ? 1 : 0
-  name                     = "${var.name_prefix}-grafana"
-  account_access_type      = "CURRENT_ACCOUNT"
-  authentication_providers = ["AWS_SSO"]
-  permission_type          = "SERVICE_MANAGED"
-  role_arn                 = aws_iam_role.grafana[0].arn
-  data_sources             = ["PROMETHEUS", "CLOUDWATCH"]
+  count                     = local.deploy_observability ? 1 : 0
+  name                      = "${var.name_prefix}-grafana"
+  account_access_type       = "CURRENT_ACCOUNT"
+  authentication_providers  = ["AWS_SSO"]
+  permission_type           = "SERVICE_MANAGED"
+  role_arn                  = aws_iam_role.grafana[0].arn
+  data_sources              = ["PROMETHEUS", "CLOUDWATCH"]
   notification_destinations = ["SNS"]
 }
 
@@ -359,7 +359,7 @@ locals {
     { name = "DEFAULT_FROM_EMAIL", value = "errors@${var.clhear_hostname}" },
     { name = "EMAIL_URL", value = "smtp+tls://email-smtp.${var.aws_region}.amazonaws.com:587" },
     { name = "REDIS_URL", value = "redis://127.0.0.1:6379/0" },
-    { name = "ENABLE_USER_REGISTRATION", value = "False" },   # maintainers are invited, never self-registered
+    { name = "ENABLE_USER_REGISTRATION", value = "False" }, # maintainers are invited, never self-registered
     { name = "ENABLE_ORGANIZATION_CREATION", value = "False" },
     { name = "GLITCHTIP_MAX_EVENT_LIFE_DAYS", value = "90" }, # same retention as the drill evidence
     { name = "CELERY_WORKER_AUTOSCALE", value = "1,2" },
@@ -395,37 +395,37 @@ resource "aws_ecs_task_definition" "glitchtip" {
 
   container_definitions = jsonencode([
     {
-      name      = "redis"
-      image     = var.discourse_redis_image
-      essential = true
-      cpu       = 128
-      memory    = 256
-      portMappings = [{ containerPort = 6379, protocol = "tcp" }]
+      name             = "redis"
+      image            = var.discourse_redis_image
+      essential        = true
+      cpu              = 128
+      memory           = 256
+      portMappings     = [{ containerPort = 6379, protocol = "tcp" }]
       logConfiguration = local.glitchtip_log
     },
     {
-      name        = "web"
-      image       = var.glitchtip_image
-      essential   = true
-      cpu         = 512
-      memory      = 1024
-      command     = ["./bin/start.sh"]
-      environment = local.glitchtip_env
-      secrets     = local.glitchtip_secrets
-      portMappings = [{ containerPort = 8000, protocol = "tcp" }]
-      dependsOn   = [{ containerName = "redis", condition = "START" }]
+      name             = "web"
+      image            = var.glitchtip_image
+      essential        = true
+      cpu              = 512
+      memory           = 1024
+      command          = ["./bin/start.sh"]
+      environment      = local.glitchtip_env
+      secrets          = local.glitchtip_secrets
+      portMappings     = [{ containerPort = 8000, protocol = "tcp" }]
+      dependsOn        = [{ containerName = "redis", condition = "START" }]
       logConfiguration = local.glitchtip_log
     },
     {
-      name        = "worker"
-      image       = var.glitchtip_image
-      essential   = true
-      cpu         = 384
-      memory      = 768
-      command     = ["./bin/run-celery-with-beat.sh"]
-      environment = local.glitchtip_env
-      secrets     = local.glitchtip_secrets
-      dependsOn   = [{ containerName = "redis", condition = "START" }]
+      name             = "worker"
+      image            = var.glitchtip_image
+      essential        = true
+      cpu              = 384
+      memory           = 768
+      command          = ["./bin/run-celery-with-beat.sh"]
+      environment      = local.glitchtip_env
+      secrets          = local.glitchtip_secrets
+      dependsOn        = [{ containerName = "redis", condition = "START" }]
       logConfiguration = local.glitchtip_log
     },
   ])

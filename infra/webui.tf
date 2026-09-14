@@ -153,8 +153,8 @@ resource "aws_lambda_function" "webui" {
       CLHEAR_COGNITO_DOMAIN           = local.deploy_cognito ? "https://${local.cognito_domain}.auth.${var.aws_region}.amazoncognito.com" : ""
       CLHEAR_SAML_DOMAINS             = local.deploy_cognito ? aws_ssm_parameter.cognito_saml_domains[0].value : ""
       # GlitchTip error tracking (observability.tf); empty = off. Scrubbed in app/clhear/platform/errors.py.
-      SENTRY_DSN                      = data.aws_ssm_parameter.sentry_dsn[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.sentry_dsn[0].value
-      CLHEAR_ENV                      = "prod"
+      SENTRY_DSN = data.aws_ssm_parameter.sentry_dsn[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.sentry_dsn[0].value
+      CLHEAR_ENV = "prod"
     }
   }
 }
