@@ -1,0 +1,132 @@
+"""Source validation must gate storage even when substring coverage passes."""
+import sqlalchemy as sa
+
+from app.clhear.l1 import pipeline
+from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
+from app.clhear.l1.models import clauses, doc_nodes, source_versions
+
+
+class Adapter:
+    key = "test"
+
+    def __init__(self):
+        self.violations = []
+
+    def meta(self):
+        return SourceMeta(
+            family_key="test", family_name="Test", source_key="finra/test",
+            name="Test rule", kind="regulation", issuer="FINRA", jurisdiction="US",
+            license="open", canonical_url="https://www.finra.org/test", adapter="finra",
+            rights_basis="derived_only",
+        )
+
+    def fetch(self, since_version=None):
+        return FetchResult(
+            version_label="consolidated:2026-09-14",
+            artifacts=[Artifact("page.html", b"official original")],
+            tree=[DocNode(node_type="provision", ref="2210(a)", raw_text="First duty. Second duty.")],
+        )
+
+    def expected_text(self, artifacts):
+        return ["First duty.", "Second duty."]
+
+    def validate_tree(self, tree, artifacts):
+        return self.violations
+
+
+def test_l1_only_keeps_verbatim_private_and_does_not_rebuild_embeddings(engine, tmp_path, monkeypatch):
+    from app.clhear.platform import embeddings
+
+    calls = []
+    monkeypatch.setattr(embeddings, "rebuild_index", lambda *a, **k: calls.append(k))
+    result = pipeline.ingest(engine, Adapter(), pipeline.LocalStore(tmp_path), index_embeddings=False)
+    assert result["status"] == "added", result
+    assert calls == []
+    assert "/restricted/finra/test/" in result["artifacts"][0]
+    assert (tmp_path / "restricted/finra/test/consolidated:2026-09-14/page.html").read_bytes() == b"official original"
+    with engine.connect() as conn:
+        clause = conn.execute(sa.select(clauses)).one()
+        assert clause.text == "First duty. Second duty."
+        assert not clause.public_ok
+        assert not conn.execute(sa.select(doc_nodes.c.public_ok)).scalar_one()
+
+
+def test_exact_validator_blocks_storage_when_coverage_is_full(engine, tmp_path):
+    adapter = Adapter()
+    adapter.violations = ["FINRA ordered text differs from official body"]
+    result = pipeline.ingest(engine, adapter, pipeline.LocalStore(tmp_path), index_embeddings=False)
+    assert result["status"] == "not-fully-successful"
+    assert result["coverage"] == 1.0
+    with engine.connect() as conn:
+        assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 0
+        assert conn.execute(sa.select(sa.func.count()).select_from(doc_nodes)).scalar_one() == 0
+    assert not list(tmp_path.rglob("page.html"))
+
+
+def test_exact_validator_is_not_bypassed_by_unchanged_bytes(engine, tmp_path):
+    adapter = Adapter()
+    store = pipeline.LocalStore(tmp_path)
+    first = pipeline.ingest(engine, adapter, store, index_embeddings=False)
+    assert first["status"] == "added"
+    adapter.violations = ["wrong clause reference"]
+    second = pipeline.ingest(engine, adapter, store, index_embeddings=False)
+    assert second["status"] == "not-fully-successful"
+    with engine.connect() as conn:
+        assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 1
+
+
+def test_clause_ordering_uses_its_node_position_before_continuation_paragraphs(engine, tmp_path):
+    class ContinuationAdapter(Adapter):
+        def fetch(self, since_version=None):
+            result = super().fetch(since_version)
+            result.tree[0].raw_text = "First duty."
+            result.tree[0].children = [DocNode(node_type="paragraph", raw_text="Second duty.")]
+            return result
+
+    result = pipeline.ingest(engine, ContinuationAdapter(), pipeline.LocalStore(tmp_path), index_embeddings=False)
+    assert result["status"] == "added", result
+    with engine.connect() as conn:
+        row = conn.execute(sa.select(clauses.c.ordering, doc_nodes.c.seq).join(doc_nodes, clauses.c.doc_node_id == doc_nodes.c.id)).one()
+        assert row.ordering == row.seq == 1
+
+
+def test_unchanged_source_repairs_corrupt_projection_without_deleting_history(engine, tmp_path):
+    adapter, store = Adapter(), pipeline.LocalStore(tmp_path)
+    assert pipeline.ingest(engine, adapter, store, index_embeddings=False)["status"] == "added"
+    with engine.begin() as conn:
+        old_clause = conn.execute(sa.select(clauses)).one()
+        old_node = conn.execute(sa.select(doc_nodes)).one()
+        conn.execute(doc_nodes.update().where(doc_nodes.c.id == old_node.id).values(raw_text="lost text"))
+        conn.execute(clauses.update().where(clauses.c.id == old_clause.id).values(text="lost text"))
+    repaired = pipeline.ingest(engine, adapter, store, index_embeddings=False)
+    assert repaired["status"] == "amended", repaired
+    assert any(stage["stage"] == "projection_repair" for stage in repaired["stages"])
+    with engine.connect() as conn:
+        assert conn.execute(sa.select(clauses.c.text).where(clauses.c.id == old_clause.id)).scalar_one() == "lost text"
+        assert conn.execute(sa.select(doc_nodes.c.id).where(doc_nodes.c.id == old_node.id)).scalar_one() == old_node.id
+        assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 2
+    assert pipeline.ingest(engine, adapter, store, index_embeddings=False)["status"] == "unchanged"
+
+
+def test_retry_hash_matches_bytes_actually_stored(engine, tmp_path, monkeypatch):
+    monkeypatch.setenv("CLHEAR_SALVAGE_CAP", "0")
+    from app.clhear.settings import get_settings
+    get_settings.cache_clear()
+
+    class RetryAdapter(Adapter):
+        attempts = 0
+
+        def fetch(self, since_version=None):
+            self.attempts += 1
+            result = super().fetch(since_version)
+            if self.attempts == 1:
+                result.tree[0].raw_text = "First duty."
+                result.artifacts = [Artifact("page.html", b"incomplete download")]
+            return result
+
+    result = pipeline.ingest(engine, RetryAdapter(), pipeline.LocalStore(tmp_path), index_embeddings=False)
+    assert result["status"] == "added", result
+    expected = pipeline.sha256(b"official original")
+    assert result["content_hash"] == expected
+    with engine.connect() as conn:
+        assert conn.execute(sa.select(source_versions.c.content_hash)).scalar_one() == expected

@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -237,6 +238,60 @@ def diff_clauses(old: dict[str, str], new: dict[str, str]) -> dict[str, list[str
     return {"added": added, "removed": removed, "amended": amended}
 
 
+def _projection_matches(conn: Connection, version_id: int, tree: list[DocNode], public_ok: bool) -> bool:
+    """Unchanged bytes do not prove that an older parser stored this tree.
+
+    Strict adapters check both the document and its clause projection before
+    accepting a hash hit, including repairs of already corrupted stored rows.
+    """
+    expected = [node for root in tree for node in root.walk()]
+    rows = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.source_version_id == version_id)
+                        .order_by(doc_nodes.c.seq)).mappings().all()
+    if len(rows) != len(expected):
+        return False
+    seq_by_object = {id(node): i for i, node in enumerate(expected, 1)}
+    parents = {}
+
+    def visit(node, parent=None, depth=0):
+        parents[id(node)] = (seq_by_object.get(id(parent)), depth)
+        for child in node.children:
+            visit(child, node, depth + 1)
+
+    for root in tree:
+        visit(root)
+    seq_by_id = {row["id"]: row["seq"] for row in rows}
+    fields = ("node_type", "ref", "label", "heading", "raw_text", "source_fragment")
+    for seq, (row, node) in enumerate(zip(rows, expected), 1):
+        if row["seq"] != seq or row["public_ok"] != public_ok:
+            return False
+        if any(row[field] != getattr(node, field) for field in fields):
+            return False
+        if (seq_by_id.get(row["parent_id"]), row["depth"]) != parents[id(node)]:
+            return False
+        if row["parent_id"] is not None and row["parent_id"] not in seq_by_id:
+            return False
+        if row["text_hash"] != sha256("\n".join(getattr(node, f) for f in fields[:-1]).encode()):
+            return False
+    projected = conn.execute(sa.select(clauses).where(clauses.c.source_version_id == version_id)).mappings().all()
+    expected_clauses = {seq: node for seq, node in enumerate(expected, 1) if node.node_type in CLAUSE_TYPES and node.ref}
+    if len(projected) != len(expected_clauses):
+        return False
+    layout = spans.span_layout(tree)
+    seen = set()
+    for row in projected:
+        seq = seq_by_id.get(row["doc_node_id"])
+        node = expected_clauses.get(seq)
+        if node is None or seq in seen:
+            return False
+        seen.add(seq)
+        text = node.subtree_text()
+        if (row["ref"], row["ordering"], row["text"], row["text_hash"], row["public_ok"]) != (node.ref, seq, text, sha256(text.encode()), public_ok):
+            return False
+        if (row["span_start"], row["span_end"]) != layout[id(node)]:
+            return False
+    return seen == set(expected_clauses)
+
+
 def _load_active_hints(conn: Connection, source_id: int) -> list[dict]:
     rows = conn.execute(
         sa.select(parse_hints)
@@ -317,6 +372,7 @@ def ingest(
     gateway=None,
     job_id: str | None = None,
     force: bool = False,
+    index_embeddings: bool = True,
 ) -> dict:
     """Run one adapter through fetch -> fidelity gate/repair loop -> persist.
 
@@ -325,6 +381,9 @@ def ingest(
     `hints_used` mark degraded-but-successful runs (warnings in the Activity
     feed). A crash in fetch() always `finish()`es the run: previous version
     kept as `stale`, first ingest recorded as `failed`.
+
+    Set index_embeddings=False for an L1-only import: the global embedding
+    projection is left untouched and no embedding provider is called.
     """
     settings = get_settings()
     meta = adapter.meta()
@@ -359,7 +418,7 @@ def ingest(
         summary = {"source": meta.source_key, "error": error}
         outputs = recorder.finish("failed", summary)
         return {**summary, "status": "failed", "run_id": recorder.run_id, "stages": outputs["stages"]}
-    freshness = "stale" if l1_http.last_good_used() else "live"
+    freshness = getattr(adapter, "fetch_origin", None) or ("stale" if l1_http.last_good_used() else "live")
     recorder.stage("fetch", artifacts=len(result.artifacts) if result else 0, freshness=freshness)
     if result is None:
         summary = {
@@ -372,15 +431,24 @@ def ingest(
         return {**summary, "status": "up-to-date", "run_id": recorder.run_id, "stages": outputs["stages"]}
 
     content_hash = sha256(b"".join(a.content for a in sorted(result.artifacts, key=lambda a: a.name)))
-    if previous is not None and previous.content_hash == content_hash and not force:
-        summary = {
-            "source": meta.source_key,
-            "version": previous.version_label,
-            "freshness": freshness,
-            "note": "probed, unchanged",
-        }
-        outputs = recorder.finish("unchanged", summary)
-        return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"]}
+    validator = getattr(adapter, "validate_tree", None)
+    strict_violations = validator(result.tree, result.artifacts) if validator else []
+    if previous is not None and previous.content_hash == content_hash and not force and not strict_violations:
+        with engine.connect() as conn:
+            matching = not validator or _projection_matches(
+                conn, previous.id, result.tree,
+                meta.license == "open" and rights.republishable(rights_basis_for(meta).basis),
+            )
+        if matching:
+            summary = {
+                "source": meta.source_key,
+                "version": previous.version_label,
+                "freshness": freshness,
+                "note": "probed, unchanged",
+            }
+            outputs = recorder.finish("unchanged", summary)
+            return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"]}
+        recorder.stage("projection_repair", reason="stored projection differs from validated source parse")
 
     # ---- fidelity gate + escalation loop -----------------------------------
     threshold = settings.clhear_fidelity_threshold
@@ -406,6 +474,10 @@ def ingest(
         recorder.stage("parse", attempt=attempt, nodes=node_count)
 
         report = fidelity.check(tree, expected)
+        # Publisher-specific exact checks are gates too. A substring coverage
+        # score cannot establish ordering, multiplicity or clause boundaries.
+        if validator:
+            report.violations.extend(validator(tree, result.artifacts))
         recorder.stage("gate", attempt=attempt, **report.summary())
 
         # Tier 1b: learned hints (deterministic; zero LLM).
@@ -489,10 +561,23 @@ def ingest(
 
     # ---- persist (gate green) ------------------------------------------------
     try:
+        # A repair retry can return different bytes; hash the artifact actually
+        # persisted, never the first (failed) fetch.
+        content_hash = sha256(b"".join(a.content for a in sorted(result.artifacts, key=lambda a: a.name)))
+        if validator:
+            with engine.connect() as conn:
+                existing_label = conn.execute(sa.select(source_versions.c.id).where(
+                    source_versions.c.source_id == source_id,
+                    source_versions.c.version_label == result.version_label,
+                )).scalar()
+            if existing_label is not None:
+                # Parser corrections are new provenance, never an in-place
+                # deletion of earlier clause IDs cited by downstream layers.
+                result.version_label += f":parse-{uuid.uuid4().hex[:12]}"
         return _persist(
             engine, store, meta, source_id, previous, result, content_hash, report,
             hints_used, new_llm_hints, recovered_spans, llm_assisted, recorder,
-            force=force, llm_router=gateway,
+            force=force, llm_router=gateway, index_embeddings=index_embeddings, freshness=freshness,
         )
     except Exception as exc:
         recorder.finish("failed", {"source": meta.source_key, "error": str(exc)[:300]})
@@ -515,8 +600,11 @@ def _persist(
     recorder: RunRecorder,
     force: bool = False,
     llm_router=None,
+    index_embeddings: bool = True,
+    freshness: str = "live",
 ) -> dict:
-    prefix = "public-ok" if meta.license == "open" else "restricted"
+    public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
+    prefix = "public-ok" if public_ok else "restricted"
     artifact_uris = []
     for artifact in result.artifacts:
         key = f"{prefix}/{meta.source_key}/{result.version_label}/{artifact.name}"
@@ -524,7 +612,6 @@ def _persist(
 
     # Text is public only when the licence is open AND the rights basis allows
     # republication (derived_only sources keep hashes/derived facts public).
-    public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
     tree = result.tree
 
     with engine.begin() as conn:
@@ -740,7 +827,7 @@ def _persist(
         "effective_date_basis": effective.basis,
         "artifacts": artifact_uris,
         "content_hash": content_hash,
-        "freshness": "live",
+        "freshness": freshness,
     }
     if hints_used:
         summary["hints_used"] = hints_used
@@ -757,8 +844,11 @@ def _persist(
     try:
         from app.clhear.platform import embeddings, graph
 
-        vec = embeddings.rebuild_index(engine, trigger="ingest", release=result.version_label)
-        summary["embeddings"] = {"embedded": vec["embedded"], "model": vec["model"]}
+        if index_embeddings:
+            vec = embeddings.rebuild_index(engine, trigger="ingest", release=result.version_label)
+            summary["embeddings"] = {"embedded": vec["embedded"], "model": vec["model"]}
+        else:
+            summary["embeddings"] = {"status": "skipped", "reason": "L1-only import"}
         graph.invalidate(engine)
     except Exception:  # pragma: no cover - the index is a projection; ingest succeeded
         log.exception("embedding index update failed for %s", meta.source_key)
@@ -791,6 +881,7 @@ def persist_tree(
     def visit(node: DocNode, parent_id: int | None, depth: int, path_parts: list[str]) -> None:
         nonlocal seq
         seq += 1
+        node_seq = seq
         payload = "\n".join([node.node_type, node.ref, node.label, node.heading, node.raw_text]).encode()
         node_id = conn.execute(
             doc_nodes.insert()
@@ -828,7 +919,7 @@ def persist_tree(
                     "doc_node_id": node_id,
                     "ref": node.ref,
                     "path": " > ".join(p for p in path_parts if p),
-                    "ordering": seq,
+                    "ordering": node_seq,
                     "text": clause_text,
                     "text_hash": sha256(clause_text.encode()),
                     "public_ok": public_ok,
