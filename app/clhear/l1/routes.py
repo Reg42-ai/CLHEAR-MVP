@@ -8,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+from urllib.parse import urlencode
 from fastapi.responses import HTMLResponse
 
 import json
@@ -34,6 +35,44 @@ from app.clhear.platform import audit
 router = APIRouter()
 
 WEB_DIR = Path(__file__).parent.parent / "web"
+
+
+def _text_access(conn, source, request: Request) -> dict:
+    """Authentication and publisher permissions are independent requirements."""
+    from app.clhear.l1 import permissions
+    from app.clhear.review_access import reviewer
+
+    if not permissions.required_for(source):
+        allowed = source.license == "open" and l1_rights.republishable(source.rights_basis or "")
+        return {"allowed": allowed, "internal": False,
+                "reason": "Public text" if allowed else "Text access requires recorded permission."}
+    public = permissions.decision(conn, source.key, "display_public")
+    if public["allowed"]:
+        return {**public, "internal": False}
+    user = reviewer(request)
+    internal = permissions.decision(conn, source.key, "display_internal")
+    request.state.private_text = bool(user and internal["allowed"])
+    return {**internal, "allowed": bool(user and internal["allowed"]), "internal": True,
+            "reason": internal["reason"] if user else "An approved reviewer and internal display permission are required."}
+
+
+def _audit_text_read(conn, request, source, version, access, route, ids):
+    if not access["allowed"] or not ids:
+        return
+    from app.clhear.l1 import permissions
+    from app.clhear.accounts import current_user
+    if not permissions.required_for(source):
+        entry = audit.log_licensed_read(conn, source_key=source.key, rights_basis=source.rights_basis or "",
+                                        clause_ids=ids, route=route)
+        if entry:
+            conn.commit()
+        return
+    user = current_user(request)
+    audit.log(conn, "read.licensed_text", resource=source.key, resource_id=str(version.id),
+              actor=audit.Actor(actor=user["email"] if user else "", kind="user" if user else "anonymous"),
+              detail={"route": route, "source_version_id": version.id, "record_ids": ids[:50],
+                      "records": len(ids), "permission_id": access.get("permission_id")})
+    conn.commit()
 
 
 @router.get("/api/clhear/sources")
@@ -94,6 +133,7 @@ def list_sources() -> list[dict]:
                 "failed",
                 "stale",
                 "not-fully-successful",
+                "rights-blocked",
             }:
                 failed_today.add(key)
         counts = {
@@ -109,7 +149,9 @@ def list_sources() -> list[dict]:
         fam_members = []
         for m in sorted((m for m in members if m.family_id == family.id), key=lambda m: (m.relation != "root", m.key)):
             version = latest.get(m.source_id)
-            if m.license == "restricted":
+            if last_status.get(m.key) == "rights-blocked":
+                library_status = "rights-blocked"
+            elif m.license == "restricted":
                 library_status = "locked-restricted"
             elif version:
                 library_status = "ingested"
@@ -167,7 +209,7 @@ def _resolve_version(conn, source, version_label: str | None):
 
 
 @router.get("/api/clhear/sources/{key:path}/document")
-def source_document(key: str, version_label: str | None = None) -> dict:
+def source_document(key: str, request: Request, version_label: str | None = None) -> dict:
     """Ordered node list for reconstructing the original document view."""
     engine = get_engine()
     with engine.connect() as conn:
@@ -176,10 +218,14 @@ def source_document(key: str, version_label: str | None = None) -> dict:
             raise HTTPException(status_code=404, detail="source not found")
         version = _resolve_version(conn, source, version_label)
         if version is None:
+            if version_label:
+                raise HTTPException(status_code=404, detail="source version not found")
             return {"source": key, "version": None, "nodes": [], "amended_refs": [], "total": 0}
 
-        locked = source.license != "open"
-        base = nodes_refs_select() if locked else nodes_public_select()
+        access = _text_access(conn, source, request)
+        locked = not access["allowed"]
+        # Explicit internal permission permits raw rows; public reads retain the public view.
+        base = nodes_refs_select() if locked else (sa.select(doc_nodes) if access["internal"] else nodes_public_select())
         rows = conn.execute(
             base.where(doc_nodes.c.source_version_id == version.id).order_by(doc_nodes.c.seq)
         ).all()
@@ -196,6 +242,7 @@ def source_document(key: str, version_label: str | None = None) -> dict:
             )
             .join(clause_annotations, clause_annotations.c.clause_id == clauses.c.id)
             .where(clauses.c.source_version_id == version.id)
+            .where(sa.literal(not locked))
             .order_by(clause_annotations.c.origin)  # 'heuristic' < 'llm': llm overwrites
         ):
             if row.doc_node_id is None:
@@ -210,6 +257,7 @@ def source_document(key: str, version_label: str | None = None) -> dict:
         latest_change = conn.execute(
             sa.select(change_events)
             .where(change_events.c.source_id == source.id)
+            .where(change_events.c.new_version == version.version_label)
             .order_by(change_events.c.id.desc())
             .limit(1)
         ).first()
@@ -223,12 +271,20 @@ def source_document(key: str, version_label: str | None = None) -> dict:
             .where(source_versions.c.version_kind == "as_published")
             .limit(1)
         ).scalar()
+        _audit_text_read(conn, request, source, version, access, request.url.path, [r.id for r in rows])
 
     from app.clhear import legal
 
     return {
         "source": key,
         "version": version.version_label,
+        "source_version_id": version.id,
+        "canonical_url": source.canonical_url,
+        "dataset_kind": "stored_candidate",
+        "real_publisher_verified": False,
+        "notice": "Stored candidate. Coverage and publisher fidelity require version-specific evidence.",
+        "access": access,
+        "permission_reason": access["reason"],
         "version_kind": version.version_kind,
         "as_of_date": str(version.as_of_date) if version.as_of_date else None,
         "as_published_sibling": as_published_sibling if version.version_kind != "as_published" else None,
@@ -260,7 +316,7 @@ def source_document(key: str, version_label: str | None = None) -> dict:
 
 
 @router.get("/api/clhear/nodes/{node_id}")
-def node_inspector(node_id: int) -> dict:
+def node_inspector(node_id: int, request: Request, source_key: str | None = None, version_label: str | None = None) -> dict:
     """Intelligence payload for the hover/click inspector."""
     engine = get_engine()
     with engine.connect() as conn:
@@ -271,11 +327,13 @@ def node_inspector(node_id: int) -> dict:
             sa.select(source_versions).where(source_versions.c.id == node.source_version_id)
         ).one()
         source = conn.execute(sa.select(sources).where(sources.c.id == version.source_id)).one()
+        if (source_key and source_key != source.key) or (version_label and version_label != version.version_label):
+            raise HTTPException(status_code=404, detail="node is not in the requested source version")
+        access = _text_access(conn, source, request)
         public = bool(node.public_ok)
-        if public and (node.raw_text or node.source_fragment):
-            audit.log_licensed_read(conn, source_key=source.key, rights_basis=getattr(source, "rights_basis", "") or "",
-                                        clause_ids=[node_id], route="/api/clhear/nodes/{id}")
-            conn.commit()
+        readable = access["allowed"] and (access["internal"] or public)
+        encoded = conn.execute(sa.select(clauses).where(clauses.c.doc_node_id == node.id)
+                               .where(clauses.c.source_version_id == version.id).order_by(clauses.c.ordering)).all()
         ancestors = []
         parent_id = node.parent_id
         while parent_id is not None:
@@ -300,7 +358,7 @@ def node_inspector(node_id: int) -> dict:
         indexed_as = None
         walk_id = node.id
         seen: set[int] = set()
-        while walk_id and walk_id not in seen:
+        while readable and walk_id and walk_id not in seen:
             seen.add(walk_id)
             # Prefer paragraph-grain (heading prefix used at index time) over
             # the distilled clause line. Walk ancestors so a short point still
@@ -319,14 +377,22 @@ def node_inspector(node_id: int) -> dict:
                 sa.select(doc_nodes.c.parent_id).where(doc_nodes.c.id == walk_id)
             ).first()
             walk_id = parent.parent_id if parent is not None else None
+        if readable:
+            _audit_text_read(conn, request, source, version, access, request.url.path, [node.id])
     return {
         "id": node.id,
         "node_type": node.node_type,
         "ref": node.ref,
         "label": node.label,
         "heading": node.heading,
-        "raw_text": node.raw_text if public else None,
-        "source_fragment": node.source_fragment if public else None,
+        "raw_text": node.raw_text if readable else None,
+        "source_fragment": node.source_fragment if readable else None,
+        "locked": not readable,
+        "permission_reason": access["reason"],
+        "source_version_id": version.id,
+        "clauses": [{"id": c.id, "ref": c.ref, "path": c.path, "ordering": c.ordering,
+                     "span_start": c.span_start, "span_end": c.span_end, "text_hash": c.text_hash,
+                     "source_version_id": c.source_version_id} for c in encoded],
         "text_hash": node.text_hash,
         "public_ok": public,
         "seq": node.seq,
@@ -338,7 +404,7 @@ def node_inspector(node_id: int) -> dict:
         "retrieved_at": str(version.retrieved_at),
         "s3_uri": version.s3_uri,
         "content_hash": version.content_hash,
-        "permalink": f"/sources?source={source.key}&node={node.id}",
+        "permalink": "/l1?" + urlencode({"source": source.key, "version": version.version_label, "node": node.id}),
         "ancestors": ancestors,
         "indexed_as": indexed_as,
         "changes": changes,
@@ -348,6 +414,7 @@ def node_inspector(node_id: int) -> dict:
 @router.get("/api/clhear/sources/{key:path}/clauses")
 def source_clauses(
     key: str,
+    request: Request,
     version_label: str | None = None,
     limit: int = Query(default=1000, le=5000),
     offset: int = 0,
@@ -359,12 +426,15 @@ def source_clauses(
             raise HTTPException(status_code=404, detail="source not found")
         version = _resolve_version(conn, source, version_label)
         if version is None:
+            if version_label:
+                raise HTTPException(status_code=404, detail="source version not found")
             return {"source": key, "version": None, "clauses": [], "total": 0}
 
         # Restricted discipline (I8): text flows only through clauses_public_select, and only
         # when the file is open *and* the rights basis allows republication.
-        open_text = source.license == "open" and l1_rights.republishable(getattr(source, "rights_basis", "") or "")
-        base = clauses_public_select() if open_text else clause_refs_select()
+        access = _text_access(conn, source, request)
+        open_text = access["allowed"]
+        base = (sa.select(clauses) if access["internal"] else clauses_public_select()) if open_text else clause_refs_select()
         rows = conn.execute(
             base.where(clauses.c.source_version_id == version.id)
             .order_by(clauses.c.ordering)
@@ -374,10 +444,7 @@ def source_clauses(
         total = conn.execute(
             sa.select(sa.func.count()).select_from(clauses).where(clauses.c.source_version_id == version.id)
         ).scalar_one()
-        if open_text and rows:
-            audit.log_licensed_read(conn, source_key=key, rights_basis=getattr(source, "rights_basis", "") or "",
-                                        clause_ids=[r.id for r in rows], route="/api/clhear/sources/{key}/clauses")
-            conn.commit()
+        _audit_text_read(conn, request, source, version, access, request.url.path, [r.id for r in rows])
     return {
         "source": key,
         "version": version.version_label,
@@ -385,6 +452,8 @@ def source_clauses(
         "s3_uri": version.s3_uri,
         "content_hash": version.content_hash,
         "locked": not open_text,
+        "source_version_id": version.id,
+        "permission_reason": access["reason"],
         "rights_basis": getattr(source, "rights_basis", None),
         "total": total,
         "clauses": [
@@ -404,6 +473,7 @@ def source_clauses(
 
 def _version_dict(v) -> dict:
     return {
+        "source_version_id": v.id,
         "version_label": v.version_label,
         "version_kind": v.version_kind,
         "as_of_date": str(v.as_of_date) if v.as_of_date else None,
@@ -415,7 +485,7 @@ def _version_dict(v) -> dict:
 
 
 @router.get("/api/clhear/sources/{key:path}/evals")
-def source_evals(key: str) -> dict:
+def source_evals(key: str, version_label: str | None = None) -> dict:
     """E1–E7 scorecard + last fetch / artifact for the Evidence tab."""
     from app.clhear.platform import evals as l1_evals
 
@@ -424,18 +494,18 @@ def source_evals(key: str) -> dict:
         source = conn.execute(sa.select(sources).where(sources.c.key == key)).first()
         if source is None:
             raise HTTPException(status_code=404, detail="source not found")
-        version = conn.execute(
-            sa.select(source_versions)
-            .where(source_versions.c.source_id == source.id)
-            .where(source_versions.c.status == "in_force")
-            .order_by(source_versions.c.id.desc())
-            .limit(1)
-        ).first()
+        version = _resolve_version(conn, source, version_label)
+        if version_label and version is None:
+            raise HTTPException(status_code=404, detail="source version not found")
         last_run = None
-        for row in conn.execute(sa.select(runs).where(runs.c.fleet.like("l1.%")).order_by(runs.c.id.desc()).limit(400)):
+        for row in conn.execute(sa.select(runs).where(runs.c.fleet.like("l1.%"))
+                                .where(runs.c.inputs["source"].as_string() == key)
+                                .order_by(runs.c.id.desc())):
             inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
             if inputs.get("source") == key:
                 outputs = _display_outputs(row)
+                if version and (outputs.get("version") != version.version_label or outputs.get("content_hash") != version.content_hash):
+                    continue
                 last_run = {
                     "run_id": row.id,
                     "status": outputs.get("status"),
@@ -444,19 +514,24 @@ def source_evals(key: str) -> dict:
                     "freshness": outputs.get("freshness"),
                     "error": outputs.get("error"),
                     "note": outputs.get("note"),
+                    "duration_ms": row.duration_ms,
+                    "fleet": row.fleet,
+                    "stages": outputs.get("stages", []),
                 }
                 break
-    card = l1_evals.latest_source_scorecard(engine, key)
+    card = l1_evals.latest_source_scorecard(engine, key, source_version_id=version.id if version else None)
     return {
         "source": key,
         "locked": source.license != "open",
         "version": version.version_label if version else None,
+        "source_version_id": version.id if version else None,
         "s3_uri": version.s3_uri if version else "",
         "content_hash": version.content_hash if version else "",
         "retrieved_at": str(version.retrieved_at) if version else None,
         "last_run": last_run,
         "scorecard": card,
-        "l2_ready": card.get("green") and source.license == "open",
+        "l2_ready": False,
+        "readiness_reason": "L1 requires a complete scope manifest and publisher comparison before downstream acceptance.",
     }
 
 
@@ -585,6 +660,7 @@ def search_clauses(
 # ---------------------------------------------------------------- audit trail
 
 _RUN_STATUS = {
+    "rights-blocked": "warning",
     "succeeded": "success",
     "warning": "warning",
     "failed": "failure",
@@ -604,7 +680,7 @@ _STALE_RUNNING = timedelta(minutes=15)
 
 
 def _display_outputs(row) -> dict:
-    """Crash before finish() left status=running — show failed, not a spinner."""
+    """A missing completion record is unknown, not proof of a crash."""
     outputs = dict(_outputs_of(row))
     if outputs.get("status") != "running":
         return outputs
@@ -613,9 +689,8 @@ def _display_outputs(row) -> dict:
         created = created.replace(tzinfo=timezone.utc)
     age = (datetime.now(timezone.utc) - created) if created is not None else _STALE_RUNNING
     if age >= _STALE_RUNNING:
-        outputs["status"] = "failed"
-        outputs.setdefault("error", "crashed before finish")
-        outputs.setdefault("note", "crash ≠ running")
+        outputs["status"] = "unknown"
+        outputs.setdefault("note", "No recent completion or heartbeat evidence; inspect the worker before retrying.")
     return outputs
 
 
@@ -998,7 +1073,7 @@ def l1_browser() -> HTMLResponse:
     """HLD v2 §4.1 L1 UI: browse by jurisdiction / regulator / instrument,
     family tree, change timeline, rights badge, watch this instrument."""
     return HTMLResponse(
-        (WEB_DIR / "l1.html").read_text(),
+        (WEB_DIR / "sources.html").read_text(),
         headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 

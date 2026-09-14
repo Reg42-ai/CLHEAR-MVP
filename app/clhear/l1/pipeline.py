@@ -19,6 +19,7 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -27,7 +28,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection, Engine
 
 from app.clhear.platform import record
-from app.clhear.l1 import change_detect, fidelity, rights, spans
+from app.clhear.l1 import change_detect, fidelity, permissions, rights, spans
 from app.clhear.l1.adapters.base import CLAUSE_TYPES, Adapter, DocNode, FetchResult, SourceMeta
 from app.clhear.l1.models import (
     change_events,
@@ -56,12 +57,23 @@ REPAIR_FLEET = "l1.repair"
 class ArtifactStore(Protocol):
     def put(self, key: str, content: bytes, content_type: str) -> str: ...
 
+    def get(self, key: str) -> bytes | None: ...
+
 
 class LocalStore:
     """Filesystem stand-in for the datalake (offline dev/tests)."""
 
     def __init__(self, base_dir: str | Path):
-        self.base_dir = Path(base_dir)
+        self.base_dir = Path(base_dir).resolve()
+
+    def get(self, key: str) -> bytes | None:
+        path = (self.base_dir / key).resolve()
+        if not path.is_relative_to(self.base_dir):
+            raise ValueError("artifact key escapes the configured store")
+        try:
+            return path.read_bytes()
+        except FileNotFoundError:
+            return None
 
     def put(self, key: str, content: bytes, content_type: str) -> str:
         path = self.base_dir / key
@@ -376,7 +388,7 @@ def ingest(
 ) -> dict:
     """Run one adapter through fetch -> fidelity gate/repair loop -> persist.
 
-    Returns the run summary. status: added|amended|unchanged|up-to-date|
+    Returns the run summary. status: rights-blocked|added|amended|unchanged|up-to-date|
     stale|failed|not-fully-successful. `llm_assisted`/`recovered_spans`/
     `hints_used` mark degraded-but-successful runs (warnings in the Activity
     feed). A crash in fetch() always `finish()`es the run: previous version
@@ -391,6 +403,35 @@ def ingest(
     if job_id:
         inputs["job_id"] = job_id
     recorder = RunRecorder(engine, f"l1.{meta.adapter}", trigger, inputs)
+
+    protected = permissions.required_for(meta)
+    permission_checks = {}
+    public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
+    if protected:
+        with engine.connect() as conn:
+            permission_checks = {operation: permissions.decision(conn, meta.source_key, operation)
+                                 for operation in ("acquire", "store", "parse", "infer", "embed", "display_public")}
+            existing_id = conn.execute(sa.select(sources.c.id).where(sources.c.key == meta.source_key)).scalar()
+            previous = _latest_version(conn, existing_id) if existing_id is not None else None
+        blocked = [operation for operation in ("acquire", "store", "parse")
+                   if not permission_checks[operation]["allowed"]]
+        recorder.stage("permissions", decisions=permission_checks, blocked_operations=blocked)
+        if blocked:
+            summary = {
+                "source": meta.source_key, "version": previous.version_label if previous else None,
+                "content_hash": previous.content_hash if previous else None,
+                "source_version_id": previous.id if previous else None,
+                "blocked_operations": blocked, "permission_decisions": permission_checks,
+                "previous_version_preserved": previous is not None, "freshness": "not_checked",
+                "error": "Protected source requires approved, current permissions for: " + ", ".join(blocked),
+            }
+            outputs = recorder.finish("rights-blocked", summary)
+            return {**summary, "status": "rights-blocked", "run_id": recorder.run_id, "stages": outputs["stages"]}
+        if not permission_checks["infer"]["allowed"]:
+            gateway = None
+        if not permission_checks["embed"]["allowed"]:
+            index_embeddings = False
+        public_ok = permission_checks["display_public"]["allowed"]
 
     with engine.begin() as conn:
         family_id, source_id = ensure_source(conn, meta)
@@ -410,6 +451,8 @@ def ingest(
             summary = {
                 "source": meta.source_key,
                 "version": previous.version_label,
+                "content_hash": previous.content_hash,
+                "source_version_id": previous.id,
                 "error": error,
                 "freshness": "stale",
             }
@@ -421,9 +464,15 @@ def ingest(
     freshness = getattr(adapter, "fetch_origin", None) or ("stale" if l1_http.last_good_used() else "live")
     recorder.stage("fetch", artifacts=len(result.artifacts) if result else 0, freshness=freshness)
     if result is None:
+        if previous is None:
+            outputs = recorder.finish("failed", {"source": meta.source_key, "freshness": "not_checked",
+                                                 "error": "Adapter returned no artifact and there is no stored version."})
+            return {**outputs, "run_id": recorder.run_id}
         summary = {
             "source": meta.source_key,
             "version": previous.version_label if previous else None,
+            "content_hash": previous.content_hash,
+            "source_version_id": previous.id,
             "freshness": "probed",
             "note": "probed, unchanged",
         }
@@ -435,14 +484,13 @@ def ingest(
     strict_violations = validator(result.tree, result.artifacts) if validator else []
     if previous is not None and previous.content_hash == content_hash and not force and not strict_violations:
         with engine.connect() as conn:
-            matching = not validator or _projection_matches(
-                conn, previous.id, result.tree,
-                meta.license == "open" and rights.republishable(rights_basis_for(meta).basis),
-            )
+            matching = not (validator or protected) or _projection_matches(conn, previous.id, result.tree, public_ok)
         if matching:
             summary = {
                 "source": meta.source_key,
                 "version": previous.version_label,
+                "content_hash": previous.content_hash,
+                "source_version_id": previous.id,
                 "freshness": freshness,
                 "note": "probed, unchanged",
             }
@@ -564,7 +612,7 @@ def ingest(
         # A repair retry can return different bytes; hash the artifact actually
         # persisted, never the first (failed) fetch.
         content_hash = sha256(b"".join(a.content for a in sorted(result.artifacts, key=lambda a: a.name)))
-        if validator:
+        if validator or protected:
             with engine.connect() as conn:
                 existing_label = conn.execute(sa.select(source_versions.c.id).where(
                     source_versions.c.source_id == source_id,
@@ -578,6 +626,7 @@ def ingest(
             engine, store, meta, source_id, previous, result, content_hash, report,
             hints_used, new_llm_hints, recovered_spans, llm_assisted, recorder,
             force=force, llm_router=gateway, index_embeddings=index_embeddings, freshness=freshness,
+            public_ok=public_ok, protected=protected, permission_checks=permission_checks,
         )
     except Exception as exc:
         recorder.finish("failed", {"source": meta.source_key, "error": str(exc)[:300]})
@@ -602,9 +651,14 @@ def _persist(
     llm_router=None,
     index_embeddings: bool = True,
     freshness: str = "live",
+    public_ok: bool | None = None,
+    protected: bool = False,
+    permission_checks: dict | None = None,
 ) -> dict:
-    public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
-    prefix = "public-ok" if public_ok else "restricted"
+    if public_ok is None:
+        public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
+    # Displaying clauses does not authorize redistribution of full originals.
+    prefix = "public-ok" if public_ok and not protected else "restricted"
     artifact_uris = []
     for artifact in result.artifacts:
         key = f"{prefix}/{meta.source_key}/{result.version_label}/{artifact.name}"
@@ -664,7 +718,8 @@ def _persist(
         from app.clhear.l1 import retrieval as l1_retrieval
 
         annotation_count = l1_annotate.heuristics_for_version(conn, version_id, list(meta.topics))
-        unit_count = l1_retrieval.build_units_for_version(conn, meta, source_id, version_id, tree)
+        search_meta = replace(meta, license="open" if public_ok else "restricted")
+        unit_count = l1_retrieval.build_units_for_version(conn, search_meta, source_id, version_id, tree)
         from app.clhear.l1 import families as l1_families
 
         citation_counts = l1_families.mine_citations(conn, source_id, version_id)
@@ -816,6 +871,7 @@ def _persist(
     summary = {
         "source": meta.source_key,
         "version": result.version_label,
+        "source_version_id": version_id,
         "version_kind": result.version_kind,
         "nodes": node_count,
         "clauses": len(clause_rows),
@@ -829,6 +885,8 @@ def _persist(
         "content_hash": content_hash,
         "freshness": freshness,
     }
+    if permission_checks:
+        summary["permission_decisions"] = permission_checks
     if hints_used:
         summary["hints_used"] = hints_used
     if recovered_spans:
@@ -848,7 +906,8 @@ def _persist(
             vec = embeddings.rebuild_index(engine, trigger="ingest", release=result.version_label)
             summary["embeddings"] = {"embedded": vec["embedded"], "model": vec["model"]}
         else:
-            summary["embeddings"] = {"status": "skipped", "reason": "L1-only import"}
+            reason = "embed permission not granted" if protected and not (permission_checks or {}).get("embed", {}).get("allowed") else "L1-only import"
+            summary["embeddings"] = {"status": "skipped", "reason": reason}
         graph.invalidate(engine)
     except Exception:  # pragma: no cover - the index is a projection; ingest succeeded
         log.exception("embedding index update failed for %s", meta.source_key)

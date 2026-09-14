@@ -313,6 +313,9 @@ def search(
                     sources.c.short_name,
                     sources.c.topics.label("source_topics"),
                     sources.c.family_id,
+                    sources.c.license,
+                    sources.c.adapter,
+                    sources.c.canonical_url,
                     source_versions.c.version_label,
                 )
                 .join(sources, sources.c.id == search_units.c.source_id)
@@ -334,10 +337,17 @@ def search(
         results: list[dict] = []
         seen_clauses: set = set()
         per_source: dict[str, int] = {}
+        display_decisions: dict[str, bool] = {}
         for unit_id, score in fused:
             row = unit_rows.get(unit_id)
             if row is None:
                 continue
+            from app.clhear.l1 import permissions
+            if row.source_key not in display_decisions:
+                display_decisions[row.source_key] = (not permissions.required_for(row) or
+                    permissions.decision(conn, row.source_key, "display_public")["allowed"])
+            if not display_decisions[row.source_key]:
+                continue  # a materialized index never overrides expiry/revocation
             if scope and scope not in ((row.source_topics or []) if isinstance(row.source_topics, list) else []) and scope != _family_key(conn, row.family_id):
                 continue
             if category or topic:

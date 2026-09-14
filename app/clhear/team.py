@@ -42,24 +42,30 @@ PERSONAS = (
 
 
 def _last_run(engine: Engine, fleet: str) -> dict | None:
+    predicate = runs.c.fleet == fleet
+    if fleet == "l1.ingest":
+        from app.clhear.l1.adapters import ADAPTER_KEYS, PUBLISHER_ADAPTER_CLASSES, get_adapter
+        actual_fleets = {"l1." + get_adapter(key).meta().adapter for key in ADAPTER_KEYS}
+        actual_fleets.update("l1." + key for key in PUBLISHER_ADAPTER_CLASSES)
+        actual_fleets.add("l1.restricted_file")
+        predicate = runs.c.fleet.in_(actual_fleets)
     with engine.connect() as conn:
         row = conn.execute(
-            sa.select(runs).where(runs.c.fleet == fleet).order_by(runs.c.id.desc()).limit(1)
+            sa.select(runs).where(predicate).order_by(runs.c.id.desc()).limit(1)
         ).first()
-    if row is None:
-        # fleets are also recorded under ai.nightly — fall back to any run mentioning the fleet.
-        with engine.connect() as conn:
-            row = conn.execute(
-                sa.select(runs).where(runs.c.fleet.like(f"%{fleet.split('.')[-1]}%")).order_by(runs.c.id.desc()).limit(1)
-            ).first()
     if row is None:
         return None
     outputs = row.outputs if isinstance(row.outputs, dict) else {}
     return {
-        "status": outputs.get("status") or "succeeded",
+        "run_id": row.id,
+        "fleet": row.fleet,
+        "status": outputs.get("status") or "unknown",
         "ts": str(row.created_at),
         "reasoning": row.reasoning,
         "duration_ms": row.duration_ms,
+        "source": (row.inputs or {}).get("source") if isinstance(row.inputs, dict) else None,
+        "job_id": (row.inputs or {}).get("job_id") if isinstance(row.inputs, dict) else None,
+        "stages": outputs.get("stages", []),
     }
 
 
@@ -110,13 +116,17 @@ def persona_cards(engine: Engine, layer: str | None = None) -> list[dict]:
         model = _model_for(engine, p["task_id"])
         led = "idle"
         if last:
-            led = "ok" if last.get("status") not in ("failed", "failure") else "bad"
+            status = last.get("status")
+            led = "ok" if status in {"succeeded", "added", "amended", "unchanged", "up-to-date"} else ("bad" if status in {"failed", "failure", "not-fully-successful", "rights-blocked"} else "idle")
         cards.append({
             **p,
             "kind": "fleet",
             "model": model,
             "last_run": last,
             "led": led,
+            "evidence_state": "recorded_run" if last else "no_recorded_run",
+            "tools_basis": "configured",
+            "execution_kind": "deterministic worker" if p["id"] == "scout" else ("AI task" if p["task_id"] else "system worker"),
         })
     return cards
 

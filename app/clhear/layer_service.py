@@ -52,6 +52,9 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
             "clauses": _count(conn, clauses),
             "clauses_public": _count(conn, clauses, clauses.c.public_ok.is_(True)),
             "change_events": _count(conn, change_events),
+            "current_clauses": int(conn.execute(sa.select(sa.func.count()).select_from(
+                clauses.join(source_versions, source_versions.c.id == clauses.c.source_version_id))
+                .where(source_versions.c.status == "in_force")).scalar() or 0),
         }
         from app.clhear.derived_models import concept_members, concepts
 
@@ -117,7 +120,8 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
             })
         except sa.exc.OperationalError:  # pre-m0014 database
             pass
-        out["L7"] = {"risk_areas": _count(conn, sample_profiles_t) * 2}
+        from app.clhear.l7.models import risk_scores
+        out["L7"] = {"risk_scores": _count(conn, risk_scores, risk_scores.c.valid_to.is_(None))}
         out["L8"] = {
             "benchmark_definitions": len(load_curated("l8_benchmarks")),
             "cohorts": _count(conn, cohorts_t),
@@ -140,6 +144,20 @@ def layer_index(engine: Engine) -> list[dict]:
     for code in LAYER_ORDER:
         entry = layer_public_meta(code)
         entry["counts"] = counts.get(code, {})
+        output_keys = {"L0": "runs", "L1": "current_clauses", "L2": "obligations", "L3": "building_blocks",
+                       "L4": "profile_attributes", "L5": "activities", "L6": "blueprints_current",
+                       "L7": "risk_scores", "L8": "aggregates_published"}
+        unit = output_keys[code]
+        count = entry["counts"].get(unit, 0)
+        entry["overview"] = {
+            "state": "candidate" if count else "unknown", "verification": "not_evaluated",
+            "output_count": count, "output_unit": unit.replace("_", " "),
+            "counts": entry["counts"], "scope": "Registered sources; full publisher scope not yet verified" if code == "L1" else None,
+            "checked_at": None,
+            "notice": ("Stored output is available for review. Complete scope, fidelity and freshness must be verified."
+                       if code == "L1" else "Existing output is a preview; layer acceptance follows verified L1."),
+            "detail": "Operational evidence" if code == "L0" else ("L1 verification in progress" if code == "L1" else "Awaiting upstream acceptance"),
+        }
         if LAYER_CATALOG[code]["status"] != "live":
             entry["banner"] = status_banner(code)
         items.append(entry)

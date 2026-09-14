@@ -17,6 +17,11 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine = get_engine()
+    if get_settings().clhear_restricted_access:
+        # The system worker owns migrations and corpus writes. A viewer must not
+        # manufacture output or mutate the corpus merely because it starts.
+        yield
+        return
     run_migrations(engine)
     try:
         from app.clhear import curated
@@ -29,6 +34,10 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="CLHEAR", lifespan=lifespan)
+    from app.clhear.review_access import RestrictedAccessMiddleware, router as review_access_router
+
+    app.add_middleware(RestrictedAccessMiddleware)
+    app.include_router(review_access_router)
     if get_settings().reg42_clhear_enabled:
         from app.clhear.platform import errors
 

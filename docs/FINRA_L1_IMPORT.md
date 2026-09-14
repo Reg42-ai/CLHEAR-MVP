@@ -1,5 +1,12 @@
 # Verifying the first FINRA L1 import
 
+> Historical local verification record. The commands below are not the daily
+> operating path. Current work must use CLHEAR's `AdapterRunRequested` worker
+> and its registered fleet. Protected acquisition now requires explicit source
+> permission evidence before fetching; old local snapshots do not supply it.
+> See [L1_REVIEW_WORKSPACE.md](L1_REVIEW_WORKSPACE.md) for the current controls
+> and unresolved acceptance requirements.
+
 This procedure covers the five individual rules currently registered in CLHEAR:
 2210, 3110, 2111, 3310 and 4511. It does not certify the complete FINRA rulebook.
 The `finra/rulebook` landing page is an index, not the text of those rules.

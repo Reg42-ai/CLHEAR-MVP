@@ -56,7 +56,7 @@ def _llm():
         return None
 
 
-@router.get("/", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/solon", response_class=HTMLResponse, include_in_schema=False)
 def front_door() -> HTMLResponse:
     return HTMLResponse((WEB_DIR / "front_door.html").read_text(), headers={"Cache-Control": "no-cache, must-revalidate"})
 

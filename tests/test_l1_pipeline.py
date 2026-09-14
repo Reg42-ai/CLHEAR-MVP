@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 
 import sqlalchemy as sa
 
-from app.clhear.l1 import families, pipeline
+from app.clhear.l1 import families, permissions, pipeline
 from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
 from app.clhear.l1.adapters.uk_legislation import CLML, UkLegislationAdapter
 from app.clhear.l1.http import get
@@ -204,7 +204,7 @@ def test_mlr_roundtrip_mini_e3(engine, client, tmp_path):
     assert info["node_type"] == "provision"
     assert info["text_hash"] == provision["text_hash"]
     assert info["source_fragment"]
-    assert info["permalink"].startswith("/sources?")
+    assert info["permalink"].startswith("/l1?")
     assert info["source_key"] == "uksi/2017/692"
     assert "SECRET" not in json.dumps(info)  # sanity
 
@@ -246,6 +246,12 @@ def test_restricted_discipline(engine, client, tmp_path):
         "v1",
         [DocNode(node_type="provision", ref="c1", raw_text=secret_text, source_fragment=f"<x>{secret_text}</x>")],
         license="restricted",
+    )
+    permissions.record_permission(
+        engine, source_key=adapter.meta().source_key,
+        permissions={"acquire": True, "store": True, "parse": True},
+        evidence_ref="test-only: original in-memory restricted discipline fixture",
+        approved_by="test fixture reviewer", approved=True,
     )
     pipeline.ingest(engine, adapter, store)
 

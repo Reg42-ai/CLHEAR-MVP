@@ -303,12 +303,25 @@ def test_unknown_items_404(client, engine):
 
 
 def test_ui_shells_served(client):
-    # HLD v2 §5: "/" is the Solon front door; the Stack UI moved to /stack.
-    home = client.get("/").text
-    assert "Describe your organization" in home
-    stack = client.get("/stack").text
-    assert "the compliance stack" in stack
-    assert "Eval Studio" in stack or "nav(\"/eval\")" in stack
-    assert "AI Ops" in stack or "nav(\"/ops\")" in stack
+    home = client.get("/")
+    stack = client.get("/stack")
+    assert home.status_code == stack.status_code == 200
+    assert home.text == stack.text
+    assert "no-cache" in home.headers["Cache-Control"]
+    assert "Regulatory truth," in home.text
+    assert "Describe your organization" not in home.text
+    assert 'class="layeraccordion"' in home.text
+    assert '<summary class="slab">' in home.text
+    assert 'id="output-layers">L1–L8' in home.text
+    assert 'id="platform-layer">L0' in home.text
+    assert 'aria-label="Primary"' in home.text
+    for view in ("sources", "fleet", "evals", "changes"):
+        assert f'href="/l1?view={view}"' in home.text
+    for href in ("/solon", "#/ops", "#/team", "#/eval", "#/docs", "#/contribute", "/explore"):
+        assert f'href="{href}"' in home.text
+    assert "Counts alone do not establish completeness, accuracy or freshness." in home.text
+    assert '"published", "candidate", "unknown"' in home.text
+    assert 'href="/solon">Ask Solon' in home.text
+    assert "Describe your organization" in client.get("/solon").text
     assert client.get("/static/theme.css").status_code == 200
     assert client.get("/sources").status_code == 200

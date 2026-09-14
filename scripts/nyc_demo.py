@@ -66,8 +66,8 @@ class Demo:
     # ------------------------------------------------------------------ api journey
 
     def run_api(self) -> dict:
-        self.say(f"Front door: {self.base}/  (no account, no key)")
-        home = urllib.request.urlopen(self.base + "/", timeout=30).read().decode()
+        self.say(f"Solon: {self.base}/solon  (no account, no key)")
+        home = urllib.request.urlopen(self.base + "/solon", timeout=30).read().decode()
         assert "Describe your organization" in home, "front door did not render"
         assert "paywall" in home.lower(), "front door must say the agnostic blueprint is open"
 
@@ -144,7 +144,7 @@ class Demo:
             page = ctx.new_page()
             t0 = time.perf_counter()
             self.say("Fresh browser → front door")
-            page.goto(self.base + "/", wait_until="networkidle", timeout=60_000)
+            page.goto(self.base + "/solon", wait_until="networkidle", timeout=60_000)
             expect(page.get_by_role("heading", name="Describe your organization.")).to_be_visible(timeout=30_000)
             shot(page, "front-door")
 

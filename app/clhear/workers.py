@@ -110,7 +110,8 @@ def run_adapter_fleet(
     for entry, adapter in plan:
         source_key = adapter.meta().source_key
         try:
-            summary = pipeline.ingest(engine, adapter, store, trigger="schedule", gateway=gateway, job_id=job_id)
+            summary = pipeline.ingest(engine, adapter, store, trigger="schedule", gateway=gateway, job_id=job_id,
+                                      index_embeddings=not settings.clhear_l1_only)
             status = summary.get("status", "?")
         except Exception as exc:
             log.exception("scheduled ingest crashed for %s", source_key)
@@ -122,7 +123,7 @@ def run_adapter_fleet(
             except Exception:
                 log.exception("could not record failed run for %s", source_key)
         statuses[status] = statuses.get(status, 0) + 1
-        if status in ("not-fully-successful", "crashed", "failed"):
+        if status in ("not-fully-successful", "crashed", "failed", "stale", "rights-blocked"):
             failures.append(source_key)
         if entry is None and adapter.key in CITATOR_KEYS:
             try:
@@ -143,6 +144,12 @@ def run_adapter_fleet(
                 log.exception("source evals failed for %s", key)
     except Exception:
         log.exception("fleet evals failed for %s", adapter_key)
+
+    if settings.clhear_l1_only:
+        pipeline.RunRecorder(engine, "l1.acceptance", "schedule", {"job_id": job_id}).finish(
+            "awaiting-verification", {"reason": "L1-only mode: downstream refresh is held until scope acceptance."})
+        return {"adapter": adapter_key, "job_id": job_id, "ran": len(plan), "statuses": statuses,
+                "failures": failures, "downstream": "held", "acceptance": "not_verified"}
 
     # Stack refresh: L1 changes flow into the derived layers + AI fleets.
     # Fleets run at most once per UTC day (idempotent; later adapters skip).
@@ -328,8 +335,19 @@ def _already_handled(engine: Engine, event_id: str) -> bool:
     return row is not None
 
 
+class L1AcceptanceHold(RuntimeError):
+    """Retryable event held until an operator accepts the L1 scope."""
+
+
 def handle_envelope(engine: Engine, gateway: Gateway, body: str) -> dict | None:
     envelope = Envelope.model_validate_json(body)
+    if get_settings().clhear_l1_only and envelope.kind in {
+        "clhear.l1.changed", "clhear.l2.changed", "clhear.l4.changed", "clhear.l5.changed",
+        "PublishReleaseRequested", "GraphRebuildRequested"
+    }:
+        # Do not write a handled marker or acknowledge the message. Existing SQS
+        # retry/DLQ policy retains it for redrive after the acceptance hold lifts.
+        raise L1AcceptanceHold("L1 acceptance hold: retain this event for replay after verification")
     if envelope.kind not in _ALWAYS_RUN and _already_handled(engine, envelope.event_id):
         log.info("event %s already handled; skipping (idempotent)", envelope.event_id)
         return None
@@ -424,7 +442,11 @@ def main() -> None:
             messages = resp.get("Messages", [])
             handled_work = False
             for message in messages:
-                outputs = handle_envelope(engine, gateway, message["Body"])
+                try:
+                    outputs = handle_envelope(engine, gateway, message["Body"])
+                except L1AcceptanceHold:
+                    log.warning("L1 acceptance hold: message retained for replay")
+                    continue  # still snapshot successful work from this batch
                 if outputs and not outputs.get("ignored"):
                     handled_work = True
                 sqs.delete_message(
@@ -434,6 +456,8 @@ def main() -> None:
             if handled_work and snapshot_uri:
                 relay_once(engine, transport)  # ship this batch's change events too
                 _snapshot_push(snapshot_uri, settings.aws_region)
+                if settings.clhear_l1_only:
+                    continue  # candidate snapshot only; no accepted release while L1 is held
                 try:
                     from app.clhear.releases import publish_release
 

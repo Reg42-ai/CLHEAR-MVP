@@ -34,7 +34,10 @@ RESTRICTED_PROVISIONS = {**V1, "4": LONG_CLAUSE}
 
 
 def _seed(engine, tmp_path):
+    from app.clhear.l1.permissions import record_permission
     store = pipeline.LocalStore(tmp_path / "lake")
+    record_permission(engine, source_key="synthetic/finra", permissions={"acquire": True, "store": True, "parse": True},
+                      evidence_ref="test:original-rights-fixture", approved_by="test", approved=True)
     pipeline.ingest(engine, SyntheticAdapter(V1, "2026-01-01"), store)  # licensed (open licence file)
     pipeline.ingest(engine, SyntheticAdapter(RESTRICTED_PROVISIONS, "2026-01-01", adapter="finra", rights_basis="derived_only", source_key="synthetic/finra"), store)
     pipeline.ingest(engine, SyntheticAdapter(V1, "2026-01-01", adapter="govinfo_us", rights_basis="public_domain", source_key="synthetic/pd"), store)

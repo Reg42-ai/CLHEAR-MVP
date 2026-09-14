@@ -178,11 +178,17 @@ def _store(conn: Connection, clause_id: int, vec: list[float], model: str, text_
 
 def _indexable(conn: Connection):
     """Public clauses of in-force versions of open sources — the only text the index may hold (I8)."""
+    from app.clhear.l1 import permissions
+    # A corpus-wide rebuild may be triggered by an unrelated public import.
+    # Display permission and legacy public flags do not authorize embedding.
+    blocked = [source.id for source in conn.execute(sa.select(sources))
+               if permissions.required_for(source) and not permissions.decision(conn, source.key, "embed")["allowed"]]
     return (sa.select(clauses.c.id, clauses.c.text, clauses.c.text_hash, clauses.c.path, clauses.c.embedding_model,
                       clauses.c.embedding_hash, sources.c.short_name)
             .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
             .join(sources, sources.c.id == source_versions.c.source_id)
-            .where(source_versions.c.status == "in_force", clauses.c.public_ok.is_(True), sources.c.license == "open"))
+            .where(source_versions.c.status == "in_force", clauses.c.public_ok.is_(True), sources.c.license == "open")
+            .where(sources.c.id.not_in(blocked)))
 
 
 def rebuild_index(engine: Engine, emb: Embedder | None = None, *, batch: int = 64, force: bool = False,

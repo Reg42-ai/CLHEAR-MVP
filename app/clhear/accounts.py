@@ -82,7 +82,8 @@ def current_user(request: Request) -> dict | None:
 
             email = claims["email"].strip().lower()
             return {"id": community_writes.user_id_for(email), "email": email,
-                    "display_name": claims.get("name") or email.split("@")[0], "provider": "cognito"}
+                    "display_name": claims.get("name") or email.split("@")[0], "provider": "cognito",
+                    "email_verified": claims.get("email_verified") is True}
     return None
 
 
@@ -135,6 +136,9 @@ async def email_magic_link(request: Request) -> dict:
     if body.get("website"):  # honeypot field: bots fill it, humans never see it
         return {"sent": True}
     settings = get_settings()
+    if settings.clhear_restricted_access and email not in settings.reviewer_set:
+        # Do not send mail to users this restricted deployment cannot admit.
+        raise HTTPException(status_code=403, detail="This workspace is limited to approved reviewers")
     token = _sign({"email": email, "exp": time.time() + MAGIC_TTL_S}, "magic")
     link = f"{settings.clhear_public_base_url}/auth/email/verify?token={token}"
     if settings.clhear_auth_debug:
@@ -175,7 +179,7 @@ def email_verify(token: str):
     if payload is None:
         raise HTTPException(status_code=400, detail="This sign-in link is invalid or expired")
     user = upsert_user(get_engine(), payload["email"], provider="email")
-    return _set_session(RedirectResponse("/stack#/contribute"), user)
+    return _set_session(RedirectResponse("/" if get_settings().clhear_restricted_access else "/stack#/contribute"), user)
 
 
 # ------------------------------------------------------------ Google OAuth
@@ -228,10 +232,13 @@ def google_callback(code: str = "", state: str = ""):
         headers={"Authorization": f"Bearer {access}"},
         timeout=20,
     ).json()
+    if settings.clhear_restricted_access and (info.get("email_verified") is not True or
+                                             info.get("email", "").lower() not in settings.reviewer_set):
+        raise HTTPException(status_code=403, detail="An approved, verified reviewer account is required")
     user = upsert_user(
         get_engine(), info["email"], display_name=info.get("name", ""), provider="google", provider_sub=info.get("sub", "")
     )
-    return _set_session(RedirectResponse("/stack#/contribute"), user)
+    return _set_session(RedirectResponse("/" if settings.clhear_restricted_access else "/stack#/contribute"), user)
 
 
 # ------------------------------------------------------------ Cognito hosted UI (HLD v2 §5)
@@ -320,6 +327,9 @@ def cognito_callback(code: str = "", state: str = ""):
     claims = verify_cognito_token(token_resp.json().get("id_token", ""))
     if claims is None:
         raise HTTPException(status_code=401, detail="Cognito token could not be verified")
+    if settings.clhear_restricted_access and (claims.get("email_verified") is not True or
+                                             claims.get("email", "").lower() not in settings.reviewer_set):
+        raise HTTPException(status_code=403, detail="An approved, verified reviewer account is required")
     # federated users carry the IdP in `identities`; keep it so the audit log can tell SAML from Google
     provider = "cognito"
     for ident in claims.get("identities") or []:
@@ -329,7 +339,7 @@ def cognito_callback(code: str = "", state: str = ""):
             provider = f"cognito:{ident['providerName']}"
     user = upsert_user(get_engine(), claims["email"], display_name=claims.get("name", ""), provider=provider,
                        provider_sub=claims.get("sub", ""))
-    return _set_session(RedirectResponse("/stack#/contribute"), user)
+    return _set_session(RedirectResponse("/" if settings.clhear_restricted_access else "/stack#/contribute"), user)
 
 
 @router.get("/apple")

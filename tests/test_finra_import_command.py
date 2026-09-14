@@ -7,9 +7,21 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 
-from app.clhear.l1 import models
+from app.clhear.l1 import models, permissions
 from app.clhear.models import events, runs
 from scripts import verify_finra_import as command
+
+
+@pytest.fixture(autouse=True)
+def original_test_fixture_permissions(engine):
+    """Approve only the original local test text authored in snapshot() below."""
+    for rule in ("2210", "3110"):
+        permissions.record_permission(
+            engine, source_key=f"finra/rule/{rule}",
+            permissions={"acquire": True, "store": True, "parse": True},
+            evidence_ref="test-only: original snapshot() fixture, not publisher content",
+            approved_by="test fixture reviewer", approved=True,
+        )
 
 
 def snapshot(directory, rule="2210", text="Each member must retain the original communication."):

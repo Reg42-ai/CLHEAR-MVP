@@ -1,9 +1,18 @@
 """Source validation must gate storage even when substring coverage passes."""
 import sqlalchemy as sa
+import pytest
 
 from app.clhear.l1 import pipeline
 from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
 from app.clhear.l1.models import clauses, doc_nodes, source_versions
+
+
+@pytest.fixture(autouse=True)
+def reviewed_test_permission(engine):
+    from app.clhear.l1.permissions import record_permission
+
+    record_permission(engine, source_key="finra/test", permissions={"acquire": True, "store": True, "parse": True},
+                      evidence_ref="test-only:original-unit-fixture", approved_by="test-reviewer", approved=True)
 
 
 class Adapter:
