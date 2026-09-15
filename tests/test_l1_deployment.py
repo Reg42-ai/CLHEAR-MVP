@@ -11,6 +11,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from botocore.exceptions import ClientError
 
 from scripts.deploy_l1 import (ACCOUNT, ADAPTER_SCHEDULES, BUCKET, CLUSTER, ENVIRONMENT, FLEETS, FUNCTION,
                               QUEUES, REGION, SUSPENDED, WORKFLOW, Deployer, DeploymentError, Inputs)
@@ -82,6 +83,8 @@ class Cloud:
         for fleet in FLEETS:
             arn = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/clhear-fleet-{fleet}:1"
             self.services[fleet] = {"serviceName": f"clhear-fleet-{fleet}", "status": "ACTIVE", "taskDefinition": arn,
+                "serviceArn": f"arn:aws:ecs:{REGION}:{ACCOUNT}:service/{CLUSTER}/clhear-fleet-{fleet}",
+                "clusterArn": f"arn:aws:ecs:{REGION}:{ACCOUNT}:cluster/{CLUSTER}",
                 "desiredCount": 0 if fleet == "l0" else 1, "runningCount": 0, "pendingCount": 0,
                 "networkConfiguration": {"awsvpcConfiguration": {"subnets": ["subnet-private"], "securityGroups": ["sg-existing"], "assignPublicIp": "DISABLED"}},
                 "capacityProviderStrategy": [{"capacityProvider": "FARGATE_SPOT", "weight": 1}], "platformVersion": "1.4.0"}
@@ -96,8 +99,11 @@ class Cloud:
                                     {"name": "LEGACY_UNKNOWN_SETTING", "value": "private-env-value"}],
                     "secrets": [{"name": "DATABASE_URL", "valueFrom": DSN_SECRET}, {"name": "INFER_TOKEN", "valueFrom": "existing-secret-ref"}]}]}
             self.scaling[fleet] = {"ResourceId": f"service/{CLUSTER}/clhear-fleet-{fleet}", "MinCapacity": 0,
+                "ServiceNamespace": "ecs", "ScalableDimension": "ecs:service:DesiredCount",
+                "ScalableTargetARN": f"arn:aws:application-autoscaling:{REGION}:{ACCOUNT}:scalable-target/{int(fleet[1:]) + 1:036x}",
                 "MaxCapacity": 2, "SuspendedState": {key: False for key in SUSPENDED}}
         self.config = {"FunctionName": FUNCTION, "State": "Active", "LastUpdateStatus": "Successful", "PackageType": "Zip",
+            "FunctionArn": f"arn:aws:lambda:{REGION}:{ACCOUNT}:function:{FUNCTION}",
             "Handler": "app.clhear.lambda_web.handler", "Role": f"arn:aws:iam::{ACCOUNT}:role/clhear-webui",
             "RevisionId": "old-revision", "CodeSha256": base64.b64encode(hashlib.sha256(OLD_CODE).digest()).decode(),
             "Environment": {"Variables": {"CLHEAR_SESSION_SECRET": "test-only-private-session-value-at-least-32-chars",
@@ -164,6 +170,7 @@ class Cloud:
             if self.fail_pause_after_probe and self.probe_failed and args["ReservedConcurrentExecutions"] == 0:
                 raise RuntimeError("test-only pause failure")
             self.concurrency = args["ReservedConcurrentExecutions"]
+            self.config["RevisionId"] += "-concurrency"
             return {}
         if operation == "delete_function_concurrency":
             self.concurrency = None
@@ -208,7 +215,9 @@ class Cloud:
                     tasks.append({"taskArn": arn, "lastStatus": "RUNNING" if any(arn in old for old in self.old_tasks.values()) else "STOPPED"})
             return {"tasks": tasks}
         if operation == "update_function_code":
-            assert args["RevisionId"] == self.config["RevisionId"]
+            if args["RevisionId"] != self.config["RevisionId"]:
+                raise ClientError({"Error": {"Code": "PreconditionFailedException", "Message": "test-only-private-sdk-message"}},
+                                  "UpdateFunctionCode")
             code = OLD_CODE if args["S3Key"].endswith("previous-viewer.zip") else NEW_CODE
             self.config["CodeSha256"] = base64.b64encode(hashlib.sha256(code).digest()).decode()
             self.config["RevisionId"] += "-code"
@@ -402,6 +411,227 @@ def test_review_ready_runs_final_snapshot_without_claiming_acceptance():
     result = cloud.deployer().deploy()
     assert result["status"] == "review_ready" and result["accepted_release_changed"] is False
     assert result["steps"][-1]["action"] == "publish"
+
+
+def test_own_concurrency_revision_change_is_refreshed_before_conditional_code_cutover():
+    cloud = Cloud()
+    old_revision = cloud.config["RevisionId"]
+    deployer = cloud.deployer()
+    result = deployer.deploy()
+    assert result["status"] == "verified"
+    writes = [args for _, op, args in cloud.calls if op == "update_function_code"]
+    assert len(writes) == 1
+    assert writes[0]["RevisionId"] == old_revision + "-concurrency"
+    # Refreshing the runtime token must not rewrite the reviewed rollback basis.
+    assert deployer.state["function"]["Configuration"]["RevisionId"] == old_revision
+
+
+@pytest.mark.parametrize("stage", ["before_pause", "during_pause", "after_pause"])
+@pytest.mark.parametrize("field,value", [
+    ("CodeSha256", "external-code-digest"),
+    ("Environment", {"Variables": {"CHANGED_SECRET": "test-only-concurrent-private-secret"}}),
+    ("Role", f"arn:aws:iam::{ACCOUNT}:role/changed-viewer-role"),
+    ("Handler", "app.other.handler"),
+    ("Runtime", "python3.14"),
+    ("VpcConfig", {"SubnetIds": ["subnet-external"]}),
+    ("KMSKeyArn", f"arn:aws:kms:{REGION}:{ACCOUNT}:key/external-key"),
+    ("FutureConfigurationField", {"changed": True}),
+    ("LastUpdateStatus", "InProgress"),
+])
+def test_revision_refresh_rejects_code_or_configuration_drift(stage, field, value, monkeypatch):
+    cloud = Cloud()
+    original_call, injected = cloud.call, False
+
+    def call(service, operation, args):
+        nonlocal injected
+        result = original_call(service, operation, args)
+        inject = ((stage == "before_pause" and operation == "put_object" and args["Key"].endswith("/rollback.json"))
+                  or (stage == "during_pause" and operation == "put_function_concurrency")
+                  or (stage == "after_pause" and operation == "run_task"))
+        if inject and not injected:
+            injected = True
+            cloud.config[field] = copy.deepcopy(value)
+            cloud.config["RevisionId"] += "-external"
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert injected and result["status"] == "failed_maintenance"
+    assert result["reason"] in {"Viewer code or configuration changed after preflight", "The viewer has an unfinished Lambda update"}
+    assert not any(op in {"update_function_code", "update_function_configuration"} for _, op, _ in cloud.calls)
+    assert cloud.config[field] == value
+    assert cloud.concurrency == 0 and all(service["desiredCount"] == 0 for service in cloud.services.values())
+    assert "test-only-concurrent-private-secret" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("stage", ["before_pause", "after_pause"])
+def test_revision_only_drift_outside_own_pause_is_not_adopted(stage, monkeypatch):
+    cloud = Cloud()
+    original_call, injected = cloud.call, False
+
+    def call(service, operation, args):
+        nonlocal injected
+        result = original_call(service, operation, args)
+        inject = ((stage == "before_pause" and operation == "put_object" and args["Key"].endswith("/rollback.json"))
+                  or (stage == "after_pause" and operation == "run_task"))
+        if inject and not injected:
+            injected = True
+            cloud.config["RevisionId"] += "-external"
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert injected and result["status"] == "failed_maintenance"
+    assert result["reason"] == "Viewer revision changed outside the deployment traffic pause"
+    assert not any(op == "update_function_code" for _, op, _ in cloud.calls)
+
+
+def test_conditional_code_update_still_rejects_race_after_final_revision_check(monkeypatch):
+    cloud = Cloud()
+    original_call, injected = cloud.call, False
+
+    def call(service, operation, args):
+        nonlocal injected
+        if operation == "update_function_code" and not injected:
+            injected = True
+            cloud.config["RevisionId"] += "-external"
+            cloud.config["CodeSha256"] = "external-code-digest"
+        return original_call(service, operation, args)
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance"
+    assert result["failure_type"] == "ClientError"
+    assert result["failure_operation"] == "UpdateFunctionCode"
+    assert result["failure_code"] == "PreconditionFailedException"
+    assert cloud.config["CodeSha256"] == "external-code-digest"
+    assert len([op for _, op, _ in cloud.calls if op == "update_function_code"]) == 1
+    assert not any(op == "update_function_configuration" for _, op, _ in cloud.calls)
+    assert cloud.concurrency == 0
+    documents = json.dumps(result) + "\n".join(body.decode() for key, body in cloud.objects.items() if key.endswith(".json"))
+    assert "test-only-private-sdk-message" not in documents
+
+
+@pytest.mark.parametrize("drift", ["code", "revision"])
+def test_configuration_cutover_cannot_accept_concurrent_code_update(drift, monkeypatch):
+    cloud = Cloud()
+    original_call = cloud.call
+
+    def call(service, operation, args):
+        result = original_call(service, operation, args)
+        if operation == "update_function_configuration":
+            if drift == "code":
+                cloud.config["CodeSha256"] = "external-code-digest"
+            else:
+                cloud.config["RevisionId"] += "-external"
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance"
+    assert cloud.concurrency == 0
+    if drift == "code":
+        assert cloud.config["CodeSha256"] == "external-code-digest"
+        assert "viewer_code_rollback_skipped_code_drift" in result["recovery_errors"]
+    assert not any(op == "invoke" for _, op, _ in cloud.calls)
+
+
+def test_failed_worker_does_not_roll_back_an_external_code_update(monkeypatch):
+    cloud = Cloud()
+    cloud.exits["verify"] = 1
+    original_call = cloud.call
+
+    def call(service, operation, args):
+        result = original_call(service, operation, args)
+        if operation == "run_task" and args["overrides"]["containerOverrides"][0]["command"][1] == "verify":
+            cloud.config["CodeSha256"] = "external-code-digest"
+            cloud.config["RevisionId"] += "-external"
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    assert cloud.config["CodeSha256"] == "external-code-digest"
+    assert "viewer_code_rollback_skipped_code_drift" in result["recovery_errors"]
+    assert len([op for _, op, _ in cloud.calls if op == "update_function_code"]) == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("CodeSha256", "external-code-digest"),
+    ("Environment", {"Variables": {"CHANGED_SECRET": "private-drift-secret"}}),
+    ("Role", f"arn:aws:iam::{ACCOUNT}:role/external-viewer-role"),
+    ("Handler", "app.other.handler"),
+    ("Runtime", "python3.14"),
+    ("VpcConfig", {"SubnetIds": ["subnet-external"]}),
+    ("LastModified", "2026-09-15T13:00:00.000+0000"),
+    ("FutureConfigurationField", {"changed": True}),
+    ("RevisionId", "external-revision"),
+])
+def test_drift_during_worker_verification_blocks_traffic_resume(field, value, monkeypatch):
+    cloud = Cloud()
+    original_call = cloud.call
+
+    def call(service, operation, args):
+        result = original_call(service, operation, args)
+        if operation == "run_task" and args["overrides"]["containerOverrides"][0]["command"][1] == "publish":
+            cloud.config[field] = copy.deepcopy(value)
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    assert result["reason"] == "Viewer code or configuration changed before traffic resume"
+    assert not any(op == "invoke" or (op == "put_function_concurrency" and args["ReservedConcurrentExecutions"] > 0)
+                   for _, op, args in cloud.calls)
+    assert all(service["desiredCount"] == 0 for service in cloud.services.values())
+    if field == "CodeSha256":
+        assert cloud.config[field] == value
+        assert "viewer_code_rollback_skipped_code_drift" in result["recovery_errors"]
+    assert "private-drift-secret" not in json.dumps(result)
+
+
+def test_cutover_snapshots_completed_service_fields_and_ignores_only_response_metadata(monkeypatch):
+    cloud = Cloud()
+    cloud.config.update(LastModified="before-cutover", ConfigSha256="before-env-change")
+    original_call = cloud.call
+    read_count = 0
+
+    def call(service, operation, args):
+        nonlocal read_count
+        result = original_call(service, operation, args)
+        if operation == "update_function_code":
+            cloud.config["LastModified"] = "after-code-change"
+        if operation == "update_function_configuration":
+            cloud.config.update(LastModified="after-env-change", ConfigSha256="new-configuration-hash")
+        if operation == "get_function_configuration":
+            read_count += 1
+            result["ResponseMetadata"] = {"RequestId": f"different-per-read-{read_count}"}
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    deployer = cloud.deployer()
+    assert deployer.deploy()["status"] == "verified"
+    verified = deployer.state["verified_viewer_configuration"]
+    assert verified["LastModified"] == "after-env-change" and verified["ConfigSha256"] == "new-configuration-hash"
+    assert "ResponseMetadata" not in verified
+
+
+def test_rollback_cas_rejects_code_change_after_ownership_check(monkeypatch):
+    cloud = Cloud()
+    cloud.exits["verify"] = 1
+    original_call = cloud.call
+
+    def call(service, operation, args):
+        if operation == "update_function_code" and args["S3Key"].endswith("previous-viewer.zip"):
+            cloud.config["CodeSha256"] = "external-code-digest"
+            cloud.config["RevisionId"] += "-external"
+        return original_call(service, operation, args)
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    assert cloud.config["CodeSha256"] == "external-code-digest"
+    assert "viewer_code_rollback_failed" in result["recovery_errors"]
 
 
 @pytest.mark.parametrize("stage", ["bootstrap", "verify", "publish"])

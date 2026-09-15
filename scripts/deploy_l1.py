@@ -22,6 +22,12 @@ from urllib.parse import parse_qs, urlparse
 import urllib.request
 
 import boto3
+from botocore.exceptions import ClientError
+
+if __package__:
+    from .deployment_recovery import RecoveryPlanError, emit_plan, load_plan, validate_plan
+else:
+    from deployment_recovery import RecoveryPlanError, emit_plan, load_plan, validate_plan
 
 ACCOUNT = "730649732189"
 REGION = "us-east-1"
@@ -54,6 +60,20 @@ def require(condition, message):
         raise DeploymentError(message)
 
 
+def _failure_details(error):
+    details = {"failure_type": type(error).__name__}
+    if isinstance(error, DeploymentError):
+        details["reason"] = str(error)
+    elif isinstance(error, ClientError):
+        # Never include SDK messages or request parameters: they can contain
+        # environment secrets, credentials or signed artifact URLs.
+        for key, value in (("failure_operation", error.operation_name),
+                           ("failure_code", error.response.get("Error", {}).get("Code"))):
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,127}", value):
+                details[key] = value
+    return details
+
+
 def _supported_worker_invocation(worker):
     # Recognize an explicit argv split, without interpreting shell syntax or
     # guessing an entrypoint inherited from an uninspected legacy image.
@@ -82,6 +102,7 @@ class Inputs:
     deployment_id: str
     reviewer_emails: str = ""
     viewer_key: str = "webui/l1/candidate.db"
+    recovery_plan: str = ""
 
     def validate(self):
         require(bool(re.fullmatch(r"[0-9a-f]{40}", self.sha)), "A full tested Git SHA is required")
@@ -93,7 +114,10 @@ class Inputs:
                 "UI artifact must be a zip in the private webui prefix")
         require(self.viewer_key.startswith("webui/l1/") and self.viewer_key.endswith(".db") and ".." not in self.viewer_key,
                 "Candidate viewer must use the separate private webui/l1 prefix")
-        require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", self.deployment_id)), "Invalid deployment identifier")
+        require(bool(re.fullmatch(r"l1-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}", self.deployment_id)), "Invalid deployment identifier")
+        require(not self.recovery_plan or bool(re.fullmatch(r"l1-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}", self.recovery_plan)),
+                "Invalid recovery plan identifier")
+        require(self.recovery_plan != self.deployment_id, "Recovery requires a fresh deployment attempt")
 
 
 class Deployer:
@@ -107,6 +131,7 @@ class Deployer:
         self.code_fetch = code_fetch or self._download_code
         self.authorized = False
         self.state = None
+        self.recovery_plan_output = None
         self.report = {"deployment_id": inputs.deployment_id, "sha": inputs.sha,
                        "account": ACCOUNT, "region": REGION, "accepted_release_changed": False,
                        "steps": [], "status": "not_started"}
@@ -344,6 +369,22 @@ class Deployer:
                 "Viewer role is not authorized to send CommunityWrite commands to L0; owner must update IAM first")
         concurrency = self.clients["lambda"].get_function_concurrency(FunctionName=FUNCTION).get("ReservedConcurrentExecutions")
         self.state = {"fleets": fleets, "function": function, "concurrency": concurrency, "reviewers": reviewers, "schedules": schedules}
+        self._checked_viewer_configuration(expected_revision=config["RevisionId"])
+        if self.inputs.recovery_plan:
+            try:
+                plan = load_plan(self.inputs.recovery_plan)
+                self.state["restoration_targets"] = validate_plan(plan, self.state)
+            except RecoveryPlanError as error:
+                raise DeploymentError(str(error)) from error
+            require(not self._active_tasks(), "Recovery requires all previous one-off worker tasks to be stopped")
+            self.report["recovery"] = {"plan_id": plan["plan_id"], "source": plan["source"],
+                                       "root_source": plan["root_source"], "runtime_source_read": False}
+        else:
+            held = concurrency == 0 and all(
+                values["service"]["desiredCount"] == 0 and values["scaling"]["MinCapacity"] == 0
+                and all(values["scaling"].get("SuspendedState", {}).get(k) is True for k in SUSPENDED)
+                for values in fleets.values())
+            require(not held, "Maintenance hold requires an owner-reviewed recovery plan; do not capture zero capacity as the baseline")
         self.report.update(status="preflight_passed", image=self.inputs.image,
             ui={"key": self.inputs.ui_key, "version": self.inputs.ui_version, "sha256": self.inputs.ui_sha256},
             viewer_uri=f"s3://{BUCKET}/{self.inputs.viewer_key}", fleet_count=len(fleets),
@@ -400,15 +441,29 @@ class Deployer:
                     "adapter_schedules": self.state["schedules"],
                     "schedule_rollback_policy": "retain_backward_compatible_event_id_and_timestamp_transformers",
                     "accepted_release_pointer": "never_modified"}
-        self._put("rollback.json", json.dumps(manifest, sort_keys=True, default=str).encode())
+        if "restoration_targets" in self.state:
+            # Preserve the observed paused state separately from the reviewed
+            # original capacities. A second failed attempt must retain both.
+            manifest["restoration_targets"] = copy.deepcopy(self.state["restoration_targets"])
+        manifest_bytes = json.dumps(manifest, sort_keys=True, default=str).encode()
+        backup = self._put("rollback.json", manifest_bytes)
+        require(backup.get("VersionId") and backup["VersionId"] != "null", "Rollback manifest must have an immutable S3 version")
+        provenance = {"deployment_id": self.inputs.deployment_id, "sha": self.inputs.sha,
+                      "bucket": BUCKET, "key": f"{self.prefix}/rollback.json", "version_id": backup["VersionId"],
+                      "sha256": hashlib.sha256(manifest_bytes).hexdigest(), "verification": "controller_emitted"}
+        try:
+            self.recovery_plan_output = emit_plan(self.inputs.deployment_id, self.state,
+                rollback_provenance=provenance, restoration_targets=self.state.get("restoration_targets"))
+        except RecoveryPlanError as error:
+            raise DeploymentError(str(error)) from error
         self.report["rollback_manifest"] = f"s3://{BUCKET}/{self.prefix}/rollback.json"
 
-    def _scaling(self, fleet, suspended, *, minimum=None):
+    def _scaling(self, fleet, suspended, *, minimum=None, maximum=None):
         old = self.state["fleets"][fleet]["scaling"]
         self._write("application-autoscaling", "register_scalable_target", ServiceNamespace="ecs",
                     ResourceId=old["ResourceId"], ScalableDimension="ecs:service:DesiredCount",
                     MinCapacity=old["MinCapacity"] if minimum is None else minimum,
-                    MaxCapacity=max(old["MaxCapacity"], minimum or 0), SuspendedState=suspended)
+                    MaxCapacity=max(old["MaxCapacity"] if maximum is None else maximum, minimum or 0), SuspendedState=suspended)
 
     def _active_tasks(self):
         candidates = set()
@@ -432,10 +487,38 @@ class Deployer:
             active.update({task["taskArn"]: task.get("lastStatus") for task in response["tasks"] if task.get("lastStatus") != "STOPPED"})
         return active
 
-    def _hold(self):
+    def _checked_viewer_configuration(self, *, expected_revision=None):
+        current = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
+        old = self.state["function"]["Configuration"]
+        require(current.get("State", "Active") == "Active"
+                and current.get("LastUpdateStatus", "Successful") == "Successful",
+                "The viewer has an unfinished Lambda update")
+        # Both Lambda reads return FunctionConfiguration. Only the revision
+        # may change during our concurrency operation; even unknown future
+        # configuration fields must continue to match the reviewed baseline.
+        ignored = {"RevisionId", "ResponseMetadata"}
+        require({k: v for k, v in current.items() if k not in ignored}
+                == {k: v for k, v in old.items() if k not in ignored},
+                "Viewer code or configuration changed after preflight")
+        require(isinstance(current.get("RevisionId"), str) and current["RevisionId"],
+                "The viewer revision is unavailable")
+        if expected_revision is not None:
+            require(current["RevisionId"] == expected_revision,
+                    "Viewer revision changed outside the deployment traffic pause")
+        return current
+
+    def _hold(self, *, capture_viewer_revision=False):
+        if capture_viewer_revision:
+            self._checked_viewer_configuration(expected_revision=self.state["function"]["Configuration"]["RevisionId"])
         self._write("lambda", "put_function_concurrency", FunctionName=FUNCTION, ReservedConcurrentExecutions=0)
         require(self.clients["lambda"].get_function_concurrency(FunctionName=FUNCTION).get("ReservedConcurrentExecutions") == 0,
                 "Viewer traffic pause could not be confirmed")
+        if capture_viewer_revision:
+            # PutFunctionConcurrency can issue a new revision without changing
+            # code/configuration. Refresh only across this verified operation,
+            # preserving the original preflight state for rollback evidence.
+            current = self._checked_viewer_configuration()
+            self.state["viewer_cutover_revision"] = current["RevisionId"]
         for fleet in FLEETS:
             self._scaling(fleet, SUSPENDED, minimum=0)
         known_tasks = set(self._active_tasks())
@@ -529,8 +612,10 @@ class Deployer:
     def _viewer(self):
         # Compare revisions so a concurrent operator change cannot be overwritten.
         old = self.state["function"]["Configuration"]
+        require(self.state.get("viewer_cutover_revision"), "Viewer revision was not verified after the traffic pause")
+        current = self._checked_viewer_configuration(expected_revision=self.state["viewer_cutover_revision"])
         updated = self._write("lambda", "update_function_code", FunctionName=FUNCTION, S3Bucket=BUCKET,
-            S3Key=self.inputs.ui_key, S3ObjectVersion=self.inputs.ui_version, RevisionId=old["RevisionId"], Publish=False)
+            S3Key=self.inputs.ui_key, S3ObjectVersion=self.inputs.ui_version, RevisionId=current["RevisionId"], Publish=False)
         self.state["viewer_code_changed"] = True
         self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
         config = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
@@ -542,13 +627,28 @@ class Deployer:
         env.update(CLHEAR_RESTRICTED_ACCESS="true", CLHEAR_AUTH_DEBUG="false", CLHEAR_REVIEWER_EMAILS=self.state["reviewers"],
                    CLHEAR_DB_S3_URI=f"s3://{BUCKET}/{self.inputs.viewer_key}", CLHEAR_RELEASES_S3_PREFIX=RELEASES,
                    CLHEAR_EVENTS_QUEUE_URL=QUEUES["l0"])
-        self._write("lambda", "update_function_configuration", FunctionName=FUNCTION, RevisionId=config["RevisionId"], Environment={"Variables": env})
+        updated_config = self._write("lambda", "update_function_configuration", FunctionName=FUNCTION,
+            RevisionId=config["RevisionId"], Environment={"Variables": env})
         self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
         current = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
         require(current.get("Environment", {}).get("Variables") == env, "Restricted viewer configuration was not retained")
+        require(current.get("RevisionId") == updated_config.get("RevisionId")
+                and current.get("CodeSha256") == base64.b64encode(bytes.fromhex(self.inputs.ui_sha256)).decode()
+                and current.get("State", "Active") == "Active"
+                and current.get("LastUpdateStatus", "Successful") == "Successful",
+                "Viewer code or revision changed during the configuration cutover")
+        # Capture only after our conditional update has completed. Its service
+        # fields (such as LastModified) may legitimately differ from preflight;
+        # the completed configuration must stay unchanged until traffic resumes.
+        self.state["verified_viewer_configuration"] = copy.deepcopy({k: v for k, v in current.items() if k != "ResponseMetadata"})
 
     def _resume_viewer(self):
-        old = self.state["concurrency"]
+        expected = self.state.get("verified_viewer_configuration")
+        require(expected, "Completed viewer cutover has not been verified")
+        current = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
+        require({k: v for k, v in current.items() if k != "ResponseMetadata"} == expected,
+                "Viewer code or configuration changed before traffic resume")
+        old = self.state.get("restoration_targets", {}).get("viewer_reserved_concurrency", self.state["concurrency"])
         # A previously paused viewer stays paused: deployment does not grant a
         # new traffic policy. One temporary slot permits the anonymous probes.
         self._write("lambda", "put_function_concurrency", FunctionName=FUNCTION, ReservedConcurrentExecutions=max(old or 0, 1))
@@ -567,11 +667,16 @@ class Deployer:
 
     def _restore_capacity(self):
         for fleet, old in self.state["fleets"].items():
-            desired = max(1, old["service"]["desiredCount"]) if fleet == "l0" else old["service"]["desiredCount"]
+            target = self.state.get("restoration_targets", {}).get("fleets", {}).get(fleet)
+            desired = target["desired_count"] if target else old["service"]["desiredCount"]
+            minimum = target["min_capacity"] if target else old["scaling"]["MinCapacity"]
+            maximum = target["max_capacity"] if target else old["scaling"]["MaxCapacity"]
+            suspended = target["suspended_state"] if target else old["scaling"].get("SuspendedState", {k: False for k in SUSPENDED})
+            if fleet == "l0":
+                desired, minimum = max(1, desired), max(1, minimum)
             self._write("ecs", "update_service", cluster=CLUSTER, service=f"clhear-fleet-{fleet}",
                         taskDefinition=old["new_task_definition"], desiredCount=desired)
-            self._scaling(fleet, old["scaling"].get("SuspendedState", {k: False for k in SUSPENDED}),
-                          minimum=max(1, old["scaling"]["MinCapacity"]) if fleet == "l0" else None)
+            self._scaling(fleet, suspended, minimum=minimum, maximum=maximum)
         self.clients["ecs"].get_waiter("services_stable").wait(cluster=CLUSTER,
             services=[f"clhear-fleet-{f}" for f in FLEETS], WaiterConfig={"Delay": 15, "MaxAttempts": 40})
 
@@ -596,10 +701,15 @@ class Deployer:
         if self.state.get("viewer_code_changed") and pause_verified:
             try:
                 config = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
-                self._write("lambda", "update_function_code", FunctionName=FUNCTION, S3Bucket=BUCKET,
-                    S3Key=f"{self.prefix}/previous-viewer.zip", S3ObjectVersion=self.state["previous_code_version"],
-                    RevisionId=config["RevisionId"], Publish=False)
-                self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
+                if config.get("CodeSha256") != base64.b64encode(bytes.fromhex(self.inputs.ui_sha256)).decode():
+                    errors.append("viewer_code_rollback_skipped_code_drift")
+                else:
+                    # Only undo this deployment's code. The conditional write
+                    # also prevents a new change after this ownership check.
+                    self._write("lambda", "update_function_code", FunctionName=FUNCTION, S3Bucket=BUCKET,
+                        S3Key=f"{self.prefix}/previous-viewer.zip", S3ObjectVersion=self.state["previous_code_version"],
+                        RevisionId=config["RevisionId"], Publish=False)
+                    self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
             except Exception:
                 errors.append("viewer_code_rollback_failed")
         elif self.state.get("viewer_code_changed"):
@@ -613,7 +723,7 @@ class Deployer:
         self.preflight()
         self._backup()  # no live resource changes if the rollback backup fails
         try:
-            self._hold()
+            self._hold(capture_viewer_revision=True)
             self._configure_schedules()
             self._register()
             self._worker("l0", "bootstrap")
@@ -627,7 +737,7 @@ class Deployer:
                                l0_relay_minimum=1, traffic_policy="previous_capacity_restored", fleet_policy="new_code_l1_only")
             self._put("result.json", json.dumps(self.report, sort_keys=True).encode())
         except Exception as error:
-            self.report["failure_type"] = type(error).__name__
+            self.report.update(_failure_details(error))
             self._rollback()
             try:
                 self._put("failure.json", json.dumps(self.report, sort_keys=True).encode())
@@ -642,6 +752,7 @@ def main(argv=None):
         parser.add_argument(f"--{name}", required=True)
     parser.add_argument("--reviewer-emails", default="")
     parser.add_argument("--viewer-key", default="webui/l1/candidate.db")
+    parser.add_argument("--recovery-plan", default="")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -652,12 +763,14 @@ def main(argv=None):
     except Exception as error:
         # SDK exceptions may contain request parameters. Only our fixed error
         # messages are safe for user-visible output.
-        report = {**deployer.report, "status": "preflight_failed", "failure_type": type(error).__name__}
-        if isinstance(error, DeploymentError):
-            report["reason"] = str(error)
+        report = {**deployer.report, "status": "preflight_failed", **_failure_details(error)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     os.chmod(args.output, 0o600)
+    if deployer.recovery_plan_output is not None:
+        recovery_output = args.output.with_name("recovery-plan.json")
+        recovery_output.write_text(json.dumps(deployer.recovery_plan_output, indent=2, sort_keys=True) + "\n")
+        os.chmod(recovery_output, 0o600)
     print(json.dumps(report, sort_keys=True))
     return 0 if report["status"] in {"preflight_passed", "verified", "review_ready"} else 1
 

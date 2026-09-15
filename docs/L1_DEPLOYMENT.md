@@ -80,6 +80,9 @@ There is no arbitrary deployment ref input. The workflow:
    existing roles, secrets and worker networking. Existing adapter targets
    receive the same occurrence-ID/time transformer as the Terraform
    configuration, preserving queue destinations and schedule expressions.
+   Lambda can change its revision when traffic is paused. The controller
+   refreshes that revision only after confirming the code and configuration
+   still match the reviewed baseline, then uses conditional updates at cutover.
 4. Runs L0 `bootstrap`: migrations and registered-source metadata, followed by
    a worker-built candidate snapshot. Switches Lambda code/configuration to
    restricted review against that candidate.
@@ -126,8 +129,9 @@ The pre-deployment FINRA target used a fixed `schedule-finra` event ID and an
 empty timestamp. Already-queued legacy messages remain explicit failures;
 they must not be relabelled as fresh runs or purged to make a check green.
 
-The GitHub artifact contains code hashes, task references, measured durations
-and deployment outcome only. Source text, database URLs and full Lambda
+The GitHub artifact contains code hashes, task references, measured durations,
+deployment outcome and a capacity-only recovery plan. Treat these as repository
+deployment metadata, not as a private corpus store. Source text, database URLs and full Lambda
 environment values stay out of GitHub logs/artifacts. Detailed data evidence
 is stored by the workers and exposed through the restricted viewer.
 
@@ -141,8 +145,35 @@ records previous task definitions, image references, code version, capacity
 and autoscaling state. It intentionally omits secret plaintext.
 
 Read `artifacts/deployment-result.json` and the referenced private recovery
-manifest. Correct the failed prerequisite or worker, then dispatch a fresh
-deployment attempt. If restoring previous behavior manually, the authorized
+manifest. A fully paused failed deployment must not be rerun using the observed
+zero capacities as the intended restoration target. Select an owner-reviewed
+capacity plan from `infra/recovery` using the workflow's optional `recovery_plan`
+input. A normal dispatch from a fully held maintenance state is rejected.
+
+The recovery plan records exact resource and starting-code identities, the
+original desired/minimum/maximum capacities and scaler flags, the original
+nullable viewer reservation, and its rollback object's version/hash. The
+controller checks the current held state and identities before any write.
+It backs up the observed configuration separately and applies the approved
+capacity targets only after worker verification and viewer access checks pass.
+The normal L0 minimum of one and the L1-only processing hold still apply.
+
+The deployment role does not read the private source rollback JSON. Provenance
+in a committed plan is an operator audit record; founder review/merge of that
+configuration and environment approval authorize its use. No new IAM permission
+is granted. Future attempts emit `artifacts/recovery-plan.json`; review its
+capacity-only contents and source binding into `infra/recovery/<plan-id>.json`
+before using it. Repeated failures retain the approved original targets instead
+of replacing them with the temporary maintenance zeros.
+
+For failure `l1-34967901665-1`, use `recovery_plan: l1-34967901665-1` after this
+fix is merged and CI passes. Its audited plan restores L0/L1 desired capacity
+one, L2–L8 zero, and removes the temporary viewer concurrency reservation after
+successful access checks. L0 bootstrap already applied migrations 24–26;
+recovery reruns that work through the same idempotent L0 worker handler.
+
+Correct the failed prerequisite or worker, then dispatch a fresh deployment
+attempt with that plan. If restoring previous behavior manually, the authorized
 operator must independently verify its authentication, compatible snapshot
 and worker hold before resuming traffic; code rollback alone is insufficient.
 An interrupted GitHub job can leave maintenance active. Check the live holds
