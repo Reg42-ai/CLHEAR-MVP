@@ -80,7 +80,7 @@ resource "aws_iam_role_policy" "webui_db" {
         # Community write path: read-only web app enqueues ops for the worker.
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
-        Resource = aws_sqs_queue.events.arn
+        Resource = aws_sqs_queue.fleet["l0"].arn
       },
       {
         # Contributor magic-link emails.
@@ -140,7 +140,7 @@ resource "aws_lambda_function" "webui" {
       CLHEAR_RELEASES_S3_PREFIX       = "s3://${aws_s3_bucket.deploy.bucket}/releases"
       CLHEAR_APP_KEYS                 = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key"
       REG42_CLHEAR_ENABLED            = "true"
-      CLHEAR_EVENTS_QUEUE_URL         = aws_sqs_queue.events.url
+      CLHEAR_EVENTS_QUEUE_URL         = aws_sqs_queue.fleet["l0"].url
       CLHEAR_SESSION_SECRET           = data.aws_ssm_parameter.session_secret[0].value
       CLHEAR_RESTRICTED_ACCESS        = "true"
       CLHEAR_AUTH_DEBUG               = "false"

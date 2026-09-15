@@ -124,7 +124,8 @@ resource "aws_ecs_service" "fleet" {
   name            = "${var.name_prefix}-fleet-${each.key}"
   cluster         = local.cluster_arn
   task_definition = aws_ecs_task_definition.fleet[each.key].arn
-  desired_count   = 0 # near-zero idle: autoscaling raises it when the fleet queue has work
+  # L0 relays the database outbox, which cannot wake an SQS-driven autoscaler.
+  desired_count = each.key == "l0" ? 1 : 0
 
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
@@ -147,7 +148,7 @@ resource "aws_appautoscaling_target" "fleet" {
   service_namespace  = "ecs"
   resource_id        = "service/${split("/", local.cluster_arn)[1]}/${aws_ecs_service.fleet[each.key].name}"
   scalable_dimension = "ecs:service:DesiredCount"
-  min_capacity       = 0
+  min_capacity       = each.key == "l0" ? 1 : 0
   max_capacity       = each.value.max
 }
 

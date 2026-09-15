@@ -55,6 +55,8 @@ _STRING_FIELDS = {
     "source_keys", "blocked_operations", "reasons", "depends_on", "channel", "doc", "celex", "celex_version",
     "ecfr_title", "ecfr_sections", "usc_title", "usc_sections", "as_of", "edition", "chapter", "chapters", "part",
     "sourcebook", "language", "allowed_origins", "hash", "permission_id", "finding_codes",
+    "verification_id", "phase", "evidence_mode", "nightly_schedule_validation",
+    "before_bindings_hash", "after_bindings_hash", "successful_sources", "failed_sources",
 }
 
 
@@ -175,7 +177,8 @@ def _corpus_query(table, permitted_sources, public_sources):
 def _evidence_query(table):
     query = sa.select(table)
     if table is runs:
-        query = query.where(sa.or_(table.c.fleet.like("l1.%"), table.c.fleet == "worker"))
+        query = query.where(sa.or_(table.c.fleet.like("l1.%"), table.c.fleet == "worker",
+                                   table.c.fleet == "l0.deployment_verification"))
     elif table is llm_calls:
         query = query.where(table.c.fleet.like("l1.%"))
     elif table is eval_runs:

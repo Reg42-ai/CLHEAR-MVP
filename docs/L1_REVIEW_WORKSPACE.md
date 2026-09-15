@@ -204,8 +204,12 @@ explicitly; it never builds a fresh fixture corpus as a production release.
    adapter gaps rather than importing navigation or claiming universal coverage.
 5. Validate the deployed queue, viewer projection and signed release workflow
    against Aurora and real authorized artifacts.
-6. Complete two consecutive successful 00:00 UTC daily cycles; only then lift
-   the downstream hold after full registered L1 acceptance.
+6. Deploy and run manual L1 verification immediately using
+   [the deployment workflow](L1_DEPLOYMENT.md). Two consecutive successful
+   00:00 UTC daily cycles are a later reliability check, not a prerequisite
+   for deploying or reviewing L1. Keep downstream processing held until its
+   separate acceptance decision; manual success does not grant full registered
+   L1 acceptance or prove that the scheduler ran.
 
 No production database, snapshot, worker configuration or deployment has been
 changed by this implementation. This document is not a declaration of complete L1.

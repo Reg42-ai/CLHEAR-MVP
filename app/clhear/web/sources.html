@@ -1203,6 +1203,20 @@ function StageLegend({ meta }) {
     </div>`;
 }
 
+function workflowStepTable(recorded, emptyText) {
+  if (!recorded.length) return html`<p class="charter">${emptyText}</p>`;
+  const maxDuration = Math.max(1, ...recorded.filter((step) => Number.isFinite(step.duration_ms)).map((step) => step.duration_ms));
+  return html`<div style=${{ overflowX: "auto" }}><table class="members"><thead><tr><th>Step / attempt</th><th>Status</th><th>Recorded dependencies</th><th>Started / finished</th><th>Measured duration</th></tr></thead>
+    <tbody>${recorded.map((step) => html`<tr key=${step.step_id}>
+      <td><b>${evidenceLabel(step.stage)}</b><div class="mono">${step.step_id} · attempt ${step.attempt ?? "not recorded"}</div></td>
+      <td><span class=${"badge " + evidenceTone(step.status)}>${evidenceLabel(step.status)}</span></td>
+      <td class="mono">${Array.isArray(step.depends_on) ? (step.depends_on.length ? step.depends_on.join(", ") : "No dependencies") : "not recorded"}</td>
+      <td class="mono">${step.started_at || "not recorded"}<br />${step.finished_at || "not recorded"}</td>
+      <td><span class="mono">${measuredDuration(step.duration_ms)}</span>
+        ${Number.isFinite(step.duration_ms) && step.duration_ms >= 0 && html`<div aria-hidden="true" style=${{ marginTop: "4px", height: "5px", width: `${Math.max(1, step.duration_ms / maxDuration * 100)}%`, background: "var(--indigo-500)", borderRadius: "3px" }}></div>`}
+      </td></tr>`)}</tbody></table></div>`;
+}
+
 function WorkflowEvidence({ report }) {
   if (!report || report.status !== "available") return html`<div class="notice">Workflow evidence unavailable. ${report && report.reason || "No worker task and step records have been published."}</div>`;
   const tasks = report.tasks || [], steps = report.steps || [], jobs = report.jobs || [];
@@ -1210,15 +1224,21 @@ function WorkflowEvidence({ report }) {
     <p class="charter">Durations come from completed worker measurements. Missing times and dependencies stay unrecorded; retries retain separate attempt records.</p>
     ${!(tasks.length || jobs.length) && html`<div class="empty">No worker workflow has been recorded for this selection.</div>`}
     ${(report.workflow_stages || []).length > 0 && html`<p class="charter">Configured stage order: ${report.workflow_stages.map(evidenceLabel).join(" → ")}. This order alone does not prove that a step ran.</p>`}
-    ${jobs.map((job) => html`<section class="family" key=${job.job_id}>
+    ${jobs.map((job) => {
+      const result = job.summary && job.summary.result;
+      const coordination = steps.filter((step) => step.job_id === job.job_id && step.task_id == null);
+      return html`<section class="family" key=${job.job_id}>
       <h3 style=${{ marginTop: 0 }}><span class=${"badge " + evidenceTone(job.status)}>${evidenceLabel(job.status)}</span> Job <span class="mono">${job.job_id}</span></h3>
       <div class="meta-grid"><span>Trigger <b>${job.trigger || "not recorded"}</b></span><span>Created <b>${job.created_at || "not recorded"}</b></span>
         <span>Started <b>${job.started_at || "not recorded"}</b></span><span>Finished <b>${job.finished_at || "not recorded"}</b></span>
-        <span>Measured duration <b>${measuredDuration(job.duration_ms)}</b></span></div>
+        <span>Measured duration <b>${measuredDuration(job.duration_ms ?? (result && result.duration_ms))}</b></span></div>
       <div class="mono">Event ${job.event_key || "not recorded"} · adapter ${job.adapter_key || "not recorded"}</div>
+      ${result && result.nightly_schedule_validation === "pending" && html`<p class="notice">Manual verification · nightly schedule validation pending</p>`}
+      ${result && html`<details class="rolecard" style=${{ marginTop: "12px" }}><summary>Persisted job result</summary><pre tabindex="0">${JSON.stringify(result, null, 2)}</pre></details>`}
+      ${coordination.length > 0 && html`<details class="rolecard" style=${{ marginTop: "12px" }} open><summary><b>Job coordination steps</b> · ${coordination.length} recorded</summary>
+        ${workflowStepTable(coordination, "No measured job coordination steps recorded.")}</details>`}
       ${tasks.filter((task) => task.job_id === job.job_id).map((task) => {
         const recorded = steps.filter((step) => step.task_id === task.task_id && step.job_id === task.job_id);
-        const maxDuration = Math.max(1, ...recorded.filter((step) => Number.isFinite(step.duration_ms)).map((step) => step.duration_ms));
         return html`<details class="rolecard" key=${task.task_id} style=${{ marginTop: "12px" }} open>
           <summary><b>${task.source_key || "Job coordination"}</b> · ${evidenceLabel(task.status)} · attempt ${task.attempt ?? "not recorded"}${task.max_attempts != null ? ` / ${task.max_attempts}` : ""}</summary>
           <div class="meta-grid"><span>Task <span class="mono">${task.task_id}</span></span><span>Worker <span class="mono">${task.worker || "not recorded"}</span></span>
@@ -1226,19 +1246,10 @@ function WorkflowEvidence({ report }) {
             <span>Lease until <b>${task.lease_until || "not recorded"}</b></span><span>Next attempt <b>${task.next_attempt_at || "not scheduled"}</b></span></div>
           <div class="charter">Started ${task.started_at || "not recorded"} · finished ${task.finished_at || "not recorded"}</div>
           ${task.error && html`<div class="notice">${typeof task.error === "string" ? task.error : JSON.stringify(task.error)}</div>`}
-          ${!recorded.length ? html`<p class="charter">No measured steps recorded for this task.</p>` : html`
-            <div style=${{ overflowX: "auto" }}><table class="members"><thead><tr><th>Step / attempt</th><th>Status</th><th>Recorded dependencies</th><th>Started / finished</th><th>Measured duration</th></tr></thead>
-              <tbody>${recorded.map((step) => html`<tr key=${step.step_id}>
-                <td><b>${evidenceLabel(step.stage)}</b><div class="mono">${step.step_id} · attempt ${step.attempt ?? "not recorded"}</div></td>
-                <td><span class=${"badge " + evidenceTone(step.status)}>${evidenceLabel(step.status)}</span></td>
-                <td class="mono">${Array.isArray(step.depends_on) ? (step.depends_on.length ? step.depends_on.join(", ") : "No dependencies") : "not recorded"}</td>
-                <td class="mono">${step.started_at || "not recorded"}<br />${step.finished_at || "not recorded"}</td>
-                <td><span class="mono">${measuredDuration(step.duration_ms)}</span>
-                  ${Number.isFinite(step.duration_ms) && step.duration_ms >= 0 && html`<div aria-hidden="true" style=${{ marginTop: "4px", height: "5px", width: `${Math.max(1, step.duration_ms / maxDuration * 100)}%`, background: "var(--indigo-500)", borderRadius: "3px" }}></div>`}
-                </td></tr>`)}</tbody></table></div>`}
+          ${workflowStepTable(recorded, "No measured steps recorded for this task.")}
         </details>`;
       })}
-    </section>`)}
+    </section>`; })}
     ${tasks.some((task) => !jobs.some((job) => job.job_id === task.job_id)) && html`<div class="notice">Some task records have no matching job in this response. Workflow evidence is incomplete.</div>`}
   </div>`;
 }

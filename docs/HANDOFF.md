@@ -80,7 +80,9 @@ Still pending from this phase (not blockers for P1):
   Stack: Lambda (`app/clhear/lambda_web.py`, Mangum) + API Gateway HTTP API
   (`infra/webui.tf`) — a plain Function URL is SCP-blocked in this account.
   # ARCH: swaps to the reg42-os web service + ALB host rule when wired.
-  Rebuild/redeploy: `scripts/build_corpus.py` then `scripts/deploy_webui.sh`.
+  Current deployment: use the manually dispatched `deploy-l1` workflow;
+  [L1 deployment and recovery](L1_DEPLOYMENT.md). Local corpus uploads and
+  `scripts/deploy_webui.sh` are retired. L0 builds the viewer from Aurora.
 - Mini-E3 round-trip test: concatenated public `raw_text` of the MLR document
   matches the official CLML Body+Schedules Text nodes (whitespace-normalized
   length within 15%; distinctive CDD span present). Restricted discipline

@@ -16,13 +16,14 @@ def _body(kind, event_id):
                        "subject_ref": "test/source", "producer": "test", "ts": "2026-09-15T00:00:00Z"})
 
 
-def test_graph_rebuild_is_held_before_index_or_projection(engine, monkeypatch):
+@pytest.mark.parametrize("kind", ["GraphRebuildRequested", "DrDrillRequested"])
+def test_global_projection_work_is_held_before_index_or_projection(engine, monkeypatch, kind):
     monkeypatch.setenv("CLHEAR_L1_ONLY", "true")
     get_settings.cache_clear()
     handler = Mock()
-    monkeypatch.setitem(workers.HANDLERS, "GraphRebuildRequested", handler)
+    monkeypatch.setitem(workers.HANDLERS, kind, handler)
     with pytest.raises(workers.L1AcceptanceHold):
-        workers.handle_envelope(engine, None, _body("GraphRebuildRequested", "held-rebuild"))
+        workers.handle_envelope(engine, None, _body(kind, "held-rebuild"))
     handler.assert_not_called()
     with engine.connect() as conn:
         assert not conn.execute(sa.select(runs.c.id).where(runs.c.fleet == "worker")).first()

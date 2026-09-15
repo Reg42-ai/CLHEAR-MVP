@@ -146,6 +146,25 @@ def test_inventory_and_workflow_tables_and_empty_preview_schema_are_present(engi
     target.dispose()
 
 
+def test_deployment_evidence_is_visible_without_other_l0_private_outputs(engine, tmp_path):
+    result = {"verification_id": "l1-test-1", "phase": "publish", "status": "succeeded",
+              "evidence_mode": "manual_deployment_verification", "nightly_schedule_validation": "pending",
+              "duration_ms": 71, "secret": "DO-NOT-COPY-DEPLOYMENT-SECRET"}
+    with engine.begin() as conn:
+        conn.execute(runs.insert().values(fleet="l0.deployment_verification", trigger="publish", outputs=result))
+        conn.execute(runs.insert().values(fleet="l0.private_admin", trigger="private", outputs={"secret": "PRIVATE-L0-OUTPUT"}))
+    path = tmp_path / "deployment-viewer.db"
+    viewer.compile_viewer_snapshot(engine, path)
+    target = open_snapshot(path)
+    with target.connect() as conn:
+        row = conn.execute(sa.select(runs.c.fleet, runs.c.outputs)).one()
+        assert row.fleet == "l0.deployment_verification"
+        assert row.outputs == {key: value for key, value in result.items() if key != "secret"}
+    assert b"PRIVATE-L0-OUTPUT" not in path.read_bytes()
+    assert b"DO-NOT-COPY-DEPLOYMENT-SECRET" not in path.read_bytes()
+    target.dispose()
+
+
 def test_missing_evidence_migration_aborts_export_and_preserves_last_good(engine, tmp_path):
     with engine.begin() as conn:
         inventory.artifact_reviews.drop(conn)

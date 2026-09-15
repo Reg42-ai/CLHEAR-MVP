@@ -41,7 +41,10 @@ def upgrade(conn: Connection) -> None:
         has_vector = conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")).first() is not None
         if not has_vector:
             try:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                # Optional extension failure must not abort the surrounding
+                # migration transaction; JSON/text embeddings remain valid.
+                with conn.begin_nested():
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 has_vector = True
             except Exception:  # pragma: no cover - host without pgvector
                 has_vector = False

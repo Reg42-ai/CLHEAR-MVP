@@ -505,7 +505,7 @@ def handle_envelope(engine: Engine, gateway: Gateway, body: str) -> dict | None:
     envelope = Envelope.model_validate_json(body)
     if get_settings().clhear_l1_only and envelope.kind in {
         "clhear.l1.changed", "clhear.l2.changed", "clhear.l4.changed", "clhear.l5.changed",
-        "PublishReleaseRequested", "GraphRebuildRequested"
+        "PublishReleaseRequested", "GraphRebuildRequested", "DrDrillRequested"
     }:
         raise L1AcceptanceHold("L1 acceptance hold: retain this event for replay after verification")
     fleet = os.environ.get("CLHEAR_FLEET", "all").lower()
@@ -683,15 +683,40 @@ def main() -> None:
             time.sleep(10)
 
 
-if __name__ == "__main__":
+def cli(argv=None) -> int:
     import argparse
-    parser = argparse.ArgumentParser(description="CLHEAR worker: SQS consumer or one durable manual envelope")
+    import sys
+
+    class WorkerArgumentParser(argparse.ArgumentParser):
+        def error(self, message):
+            # Exit 2 is reserved for a completed review-ready verification.
+            # Invalid ECS command arguments must never look like that result.
+            self.print_usage(sys.stderr)
+            self.exit(1, f"{self.prog}: error: {message}\n")
+
+    parser = WorkerArgumentParser(description="CLHEAR worker: SQS consumer or one durable manual envelope")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--envelope-file")
-    args = parser.parse_args()
+    parser.add_argument("--verify-deployment", choices=("bootstrap", "verify", "publish"))
+    parser.add_argument("--verification-id")
+    args = parser.parse_args(argv)
+    if args.verify_deployment:
+        if args.once or args.envelope_file or not args.verification_id:
+            parser.error("--verify-deployment requires --verification-id and cannot be combined with --once")
+        from app.clhear.deployment_verification import execute
+        result = execute(args.verify_deployment, args.verification_id)
+        print(json.dumps(result, default=str))
+        return result["exit_code"]
+    if args.verification_id:
+        parser.error("--verification-id requires --verify-deployment")
     if args.once != bool(args.envelope_file):
         parser.error("--once and --envelope-file must be supplied together")
     if args.once:
         print(json.dumps(dispatch_once(args.envelope_file), default=str))
     else:
         main()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())
