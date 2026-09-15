@@ -4,11 +4,13 @@ recorded, surfaced on the status page, and alarmed when missing."""
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+import yaml
 
 from app.clhear.derived_models import blocks as blocks_t
 from app.clhear.l1 import pipeline
@@ -193,3 +195,37 @@ def test_schedule_workflow_and_infra_exist_and_agree():
     assert 'resource "aws_s3_bucket_replication_configuration" "datalake"' in s3 and "datalake_replica" in s3
     up = (ROOT / "status/.upptimerc.yml").read_text()
     assert "/status.json" in up and "*/5 * * * *" in up
+
+
+def test_dr_workflow_uses_available_expression_contexts_and_env_input():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/dr_drill.yml").read_text())
+    job = workflow["jobs"]["restore-and-verify"]
+    assert job["env"]["RELEASE_ROLE_ARN"] == "${{ secrets.AWS_RELEASE_ROLE_ARN }}"
+    steps = job["steps"]
+    for step in steps:
+        # GitHub rejects the secrets context in step conditions before jobs start.
+        assert "secrets." not in str(step.get("if", ""))
+        assert "github.event.inputs" not in step.get("run", "")
+    aws = next(step for step in steps if step.get("name") == "Configure AWS (OIDC)")
+    metric = next(step for step in steps if step.get("name") == "Publish DrDrillPassed metric")
+    assert aws["if"] == "${{ env.RELEASE_ROLE_ARN != '' }}"
+    assert aws["with"]["role-to-assume"] == "${{ env.RELEASE_ROLE_ARN }}"
+    assert metric["if"] == "${{ always() && env.RELEASE_ROLE_ARN != '' }}"
+    fetch = next(step for step in steps if step.get("id") == "snap")
+    assert fetch["env"]["INPUT_RELEASE_ID"] == "${{ github.event.inputs.release_id }}"
+
+
+@pytest.mark.parametrize("release_id", [
+    '$(touch injected)', "2026.09.15\nrid=other", "../escape", "2026.09.15/other",
+])
+def test_dr_workflow_rejects_unsafe_release_inputs_before_external_commands(tmp_path, release_id):
+    workflow = yaml.safe_load((ROOT / ".github/workflows/dr_drill.yml").read_text())
+    fetch = next(step for step in workflow["jobs"]["restore-and-verify"]["steps"] if step.get("id") == "snap")
+    result = subprocess.run(
+        ["/bin/bash", "-e", "-c", fetch["run"]], cwd=tmp_path, text=True, capture_output=True,
+        # No external commands are available: this test cannot call AWS or import data.
+        env={"PATH": "", "INPUT_RELEASE_ID": release_id, "RELEASES_PREFIX": "s3://unused/releases",
+             "GITHUB_OUTPUT": str(tmp_path / "outputs")},
+    )
+    assert result.returncode == 1 and result.stderr.strip() == "Invalid release id."
+    assert not list(tmp_path.iterdir())

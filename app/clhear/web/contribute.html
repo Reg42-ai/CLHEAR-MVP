@@ -44,6 +44,7 @@
   .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
   .note { color: var(--muted); font-size: 13px; }
   .banner { border: 1px solid var(--warn); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; background: rgba(251,191,36,0.08); }
+  .banner a { text-decoration: underline; text-underline-offset: 2px; }
   .check { display: flex; gap: 8px; align-items: baseline; font-size: 13px; padding: 4px 0; }
   .check code { font-family: var(--mono); font-size: 12px; }
   .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0 12px; }
@@ -94,7 +95,7 @@ function CLABanner({ cla, onSigned, me }) {
   const [open, setOpen] = useState(false);
   const [ack, setAck] = useState(false);
   const [err, setErr] = useState("");
-  if (!me) return html`<div class="banner" role="status">Sign in to contribute — <a href="/auth/google">Google</a> or <a href="/stack#signin">email link</a>. Reading never needs an account.</div>`;
+  if (!me) return html`<div class="banner" role="status">Sign in to contribute — <a href="/auth/google">Google</a> or <a href="/signin">email link</a>. Reading never needs an account.</div>`;
   if (cla && cla.signed) return html`<p class="note">CLA v${cla.version} signed ${fmt(cla.signed.signed_at)} as <b>${me.email}</b>.</p>`;
   const sign = async () => { setErr(""); try { await api("/cla/sign", { method: "POST", body: JSON.stringify({ acknowledge_patent_grant: true }) }); onSigned(); } catch (e) { setErr(e.message); } };
   return html`<div class="banner">
