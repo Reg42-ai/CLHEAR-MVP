@@ -1,8 +1,7 @@
-"""/api/clhear/sources… routes + /sources Explorer (HLD §7.2).
+"""Source Explorer and read-only worker evidence APIs (HLD §7.2).
 
-Clause text is served exclusively through l1.public (the clauses_public
-discipline): restricted sources expose refs and hashes, never text. BYOL
-endpoints arrive in P3.
+Protected text requires independent authentication and publisher permissions.
+Inventory and workflow endpoints return recorded operational metadata only.
 """
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +34,27 @@ from app.clhear.platform import audit
 router = APIRouter()
 
 WEB_DIR = Path(__file__).parent.parent / "web"
+
+
+@router.get("/api/clhear/viewer-snapshot")
+def viewer_snapshot_state() -> dict:
+    from app.clhear.l1.viewer_snapshot import read_viewer_state
+
+    return read_viewer_state(get_engine())
+
+
+@router.get("/api/clhear/l1/inventory")
+def l1_inventory(scope: str = Query("registered", pattern="^(registered|finra)$")) -> dict:
+    from app.clhear.l1.inventory import inventory_summary
+
+    return inventory_summary(get_engine(), scope=scope)
+
+
+@router.get("/api/clhear/l1/workflow")
+def l1_workflow(job_id: str | None = None, source_key: str | None = None) -> dict:
+    from app.clhear.l1.workflow import workflow_summary
+
+    return workflow_summary(get_engine(), job_id=job_id, source_key=source_key)
 
 
 def _text_access(conn, source, request: Request) -> dict:
@@ -208,6 +228,21 @@ def _resolve_version(conn, source, version_label: str | None):
     return conn.execute(version_q.order_by(source_versions.c.id.desc()).limit(1)).first()
 
 
+def _declared_source_only(engine, key: str) -> dict:
+    """A discovered expected document can be inspected before any import."""
+    from app.clhear.l1.inventory import source_inventory_evidence
+
+    evidence = source_inventory_evidence(engine, key)
+    if not evidence.get("name"):
+        raise HTTPException(status_code=404, detail="source not found")
+    return {"key": key, "name": evidence["name"], "short_name": "", "kind": "not recorded",
+            "issuer": "not recorded", "jurisdiction": "not recorded", "license": "not recorded",
+            "license_ref": "", "adapter": "not recorded", "canonical_url": evidence.get("canonical_url"),
+            "about": "Declared by the worker inventory; no source version has been imported.",
+            "topics": [], "versions": [], "changes": [], "s3_uri": "", "content_hash": "",
+            "inventory": evidence, "provenance": {"text_states": [], "related_instruments": []}}
+
+
 @router.get("/api/clhear/sources/{key:path}/document")
 def source_document(key: str, request: Request, version_label: str | None = None) -> dict:
     """Ordered node list for reconstructing the original document view."""
@@ -215,7 +250,10 @@ def source_document(key: str, request: Request, version_label: str | None = None
     with engine.connect() as conn:
         source = conn.execute(sa.select(sources).where(sources.c.key == key)).first()
         if source is None:
-            raise HTTPException(status_code=404, detail="source not found")
+            _declared_source_only(engine, key)
+            if version_label:
+                raise HTTPException(status_code=404, detail="source version not found")
+            return {"source": key, "version": None, "nodes": [], "amended_refs": [], "total": 0}
         version = _resolve_version(conn, source, version_label)
         if version is None:
             if version_label:
@@ -274,14 +312,18 @@ def source_document(key: str, request: Request, version_label: str | None = None
         _audit_text_read(conn, request, source, version, access, request.url.path, [r.id for r in rows])
 
     from app.clhear import legal
+    from app.clhear.l1.inventory import source_inventory_evidence
 
+    evidence = source_inventory_evidence(engine, key)
+    publisher_verified = (evidence.get("verified") is True and evidence.get("source_version_id") == version.id
+                          and evidence.get("content_hash") == version.content_hash)
     return {
         "source": key,
         "version": version.version_label,
         "source_version_id": version.id,
         "canonical_url": source.canonical_url,
         "dataset_kind": "stored_candidate",
-        "real_publisher_verified": False,
+        "real_publisher_verified": publisher_verified,
         "notice": "Stored candidate. Coverage and publisher fidelity require version-specific evidence.",
         "access": access,
         "permission_reason": access["reason"],
@@ -520,6 +562,12 @@ def source_evals(key: str, version_label: str | None = None) -> dict:
                 }
                 break
     card = l1_evals.latest_source_scorecard(engine, key, source_version_id=version.id if version else None)
+    from app.clhear.l1.inventory import source_inventory_evidence
+    from app.clhear.l1.workflow import workflow_summary
+
+    inventory = source_inventory_evidence(engine, key)
+    inventory_matches = bool(version and inventory.get("source_version_id") == version.id
+                             and inventory.get("content_hash") == version.content_hash)
     return {
         "source": key,
         "locked": source.license != "open",
@@ -530,9 +578,21 @@ def source_evals(key: str, version_label: str | None = None) -> dict:
         "retrieved_at": str(version.retrieved_at) if version else None,
         "last_run": last_run,
         "scorecard": card,
+        "inventory": inventory,
+        "inventory_matches_selected_version": inventory_matches,
+        "publisher_checked_at": inventory.get("publisher_checked_at") if inventory_matches else None,
+        "workflow": workflow_summary(engine, source_key=key),
         "l2_ready": False,
         "readiness_reason": "L1 requires a complete scope manifest and publisher comparison before downstream acceptance.",
     }
+
+
+@router.get("/api/clhear/sources/{key:path}/inventory")
+def source_inventory(key: str) -> dict:
+    """Worker audit for a declared source, including not-yet-imported sources."""
+    from app.clhear.l1.inventory import source_inventory_evidence
+
+    return source_inventory_evidence(get_engine(), key)
 
 
 @router.get("/api/clhear/sources/{key:path}")
@@ -541,7 +601,7 @@ def source_detail(key: str) -> dict:
     with engine.connect() as conn:
         source = conn.execute(sa.select(sources).where(sources.c.key == key)).first()
         if source is None:
-            raise HTTPException(status_code=404, detail="source not found")
+            return _declared_source_only(engine, key)
         versions = conn.execute(
             sa.select(source_versions)
             .where(source_versions.c.source_id == source.id)
@@ -570,6 +630,7 @@ def source_detail(key: str) -> dict:
             .order_by(sources.c.key)
         ).all()
     from app.clhear import legal
+    from app.clhear.l1.inventory import source_inventory_evidence
 
     return {
         "key": source.key,
@@ -589,6 +650,7 @@ def source_detail(key: str) -> dict:
         "changes": [_change_dict(c) for c in changes],
         "s3_uri": versions[0].s3_uri if versions else "",
         "content_hash": versions[0].content_hash if versions else "",
+        "inventory": source_inventory_evidence(engine, key),
         "provenance": {
             "text_states": [_version_dict(v) for v in reversed(versions)],  # oldest first
             "related_instruments": [
@@ -1007,6 +1069,8 @@ def _job_graph(conn, job_id: str) -> dict:
         "trigger": "build_corpus" if any(t["fleet"] == "l0.relay" for t in tasks) else "cli",
         "started_at": first["ts"],
         "total_duration_ms": sum(t["duration_ms"] or 0 for t in tasks),
+        "duration_basis": "sum_of_recorded_task_durations_not_wall_clock",
+        "dependency_basis": "legacy_run_order_not_recorded_dependencies",
         "status_counts": counts,
         "running": any(t["status"] == "running" for t in tasks),
         "lanes": [{"source": source, "tasks": lane} for source, lane in lanes.items()],

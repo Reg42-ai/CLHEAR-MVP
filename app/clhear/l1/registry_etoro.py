@@ -255,8 +255,9 @@ _src("au-afsl", "au/asic-rg271", "ASIC RG 271", "ASIC Regulatory Guide 271 — I
 _src("il-isa", "il/securities-law-5728", "IL Securities Law", "Israel Securities Law 5728-1968 (ISA English translation)", "law", "IL", "Israel Securities Authority", "https://www.isa.gov.il/sites/ISAEng/1489/1511/Pages/default.aspx", "isa", "root", "binding", ["securities", "israel"], ["IL-001"], 3, fetch={"url": "https://www.isa.gov.il/sites/ISAEng/1489/1511/Pages/default.aspx", "kind": "pdf"}, rights_basis="derived_only")
 _src("sg-mas", "sg/mas-psn02", "MAS PSN02", "MAS Notice PSN02 — Prevention of Money Laundering and Countering the Financing of Terrorism (digital payment token services)", "guidance", "SG", "MAS", "https://www.mas.gov.sg/regulation/notices/psn02-aml-cft-notice---digital-payment-token-service", "mas", "supplements", "binding", ["aml", "crypto", "sg"], ["SG-003"], 3, fetch={"url": "https://www.mas.gov.sg/regulation/notices/psn02-aml-cft-notice---digital-payment-token-service", "kind": "pdf"})
 _src("standards", "wolfsberg/standards", "Wolfsberg", "Wolfsberg Group standards (CBDDQ, payment transparency, monitoring)", "standard", "INTL", "Wolfsberg Group", "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "wolfsberg", "supplements", "guidance", ["aml", "standards"], ["GRP-027"], 3, fetch={"url": "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "kind": "pdf"})
-_src("standards", "iso/27001-2022", "ISO 27001", "ISO/IEC 27001:2022 + Amd 1:2024 [RESTRICTED — P3 importer + BYOL]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/27001", "restricted_file", "supplements", "guidance", ["infosec", "standards"], ["STD-001"], 4, license="restricted")
-_src("standards", "aicpa/soc2-tsc", "SOC 2 TSC", "AICPA Trust Services Criteria 2017 (2022 points of focus) [RESTRICTED]", "standard", "US", "AICPA", "https://www.aicpa-cima.com/", "restricted_file", "supplements", "guidance", ["infosec", "assurance", "standards"], ["STD-002"], 4, license="restricted")
+_src("standards", "iso/27001-2022", "ISO 27001:2022", "ISO/IEC 27001:2022 — base standard [RESTRICTED]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/27001", "restricted_file", "supplements", "guidance", ["infosec", "standards"], ["STD-001"], 4, license="restricted")
+_src("standards", "iso/27001-2022-amd1-2024", "ISO 27001 Amd 1:2024", "ISO/IEC 27001:2022/Amd 1:2024 — Climate action changes [RESTRICTED]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/88435.html", "restricted_file", "amends", "guidance", ["infosec", "standards"], ["STD-001-A1"], 4, license="restricted")
+_src("standards", "aicpa/soc2-tsc", "SOC 2 TSC", "AICPA Trust Services Criteria 2017 (2022 points of focus) [RESTRICTED]", "standard", "US", "AICPA", "https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022", "restricted_file", "supplements", "guidance", ["infosec", "assurance", "standards"], ["STD-002"], 4, license="restricted")
 _src("standards", "pci/dss-v4", "PCI DSS v4", "PCI DSS v4.x [RESTRICTED — license check]", "standard", "INTL", "PCI SSC", "https://www.pcisecuritystandards.org/", "restricted_file", "supplements", "guidance", ["payments", "infosec"], ["STD-004"], 4, license="restricted")
 _src("standards", "ifrs/standards", "IFRS", "IFRS as issued by the IASB [RESTRICTED — IFRS Foundation license]", "standard", "INTL", "IFRS Foundation", "https://www.ifrs.org/", "restricted_file", "supplements", "guidance", ["financial-reporting"], ["GRP-009"], 4, license="restricted")
 
@@ -318,7 +319,8 @@ def source_meta(entry: dict) -> SourceMeta:
         short_name=entry["short_name"],
         about=_about(entry),
         topics=entry["topics"],
-        version_policy="as_published" if entry["adapter"] == "eur_lex" else "consolidated",
+        version_policy=("as_published" if entry["adapter"] == "eur_lex" else
+                        "edition" if entry["adapter"] == "restricted_file" else "consolidated"),
     )
 
 
@@ -390,6 +392,14 @@ def seed(engine: Engine) -> dict:
                         .where(sources.c.id == existing_id)
                         .values(short_name=s["short_name"], about=_about(s), topics=s["topics"])
                     )
+                if s["key"] in {"iso/27001-2022", "iso/27001-2022-amd1-2024", "aicpa/soc2-tsc"}:
+                    # Correct the declared publisher identity through the
+                    # ordinary worker registry seed. Existing text versions and
+                    # artifact hashes remain untouched and require their own
+                    # edition review; renaming metadata never certifies them.
+                    conn.execute(sources.update().where(sources.c.id == existing_id).values(
+                        name=s["name"], short_name=s["short_name"], canonical_url=s["canonical_url"],
+                        instrument=s["instrument"], about=_about(s)))
                 member = conn.execute(
                     sa.select(family_members.c.source_id).where(
                         family_members.c.family_id == family_ids[s["family"]],

@@ -1,29 +1,41 @@
 name: release
 
-# HLD v2 §3 release pipeline: nightly derivation -> evals -> snapshot -> signed
-# release (Sigstore keyless) -> publish. Versions are semantic dates (2026.09.28).
-# Publication to the public `clhear` repo is gated on CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED.
-
+# L0 prepares a candidate from the authoritative worker DB, signs final bytes,
+# then verifies and promotes through the same system worker. No fixture corpus,
+# inline layer derivation or automatic public export is part of this workflow.
 on:
   schedule:
-    - cron: "15 1 * * *" # after the 00:00 UTC adapter fleets and 23:30 EOD publish
+    - cron: "15 1 * * *"
   workflow_dispatch:
     inputs:
       release_id:
-        description: "Override release id (YYYY.MM.DD)"
+        description: "New immutable release id (YYYY.MM.DD or clhear-v...); default includes run and attempt"
         required: false
 
 permissions:
   contents: read
-  id-token: write # keyless cosign
+  id-token: write
 
-env:
-  AWS_REGION: us-east-1
-  CLHEAR_HTTP_MODE: replay
+concurrency:
+  group: clhear-release
+  cancel-in-progress: false
 
 jobs:
-  derive-eval-release:
-    runs-on: ubuntu-latest
+  verify-and-promote:
+    if: github.repository == 'Reg42-ai/CLHEAR-MVP' && github.ref == 'refs/heads/main'
+    # Set this variable to a runner label with network access to Aurora.
+    runs-on: ${{ vars.CLHEAR_RELEASE_RUNNER || 'ubuntu-latest' }}
+    env:
+      AWS_REGION: us-east-1
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      CLHEAR_RELEASES_S3_PREFIX: ${{ secrets.CLHEAR_RELEASES_S3_PREFIX }}
+      RELEASE_ROLE_ARN: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+      CLHEAR_ARTIFACTS_DIR: artifacts
+      CLHEAR_FLEET: l0
+      CLHEAR_HTTP_MODE: live
+      # L0 promotion still requires strict current inventory acceptance.
+      CLHEAR_L1_ONLY: "false"
+      CLHEAR_SNAPSHOT_S3_URI: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,79 +44,87 @@ jobs:
           cache: pip
       - run: pip install -r requirements.lock
 
+      - name: Require authoritative database and private release destination
+        shell: bash
+        run: |
+          case "$DATABASE_URL" in
+            postgresql://*|postgresql+psycopg://*|postgresql+psycopg2://*) ;;
+            *) echo "DATABASE_URL must name the authoritative PostgreSQL database; no local fallback is allowed." >&2; exit 1 ;;
+          esac
+          case "$CLHEAR_RELEASES_S3_PREFIX" in
+            s3://*/*) ;;
+            *) echo "A private CLHEAR_RELEASES_S3_PREFIX is required." >&2; exit 1 ;;
+          esac
+          test -n "$RELEASE_ROLE_ARN" || { echo "AWS_RELEASE_ROLE_ARN is required." >&2; exit 1; }
+          mkdir -p artifacts
+
       - name: Configure AWS (OIDC)
-        if: ${{ secrets.AWS_RELEASE_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          role-to-assume: ${{ env.RELEASE_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Resolve release id
         id: rid
-        run: |
-          RID="${{ github.event.inputs.release_id }}"
-          if [ -z "$RID" ]; then RID=$(date -u +%Y.%m.%d); fi
-          echo "rid=$RID" >> "$GITHUB_OUTPUT"
-
-      - name: Nightly derivation (all layer fleets, event-driven)
-        run: python -m app.clhear.fleets nightly --release "${{ steps.rid.outputs.rid }}"
-
-      - name: Evals — every layer gate
-        run: python -m app.clhear.platform.evals all "${{ steps.rid.outputs.rid }}"
-
-      - name: Publish evals summary table (public dashboard source)
-        run: python -m app.clhear.platform.gates summary "${{ steps.rid.outputs.rid }}" > artifacts/evals-summary.json
-
-      - name: Freeze model manifest from Infer
         env:
-          INFER_BASE_URL: ${{ secrets.INFER_BASE_URL }}
-          INFER_TOKEN: ${{ secrets.INFER_TOKEN }}
-        run: python -m app.clhear.platform.manifest freeze "${{ steps.rid.outputs.rid }}" > artifacts/model-manifest.json
+          INPUT_RELEASE_ID: ${{ github.event.inputs.release_id }}
+        shell: bash
+        run: |
+          RELEASE_ID="${INPUT_RELEASE_ID:-clhear-v$(date -u +%Y.%m.%d)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+          [[ "$RELEASE_ID" =~ ^([0-9]{4}\.[0-9]{2}\.[0-9]{2}|clhear-v[A-Za-z0-9_.-]+)$ ]] || { echo "Invalid release id." >&2; exit 1; }
+          echo "rid=$RELEASE_ID" >> "$GITHUB_OUTPUT"
 
-      - name: Snapshot + manifest (layers gated by evals)
-        run: python -m app.clhear.releases publish --release "${{ steps.rid.outputs.rid }}" --model-manifest artifacts/model-manifest.json
-
-      - name: SBOM (syft)
+      - name: Create SBOM before manifest finalization
         uses: anchore/sbom-action@v0
         with:
           path: .
           format: spdx-json
-          output-file: artifacts/releases/${{ steps.rid.outputs.rid }}/sbom.spdx.json
+          output-file: artifacts/sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
 
-      - name: Agnostic-store scan (I5) — zero organization identifiers
-        run: python -m app.clhear.platform.agnostic_scan artifacts/releases/${{ steps.rid.outputs.rid }}
+      - name: L0 worker — prepare immutable candidate
+        env:
+          RELEASE_ID: ${{ steps.rid.outputs.rid }}
+        shell: bash
+        run: |
+          jq -n --arg rid "$RELEASE_ID" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg event "release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-prepare" \
+            '{event_id:$event,layer:"L0",kind:"PublishReleaseRequested",subject_ref:$rid,producer:"github-release",ts:$ts,payload:{release_id:$rid,action:"prepare",sbom_path:"artifacts/sbom.spdx.json"}}' > artifacts/prepare-envelope.json
+          python -m app.clhear.workers --once --envelope-file artifacts/prepare-envelope.json
+
+      - name: Agnostic-store scan
+        env:
+          RELEASE_ID: ${{ steps.rid.outputs.rid }}
+        run: python -m app.clhear.platform.agnostic_scan "artifacts/releases/$RELEASE_ID"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign manifest (Sigstore keyless)
-        run: |
-          cd artifacts/releases/${{ steps.rid.outputs.rid }}
-          cosign sign-blob --yes manifest.json --bundle manifest.sigstore.json
-          python - <<'PY'
-          import json, pathlib
-          p = pathlib.Path("manifest.json"); m = json.loads(p.read_text())
-          m["signature"].update({"signed": True, "bundle_uri": "manifest.sigstore.json",
-                                 "identity": "https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}"})
-          m["sbom_uri"] = "sbom.spdx.json"
-          p.write_text(json.dumps(m, indent=2))
-          PY
-
-      - name: Verify release (signature, hash, frozen model ids, gates)
-        run: python scripts/verify_release.py artifacts/releases/${{ steps.rid.outputs.rid }} --require-signature
-
-      - name: Upload release to S3 (immutable, Object Lock)
-        if: ${{ secrets.AWS_RELEASE_ROLE_ARN != '' }}
-        run: aws s3 cp --recursive artifacts/releases/${{ steps.rid.outputs.rid }} s3://clhear-deploy-730649732189/releases/${{ steps.rid.outputs.rid }}/
-
-      - name: Export to public `clhear` repo (gated on disclosure confirmation)
+      - name: Sign exact finalized manifest bytes
         env:
-          CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED: ${{ vars.CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED }}
-          CLHEAR_PUBLIC_REPO_URL: ${{ secrets.CLHEAR_PUBLIC_REPO_URL }}
-          CLHEAR_EXPORT_GIT_TOKEN: ${{ secrets.CLHEAR_EXPORT_GIT_TOKEN }}
-        run: python -m app.clhear.platform.exporter "${{ steps.rid.outputs.rid }}"
+          RELEASE_ID: ${{ steps.rid.outputs.rid }}
+        shell: bash
+        run: |
+          RELEASE_ROOT="artifacts/releases/$RELEASE_ID"
+          cosign sign-blob --yes "$RELEASE_ROOT/manifest.json" --bundle "$RELEASE_ROOT/manifest.sigstore.json"
 
-      - uses: actions/upload-artifact@v4
+      - name: L0 worker — verify signature, artifacts and current inventory; promote
+        env:
+          RELEASE_ID: ${{ steps.rid.outputs.rid }}
+        shell: bash
+        run: |
+          jq -n --arg rid "$RELEASE_ID" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg event "release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-promote" \
+            '{event_id:$event,layer:"L0",kind:"PublishReleaseRequested",subject_ref:$rid,producer:"github-release",ts:$ts,payload:{release_id:$rid,action:"promote"}}' > artifacts/promote-envelope.json
+          python -m app.clhear.workers --once --envelope-file artifacts/promote-envelope.json
+
+      - name: Retain verification metadata
+        uses: actions/upload-artifact@v4
         with:
-          name: release-${{ steps.rid.outputs.rid }}
-          path: artifacts/
+          name: release-${{ steps.rid.outputs.rid }}-verification
+          retention-days: 7
+          path: |
+            artifacts/releases/${{ steps.rid.outputs.rid }}/manifest.json
+            artifacts/releases/${{ steps.rid.outputs.rid }}/manifest.sigstore.json
+            artifacts/releases/${{ steps.rid.outputs.rid }}/promotion.json

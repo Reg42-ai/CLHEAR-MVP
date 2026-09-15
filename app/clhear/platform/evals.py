@@ -80,7 +80,18 @@ def run_suite(engine: Engine, suite: str, source_key: str | None = None, release
     """Run one suite -> eval_runs row + JSON artifact. Returns the record."""
     fn = SUITES[suite]
     before = _source_identity(engine, source_key) if source_key and suite in SOURCE_SUITES else None
-    scores, passed = fn(engine, source_key)
+    permission_blocked = []
+    if source_key and suite in SOURCE_SUITES:
+        from app.clhear.l1 import permissions
+        from app.clhear.l1.models import sources
+        with engine.connect() as conn:
+            source = conn.execute(sa.select(sources).where(sources.c.key == source_key)).mappings().first()
+            if source and permissions.required_for(source):
+                permission_blocked = [op for op in ("store", "parse") if not permissions.decision(conn, source_key, op)["allowed"]]
+    if permission_blocked:
+        scores, passed = {"not_evaluated": True, "reason": "permission_blocked", "operations": permission_blocked}, False
+    else:
+        scores, passed = fn(engine, source_key)
     if source_key and suite in SOURCE_SUITES:
         after = _source_identity(engine, source_key)
         scores = {**scores, "source_version_id": before.get("id") if before else None,
@@ -190,8 +201,6 @@ def e1_fidelity(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
     source, version, nodes, clause_rows = _latest_source(engine, source_key)
     if source is None:
         return {"error": "unknown source", "passed": False}, False
-    if source.license == "restricted":
-        return {"note": "BYOL-pending / restricted — E1 n/a until unlocked", "n/a": True}, True
     if version is None:
         return {"error": "no version stored", "sampled": 0}, False
     haystack = _ws(" ".join((n.heading or "") + " " + (n.raw_text or "") for n in nodes))
@@ -216,6 +225,15 @@ def e2_completeness(engine: Engine, source_key: str | None) -> tuple[dict, bool]
     early = _need_source(source_key)
     if early:
         return early
+    from app.clhear.l1.inventory import source_inventory_evidence
+    inventory = source_inventory_evidence(engine, source_key)
+    if inventory.get("audit_id"):
+        return {"audit_id": inventory["audit_id"], "inventory_hash": inventory["inventory_hash"],
+                "nodes": inventory.get("node_count", 0), "clauses": inventory.get("clause_count", 0),
+                "scope_verified": inventory.get("scope_verified", False),
+                "stored_over_expected": 1 if inventory.get("verified") else 0,
+                "findings": inventory.get("findings", []),
+                "method": "Worker reconciliation of exact artifacts, stored version, tree and clauses"}, bool(inventory.get("verified"))
     from app.clhear.models import runs
 
     source, version, nodes, clause_rows = _latest_source(engine, source_key)
@@ -598,57 +616,25 @@ def _golden_adapter(case: dict):
 
 @register_suite("l1_completeness")
 def l1_completeness(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
-    """Every registry ID in S has latest_version OR a red failed run dated today.
+    """A failure is an unresolved document, never evidence of completeness."""
+    from app.clhear.l1.inventory import inventory_summary
 
-    Host-state overlay keys must be present. Restricted BYOL-pending rows count
-    if they have a placeholder version.
-    """
-    from datetime import date, timezone
+    summary = inventory_summary(engine)
+    missing = [s["source_key"] for s in summary["sources"] if not s["verified"]]
+    passed = bool(summary.get("full_scope_verified") and summary.get("current_binding_valid")
+                  and summary["known_expected"] and not summary["unresolved"])
+    return {"registry_rows": summary["known_expected"], "verified": summary["verified"],
+            "missing": missing[:40], "missing_count": summary["unresolved"],
+            "denominator_is_lower_bound": summary["known_expected_is_lower_bound"],
+            "audit_id": summary.get("audit_id"), "inventory_hash": summary.get("inventory_hash"),
+            "method": "worker inventory reconciliation; blocked and missing sources remain expected"}, passed
 
-    from app.clhear.l1.models import source_versions, sources
-    from app.clhear.l1.registry_etoro import S
-    from app.clhear.models import runs
 
-    today = datetime.now(timezone.utc).date().isoformat()
-    missing = []
-    overlay_missing = []
-    with engine.connect() as conn:
-        by_key = {row.key: row for row in conn.execute(sa.select(sources))}
-        versioned = {
-            row.key
-            for row in conn.execute(
-                sa.select(sources.c.key)
-                .join(source_versions, source_versions.c.source_id == sources.c.id)
-                .where(source_versions.c.status == "in_force")
-            )
-        }
-        failed_today = set()
-        for row in conn.execute(sa.select(runs).where(runs.c.fleet.like("l1.%")).order_by(runs.c.id.desc()).limit(800)):
-            inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
-            outputs = row.outputs if isinstance(row.outputs, dict) else json.loads(row.outputs or "{}")
-            key = inputs.get("source")
-            ts = str(row.created_at)[:10]
-            if key and ts == today and outputs.get("status") in {"failed", "stale", "not-fully-successful"}:
-                failed_today.add(key)
-    for entry in S:
-        key = entry["key"]
-        if key not in by_key:
-            missing.append(key)
-            continue
-        if key not in versioned and key not in failed_today:
-            missing.append(key)
-        if entry["family"] == "host-state-overlays" and key not in by_key:
-            overlay_missing.append(key)
-    overlays = [e["key"] for e in S if e["family"] == "host-state-overlays"]
-    overlay_ok = all(k in by_key for k in overlays)
-    passed = not missing and overlay_ok
-    return {
-        "registry_rows": len(S),
-        "missing": missing[:40],
-        "missing_count": len(missing),
-        "overlays_present": overlay_ok,
-        "overlay_missing": overlay_missing,
-    }, passed
+@register_suite("l1_inventory_acceptance")
+def l1_inventory_acceptance(engine: Engine, source_key: str | None) -> tuple[dict, bool]:
+    from app.clhear.l1.inventory import acceptance_status
+    evidence = acceptance_status(engine)
+    return {k: v for k, v in evidence.items() if k != "evidence"}, evidence["passed"]
 
 
 @register_suite("l1_schedule_kept")
@@ -1729,6 +1715,7 @@ def latest_source_scorecard(engine: Engine, source_key: str, source_version_id: 
 
 
 GLOBAL_SUITES = ("l0_smoke", "l1_fidelity")
+L1_DIAGNOSTIC_SUITES = ("l1_family_completeness", "l1_currency")
 
 
 def gate_suites() -> tuple[str, ...]:
@@ -1737,7 +1724,7 @@ def gate_suites() -> tuple[str, ...]:
     'missing' in gates.gate_status — the layer is simply not publishable."""
     from app.clhear.platform.gates import LAYER_GATES
 
-    ordered: list[str] = list(GLOBAL_SUITES)
+    ordered: list[str] = [*GLOBAL_SUITES, *L1_DIAGNOSTIC_SUITES]
     for suites in LAYER_GATES.values():
         for suite in suites:
             if suite in SUITES and suite not in ordered:
@@ -1775,22 +1762,14 @@ def release_gate(engine: Engine, release: str) -> bool:
 
 
 def l2_gate(engine: Engine) -> dict:
-    """L2 may start only when every open, non-BYOL-pending source is green."""
-    from app.clhear.l1.models import sources
-    from app.clhear.l1.registry_etoro import S
-
-    blocked = []
-    with engine.connect() as conn:
-        by_key = {row.key: row for row in conn.execute(sa.select(sources))}
-    for entry in S:
-        if entry.get("license") == "restricted":
-            continue
-        card = latest_source_scorecard(engine, entry["key"])
-        if not card["green"]:
-            blocked.append(entry["key"])
-        if entry["key"] not in by_key:
-            blocked.append(entry["key"])
-    return {"passed": not blocked, "blocked": blocked[:50], "blocked_count": len(blocked)}
+    """Every declared L1 source, including restricted sources, gates L2."""
+    from app.clhear.l1.inventory import acceptance_status
+    acceptance = acceptance_status(engine)
+    summary = acceptance["evidence"]
+    blocked = [s["source_key"] for s in summary["sources"] if not s["verified"]]
+    return {"passed": acceptance["passed"], "blocked": blocked[:50],
+            "blocked_count": summary["unresolved"], "reasons": acceptance["reasons"],
+            "audit_id": acceptance["audit_id"], "inventory_hash": acceptance["inventory_hash"]}
 
 
 def main() -> int:

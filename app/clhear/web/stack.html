@@ -53,7 +53,7 @@
   .layeraccordion[open] > summary::after { content: "−"; }
   .layeraccordion[open] > summary { border-radius: 16px 16px 0 0; }
   .layeraccordion > summary:hover { transform: none; }
-  .layeraccordion .slab { padding-right: 38px; }
+  .layeraccordion .slab { padding-right: 38px; animation: none; }
   .layername { display: block; font-size: 16.5px; font-weight: 700; margin-bottom: 3px; }
   .layerbody { padding: 20px 22px; border: 1px solid var(--edge); border-top: 0; border-radius: 0 0 16px 16px; background: var(--panel); }
   .layerbody h3 { margin: 0 0 8px; font-size: 14px; }
@@ -330,10 +330,13 @@ function overviewState(layer) {
 function LayerAccordion({ layer }) {
   const [expanded, setExpanded] = useState(layer.layer === "L1");
   const overview = layer.overview || {};
+  const inventory = overview.inventory;
+  const viewer = overview.viewer_snapshot;
+  const job = overview.workflow && overview.workflow.jobs && overview.workflow.jobs[0];
   const state = overviewState(layer);
   const platform = layer.layer === "L0";
   const counts = overview.counts || layer.counts || {};
-  const output = Number.isFinite(overview.output_count)
+  const output = overview.available_in_projection === false ? "Not in this viewer snapshot" : Number.isFinite(overview.output_count)
     ? `${overview.output_count} ${overview.output_unit || "records"}`
     : countline(counts, HOME_COUNTS[layer.layer]) || "Counts not reported";
   const derivation = layer.derivation || {};
@@ -345,7 +348,8 @@ function LayerAccordion({ layer }) {
       <summary class="slab">
         <span class="code">${layer.layer}</span>
         <span><span class="layername" id=${`overview-${layer.layer}`}>${layer.name}</span><span class="purpose">${layer.purpose}</span></span>
-        <span class="right"><span class=${`overviewstate ${state}`}>${STATE_LABELS[state]}</span><span class="countline">${output}</span></span>
+        <span class="right"><span class=${`overviewstate ${state}`}>${STATE_LABELS[state]}</span><span class="countline">${output}</span>
+          ${layer.layer === "L1" && inventory && html`<span class="countline">${inventory.verified ?? "—"} / ${inventory.known_expected ?? "—"} declared sources verified · ${inventory.unresolved ?? "—"} unresolved</span>`}</span>
       </summary>
       <div class="layerbody">
         <div class="overviewcols">
@@ -354,20 +358,32 @@ function LayerAccordion({ layer }) {
             <p>${overview.notice || overview.detail || STATE_NOTICES[state]}</p>
             <p><b>Verification:</b> ${verification}${overview.scope ? ` · ${overview.scope}` : " · scope not reported"}</p>
             ${overview.dataset_kind && html`<p><b>Dataset:</b> ${overview.dataset_kind}</p>`}
+            ${viewer && html`<p><b>Viewer origin:</b> ${viewer.source_environment || "not recorded"}${viewer.viewer_snapshot ? ` · revision ${viewer.revision || "not recorded"} · refreshed ${viewer.generated_at || "not recorded"}` : " · direct database; no viewer revision recorded"}.</p>
+              ${viewer.viewer_snapshot && html`<p>This L1 projection is a candidate view. It is not an accepted release; ${(viewer.omitted_layers || []).join(", ")} output is not included.</p>`}`}
             ${overview.checked_at && html`<p><b>Checked:</b> <time>${overview.checked_at}</time></p>`}
             <p><b>Stored records:</b> ${output}. Counts alone do not establish completeness, accuracy or freshness.</p>
             ${overview.job_id && html`<p><b>Evidence job:</b> <span class="chip">${overview.job_id}</span></p>`}
+            ${layer.layer === "L1" && inventory && html`<div>
+              <p><b>Declared inventory:</b> ${inventory.verified ?? "not recorded"} verified of ${inventory.known_expected ?? "unknown"} expected documents · ${inventory.unresolved ?? "unknown"} unresolved.</p>
+              <p>${inventory.discovery_complete === true ? "Publisher discovery recorded as complete." : "Publisher discovery is incomplete or unverified; this count does not establish the complete publisher scope."}</p>
+              ${["unavailable", "migration_required", "not_run"].includes(inventory.status) && html`<p><b>Evidence unavailable:</b> ${inventory.reason || "No worker audit recorded."}</p>`}
+              ${inventory.audit_id != null && inventory.current_binding_valid === false && html`<p><b>Audit outdated:</b> current source versions no longer match the recorded audit.</p>`}
+              <p><b>Blockers:</b> permissions unverified ${inventory.counts && inventory.counts.permission_unverified != null ? inventory.counts.permission_unverified : "unknown"}; permissions blocked ${inventory.counts && inventory.counts.permission_blocked != null ? inventory.counts.permission_blocked : "unknown"}; awaiting artifact ${inventory.counts && inventory.counts.awaiting_artifact != null ? inventory.counts.awaiting_artifact : "unknown"}.</p>
+              <p class="mono" style=${{ overflowWrap: "anywhere" }}>Inventory SHA-256: ${inventory.inventory_hash || "not recorded"}</p>
+              ${(inventory.findings || []).length > 0 && html`<details><summary>Scope findings (${inventory.findings.length})</summary><ul>${inventory.findings.map((finding, i) => html`<li key=${i}>${finding.detail || finding.code}</li>`)}</ul></details>`}
+            </div>`}
           </div>
           <div>
             <h3>How this layer is produced</h3>
             <p>${derivation.method || "Method not reported."}</p>
             <div class="kv">${(derivation.inputs || []).map((code) => html`<a class="chip linky" key=${code} href=${`#/layer/${code.toLowerCase()}`}>Input ${code}</a>`)}</div>
             ${layer.layer === "L1" && html`<p>Read original text alongside encoded records, inspect the fleet run, and open Evals for complete, accurate and fresh checks.</p>`}
+            ${layer.layer === "L1" && html`<p><b>Latest recorded worker job:</b> ${job ? `${job.job_id} · ${job.status || "status not recorded"} · started ${job.started_at || "not recorded"}` : "No workflow evidence recorded."}</p>`}
             ${!platform && layer.layer !== "L1" && html`<p>Browse the available preview and its evidence. Preview availability does not imply publication.</p>`}
           </div>
         </div>
         <div class="overviewactions">
-          ${!platform && html`<a class="bigbtn" href=${preview}>${layer.layer === "L1" ? "Open L1 sources" : `Browse ${layer.layer} preview`}</a>`}
+          ${!platform && overview.available_in_projection !== false && html`<a class="bigbtn" href=${preview}>${layer.layer === "L1" ? "Open L1 sources" : `Browse ${layer.layer} preview`}</a>`}
           ${layer.layer === "L1" && html`
             <a class="navlink" href="/l1?view=fleet">Fleet</a>
             <a class="navlink" href="/l1?view=evals">Evals</a>

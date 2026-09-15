@@ -52,7 +52,10 @@ def test_l1_only_keeps_verbatim_private_and_does_not_rebuild_embeddings(engine, 
     assert result["status"] == "added", result
     assert calls == []
     assert "/restricted/finra/test/" in result["artifacts"][0]
-    assert (tmp_path / "restricted/finra/test/consolidated:2026-09-14/page.html").read_bytes() == b"official original"
+    artifact = result["artifact_manifest"][0]
+    assert artifact["key"] == f"restricted/finra/test/sha256-{result['content_hash']}/page.html"
+    assert (tmp_path / artifact["key"]).read_bytes() == b"official original"
+    assert artifact["sha256"] == pipeline.sha256(b"official original")
     with engine.connect() as conn:
         clause = conn.execute(sa.select(clauses)).one()
         assert clause.text == "First duty. Second duty."

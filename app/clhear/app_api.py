@@ -1,6 +1,6 @@
 """Versioned app-read API: /v1/releases…
 
-L1 resources are live. L2–L8 return 501 + layer_status=not_published.
+L1 resources are pinned to an accepted manifest. Downstream previews stay explicitly labeled.
 """
 from __future__ import annotations
 
@@ -40,7 +40,10 @@ def layers_catalog(app: dict = Depends(require_app)) -> dict:
     require_scope(app, "read:l1")
     from app.clhear.layers import LAYER_ORDER
 
-    return {"layers": [layer_public_meta(code) for code in LAYER_ORDER]}
+    manifest = release_store.get_latest(_engine()) or {}
+    promoted = bool(release_store.get_promotion(manifest.get("id", "")))
+    return {"layers": [{**layer_public_meta(code), "published": promoted and code in manifest.get("layers", [])}
+                       for code in LAYER_ORDER]}
 
 
 @router.get("/releases/latest")
@@ -85,12 +88,10 @@ def changelog(
     app: dict = Depends(require_app),
 ) -> dict:
     require_scope(app, "read:l1")
-    if not release_store.get_release(release_id, engine=_engine()):
-        raise HTTPException(404, f"Release {release_id} not found")
-    engine = _engine()
-    q = sa.select(change_events).order_by(change_events.c.id.desc()).limit(limit)
-    with engine.connect() as conn:
-        rows = conn.execute(q).mappings().all()
+    manifest = _require_published_l1(release_id, "L1", app)
+    with _engine().connect() as conn:
+        ids = _release_bindings(conn, manifest)
+        rows = conn.execute(_release_change_query(ids).order_by(change_events.c.id.desc()).limit(limit)).mappings().all()
     events = []
     for row in rows:
         item = dict(row)
@@ -100,62 +101,119 @@ def changelog(
         events.append(item)
     if since:
         events = [e for e in events if str(e.get("detected_at") or e.get("id")) > since]
-    return {"release_id": release_id, "since": since, "events": events}
+    return {"release_id": release_id, **_l1_label(manifest), "since": since, "events": events}
 
 
 @router.get("/releases/{release_id}/{layer}/status")
 def layer_status(release_id: str, layer: str, app: dict = Depends(require_app)) -> dict:
     require_scope(app, "read:l1")
-    if not release_store.get_release(release_id, engine=_engine()):
+    manifest = release_store.get_release(release_id, engine=_engine())
+    if not manifest:
         raise HTTPException(404, f"Release {release_id} not found")
     code = normalize_layer(layer)
     if not code:
         raise HTTPException(404, f"Unknown layer {layer}")
     meta = LAYER_CATALOG[code]
-    if meta["published"]:
-        status = "published"
-    elif meta["status"] in ("derived", "curated", "computed"):
-        status = meta["status"]
-    else:
-        status = "not_published"
-    body = {"release_id": release_id, "layer": code, "layer_status": status, **layer_public_meta(code)}
-    if status not in ("published", "not_published"):
+    included = code in manifest.get("layers", []) and (code != "L1" or (manifest.get("acceptance") or {}).get("passed") is True)
+    published = included and bool(release_store.get_promotion(manifest["id"]))
+    status = "published" if published else "candidate" if included else meta["status"] if code != "L1" and meta["status"] in ("derived", "curated", "computed") else "not_published"
+    body = {**layer_public_meta(code), "release_id": release_id, "layer": code,
+            "layer_status": status, "status": status, "published": published}
+    if status not in ("published", "not_published", "candidate"):
         body["banner"] = status_banner(code)
     return body
 
 
-def _require_published_l1(release_id: str, layer: str, app: dict) -> None:
+def _require_published_l1(release_id: str, layer: str, app: dict) -> dict:
     require_scope(app, "read:l1")
-    if not release_store.get_release(release_id, engine=_engine()):
+    manifest = release_store.get_release(release_id, engine=_engine())
+    if not manifest:
         raise HTTPException(404, f"Release {release_id} not found")
     code = normalize_layer(layer)
     if code is None:
         raise HTTPException(404, f"Unknown layer {layer}")
     if code != "L1":
         raise HTTPException(status_code=501, detail=not_published_body(code))
+    if ("L1" not in manifest.get("layers", []) or not (manifest.get("acceptance") or {}).get("passed")
+            or manifest.get("status") in {"blocked", "live", "preview"}):
+        raise HTTPException(409, {"layer_status": "not_published", "detail": "This manifest has no accepted L1 output. Browse the candidate in the source review workspace."})
+    bindings = (manifest.get("projection") or {}).get("bindings")
+    if not isinstance(bindings, list) or not bindings:
+        raise HTTPException(409, "Release lacks exact source-version bindings; use its verified immutable artifact")
+    return manifest
+
+
+def _l1_label(manifest):
+    promoted = bool(release_store.get_promotion(manifest["id"]))
+    return {"layer_status": "published" if promoted else "candidate", "published": promoted,
+            "data_binding": "manifest_source_versions"}
+
+
+def _release_bindings(conn, manifest, *, require_current=False):
+    """Never substitute live versions for a frozen release's source bindings."""
+    from app.clhear.l1.release_snapshot import current_bindings
+    expected = manifest["projection"]["bindings"]
+    try:
+        ids = [int(row["source_version_id"]) for row in expected]
+        wanted = {row["source_key"]: (int(row["source_version_id"]), row["content_hash"]) for row in expected}
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(409, "Invalid release source-version bindings")
+    if len(wanted) != len(expected) or len(set(ids)) != len(ids):
+        raise HTTPException(409, "Ambiguous release source-version bindings")
+    actual = {row.source_key: (row.id, row.content_hash) for row in conn.execute(sa.select(
+        sources.c.key.label("source_key"), source_versions.c.id, source_versions.c.content_hash,
+    ).join(source_versions, source_versions.c.source_id == sources.c.id).where(source_versions.c.id.in_(ids)))}
+    if actual != wanted:
+        raise HTTPException(409, "The exact release versions are unavailable or changed; use the verified immutable artifact")
+    if require_current:
+        current = {row["source_key"]: (row["source_version_id"], row["content_hash"]) for row in current_bindings(conn)}
+        if current != wanted:
+            raise HTTPException(409, "Live metadata no longer matches this frozen release; use the verified immutable artifact")
+    return ids
+
+
+def _release_change_query(ids):
+    return sa.select(change_events).join(source_versions, sa.and_(
+        source_versions.c.source_id == change_events.c.source_id,
+        source_versions.c.version_label == change_events.c.new_version,
+    )).where(source_versions.c.id.in_(ids))
 
 
 @router.get("/releases/{release_id}/{layer}/families")
 def l1_families(release_id: str, layer: str, app: dict = Depends(require_app)) -> dict:
-    _require_published_l1(release_id, layer, app)
+    manifest = _require_published_l1(release_id, layer, app)
     engine = _engine()
     with engine.connect() as conn:
-        rows = conn.execute(sa.select(source_families).order_by(source_families.c.key)).mappings().all()
+        ids = _release_bindings(conn, manifest, require_current=True)
+        family_ids = sa.select(sources.c.family_id).join(source_versions, source_versions.c.source_id == sources.c.id).where(source_versions.c.id.in_(ids))
+        rows = conn.execute(sa.select(source_families).where(source_families.c.id.in_(family_ids)).order_by(source_families.c.key)).mappings().all()
     items = []
     for row in rows:
         charter = row["scope_charter"]
         if isinstance(charter, str):
             charter = json.loads(charter)
         items.append({"id": row["id"], "key": row["key"], "name": row["name"], "scope_charter": charter})
-    return {"release_id": release_id, "layer": "L1", "families": items}
+    return {"release_id": release_id, "layer": "L1", **_l1_label(manifest), "families": items}
 
 
 @router.get("/releases/{release_id}/{layer}/sources")
 def l1_sources(release_id: str, layer: str, app: dict = Depends(require_app)) -> dict:
-    _require_published_l1(release_id, layer, app)
+    manifest = _require_published_l1(release_id, layer, app)
     from app.clhear.l1.routes import list_sources
-
-    return {"release_id": release_id, "layer": "L1", "sources": list_sources()}
+    with _engine().connect() as conn:
+        _release_bindings(conn, manifest, require_current=True)
+    allowed = {row["source_key"] for row in manifest["projection"]["bindings"]}
+    families = []
+    for family in list_sources():
+        members = [member for member in family.get("members", []) if member["key"] in allowed]
+        if members:
+            families.append({**family, "members": members})
+    # Validate after the live metadata query too; concurrent ingestion cannot
+    # silently change which versions this release-labeled response describes.
+    with _engine().connect() as conn:
+        _release_bindings(conn, manifest, require_current=True)
+    return {"release_id": release_id, "layer": "L1", **_l1_label(manifest), "sources": families,
+            "metadata_state": "current_metadata_for_matching_release_bindings"}
 
 
 @router.get("/releases/{release_id}/{layer}/clauses")
@@ -168,20 +226,18 @@ def l1_clauses(
     offset: int = Query(default=0, ge=0),
     app: dict = Depends(require_app),
 ) -> dict:
-    _require_published_l1(release_id, layer, app)
+    manifest = _require_published_l1(release_id, layer, app)
     engine = _engine()
-    stmt = clauses_public_select()
-    if q:
-        like = f"%{q}%"
-        stmt = stmt.where(sa.or_(clauses.c.ref.ilike(like), clauses.c.text.ilike(like), clauses.c.path.ilike(like)))
-    if source_key:
-        stmt = (
-            stmt.join(source_versions, source_versions.c.id == clauses.c.source_version_id)
-            .join(sources, sources.c.id == source_versions.c.source_id)
-            .where(sources.c.key == source_key)
-        )
-    count_stmt = sa.select(sa.func.count()).select_from(stmt.subquery())
     with engine.connect() as conn:
+        ids = _release_bindings(conn, manifest)
+        stmt = clauses_public_select(conn).where(clauses.c.source_version_id.in_(ids))
+        if q:
+            like = f"%{q}%"
+            stmt = stmt.where(sa.or_(clauses.c.ref.ilike(like), clauses.c.text.ilike(like), clauses.c.path.ilike(like)))
+        if source_key:
+            stmt = stmt.where(clauses.c.source_version_id.in_([
+                row["source_version_id"] for row in manifest["projection"]["bindings"] if row["source_key"] == source_key]))
+        count_stmt = sa.select(sa.func.count()).select_from(stmt.subquery())
         total = int(conn.execute(count_stmt).scalar() or 0)
         rows = conn.execute(stmt.order_by(clauses.c.id).limit(limit).offset(offset)).mappings().all()
     items = []
@@ -201,6 +257,7 @@ def l1_clauses(
     return {
         "release_id": release_id,
         "layer": "L1",
+        **_l1_label(manifest),
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -215,10 +272,11 @@ def l1_change_events(
     limit: int = Query(default=50, ge=1, le=200),
     app: dict = Depends(require_app),
 ) -> dict:
-    _require_published_l1(release_id, layer, app)
+    manifest = _require_published_l1(release_id, layer, app)
     engine = _engine()
     with engine.connect() as conn:
-        rows = conn.execute(sa.select(change_events).order_by(change_events.c.id.desc()).limit(limit)).mappings().all()
+        ids = _release_bindings(conn, manifest)
+        rows = conn.execute(_release_change_query(ids).order_by(change_events.c.id.desc()).limit(limit)).mappings().all()
     events = []
     for row in rows:
         item = dict(row)
@@ -226,14 +284,24 @@ def l1_change_events(
             if hasattr(v, "isoformat"):
                 item[k] = v.isoformat()
         events.append(item)
-    return {"release_id": release_id, "layer": "L1", "events": events}
+    return {"release_id": release_id, "layer": "L1", **_l1_label(manifest), "events": events}
 
 
 @router.get("/releases/{release_id}/{layer}/snapshot")
 def l1_snapshot(release_id: str, layer: str, app: dict = Depends(require_app)) -> dict:
     """Bulk download: signed URL to the L1 snapshot (or local file URI in tests)."""
-    _require_published_l1(release_id, layer, app)
-    man = release_store.get_release(release_id, engine=_engine()) or {}
+    man = _require_published_l1(release_id, layer, app)
+    from app.clhear.l1 import permissions
+    if man.get("audience") != "public":
+        raise HTTPException(403, "Restricted review snapshots are not available through an app-key public download")
+    with _engine().connect() as conn:
+        ids = _release_bindings(conn, man)
+        source_rows = conn.execute(sa.select(sources).join(source_versions, source_versions.c.source_id == sources.c.id)
+                                   .where(source_versions.c.id.in_(ids))).mappings().all()
+        for source in source_rows:
+            if permissions.required_for(source) and any(not permissions.decision(conn, source["key"], op)["allowed"]
+                                                       for op in ("display_public", "redistribute")):
+                raise HTTPException(403, "Current permissions do not allow public snapshot redistribution")
     uri = ((man.get("l1") or {}).get("snapshot_uri")) or ""
     if uri.startswith("s3://"):
         import boto3
@@ -245,8 +313,8 @@ def l1_snapshot(release_id: str, layer: str, app: dict = Depends(require_app)) -
             Params={"Bucket": bucket, "Key": key},
             ExpiresIn=3600,
         )
-        return {"release_id": release_id, "layer": "L1", "url": url, "expires_in": 3600, "snapshot_uri": uri}
-    return {"release_id": release_id, "layer": "L1", "url": uri, "expires_in": 0, "snapshot_uri": uri}
+        return {"release_id": release_id, "layer": "L1", **_l1_label(man), "url": url, "expires_in": 3600, "snapshot_uri": uri}
+    raise HTTPException(409, "A verified downloadable public artifact is not available")
 
 
 @router.post("/blueprint")

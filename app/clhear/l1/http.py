@@ -16,7 +16,10 @@ import json
 import logging
 import os
 import time
+from contextvars import ContextVar
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -24,6 +27,39 @@ log = logging.getLogger("clhear.l1.http")
 
 USER_AGENT = "CLHEAR/0.1 (regulatory corpus builder; contact clhear@reg42.ai)"
 DEFAULT_FIXTURES_DIR = "tests/fixtures/http"
+_observations: ContextVar[tuple] = ContextVar("l1_http_observations", default=())
+_response_meta: ContextVar[dict | None] = ContextVar("l1_http_response", default=None)
+
+
+def begin_fetch() -> None:
+    """Start evidence for one adapter acquisition, isolated from other tasks."""
+    _observations.set(())
+
+
+def fetch_evidence() -> list[dict]:
+    return list(_observations.get())
+
+
+def publisher_checked_at() -> str | None:
+    observations = fetch_evidence()
+    if not observations or any(o["origin"] not in {"live", "revalidated"} for o in observations):
+        return None
+    return min(o["checked_at"] for o in observations)
+
+
+def _observe(url: str, origin: str, content: bytes, **detail) -> None:
+    _observations.set((*_observations.get(), {
+        "url": url, "origin": origin,
+        "checked_at": datetime.now(timezone.utc).isoformat() if origin in {"live", "revalidated"} else None,
+        "sha256": hashlib.sha256(content).hexdigest(), **detail,
+    }))
+
+
+def _cache_path(url: str) -> Path:
+    # Never share live cache files with committed replay fixtures.
+    from app.clhear.settings import get_settings
+    root = Path(os.environ.get("CLHEAR_HTTP_CACHE_DIR", str(Path(get_settings().clhear_artifacts_dir) / "restricted" / "http-cache")))
+    return root / f"{_cache_digest(url)}.json.gz"
 
 
 class FixtureMissing(RuntimeError):
@@ -48,23 +84,55 @@ def _read_fixture(path: Path) -> bytes:
     return base64.b64decode(record["content_b64"])
 
 
-def _write_fixture(path: Path, url: str, status: int, content: bytes) -> None:
+def _write_fixture(path: Path, url: str, status: int, content: bytes, **metadata) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    record = {"url": url, "status": status, "content_b64": base64.b64encode(content).decode()}
-    path.write_bytes(gzip.compress(json.dumps(record).encode()))
+    record = {"url": url, "status": status, "content_b64": base64.b64encode(content).decode(),
+              "sha256": hashlib.sha256(content).hexdigest(), **metadata}
+    temporary = path.with_name(path.name + f".{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(gzip.compress(json.dumps(record).encode()))
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts: int = 8) -> bytes:
+    _response_meta.set(None)
     delay = 5.0
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
-            resp = httpx.get(
-                url,
-                headers={"User-Agent": USER_AGENT, **(headers or {})},
-                timeout=timeout,
-                follow_redirects=True,
-            )
+            requested_host = (urlsplit(url).hostname or "").lower()
+            finra = requested_host in {"www.finra.org", "finra.org"}
+            request_url, redirect_chain = url, []
+            for hop in range(6):
+                resp = httpx.get(
+                    request_url,
+                    headers={"User-Agent": USER_AGENT, **(headers or {})},
+                    timeout=timeout,
+                    follow_redirects=not finra,
+                )
+                if not finra or resp.status_code not in {301, 302, 303, 307, 308}:
+                    break
+                destination = urljoin(request_url, resp.headers.get("location", ""))
+                parsed = urlsplit(destination)
+                if parsed.scheme != "https" or parsed.hostname not in {"www.finra.org", "finra.org"} or parsed.username or parsed.password or parsed.port not in {None, 443}:
+                    raise ValueError("FINRA acquisition redirected outside the authorized publisher host")
+                if destination in [*redirect_chain, request_url] or hop == 5:
+                    raise ValueError("FINRA acquisition exceeded its bounded redirect chain")
+                redirect_chain.append(request_url)
+                request_url = destination
+            final_url = str(resp.url)
+            final_host = (urlsplit(final_url).hostname or "").lower()
+            if finra and final_host not in {"www.finra.org", "finra.org"}:
+                raise ValueError("FINRA acquisition redirected outside the authorized publisher host")
+            provenance = {"final_url": final_url, "redirect_chain": redirect_chain if finra else [str(r.url) for r in resp.history]}
+            if resp.status_code == 304:
+                _response_meta.set({"status": 304, "etag": resp.headers.get("etag"),
+                                    "last_modified": resp.headers.get("last-modified"), **provenance})
+                return b""
             if resp.status_code == 429 or resp.status_code >= 500:
                 raise httpx.HTTPStatusError(
                     f"{resp.status_code} from {url}", request=resp.request, response=resp
@@ -78,6 +146,8 @@ def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts:
                     response=resp,
                 )
             resp.raise_for_status()
+            _response_meta.set({"status": resp.status_code, "etag": resp.headers.get("etag"),
+                                "last_modified": resp.headers.get("last-modified"), **provenance})
             return resp.content
         except (httpx.TransportError, httpx.HTTPStatusError) as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -92,12 +162,9 @@ def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts:
     raise RuntimeError(f"fetch failed after {attempts} attempts: {url}") from last_error
 
 
-_last_good_used = False
-
-
 def last_good_used() -> bool:
-    """True when the most recent get() served datalake last-good instead of live."""
-    return _last_good_used
+    """True if ANY request in this acquisition fell back to cached bytes."""
+    return any(o["origin"] == "stale_cache" for o in _observations.get())
 
 
 def _cache_digest(url: str) -> str:
@@ -105,7 +172,8 @@ def _cache_digest(url: str) -> str:
 
 
 def _datalake_cache_key(url: str) -> str:
-    return f"public-ok/_http_cache/{_cache_digest(url)}.bin"
+    # HTTP acquisition never implies permission to redistribute source bytes.
+    return f"restricted/_http_cache/{_cache_digest(url)}.bin"
 
 
 def _datalake_put(url: str, content: bytes) -> None:
@@ -153,30 +221,62 @@ def _datalake_get(url: str) -> bytes | None:
 def get(url: str, timeout: float = 60.0, headers: dict | None = None) -> bytes:
     """Fetch url as bytes honoring CLHEAR_HTTP_MODE (replay/record/live).
 
-    Live fetches that survive also land in `s3://…/public-ok/_http_cache/`.
-    After TNA 202 / empty-body exhaustion the worker reads that last-good
-    object instead of crashing a source that already has text.
+    Live mode always contacts the publisher. A valid 304 checks cached bytes;
+    an outage can return private last-good bytes but never advances freshness.
     """
-    global _last_good_used
-    _last_good_used = False
     mode = _mode()
     path = _fixture_path(url)
-    if path.exists():
-        return _read_fixture(path)
+    if mode not in {"replay", "record", "live"}:
+        raise ValueError(f"Unknown CLHEAR_HTTP_MODE: {mode}")
+    if mode in {"replay", "record"} and path.exists():
+        body = _read_fixture(path)
+        _observe(url, "fixture", body)
+        return body
     if mode == "replay":
+        _observe(url, "failed", b"")
         raise FixtureMissing(f"no recorded fixture for {url} (CLHEAR_HTTP_MODE=replay)")
+    cache_path = _cache_path(url)
+    cached, cache_meta = None, {}
+    if mode == "live" and cache_path.exists():
+        try:
+            cache_meta = json.loads(gzip.decompress(cache_path.read_bytes()))
+            candidate = base64.b64decode(cache_meta["content_b64"], validate=True)
+            if cache_meta["url"] == url and cache_meta["sha256"] == hashlib.sha256(candidate).hexdigest():
+                cached = candidate
+        except (ValueError, KeyError, OSError):
+            cache_meta = {}
+    request_headers = dict(headers or {})
+    if cached:
+        if cache_meta.get("etag"):
+            request_headers["If-None-Match"] = cache_meta["etag"]
+        elif cache_meta.get("last_modified"):
+            request_headers["If-Modified-Since"] = cache_meta["last_modified"]
     try:
-        content = _fetch_live(url, timeout, headers)
+        _response_meta.set(None)
+        content = _fetch_live(url, timeout, request_headers)
+        response = _response_meta.get() or {"status": 200}
+        origin = "live"
+        if response.get("status") == 304:
+            if not cached:
+                raise RuntimeError("Publisher returned 304 without verified cached bytes")
+            content, origin = cached, "revalidated"
+        if not content:
+            raise RuntimeError("Publisher returned no source bytes")
     except Exception:
-        cached = _datalake_get(url)
+        cached = cached or (_datalake_get(url) if mode == "live" else None)
         if cached:
             log.warning("live fetch failed for %s; using datalake last-good", url)
-            _last_good_used = True
+            _observe(url, "stale_cache", cached)
             return cached
+        _observe(url, "failed", b"")
         raise
-    # record mode saves committed fixtures; live mode caches to avoid re-hitting
-    # official endpoints within a run. Same file format either way.
-    _write_fixture(path, url, 200, content)
+    _observe(url, origin, content, status=response.get("status"), final_url=response.get("final_url"),
+             redirect_chain=response.get("redirect_chain", []))
+    destination = cache_path if mode == "live" else path
+    validators = {k: response.get(k) or (cache_meta.get(k) if origin == "revalidated" else None)
+                  for k in ("etag", "last_modified")}
+    _write_fixture(destination, url, 200, content,
+                   **validators)
     if mode == "live":
         _datalake_put(url, content)
     return content

@@ -62,7 +62,9 @@ resource "aws_ecs_task_definition" "fleet" {
       environment = [
         { name = "AWS_REGION", value = var.aws_region },
         { name = "CLHEAR_FLEET", value = upper(each.key) },
+        { name = "CLHEAR_L1_ONLY", value = "true" },
         { name = "CLHEAR_EVENTS_QUEUE_URL", value = local.fleet_queue[each.key].url },
+        { name = "CLHEAR_FLEET_QUEUE_URLS", value = jsonencode({ for fleet, queue in local.fleet_queue : fleet => queue.url }) },
         { name = "CLHEAR_EVENTS_DLQ_URL", value = aws_sqs_queue.events_dlq.url },
         { name = "CLHEAR_EVENT_BUS_NAME", value = aws_cloudwatch_event_bus.clhear.name },
         { name = "CLHEAR_DATALAKE_BUCKET", value = aws_s3_bucket.datalake.bucket },
@@ -70,6 +72,7 @@ resource "aws_ecs_task_definition" "fleet" {
         { name = "CLHEAR_DATALAKE_REPLICA_BUCKET", value = var.replication_enabled ? aws_s3_bucket.datalake_replica[0].bucket : "" },
         { name = "REG42_CLHEAR_ENABLED", value = "true" },
         { name = "CLHEAR_SNAPSHOT_S3_URI", value = var.aurora_enabled ? "" : "s3://${aws_s3_bucket.deploy.bucket}/webui/clhear-latest.db" },
+        { name = "CLHEAR_VIEWER_SNAPSHOT_S3_URI", value = "s3://${aws_s3_bucket.deploy.bucket}/${var.webui_db_key != "" ? var.webui_db_key : "webui/clhear-latest.db"}" },
         { name = "CLHEAR_RELEASES_S3_PREFIX", value = "s3://${aws_s3_bucket.deploy.bucket}/releases" },
         { name = "CLHEAR_HTTP_MODE", value = "live" },
         { name = "CLHEAR_ARTIFACT_STORE", value = "s3" },

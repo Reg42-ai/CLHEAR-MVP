@@ -163,12 +163,20 @@ def test_worker_handles_the_scheduled_drill_and_the_ledger_is_append_only(engine
 
     _seed(engine, tmp_path)
     monkeypatch.setenv("CLHEAR_DR_SCRATCH_URL", f"sqlite:///{tmp_path}/scratch.db")
-    assert "DrDrillRequested" in workers.HANDLERS and "DrDrillRequested" in workers._ALWAYS_RUN
-    env = Envelope(event_id="schedule-dr-drill", layer="l0", kind="DrDrillRequested", subject_ref="all",
-                   payload={"skip_datalake": True}, schema_version=1, producer="eventbridge", ts="")
-    out = workers.handle_dr_drill(engine, None, env)
+    monkeypatch.setenv("CLHEAR_FLEET", "L0")
+    env = Envelope(event_id="drill-occurrence-1", layer="l0", kind="DrDrillRequested", subject_ref="all",
+                   payload={"skip_datalake": True}, schema_version=1, producer="eventbridge", ts="2026-09-15T04:00:00Z")
+    out = workers.handle_envelope(engine, None, env.model_dump_json())
     assert out["status"] == "passed" and out["trigger"] == "event"
     assert len(dr.history(engine)) == 1
+    # A queue retry of one occurrence must not repeat a restore into its now
+    # populated scratch target. Tomorrow is a distinct durable event/job.
+    assert workers.handle_envelope(engine, None, env.model_dump_json()) is None
+    assert len(dr.history(engine)) == 1
+    monkeypatch.setenv("CLHEAR_DR_SCRATCH_URL", f"sqlite:///{tmp_path}/next-scratch.db")
+    tomorrow = env.model_copy(update={"event_id": "drill-occurrence-2", "ts": "2026-09-16T04:00:00Z"})
+    assert workers.handle_envelope(engine, None, tomorrow.model_dump_json())["status"] == "passed"
+    assert len(dr.history(engine)) == 2
     src = (ROOT / "app/clhear/platform/dr.py").read_text()
     assert "dr_drills.update(" not in src and "dr_drills.delete(" not in src
 

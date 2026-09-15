@@ -76,7 +76,7 @@ resource "aws_iam_role_policy" "worker_task" {
         Sid    = "FleetQueues"
         Effect = "Allow"
         Action = [
-          "sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage",
+          "sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility",
           "sqs:GetQueueAttributes", "sqs:GetQueueUrl",
         ]
         Resource = concat([aws_sqs_queue.events_dlq.arn], [for q in local.fleet_queue : q.arn])

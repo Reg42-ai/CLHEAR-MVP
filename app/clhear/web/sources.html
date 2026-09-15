@@ -246,6 +246,7 @@
   .rolecard dt { color: var(--muted); font-size: 12px; margin-top: 10px; }
   .rolecard dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
   .rolecard summary { cursor: pointer; color: var(--accent); }
+  .family summary, .rolecard summary { min-height: 28px; padding: 4px 0; cursor: pointer; }
   .rolecard pre { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .recordbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .recordbar select { max-width: min(100%, 520px); background: var(--panel-strong); color: var(--ink); border: 1px solid var(--edge); padding: 6px; border-radius: 6px; }
@@ -305,7 +306,7 @@ function initialView() {
   if (p.get("source")) {
     return { page: "source", key: p.get("source"), nodeId: p.get("node") ? Number(p.get("node")) : null, ref: p.get("ref"), version: p.get("version") || p.get("version_label") };
   }
-  if (p.get("view")) return { page: p.get("view") };
+  if (p.get("view")) return { page: ({ sources: "library", evals: "evidence" })[p.get("view")] || p.get("view") };
   return { page: "library" };
 }
 
@@ -360,7 +361,8 @@ function App() {
         <button class=${view.page === "fleet" || view.page === "activity" ? "active" : ""} onClick=${() => go("fleet")}>Fleet</button>
         <button class=${view.page === "evidence" ? "active" : ""} onClick=${() => go("evidence")}>Evals</button>
         <button class=${view.page === "changes" ? "active" : ""} onClick=${() => go("changes")}>Changes</button>
-      </div>`;
+      </div>
+      ${view.page !== "source" && html`<${InventoryOverview} />`}`;
     if (view.page === "source") page = html`<div>${tabs}<${SourceView} key=${view.key + (view.version || "") + (view.nodeId || "")} sourceKey=${view.key} back=${() => go("library")} openRef=${view.ref} openNodeId=${view.nodeId} initialVersion=${view.version} /></div>`;
     else if (view.page === "search") page = html`<${SearchView} q=${query} open=${openSource} back=${() => go("library")} />`;
     else if (view.page === "changes") page = html`<div>${tabs}<${ChangesView} open=${openSource} /></div>`;
@@ -382,8 +384,118 @@ function App() {
         <a class="navlink" href="/review">Review</a>
         <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
       </header>
-      <main id="main"><h1 class="visually-hidden">Sources</h1>${page}</main>
+      <main id="main"><h1 class="visually-hidden">Sources</h1><${ViewerSnapshotNotice} />${page}</main>
     </div>`;
+}
+
+const measuredDuration = (value) => Number.isFinite(value) && value >= 0
+  ? (value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(2)} s`) : "not recorded";
+const evidenceLabel = (value) => value ? String(value).replaceAll("_", " ").replaceAll("-", " ") : "unverified";
+const evidenceTone = (value) => ["verified", "passed", "succeeded", "completed"].includes(value) ? "open"
+  : ["failed", "gaps", "blocked", "permission_blocked", "permission_unverified", "permissions_unverified", "rights-blocked"].includes(value) ? "restricted" : "guidance";
+
+function ViewerSnapshotNotice() {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => { api("/api/clhear/viewer-snapshot").then(setState).catch(setError); }, []);
+  if (error) return html`<div class="notice">Viewer origin evidence unavailable. ${error.message}</div>`;
+  if (!state) return html`<p class="charter">Loading viewer origin evidence…</p>`;
+  return html`<div class="charter" style=${{ marginBottom: "16px" }}>
+    <b>${state.viewer_snapshot ? "L1 candidate viewer" : "Direct database view"}</b> · ${evidenceLabel(state.source_environment)}
+    ${state.viewer_snapshot && html` · refreshed ${state.generated_at || "at an unrecorded time"} · revision <span class="mono">${state.revision || "not recorded"}</span>
+      <br />This projection is not an accepted release. ${(state.omitted_layers || []).join("–")} output is not included.
+      ${(state.redacted_source_keys || []).length} sources have text withheld by recorded permissions.`}
+    ${!state.viewer_snapshot && html` · no viewer snapshot revision is recorded; this does not establish acceptance.`}
+  </div>`;
+}
+
+function Findings({ findings = [] }) {
+  if (!findings.length) return html`<p class="charter">No findings recorded. This alone does not establish verification.</p>`;
+  return html`<ul>${findings.map((f, i) => html`<li key=${i}><b>${evidenceLabel(f.code)}</b>${f.operation ? ` · ${evidenceLabel(f.operation)}` : ""}${f.source_key ? ` · ${f.source_key}` : ""} — ${f.detail || f.reason || "Detail not recorded"}</li>`)}</ul>`;
+}
+
+function InventoryOverview() {
+  const [scope, setScope] = useState("registered");
+  const [report, setReport] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setReport(null); setError(null);
+    api(`/api/clhear/l1/inventory?scope=${scope}`).then((value) => { if (!cancelled) setReport(value); })
+      .catch((failure) => { if (!cancelled) setError(failure); });
+    return () => { cancelled = true; };
+  }, [scope]);
+  return html`<section class="family" aria-label="Declared L1 inventory">
+    <div class="recordbar"><h2 style=${{ margin: 0 }}>Declared L1 inventory</h2>
+      <label for="inventory-scope">Scope </label><select id="inventory-scope" value=${scope} onChange=${(e) => setScope(e.target.value)}>
+        <option value="registered">All registered sources</option><option value="finra">FINRA library</option>
+      </select></div>
+    ${error ? html`<${ErrorNotice} error=${error} />` : !report ? html`<p class="charter">Loading worker-produced inventory evidence…</p>` : html`<${InventorySummary} report=${report} />`}
+  </section>`;
+}
+
+function InventorySummary({ report }) {
+  const unavailable = !report || ["unavailable", "migration_required", "not_run"].includes(report.status);
+  const verified = report && report.full_scope_verified === true && report.current_binding_valid === true;
+  const sources = report && report.sources || [];
+  const counts = report && report.counts || {};
+  if (!report) return html`<div class="notice">Inventory evidence unavailable.</div>`;
+  return html`<div>
+    <p><span class=${"badge " + (verified ? "open" : "guidance")}>${verified ? "Scope verified" : "Scope not verified"}</span>
+      ${" "}${Number.isFinite(report.verified) ? report.verified : "—"} verified / ${Number.isFinite(report.known_expected) ? report.known_expected : "—"} declared documents
+      · ${Number.isFinite(report.unresolved) ? report.unresolved : "—"} unresolved</p>
+    ${unavailable && html`<div class="notice">Inventory evidence unavailable. ${report.reason || "The L1 worker has not recorded an audit for this scope."}</div>`}
+    ${report.audit_id != null && report.current_binding_valid === false && html`<div class="notice">The stored audit does not match the current source versions. A new worker audit is required.</div>`}
+    <p class="charter">${report.discovery_complete === true ? "Publisher discovery recorded as complete." : "Publisher discovery is incomplete or unverified; the declared count is not a full-publisher denominator."}
+      ${report.reason && !unavailable ? ` ${report.reason}` : ""}</p>
+    <div class="meta-grid">
+      <span>Scope <b>${report.scope_version || report.scope || "not recorded"}</b></span>
+      <span>Audited <b>${report.audited_at || "not recorded"}</b></span>
+      <span>Audit <b>${report.audit_id ?? "not recorded"}</b></span>
+      <span>Job <span class="mono">${report.job_id || "not recorded"}</span></span>
+    </div>
+    <div class="charter">Permission unverified: ${counts.permission_unverified ?? "not recorded"} · permission blocked: ${counts.permission_blocked ?? "not recorded"} · awaiting artifact: ${counts.awaiting_artifact ?? "not recorded"}.
+      Sign-in controls access; a missing acquisition permission and a missing original file are different blockers.</div>
+    <details><summary>Scope findings and original-document inventory (${sources.length})</summary>
+      <p class="mono">Inventory hash: ${report.inventory_hash || "not recorded"}</p>
+      <${Findings} findings=${report.findings || []} />
+      <div style=${{ overflowX: "auto" }}><table class="members"><thead><tr><th>Declared source</th><th>State</th><th>Expected edition</th><th>Publisher checked</th><th>Imported</th></tr></thead>
+        <tbody>${sources.map((s) => html`<tr key=${s.source_key}>
+          <td><a href=${sourceUrl(s.source_key, s.version_label)}>${s.name || s.source_key}</a><div class="mono">${s.source_key}</div></td>
+          <td><span class=${"badge " + evidenceTone(report.current_binding_valid === false && s.status === "verified" ? "unverified" : s.status)}>${evidenceLabel(report.current_binding_valid === false && s.status === "verified" ? "unverified" : s.status)}</span></td>
+          <td>${s.expected_edition || "not recorded"}</td><td>${s.publisher_checked_at || "not recorded"}</td><td>${s.ingested_at || "not recorded"}</td>
+        </tr>`)}</tbody></table></div>
+      ${report.discovery && html`<details><summary>Publisher discovery evidence</summary><pre tabindex="0">${JSON.stringify(report.discovery, null, 2)}</pre></details>`}
+    </details>
+  </div>`;
+}
+
+function SourceAuditEvidence({ audit, doc }) {
+  if (!audit || ["unavailable", "migration_required", "not_run"].includes(audit.status)) return html`<div class="notice">Source audit evidence unavailable. ${audit && audit.reason || "No worker audit is recorded."}</div>`;
+  const selected = doc && doc.source_version_id != null;
+  const matches = selected && audit.source_version_id === doc.source_version_id && audit.content_hash === doc.content_hash;
+  const permissionEntries = Object.entries(audit.permissions || {});
+  const status = audit.status === "verified" && (audit.verified !== true || audit.current_binding_valid === false) ? "unverified" : audit.status;
+  return html`<details class="family"><summary>Source audit · ${evidenceLabel(status)}${selected && !matches ? " · different version" : ""}</summary>
+    ${selected && !matches && html`<div class="notice">This audit describes another version or artifact. It does not verify the selected text.</div>`}
+    ${audit.current_binding_valid === false && html`<div class="notice">Current permissions, scope, freshness or versions no longer match this recorded audit. A new worker audit is required.</div>`}
+    <div class="meta-grid"><span>Expected edition <b>${audit.expected_edition || "not recorded"}</b></span>
+      <span>Publisher successfully checked <b>${audit.publisher_checked_at || "not recorded"}</b></span>
+      <span>Imported <b>${audit.ingested_at || "not recorded"}</b></span></div>
+    <div class="charter">Audit binding: source version #${audit.source_version_id ?? "not recorded"} · ${audit.version_label || "not recorded"}</div>
+    <p class="mono" style=${{ overflowWrap: "anywhere" }}>Artifact SHA-256: ${audit.content_hash || "not recorded"}</p>
+    ${audit.artifact_review ? html`<p><b>Artifact review:</b> ${audit.artifact_review.approved === true ? "Approved" : "Not approved"} · ${evidenceLabel(audit.artifact_review.coverage)} coverage · ${audit.artifact_review.publisher_edition || "edition not recorded"}.
+      <span class="charter"> Reviewed ${audit.artifact_review.reviewed_at || "at an unrecorded time"} · evidence ${audit.artifact_review.evidence_ref || "not recorded"}.</span></p>` : html`<p class="charter">No independent artifact edition and full-text coverage review recorded.</p>`}
+    <${Findings} findings=${audit.findings || []} />
+    <details><summary>Recorded permission decisions (${permissionEntries.length})</summary>
+      ${!permissionEntries.length && html`<p>No permission decisions recorded.</p>`}
+      <dl>${permissionEntries.map(([operation, decision]) => html`<div key=${operation}><dt>${evidenceLabel(operation)}</dt><dd>${decision.allowed === true ? "Allowed" : "Not allowed"} · ${decision.reason || "No reason recorded"}</dd></div>`)}</dl>
+    </details>
+    <details><summary>Original artifacts (${(audit.artifacts || []).length})</summary>
+      ${(audit.artifacts || []).map((a, i) => html`<div key=${i}><b>${a.name || "Original artifact"}</b> · ${a.byte_count ?? "unknown"} bytes · ${a.verified === true ? "verified" : "unverified"}
+        <p class="mono" style=${{ overflowWrap: "anywhere" }}>${a.uri || "URI not recorded"}<br />SHA-256 ${a.sha256 || "not recorded"}</p></div>`)}
+    </details>
+  </details>`;
 }
 
 function Library({ families, open }) {
@@ -579,6 +691,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
       </div>
       ${(doc.notice || detail.notice) && html`<div class="notice">${doc.notice || detail.notice}</div>`}
       ${doc.real_publisher_verified === false && html`<div class="notice">Publisher verification is not recorded for this version. Source registration and stored text alone do not establish complete or accurate coverage.</div>`}
+      <${SourceAuditEvidence} audit=${detail.inventory} doc=${doc} />
       ${detail.about && html`
         <div class="about">${detail.about}
           ${(detail.topics || []).map((t) => html`<span class="topic" key=${t}>${t}</span>`)}
@@ -624,7 +737,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
       ${doc.locked === true && html`<div class="locked">Original text is withheld for this account. ${doc.permission_reason || "Permission to view this version has not been established."} Available references and integrity records are shown below.</div>`}
       ${doc.locked !== true && doc.permission_reason && html`<div class="notice">Access: ${doc.permission_reason}</div>`}
       ${!doc.nodes.length && html`<div class="empty">${doc.version ? "This version has no document nodes available. No source text is displayed." : "No version has been imported for this source."}</div>`}
-      ${evidence && html`<${EvidencePanel} card=${scorecard} error=${scoreError} sourceKey=${sourceKey} version=${doc.version} />`}
+      ${evidence && html`<${EvidencePanel} card=${scorecard} error=${scoreError} sourceKey=${sourceKey} version=${doc.version} sourceVersionId=${doc.source_version_id} contentHash=${doc.content_hash} />`}
       <div class="readerbar">
         <input aria-label="Filter this document" placeholder="Filter this document… (e.g. risk assessment)"
                value=${filter} onInput=${(e) => setFilter(e.target.value)} />
@@ -930,20 +1043,21 @@ function Inspector({ info, error, loading, pinned, clearPin, annotation, annotat
           <span class="tag">contains — ${contains.count} element${contains.count === 1 ? "" : "s"} (scroll for full stored text)</span>
           <div class="contains" style=${{ marginTop: "4px" }}>${contains.text}</div>
         </div>`}
-      ${info.raw_text && html`<dt style=${{ marginTop: "10px" }}>raw text</dt><pre tabindex="0">${info.raw_text}</pre>`}
-      ${info.source_fragment && html`<dt>source fragment</dt><pre tabindex="0">${info.source_fragment}</pre>`}
+      ${info.raw_text && html`<h4>Raw text</h4><pre tabindex="0">${info.raw_text}</pre>`}
+      ${info.source_fragment && html`<h4>Source fragment</h4><pre tabindex="0">${info.source_fragment}</pre>`}
       <details class="prov"><summary>Encoded record · JSON</summary><pre tabindex="0">${JSON.stringify(encoded, null, 2)}</pre></details>
       <a href=${permalink}>Open version-pinned record ↗</a><br />
       <button onClick=${copy}>Copy record link</button><div role="status" class="charter">${copied}</div>
     </aside>`;
 }
 
-function EvidencePanel({ card, sourceKey, version, error }) {
+function EvidencePanel({ card, sourceKey, version, error, sourceVersionId, contentHash }) {
   if (error) return html`<${ErrorNotice} error=${error} />`;
   if (!version) return html`<div class="empty">No imported version is available to evaluate.</div>`;
   if (!card) return html`<div class="spin">Loading this version’s recorded checks…</div>`;
   const evidenceVersion = card.version || card.latest_version;
   if (evidenceVersion && evidenceVersion !== version) return html`<div class="notice">The returned scorecard belongs to ${evidenceVersion}, not selected version ${version}. No pass result is shown for this version.</div>`;
+  if ((sourceVersionId != null && card.source_version_id !== sourceVersionId) || (contentHash && card.content_hash !== contentHash)) return html`<div class="notice">The returned evidence does not match the selected version ID and artifact hash. No pass result is shown for this version.</div>`;
   const suites = card.scorecard && card.scorecard.suites ? card.scorecard.suites : {};
   const order = ["e1_fidelity", "e2_completeness", "e3_roundtrip", "e4_change_replay", "e5_provenance", "e6_retrievability", "e7_closure"];
   const labels = {
@@ -962,14 +1076,15 @@ function EvidencePanel({ card, sourceKey, version, error }) {
       <div class="rolegrid">
         <div><b>Complete</b><p class="charter">${suites.e2_completeness ? (suites.e2_completeness.passed ? "Recorded completeness check passed." : "Recorded completeness check failed.") : "No completeness check recorded."} Scope and counts appear in the evidence below.</p></div>
         <div><b>Accurate</b><p class="charter">${suites.e1_fidelity ? (suites.e1_fidelity.passed ? "Recorded source fidelity check passed." : "Recorded source fidelity check failed.") : "No source fidelity check recorded."} Review provenance and round-trip results alongside fidelity.</p></div>
-        <div><b>On time</b><p class="charter">${card.last_run ? `Last recorded check: ${card.last_run.ts}.` : "No source check recorded."} A configured schedule alone does not prove an on-time check.</p></div>
+        <div><b>On time</b><p class="charter">${card.publisher_checked_at ? `Last successful publisher check: ${card.publisher_checked_at}.` : "No successful publisher check recorded for this version."} A stored version, cached artifact or attempted run does not establish current publisher freshness.</p></div>
       </div>
-      <div class="charter">Last fetch ${card.last_run ? card.last_run.ts : "never"} ·
+      <div class="charter">Imported ${card.retrieved_at || "not recorded"} · last recorded attempt ${card.last_run ? card.last_run.ts : "not recorded"} ·
         artifact <span class="mono">${card.s3_uri || "—"}</span> ·
         run ${card.last_run ? "#" + card.last_run.run_id : "—"}
         ${card.last_run && card.last_run.error ? html` · <span style=${{ color: "var(--rose-600)" }}>${card.last_run.error}</span>` : ""}
         ${card.last_run && card.last_run.note ? html` · ${card.last_run.note}` : ""}
       </div>
+      <p class="mono" style=${{ overflowWrap: "anywhere" }}>Source version #${card.source_version_id ?? "not recorded"} · SHA-256 ${card.content_hash || "not recorded"}</p>
       <table class="members">
         <thead><tr><th>suite</th><th>status</th><th>score</th></tr></thead>
         <tbody>
@@ -981,12 +1096,15 @@ function EvidencePanel({ card, sourceKey, version, error }) {
             return html`<tr key=${s}>
               <td>${labels[s]}</td>
               <td><span class=${"badge " + (ok === true ? "open" : ok === false ? "restricted" : "guidance")}>${ok === true ? "pass" : ok === false ? "fail" : "not run"}</span></td>
-              <td class="mono">${score === "" ? JSON.stringify(scores) : score}</td>
+              <td class="mono">${score === "" ? "No summary score recorded" : score}
+                ${row && html`<details><summary>Method, binding and result evidence</summary><pre tabindex="0">${JSON.stringify(row, null, 2)}</pre></details>`}</td>
             </tr>`;
           })}
         </tbody>
       </table>
       <div class="charter">Reported downstream readiness: ${card.l2_ready === true ? "ready" : card.l2_ready === false ? "not ready" : "not recorded"}. ${card.readiness_reason || "Missing checks remain unverified."}</div>
+      <${SourceAuditEvidence} audit=${card.inventory} doc=${{ source_version_id: card.source_version_id, content_hash: card.content_hash }} />
+      <details><summary>Recorded source workflow (all attempts)</summary><${WorkflowEvidence} report=${card.workflow} /></details>
     </div>`;
 }
 
@@ -1085,6 +1203,46 @@ function StageLegend({ meta }) {
     </div>`;
 }
 
+function WorkflowEvidence({ report }) {
+  if (!report || report.status !== "available") return html`<div class="notice">Workflow evidence unavailable. ${report && report.reason || "No worker task and step records have been published."}</div>`;
+  const tasks = report.tasks || [], steps = report.steps || [], jobs = report.jobs || [];
+  return html`<div>
+    <p class="charter">Durations come from completed worker measurements. Missing times and dependencies stay unrecorded; retries retain separate attempt records.</p>
+    ${!(tasks.length || jobs.length) && html`<div class="empty">No worker workflow has been recorded for this selection.</div>`}
+    ${(report.workflow_stages || []).length > 0 && html`<p class="charter">Configured stage order: ${report.workflow_stages.map(evidenceLabel).join(" → ")}. This order alone does not prove that a step ran.</p>`}
+    ${jobs.map((job) => html`<section class="family" key=${job.job_id}>
+      <h3 style=${{ marginTop: 0 }}><span class=${"badge " + evidenceTone(job.status)}>${evidenceLabel(job.status)}</span> Job <span class="mono">${job.job_id}</span></h3>
+      <div class="meta-grid"><span>Trigger <b>${job.trigger || "not recorded"}</b></span><span>Created <b>${job.created_at || "not recorded"}</b></span>
+        <span>Started <b>${job.started_at || "not recorded"}</b></span><span>Finished <b>${job.finished_at || "not recorded"}</b></span>
+        <span>Measured duration <b>${measuredDuration(job.duration_ms)}</b></span></div>
+      <div class="mono">Event ${job.event_key || "not recorded"} · adapter ${job.adapter_key || "not recorded"}</div>
+      ${tasks.filter((task) => task.job_id === job.job_id).map((task) => {
+        const recorded = steps.filter((step) => step.task_id === task.task_id && step.job_id === task.job_id);
+        const maxDuration = Math.max(1, ...recorded.filter((step) => Number.isFinite(step.duration_ms)).map((step) => step.duration_ms));
+        return html`<details class="rolecard" key=${task.task_id} style=${{ marginTop: "12px" }} open>
+          <summary><b>${task.source_key || "Job coordination"}</b> · ${evidenceLabel(task.status)} · attempt ${task.attempt ?? "not recorded"}${task.max_attempts != null ? ` / ${task.max_attempts}` : ""}</summary>
+          <div class="meta-grid"><span>Task <span class="mono">${task.task_id}</span></span><span>Worker <span class="mono">${task.worker || "not recorded"}</span></span>
+            <span>Queue wait <b>${measuredDuration(task.queue_wait_ms)}</b></span><span>Heartbeat <b>${task.heartbeat_at || "not recorded"}</b></span>
+            <span>Lease until <b>${task.lease_until || "not recorded"}</b></span><span>Next attempt <b>${task.next_attempt_at || "not scheduled"}</b></span></div>
+          <div class="charter">Started ${task.started_at || "not recorded"} · finished ${task.finished_at || "not recorded"}</div>
+          ${task.error && html`<div class="notice">${typeof task.error === "string" ? task.error : JSON.stringify(task.error)}</div>`}
+          ${!recorded.length ? html`<p class="charter">No measured steps recorded for this task.</p>` : html`
+            <div style=${{ overflowX: "auto" }}><table class="members"><thead><tr><th>Step / attempt</th><th>Status</th><th>Recorded dependencies</th><th>Started / finished</th><th>Measured duration</th></tr></thead>
+              <tbody>${recorded.map((step) => html`<tr key=${step.step_id}>
+                <td><b>${evidenceLabel(step.stage)}</b><div class="mono">${step.step_id} · attempt ${step.attempt ?? "not recorded"}</div></td>
+                <td><span class=${"badge " + evidenceTone(step.status)}>${evidenceLabel(step.status)}</span></td>
+                <td class="mono">${Array.isArray(step.depends_on) ? (step.depends_on.length ? step.depends_on.join(", ") : "No dependencies") : "not recorded"}</td>
+                <td class="mono">${step.started_at || "not recorded"}<br />${step.finished_at || "not recorded"}</td>
+                <td><span class="mono">${measuredDuration(step.duration_ms)}</span>
+                  ${Number.isFinite(step.duration_ms) && step.duration_ms >= 0 && html`<div aria-hidden="true" style=${{ marginTop: "4px", height: "5px", width: `${Math.max(1, step.duration_ms / maxDuration * 100)}%`, background: "var(--indigo-500)", borderRadius: "3px" }}></div>`}
+                </td></tr>`)}</tbody></table></div>`}
+        </details>`;
+      })}
+    </section>`)}
+    ${tasks.some((task) => !jobs.some((job) => job.job_id === task.job_id)) && html`<div class="notice">Some task records have no matching job in this response. Workflow evidence is incomplete.</div>`}
+  </div>`;
+}
+
 function FleetView({ open }) {
   const [board, setBoard] = useState(null);
   const [job, setJob] = useState(null);
@@ -1101,14 +1259,12 @@ function FleetView({ open }) {
 
   const load = () => {
     api("/api/clhear/fleet").then((value) => { setBoard(value); setBoardError(null); }).catch(setBoardError);
-    api("/api/clhear/jobs/latest").then((value) => { setJob(value); setJobError(null); }).catch((error) => {
-      if (error.status === 404) { setJob(false); setJobError(null); } else setJobError(error);
-    });
+    api("/api/clhear/l1/workflow").then((value) => { setJob(value); setJobError(null); }).catch(setJobError);
   };
   useEffect(() => { load(); }, []);
   useEffect(() => {
     // real-time: poll while the latest job (or any run) is executing
-    const active = (job && job.running) || (board && board.some((r) => r.last_run && r.last_run.status === "running"));
+    const active = (job && (job.tasks || []).some((task) => ["running", "queued", "retry_wait"].includes(task.status))) || (board && board.some((r) => r.last_run && r.last_run.status === "running"));
     if (!active) return;
     const t = setInterval(load, 2500);
     return () => clearInterval(t);
@@ -1144,9 +1300,7 @@ function FleetView({ open }) {
       ${stageLegend && html`<${StageLegend} meta=${meta} />`}
       ${mode === "team" && html`<${TeamRoles} selectRun=${(id) => { setRunId(id); }} />`}
       ${mode === "activity" && html`<${ActivityView} open=${open} />`}
-      ${mode === "canvas" && (jobError ? html`<${ErrorNotice} error=${jobError} />` : job === null ? html`<div class="spin">Loading recorded workflow…</div>` : job
-        ? html`<${JobCanvas} job=${job} selectRun=${setRunId} selectedRun=${runId} />`
-        : html`<div class="empty">No fleet job has been recorded.</div>`)}
+      ${mode === "canvas" && (jobError ? html`<${ErrorNotice} error=${jobError} />` : job === null ? html`<div class="spin">Loading recorded workflow…</div>` : html`<${WorkflowEvidence} report=${job} />`)}
       ${runError && html`<${ErrorNotice} error=${runError} />`}
       ${run && html`<${RunDag} run=${run} close=${() => setRunId(null)} meta=${meta} />`}
       ${mode === "table" && (boardError ? html`<${ErrorNotice} error=${boardError} />` : board === null ? html`<div class="spin">Loading recorded source runs…</div>` : html`<${FleetTable} board=${board} open=${open} setRunId=${setRunId} meta=${meta} />`)}
@@ -1221,178 +1375,24 @@ function FleetTable({ board, open, setRunId, meta }) {
       </table>`;
 }
 
-/* Databricks-style job workflow canvas: lanes per source, task cards with
-   live statuses, start/relay convergence, replay from the ledger. */
-function JobCanvas({ job, selectRun, selectedRun }) {
-  const allTasks = job.lanes.flatMap((l) => l.tasks).concat(job.relay ? [job.relay] : []);
-  const ordered = [...allTasks].sort((a, b) => a.run_id - b.run_id);
-  const [lit, setLit] = useState(new Set(ordered.map((t) => t.run_id)));
-  const replay = () => {
-    setLit(new Set());
-    const total = Math.max(1, ordered.reduce((a, t) => a + (t.duration_ms || 1), 0));
-    const scale = Math.min(1, 6000 / total);
-    let t = 0;
-    ordered.forEach((task) => {
-      t += Math.max(200, (task.duration_ms || 1) * scale);
-      setTimeout(() => setLit((prev) => new Set([...prev, task.run_id])), t);
-    });
-  };
-
-  const W = 208, H = 66, GAPX = 54, LANEH = 86, LEFT = 96;
-  const maxLen = Math.max(...job.lanes.map((l) => l.tasks.length));
-  const relayX = LEFT + maxLen * (W + GAPX) + 30;
-  const width = relayX + W + 30;
-  const height = Math.max(2, job.lanes.length) * LANEH + 30;
-  const midY = height / 2;
-  const laneY = (i) => 20 + i * LANEH + H / 2;
-  const pos = {};
-  job.lanes.forEach((lane, li) =>
-    lane.tasks.forEach((task, ti) => { pos[task.run_id] = { x: LEFT + ti * (W + GAPX), y: laneY(li) }; })
-  );
-  if (job.relay) pos[job.relay.run_id] = { x: relayX, y: midY };
-
-  const statusColor = (task) =>
-    !lit.has(task.run_id) ? "var(--pearl-dark)"
-    : task.status === "failure" ? "var(--rose-600)"
-    : task.status === "warning" ? "var(--amber-600)"
-    : task.status === "running" ? "var(--indigo-500)"
-    : task.status === "info" ? "var(--indigo-100)"
-    : "var(--mint-600)";
-  const counts = job.status_counts || {};
-
-  const edgePath = (from, to) => {
-    const x1 = from === 0 ? 44 : pos[from].x + W;
-    const y1 = from === 0 ? midY : pos[from].y;
-    const x2 = pos[to].x;
-    const y2 = pos[to].y;
-    const mx = (x1 + x2) / 2;
-    return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
-  };
-
-  return html`
-    <div class="dagwrap">
-      <h3><span class="mono">${job.job_id}</span> · trigger ${job.trigger} · started ${job.started_at}
-        · ${(job.total_duration_ms / 1000).toFixed(1)}s
-        ${job.running ? html` · <span class="dot running"></span> running` : ""}</h3>
-      <div class="charter">
-        ${allTasks.length} tasks —
-        ${["success", "warning", "failure", "running", "info"].filter((s) => counts[s])
-          .map((s) => `${counts[s]} ${s}`).join(" · ")}
-        · ${allTasks.reduce((a, t) => a + (t.nodes || 0), 0).toLocaleString()} nodes reported across tasks
-        in ${(job.total_duration_ms / 1000).toFixed(1)}s recorded duration
-        · click a task for its stage pipeline
-      </div>
-      <div style=${{ overflowX: "auto" }}>
-        <svg width=${width} height=${height} style=${{ display: "block" }}>
-          ${job.edges.map(([from, to], i) => {
-            const on = (from === 0 || lit.has(from)) && lit.has(to);
-            return html`<path key=${i} d=${edgePath(from, to)} fill="none"
-              stroke=${on ? "var(--indigo-500)" : "var(--pearl-dark)"} stroke-width="1.8" />`;
-          })}
-          <circle cx="32" cy=${midY} r="13" fill="var(--ind-700)" />
-          <text x="32" y=${midY + 4} text-anchor="middle" font-size="11" fill="white">▶</text>
-          <text x="32" y=${midY + 30} text-anchor="middle" font-size="10.5" fill="var(--muted)">job start</text>
-          ${allTasks.map((task) => {
-            const p = pos[task.run_id];
-            const selected = selectedRun === task.run_id;
-            return html`
-              <g key=${task.run_id} style=${{ cursor: "pointer" }} onClick=${() => selectRun(task.run_id)}>
-                <rect x=${p.x} y=${p.y - H / 2} width=${W} height=${H} rx="10"
-                      fill="var(--canvas)" stroke=${statusColor(task)} stroke-width=${selected ? 3.5 : 2.2} />
-                <circle cx=${p.x + 14} cy=${p.y - H / 2 + 15} r="4.5" fill=${statusColor(task)} />
-                <text x=${p.x + 26} y=${p.y - H / 2 + 19}
-                      font-family="ui-monospace, Menlo, monospace" font-size="11" fill="var(--muted)">
-                  ${task.fleet} · #${task.run_id}</text>
-                <text x=${p.x + 12} y=${p.y + 6} font-size="12" font-weight="700" fill="var(--ink)">
-                  ${(task.short_name || task.source || "").slice(0, 26)}</text>
-                <text x=${p.x + 12} y=${p.y + 22} font-size="10.5" fill="var(--muted)">
-                  ${task.step.slice(0, 30)}${task.coverage != null ? ` · ${(task.coverage * 100).toFixed(1)}%` : ""}${task.duration_ms != null ? ` · ${(task.duration_ms / 1000).toFixed(1)}s` : ""}</text>
-              </g>`;
-          })}
-        </svg>
-      </div>
-      <button class="playbtn" onClick=${replay}>▶ Animate recorded job</button>
-    </div>`;
-}
-
-function chipStatus(stage, runStatus) {
-  if (stage.stage === "salvage" || stage.stage === "llm_repair" || stage.stage === "hints") return "warning";
-  if (stage.stage === "gate" && stage.coverage != null && stage.coverage < 0.995) return runStatus === "failure" ? "failure" : "warning";
-  return runStatus === "failure" ? "failure" : "success";
-}
-
+/* Legacy run records remain inspectable without inventing step dependencies. */
 function RunDag({ run, close, meta }) {
-  const [lit, setLit] = useState(run.stages.length); // all lit by default
-  const stages = run.stages;
-  const W = 148, H = 92, GAP = 26;
-  const width = Math.max(600, stages.length * (W + GAP));
-  const replay = () => {
-    setLit(0);
-    const total = Math.max(1, stages.reduce((a, s) => a + (s.ms || 1), 0));
-    const scale = Math.min(1, 4000 / total); // compress to <= 4s
-    let t = 0;
-    stages.forEach((s, i) => {
-      t += Math.max(120, (s.ms || 1) * scale);
-      setTimeout(() => setLit(i + 1), t);
-    });
-  };
-  const color = (s, i) => {
-    if (i >= lit) return "var(--pearl-dark)";
-    if (["salvage", "llm_repair", "hints"].includes(s.stage)) return "var(--amber-600)";
-    if (s.stage === "gate" && s.coverage != null && s.coverage < 0.995) return "var(--amber-600)";
-    return run.status === "failed" && i === stages.length - 1 ? "var(--rose-600)" : "var(--mint-600)";
-  };
-  return html`
-    <div class="dagwrap">
-      <h3>run #${run.id} · <span class="mono">${run.fleet}</span> · ${run.status}
-        ${run.outputs.coverage != null && html` · coverage ${(run.outputs.coverage * 100).toFixed(2)}%`}
-        ${run.outputs.version && html` · <span class="mono">${run.outputs.version}</span>`}
-      </h3>
-      <div class="charter">
-        trigger ${run.trigger} · ${run.created_at} · ${(run.duration_ms / 1000).toFixed(1)}s total
-        ${run.outputs.llm_assisted ? " · LLM-assisted repair (ratification pending)" : ""}
-        ${run.outputs.hints_used ? ` · ${run.outputs.hints_used.length} learned hint(s) applied` : ""}
-      </div>
-      <div style=${{ overflowX: "auto" }}>
-        <svg width=${width} height=${H + 40} style=${{ display: "block" }}>
-          ${stages.map((s, i) => {
-            const x = i * (W + GAP);
-            const attemptLoop = i > 0 && STAGE_ORDER.indexOf(s.stage) <= STAGE_ORDER.indexOf(stages[i - 1].stage);
-            return html`
-              <g key=${i}>
-                <title>${meta && meta.stages ? meta.stages[s.stage] || s.stage : s.stage}</title>
-                ${i > 0 && html`
-                  <line x1=${x - GAP} y1=${H / 2} x2=${x} y2=${H / 2}
-                        stroke=${i < lit ? "var(--indigo-500)" : "var(--pearl-dark)"} stroke-width="2" />
-                  <polygon points=${`${x},${H / 2} ${x - 7},${H / 2 - 4} ${x - 7},${H / 2 + 4}`}
-                           fill=${i < lit ? "var(--indigo-500)" : "var(--pearl-dark)"} />`}
-                ${attemptLoop && html`
-                  <path d=${`M ${x + W / 2} ${H - 6} C ${x + W / 2 - 40} ${H + 28}, ${x - GAP - W / 2 + 40} ${H + 28}, ${x - GAP - W / 2} ${H - 6}`}
-                        fill="none" stroke="var(--amber-600)" stroke-width="1.5" stroke-dasharray="4 3" />`}
-                <rect x=${x} y=${H / 2 - 32} width=${W} height="64" rx="10"
-                      fill="var(--canvas)" stroke=${color(s, i)} stroke-width="2.5" />
-                <text x=${x + W / 2} y=${H / 2 - 8} text-anchor="middle"
-                      font-family="ui-monospace, Menlo, monospace" font-size="13" font-weight="700"
-                      fill="var(--ink)">${s.stage}${s.attempt > 1 ? ` #${s.attempt}` : ""}</text>
-                <text x=${x + W / 2} y=${H / 2 + 12} text-anchor="middle" font-size="11" fill="var(--muted)">
-                  ${s.coverage != null ? `${(s.coverage * 100).toFixed(2)}% · ` : ""}${s.nodes ? `${s.nodes} nodes · ` : ""}${s.ms}ms
-                </text>
-                ${s.stage === "diff" && html`
-                  <text x=${x + W / 2} y=${H / 2 + 26} text-anchor="middle" font-size="10.5" fill="var(--muted)">
-                    +${s.added || 0} ~${s.amended || 0} −${s.removed || 0}
-                  </text>`}
-                ${s.stage === "persist" && s.version && html`
-                  <text x=${x + W / 2} y=${H / 2 + 26} text-anchor="middle" font-size="10.5" fill="var(--muted)">
-                    ${String(s.version).slice(0, 22)}
-                  </text>`}
-              </g>`;
-          })}
-        </svg>
-      </div>
-      <button class="playbtn" onClick=${replay}>▶ Animate recorded run</button>
-      ${" "}
-      <button class="playbtn" onClick=${close}>close</button>
-    </div>`;
+  const outputs = run.outputs || {};
+  const stages = outputs.stages || [];
+  return html`<div class="dagwrap">
+    <h3>Run #${run.id} · <span class="mono">${run.fleet}</span> · ${run.status || "unverified"}</h3>
+    <p class="charter">Trigger ${run.trigger || "not recorded"} · recorded ${run.created_at || "not recorded"} · measured duration ${measuredDuration(run.duration_ms)}.</p>
+    <p class="charter">This legacy run lists recorded stages. Step dependencies, heartbeats and worker leases were not recorded here; use Workflow for current task evidence.</p>
+    <p class="mono" style=${{ overflowWrap: "anywhere" }}>${outputs.version || "Version not recorded"} · SHA-256 ${outputs.content_hash || "not recorded"}</p>
+    ${!stages.length && html`<div class="empty">No measured stage records.</div>`}
+    <table class="members"><thead><tr><th>Recorded stage</th><th>Attempt</th><th>Measured duration</th><th>Recorded result</th></tr></thead>
+      <tbody>${stages.map((stage, i) => html`<tr key=${i}>
+        <td title=${meta && meta.stages && meta.stages[stage.stage] || ""}>${stage.stage}</td>
+        <td>${stage.attempt ?? "not recorded"}</td><td>${measuredDuration(stage.ms)}</td>
+        <td>${stage.status || "status not recorded"}${stage.coverage != null ? ` · reported coverage ${(stage.coverage * 100).toFixed(2)}%` : ""}</td>
+      </tr>`)}</tbody></table>
+    <button class="playbtn" onClick=${close}>Close run</button>
+  </div>`;
 }
 
 /* --------------------------------- search ----------------------------------- */

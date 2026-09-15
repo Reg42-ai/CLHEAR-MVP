@@ -15,7 +15,7 @@
   .lead { color: var(--muted); margin: 0 0 16px; max-width: 820px; }
   .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
   .tab { border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
-  .tab[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
+  .tab[aria-selected="true"] { color: var(--ink); border-color: var(--accent); }
   .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 18px 20px; margin-bottom: 14px; }
   .card h2 { margin: 0 0 8px; font-size: 17px; }
   .card h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
@@ -337,7 +337,7 @@ function App() {
       <h1>Say how your program stands. Prove it.</h1>
       <p class="lead">Four conformance levels against the CLHEAR standard — CL1 Mapped and CL2 Traceable by verified self-assessment, CL3 Assessed and CL4 Automated by accredited independent assessors under ISAE 3000. One public register; marks only through the program.</p>
       ${summary ? html`<div class="kpis">${Object.entries(summary.marks_granted).map(([l, n]) => html`<span key=${l} class="kpi"><b>${n}</b>${l}</span>`)}<span class="kpi"><b>${summary.pending_verification}</b>awaiting verification</span><span class="kpi"><b>${summary.accredited_assessors}</b>accredited assessors</span></div>` : null}
-      <div class="tabs" role="tablist" aria-label="Sections">${tabs.map(([k, l]) => html`<button key=${k} class="tab" role="tab" aria-pressed=${tab === k && !open} aria-selected=${tab === k && !open} onClick=${() => go(k)}>${l}</button>`)}</div>
+      <div class="tabs" role="tablist" aria-label="Sections">${tabs.map(([k, l]) => html`<button key=${k} class="tab" role="tab" aria-selected=${tab === k && !open} onClick=${() => go(k)}>${l}</button>`)}</div>
       ${body}
     </main></div>`;
 }

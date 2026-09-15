@@ -118,8 +118,8 @@ def test_agnostic_scan_of_store_is_clean(engine):
 
 def test_disclosure_gate(engine, monkeypatch):
     """§9: nothing reaches the public `clhear` repo before the filing is confirmed.
-    The exporter compiles locally regardless, refuses to push without the flag,
-    and the release workflow wires the flag from a repository variable."""
+    The legacy public exporter refuses to push without explicit disclosure.
+    The current release workflow prepares and promotes private candidates only."""
     from app.clhear.platform import exporter
     from app.clhear.settings import get_settings
 
@@ -128,17 +128,29 @@ def test_disclosure_gate(engine, monkeypatch):
     get_settings.cache_clear()
     try:
         assert exporter.disclosure_confirmed() is False
-        monkeypatch.setattr(exporter, "compile_snapshot", lambda *_a, **_k: {"release": "x"})
+        from unittest.mock import Mock
+        compile_snapshot, execute = Mock(), Mock()
+        monkeypatch.setattr(exporter, "compile_snapshot", compile_snapshot)
+        monkeypatch.setattr(exporter.subprocess, "run", execute)
         monkeypatch.setattr("app.clhear.platform.evals.release_gate", lambda *_a, **_k: True)
         with pytest.raises(exporter.DisclosureNotConfirmed):
             exporter.export_release(engine, "x", push=True, layout=False)
+        compile_snapshot.assert_not_called()
+        execute.assert_not_called()
         monkeypatch.setenv("CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED", "true")
         get_settings.cache_clear()
         assert exporter.disclosure_confirmed() is True
     finally:
         get_settings.cache_clear()
     workflow = (REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-    assert "CLHEAR_PUBLIC_DISCLOSURE_CONFIRMED" in workflow
+    assert "app.clhear.platform.exporter" not in workflow
+    assert "CLHEAR_PUBLIC_REPO_URL" not in workflow
+    assert "private CLHEAR_RELEASES_S3_PREFIX is required" in workflow
+    assert workflow.index("L0 worker — prepare immutable candidate") < workflow.index("cosign sign-blob")
+    assert workflow.index("cosign sign-blob") < workflow.index("L0 worker — verify signature, artifacts and current inventory; promote")
+    retained = workflow.split("- name: Retain verification metadata", 1)[1]
+    assert "/l1/snapshot.db" not in retained and "artifacts/**" not in retained
+    assert "manifest.sigstore.json" in retained and "promotion.json" in retained
     # no workflow pushes to a public remote by hand — only the gated exporter does
     for wf in (REPO / ".github" / "workflows").glob("*.yml"):
         text = wf.read_text(encoding="utf-8")

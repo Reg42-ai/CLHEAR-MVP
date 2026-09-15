@@ -139,7 +139,14 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
 
 
 def layer_index(engine: Engine) -> list[dict]:
+    from app.clhear.l1.inventory import inventory_summary
+    from app.clhear.l1.workflow import workflow_summary
+    from app.clhear.l1.viewer_snapshot import read_viewer_state
+
     counts = layer_counts(engine)
+    inventory = inventory_summary(engine, scope="registered")
+    workflow = workflow_summary(engine)
+    viewer = read_viewer_state(engine)
     items = []
     for code in LAYER_ORDER:
         entry = layer_public_meta(code)
@@ -158,6 +165,27 @@ def layer_index(engine: Engine) -> list[dict]:
                        if code == "L1" else "Existing output is a preview; layer acceptance follows verified L1."),
             "detail": "Operational evidence" if code == "L0" else ("L1 verification in progress" if code == "L1" else "Awaiting upstream acceptance"),
         }
+        if code == "L1":
+            # Read persisted audit results. Registry/record counts are never an
+            # independent publisher-scope denominator or an acceptance signal.
+            entry["overview"].update({
+                "inventory": {key: value for key, value in inventory.items() if key != "sources"},
+                "workflow": {"status": workflow.get("status"), "jobs": workflow.get("jobs", [])[:1]},
+                "scope": inventory.get("scope_version") or inventory.get("scope") or "Scope evidence unavailable",
+                "checked_at": inventory.get("audited_at"),
+                "job_id": inventory.get("job_id"),
+                "viewer_snapshot": viewer,
+                "verification": ("passed" if inventory.get("full_scope_verified") is True
+                                 and inventory.get("current_binding_valid") is True
+                                 else "failed" if inventory.get("status") == "gaps" else "not_evaluated"),
+            })
+        if code in viewer.get("omitted_layers", []):
+            entry["counts"] = {}
+            entry["overview"].update({
+                "state": "unknown", "verification": "not_evaluated", "output_count": None,
+                "counts": {}, "available_in_projection": False,
+                "notice": "This layer is not included in the L1 viewer snapshot. Its output is unavailable in this projection.",
+            })
         if LAYER_CATALOG[code]["status"] != "live":
             entry["banner"] = status_banner(code)
         items.append(entry)

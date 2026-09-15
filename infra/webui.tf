@@ -142,6 +142,8 @@ resource "aws_lambda_function" "webui" {
       REG42_CLHEAR_ENABLED            = "true"
       CLHEAR_EVENTS_QUEUE_URL         = aws_sqs_queue.events.url
       CLHEAR_SESSION_SECRET           = data.aws_ssm_parameter.session_secret[0].value
+      CLHEAR_RESTRICTED_ACCESS        = "true"
+      CLHEAR_AUTH_DEBUG               = "false"
       GOOGLE_OAUTH_CLIENT_ID          = data.aws_ssm_parameter.google_oauth_client_id[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.google_oauth_client_id[0].value
       GOOGLE_OAUTH_CLIENT_SECRET      = data.aws_ssm_parameter.google_oauth_client_secret[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.google_oauth_client_secret[0].value
       CLHEAR_SES_SENDER               = "CLHEAR <noreply@${var.clhear_hostname}>"
