@@ -231,7 +231,7 @@ FLEET_SCHEDULES = {
     "isa": _daily("Israel Securities Authority — Securities Law 5728-1968 + regulations (English translations, derived-only)."),
     "au_legislation": _daily("Australia — Corporations Act Ch 7, AML/CTF, ASIC DTR, Privacy Act (legislation.gov.au)."),
     "sg_legislation": _daily("Singapore — SFA 2001, PDPA (sso.agc.gov.sg)."),
-    "finra": _daily("FINRA rulebook subset (finra.org)."),
+    "finra": _daily("FINRA declared inventory: permission-gated discovery, current rules and explicit publication/adapter gaps (finra.org)."),
     "adgm": _daily("ADGM FSMR + FSRA GEN/COBS/PRU/AML."),
     "nydfs": _daily("NYDFS 23 NYCRR Parts 200 and 500."),
     "nasdaq": _daily("Nasdaq Listing Rules 5600 series."),

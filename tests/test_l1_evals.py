@@ -12,7 +12,11 @@ from tests.test_l1_synthetic_amendment import V1, V2, SyntheticAdapter
 
 
 def test_l1_gate_lists_the_hld_suites():
-    assert {"e1_fidelity", "e7_closure", "l1_family_completeness", "l1_currency", "l1_boundary_f1"} <= set(LAYER_GATES["L1"])
+    # Publication needs current independently verified inventory evidence.
+    # Per-source and legacy family/currency diagnostics remain available, but
+    # parser self-consistency and ingestion age cannot certify publisher scope.
+    assert set(LAYER_GATES["L1"]) == {"l1_inventory_acceptance", "l1_boundary_f1"}
+    assert {"e1_fidelity", "e7_closure", "l1_family_completeness", "l1_currency"} <= set(evals.SUITES)
     assert set(LAYER_GATES["L1"]) <= set(evals.SUITES)
 
 
@@ -110,4 +114,5 @@ def test_run_all_records_every_gate_suite(engine):
     by = {r["suite"]: r for r in records}
     assert by["l1_boundary_f1"]["passed"] is True
     assert by["l1_currency"]["passed"] is False
+    assert by["l1_inventory_acceptance"]["passed"] is False
     assert json.dumps(by["l1_boundary_f1"]["scores"])  # serialisable artefact

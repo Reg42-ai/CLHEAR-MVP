@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>CLHEAR · Sources Explorer</title>
+<title>CLHEAR · L1 Sources</title>
 <link rel="stylesheet" href="/static/theme.css" />
 <style>
   /* Page-specific styles; shared tokens + chrome live in /static/theme.css.
@@ -239,6 +239,25 @@
   .dagwrap h3 { margin: 0 0 4px; font-size: 15px; }
   .playbtn { border: 1px solid var(--edge-bright); color: var(--accent); background: var(--panel);
              border-radius: 999px; padding: 5px 16px; cursor: pointer; font-size: 12.5px; }
+  .rolegrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 16px 0; }
+  .rolecard { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 18px; }
+  .rolecard h3 { margin: 0 0 6px; }
+  .rolecard p { color: var(--muted); font-size: 13px; }
+  .rolecard dt { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .rolecard dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+  .rolecard summary { cursor: pointer; color: var(--accent); }
+  .family summary, .rolecard summary { min-height: 28px; padding: 4px 0; cursor: pointer; }
+  .rolecard pre { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .recordbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .recordbar select { max-width: min(100%, 520px); background: var(--panel-strong); color: var(--ink); border: 1px solid var(--edge); padding: 6px; border-radius: 6px; }
+  .n .rawbody { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .n:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .family { overflow-x: auto; }
+  .tabs { flex-wrap: wrap; }
+  .float { white-space: normal; max-width: 100%; overflow-wrap: anywhere; }
+  @media (max-width: 1200px) { .toc { width: 220px; } .inspector { width: 300px; } .doc { padding: 28px; } }
+  @media (max-width: 960px) { .layout { flex-wrap: wrap; } .toc { position: static; width: 100%; max-height: 200px; box-sizing: border-box; } .doc { max-width: none; } .inspector { position: static; width: 100%; max-height: none; box-sizing: border-box; } header.appbar input { width: 210px; } }
+  @media (max-width: 600px) { main { padding: 0 12px 40px; } .doc { padding: 20px 16px; } .curbadge { flex-wrap: wrap; } .meta-grid { gap: 8px; overflow-wrap: anywhere; } }
 </style>
 </head>
 <body>
@@ -252,20 +271,42 @@ import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
 import htm from "https://esm.sh/htm@3.1.1";
 
 const html = htm.bind(React.createElement);
-const api = (p) => fetch(p).then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
+const api = async (p) => {
+  const r = await fetch(p, { credentials: "same-origin" });
+  if (!r.ok) {
+    const message = r.status === 401 ? "Sign in to access this L1 workspace." : r.status === 403 ? "Your account does not have access to this record." : r.status === 404 ? "This source, version or record was not found." : `Unable to load this record (${r.status}).`;
+    const error = new Error(message); error.status = r.status; throw error;
+  }
+  return r.json();
+};
 const ws = (s) => (s || "").split(/\s+/).join(" ").trim();
+const sourcePath = (key) => `/api/clhear/sources/${key.split("/").map(encodeURIComponent).join("/")}`;
+function sourceUrl(key, version, nodeId, ref) {
+  const q = new URLSearchParams({ source: key });
+  if (version) q.set("version", version);
+  if (nodeId) q.set("node", String(nodeId));
+  if (ref) q.set("ref", ref);
+  return `/l1?${q}`;
+}
+function recordMatches(info, sourceKey, doc) {
+  return info && info.source_key === sourceKey && info.version_label === doc.version &&
+    (doc.source_version_id == null || info.source_version_id == null || info.source_version_id === doc.source_version_id);
+}
+function ErrorNotice({ error }) {
+  return html`<div class="locked" role="alert">${error.message || String(error)}${error.status === 401 && html` <a href="/signin">Sign in →</a>`}</div>`;
+}
 
 let _meta = null;
 const getMeta = () => (_meta ? Promise.resolve(_meta) : api("/api/clhear/meta").then((m) => (_meta = m)));
-const kindLabel = (meta, kind) => (meta && meta.version_kinds[kind] ? meta.version_kinds[kind].label : kind);
-const kindDef = (meta, kind) => (meta && meta.version_kinds[kind] ? meta.version_kinds[kind].definition : "");
+const kindLabel = (meta, kind) => (meta && meta.version_kinds && meta.version_kinds[kind] ? meta.version_kinds[kind].label : kind);
+const kindDef = (meta, kind) => (meta && meta.version_kinds && meta.version_kinds[kind] ? meta.version_kinds[kind].definition : "");
 
 function initialView() {
   const p = new URLSearchParams(location.search);
   if (p.get("source")) {
-    return { page: "source", key: p.get("source"), nodeId: p.get("node") ? Number(p.get("node")) : null, ref: null };
+    return { page: "source", key: p.get("source"), nodeId: p.get("node") ? Number(p.get("node")) : null, ref: p.get("ref"), version: p.get("version") || p.get("version_label") };
   }
-  if (p.get("view")) return { page: p.get("view") };
+  if (p.get("view")) return { page: ({ sources: "library", evals: "evidence" })[p.get("view")] || p.get("view") };
   return { page: "library" };
 }
 
@@ -281,10 +322,11 @@ function useTheme() {
 function App() {
   const [view, setView] = useState(initialView);
   const [families, setFamilies] = useState(null);
+  const [loadError, setLoadError] = useState(null);
   const [query, setQuery] = useState("");
   const [theme, toggleTheme] = useTheme();
 
-  useEffect(() => { api("/api/clhear/sources").then(setFamilies).catch(() => setFamilies([])); }, []);
+  useEffect(() => { api("/api/clhear/sources").then(setFamilies).catch(setLoadError); }, []);
   useEffect(() => {
     const input = document.getElementById("q");
     const handler = (e) => {
@@ -295,61 +337,170 @@ function App() {
     };
     input.addEventListener("keydown", handler);
     const home = document.getElementById("home");
-    const goHome = () => { history.replaceState({}, "", "/sources"); setView({ page: "library" }); };
+    const goHome = () => { history.replaceState({}, "", "/l1"); setView({ page: "library" }); };
     home.addEventListener("click", goHome);
     return () => { input.removeEventListener("keydown", handler); home.removeEventListener("click", goHome); };
   }, []);
 
-  const openSource = (key, ref, nodeId) => {
-    const q = new URLSearchParams({ source: key });
-    if (nodeId) q.set("node", String(nodeId));
-    history.replaceState({}, "", `/sources?${q}`);
-    setView({ page: "source", key, ref, nodeId: nodeId || null });
+  const openSource = (key, ref, nodeId, version) => {
+    history.replaceState({}, "", sourceUrl(key, version, nodeId, ref));
+    setView({ page: "source", key, ref, version, nodeId: nodeId || null });
   };
   const go = (page) => {
-    history.replaceState({}, "", page === "library" ? "/sources" : `/sources?view=${page}`);
+    history.replaceState({}, "", page === "library" ? "/l1" : `/l1?view=${page}`);
     setView({ page });
   };
 
   let page;
-  if (families === null) page = html`<div class="spin">Loading corpus…</div>`;
+  if (loadError) page = html`<${ErrorNotice} error=${loadError} />`;
+  else if (families === null) page = html`<div class="spin">Loading corpus…</div>`;
   else {
     const tabs = html`
       <div class="tabs">
-        <button class=${view.page === "library" ? "active" : ""} onClick=${() => go("library")}>Library</button>
-        <button class=${view.page === "activity" ? "active" : ""} onClick=${() => go("activity")}>Activity</button>
-        <button class=${view.page === "fleet" ? "active" : ""} onClick=${() => go("fleet")}>Fleet</button>
-        <button class=${view.page === "changes" ? "active" : ""} onClick=${() => go("changes")}>Change events</button>
-        <button class=${view.page === "evidence" ? "active" : ""} onClick=${() => go("evidence")}>Evidence</button>
-      </div>`;
-    if (view.page === "source") page = html`<${SourceView} sourceKey=${view.key} back=${() => go("library")} openRef=${view.ref} openNodeId=${view.nodeId} />`;
+        <button class=${view.page === "library" || view.page === "source" ? "active" : ""} onClick=${() => go("library")}>Sources</button>
+        <button class=${view.page === "fleet" || view.page === "activity" ? "active" : ""} onClick=${() => go("fleet")}>Fleet</button>
+        <button class=${view.page === "evidence" ? "active" : ""} onClick=${() => go("evidence")}>Evals</button>
+        <button class=${view.page === "changes" ? "active" : ""} onClick=${() => go("changes")}>Changes</button>
+      </div>
+      ${view.page !== "source" && html`<${InventoryOverview} />`}`;
+    if (view.page === "source") page = html`<div>${tabs}<${SourceView} key=${view.key + (view.version || "") + (view.nodeId || "")} sourceKey=${view.key} back=${() => go("library")} openRef=${view.ref} openNodeId=${view.nodeId} initialVersion=${view.version} /></div>`;
     else if (view.page === "search") page = html`<${SearchView} q=${query} open=${openSource} back=${() => go("library")} />`;
-    else if (view.page === "changes") page = html`<div>${tabs}<${ChangesView} open=${(key) => openSource(key)} /></div>`;
+    else if (view.page === "changes") page = html`<div>${tabs}<${ChangesView} open=${openSource} /></div>`;
     else if (view.page === "activity") page = html`<div>${tabs}<${ActivityView} open=${openSource} /></div>`;
     else if (view.page === "fleet") page = html`<div>${tabs}<${FleetView} open=${openSource} /></div>`;
-    else if (view.page === "evidence") page = html`<div>${tabs}<${EvidenceIndex} families=${families} open=${(key) => openSource(key)} /></div>`;
-    else page = html`<div>${tabs}<${Library} families=${families} open=${(key) => openSource(key)} /></div>`;
+    else if (view.page === "evidence") page = html`<div>${tabs}<${EvidenceIndex} families=${families} open=${openSource} /></div>`;
+    else page = html`<div>${tabs}<${Library} families=${families} open=${openSource} /></div>`;
   }
   return html`
     <div>
       <header class="appbar">
         <div class="wordmark" id="home">
-          <b>CLHEAR</b><span>sources explorer</span>
+          <b>CLHEAR</b><span>L1 · sources</span>
         </div>
         <input id="q" aria-label="Search verbatim clause text" placeholder="Search verbatim clause text (e.g. customer due diligence)…" />
         <div class="spacer"></div>
         <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a>
-        <span class="navlink active">Sources Explorer</span>
+        <span class="navlink active">L1 Sources</span>
         <a class="navlink" href="/review">Review</a>
         <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
       </header>
-      <main id="main"><h1 class="visually-hidden">Sources</h1>${page}</main>
+      <main id="main"><h1 class="visually-hidden">Sources</h1><${ViewerSnapshotNotice} />${page}</main>
     </div>`;
+}
+
+const measuredDuration = (value) => Number.isFinite(value) && value >= 0
+  ? (value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(2)} s`) : "not recorded";
+const evidenceLabel = (value) => value ? String(value).replaceAll("_", " ").replaceAll("-", " ") : "unverified";
+const evidenceTone = (value) => ["verified", "passed", "succeeded", "completed"].includes(value) ? "open"
+  : ["failed", "gaps", "blocked", "permission_blocked", "permission_unverified", "permissions_unverified", "rights-blocked"].includes(value) ? "restricted" : "guidance";
+
+function ViewerSnapshotNotice() {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => { api("/api/clhear/viewer-snapshot").then(setState).catch(setError); }, []);
+  if (error) return html`<div class="notice">Viewer origin evidence unavailable. ${error.message}</div>`;
+  if (!state) return html`<p class="charter">Loading viewer origin evidence…</p>`;
+  return html`<div class="charter" style=${{ marginBottom: "16px" }}>
+    <b>${state.viewer_snapshot ? "L1 candidate viewer" : "Direct database view"}</b> · ${evidenceLabel(state.source_environment)}
+    ${state.viewer_snapshot && html` · refreshed ${state.generated_at || "at an unrecorded time"} · revision <span class="mono">${state.revision || "not recorded"}</span>
+      <br />This projection is not an accepted release. ${(state.omitted_layers || []).join("–")} output is not included.
+      ${(state.redacted_source_keys || []).length} sources have text withheld by recorded permissions.`}
+    ${!state.viewer_snapshot && html` · no viewer snapshot revision is recorded; this does not establish acceptance.`}
+  </div>`;
+}
+
+function Findings({ findings = [] }) {
+  if (!findings.length) return html`<p class="charter">No findings recorded. This alone does not establish verification.</p>`;
+  return html`<ul>${findings.map((f, i) => html`<li key=${i}><b>${evidenceLabel(f.code)}</b>${f.operation ? ` · ${evidenceLabel(f.operation)}` : ""}${f.source_key ? ` · ${f.source_key}` : ""} — ${f.detail || f.reason || "Detail not recorded"}</li>`)}</ul>`;
+}
+
+function InventoryOverview() {
+  const [scope, setScope] = useState("registered");
+  const [report, setReport] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setReport(null); setError(null);
+    api(`/api/clhear/l1/inventory?scope=${scope}`).then((value) => { if (!cancelled) setReport(value); })
+      .catch((failure) => { if (!cancelled) setError(failure); });
+    return () => { cancelled = true; };
+  }, [scope]);
+  return html`<section class="family" aria-label="Declared L1 inventory">
+    <div class="recordbar"><h2 style=${{ margin: 0 }}>Declared L1 inventory</h2>
+      <label for="inventory-scope">Scope </label><select id="inventory-scope" value=${scope} onChange=${(e) => setScope(e.target.value)}>
+        <option value="registered">All registered sources</option><option value="finra">FINRA library</option>
+      </select></div>
+    ${error ? html`<${ErrorNotice} error=${error} />` : !report ? html`<p class="charter">Loading worker-produced inventory evidence…</p>` : html`<${InventorySummary} report=${report} />`}
+  </section>`;
+}
+
+function InventorySummary({ report }) {
+  const unavailable = !report || ["unavailable", "migration_required", "not_run"].includes(report.status);
+  const verified = report && report.full_scope_verified === true && report.current_binding_valid === true;
+  const sources = report && report.sources || [];
+  const counts = report && report.counts || {};
+  if (!report) return html`<div class="notice">Inventory evidence unavailable.</div>`;
+  return html`<div>
+    <p><span class=${"badge " + (verified ? "open" : "guidance")}>${verified ? "Scope verified" : "Scope not verified"}</span>
+      ${" "}${Number.isFinite(report.verified) ? report.verified : "—"} verified / ${Number.isFinite(report.known_expected) ? report.known_expected : "—"} declared documents
+      · ${Number.isFinite(report.unresolved) ? report.unresolved : "—"} unresolved</p>
+    ${unavailable && html`<div class="notice">Inventory evidence unavailable. ${report.reason || "The L1 worker has not recorded an audit for this scope."}</div>`}
+    ${report.audit_id != null && report.current_binding_valid === false && html`<div class="notice">The stored audit does not match the current source versions. A new worker audit is required.</div>`}
+    <p class="charter">${report.discovery_complete === true ? "Publisher discovery recorded as complete." : "Publisher discovery is incomplete or unverified; the declared count is not a full-publisher denominator."}
+      ${report.reason && !unavailable ? ` ${report.reason}` : ""}</p>
+    <div class="meta-grid">
+      <span>Scope <b>${report.scope_version || report.scope || "not recorded"}</b></span>
+      <span>Audited <b>${report.audited_at || "not recorded"}</b></span>
+      <span>Audit <b>${report.audit_id ?? "not recorded"}</b></span>
+      <span>Job <span class="mono">${report.job_id || "not recorded"}</span></span>
+    </div>
+    <div class="charter">Permission unverified: ${counts.permission_unverified ?? "not recorded"} · permission blocked: ${counts.permission_blocked ?? "not recorded"} · awaiting artifact: ${counts.awaiting_artifact ?? "not recorded"}.
+      Sign-in controls access; a missing acquisition permission and a missing original file are different blockers.</div>
+    <details><summary>Scope findings and original-document inventory (${sources.length})</summary>
+      <p class="mono">Inventory hash: ${report.inventory_hash || "not recorded"}</p>
+      <${Findings} findings=${report.findings || []} />
+      <div style=${{ overflowX: "auto" }}><table class="members"><thead><tr><th>Declared source</th><th>State</th><th>Expected edition</th><th>Publisher checked</th><th>Imported</th></tr></thead>
+        <tbody>${sources.map((s) => html`<tr key=${s.source_key}>
+          <td><a href=${sourceUrl(s.source_key, s.version_label)}>${s.name || s.source_key}</a><div class="mono">${s.source_key}</div></td>
+          <td><span class=${"badge " + evidenceTone(report.current_binding_valid === false && s.status === "verified" ? "unverified" : s.status)}>${evidenceLabel(report.current_binding_valid === false && s.status === "verified" ? "unverified" : s.status)}</span></td>
+          <td>${s.expected_edition || "not recorded"}</td><td>${s.publisher_checked_at || "not recorded"}</td><td>${s.ingested_at || "not recorded"}</td>
+        </tr>`)}</tbody></table></div>
+      ${report.discovery && html`<details><summary>Publisher discovery evidence</summary><pre tabindex="0">${JSON.stringify(report.discovery, null, 2)}</pre></details>`}
+    </details>
+  </div>`;
+}
+
+function SourceAuditEvidence({ audit, doc }) {
+  if (!audit || ["unavailable", "migration_required", "not_run"].includes(audit.status)) return html`<div class="notice">Source audit evidence unavailable. ${audit && audit.reason || "No worker audit is recorded."}</div>`;
+  const selected = doc && doc.source_version_id != null;
+  const matches = selected && audit.source_version_id === doc.source_version_id && audit.content_hash === doc.content_hash;
+  const permissionEntries = Object.entries(audit.permissions || {});
+  const status = audit.status === "verified" && (audit.verified !== true || audit.current_binding_valid === false) ? "unverified" : audit.status;
+  return html`<details class="family"><summary>Source audit · ${evidenceLabel(status)}${selected && !matches ? " · different version" : ""}</summary>
+    ${selected && !matches && html`<div class="notice">This audit describes another version or artifact. It does not verify the selected text.</div>`}
+    ${audit.current_binding_valid === false && html`<div class="notice">Current permissions, scope, freshness or versions no longer match this recorded audit. A new worker audit is required.</div>`}
+    <div class="meta-grid"><span>Expected edition <b>${audit.expected_edition || "not recorded"}</b></span>
+      <span>Publisher successfully checked <b>${audit.publisher_checked_at || "not recorded"}</b></span>
+      <span>Imported <b>${audit.ingested_at || "not recorded"}</b></span></div>
+    <div class="charter">Audit binding: source version #${audit.source_version_id ?? "not recorded"} · ${audit.version_label || "not recorded"}</div>
+    <p class="mono" style=${{ overflowWrap: "anywhere" }}>Artifact SHA-256: ${audit.content_hash || "not recorded"}</p>
+    ${audit.artifact_review ? html`<p><b>Artifact review:</b> ${audit.artifact_review.approved === true ? "Approved" : "Not approved"} · ${evidenceLabel(audit.artifact_review.coverage)} coverage · ${audit.artifact_review.publisher_edition || "edition not recorded"}.
+      <span class="charter"> Reviewed ${audit.artifact_review.reviewed_at || "at an unrecorded time"} · evidence ${audit.artifact_review.evidence_ref || "not recorded"}.</span></p>` : html`<p class="charter">No independent artifact edition and full-text coverage review recorded.</p>`}
+    <${Findings} findings=${audit.findings || []} />
+    <details><summary>Recorded permission decisions (${permissionEntries.length})</summary>
+      ${!permissionEntries.length && html`<p>No permission decisions recorded.</p>`}
+      <dl>${permissionEntries.map(([operation, decision]) => html`<div key=${operation}><dt>${evidenceLabel(operation)}</dt><dd>${decision.allowed === true ? "Allowed" : "Not allowed"} · ${decision.reason || "No reason recorded"}</dd></div>`)}</dl>
+    </details>
+    <details><summary>Original artifacts (${(audit.artifacts || []).length})</summary>
+      ${(audit.artifacts || []).map((a, i) => html`<div key=${i}><b>${a.name || "Original artifact"}</b> · ${a.byte_count ?? "unknown"} bytes · ${a.verified === true ? "verified" : "unverified"}
+        <p class="mono" style=${{ overflowWrap: "anywhere" }}>${a.uri || "URI not recorded"}<br />SHA-256 ${a.sha256 || "not recorded"}</p></div>`)}
+    </details>
+  </details>`;
 }
 
 function Library({ families, open }) {
   const [meta, setMeta] = useState(_meta);
-  useEffect(() => { getMeta().then(setMeta); }, []);
+  useEffect(() => { getMeta().then(setMeta).catch(() => {}); }, []);
   const allMembers = families.flatMap((f) => f.members);
   const ingested = allMembers.filter((m) => m.library_status === "ingested" || m.latest_version);
   const failed = allMembers.filter((m) => m.library_status === "failed-today");
@@ -359,7 +510,7 @@ function Library({ families, open }) {
     <div>
       ${meta && meta.schedules && html`
         <div class="schedbar">
-          <strong>L1 fleet</strong> runs daily at 00:00 UTC
+          <strong>Configured schedules</strong> · recorded execution is shown in Fleet
           ${Object.entries(meta.schedules).map(([k, s]) => html`
             <span class="scheditem" key=${k} title=${s.covers}>
               <span class="mono">${k}</span> ${s.cadence} · ${s.utc_time} UTC
@@ -379,8 +530,8 @@ function Library({ families, open }) {
             ${f.members.map((m) => html`
               <tr key=${m.key}>
                 <td>
-                  <span class=${"srcname" + (m.latest_version || m.library_status === "locked-restricted" || m.library_status === "failed-today" ? "" : " stub")} title=${m.name}
-                        onClick=${() => open(m.key)}>${m.short_name || m.name}</span>
+                  <a class="srcname" title=${m.name} href=${sourceUrl(m.key, m.latest_version)}
+                        onClick=${(e) => { e.preventDefault(); open(m.key, null, null, m.latest_version); }}>${m.short_name || m.name}</a>
                   ${m.short_name && html`<div class="charter" style=${{ margin: 0 }}>${m.name}</div>`}
                   <div class="mono">${m.key}</div>
                   ${m.about && html`<div class="about" style=${{ margin: "4px 0 0" }}>${m.about.slice(0, 220)}${m.about.length > 220 ? "…" : ""}
@@ -390,7 +541,7 @@ function Library({ families, open }) {
                 <td><span class="badge ${m.tier}">${m.tier}</span></td>
                 <td><span class="badge ${m.license}">${m.license}</span></td>
                 <td class="mono">${m.latest_version || m.library_status || "never-fetched"}</td>
-                <td class="mono">${m.clauses || ""}</td>
+                <td class="mono">${m.clauses ?? "—"}</td>
                 <td>${m.added_via === "citator" ? html`<span class="badge citator">citator</span>` : m.added_via}</td>
               </tr>`)}
             </tbody>
@@ -398,46 +549,97 @@ function Library({ families, open }) {
         </div>`)}
       <div class="charter" style=${{ textAlign: "center" }}>
         ${ingested.length} ingested · ${failed.length} failed-today · ${never.length} never-fetched · ${locked.length} locked-restricted
-        · every ingest passes a 99.5% fidelity gate against the official artifact · scorecards at https://clhear.reg42.ai
+        · scope is the source registry; inspect each version’s recorded evidence in Evals.
       </div>
     </div>`;
 }
 
 /* ------------------------------- document view ------------------------------ */
-function SourceView({ sourceKey, back, openRef, openNodeId }) {
+function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
   const [detail, setDetail] = useState(null);
   const [doc, setDoc] = useState(null);
-  const [version, setVersion] = useState(null);
-  const [inspect, setInspect] = useState(false);
+  const [version, setVersion] = useState(initialVersion || null);
+  const [inspect, setInspect] = useState(true);
   const [evidence, setEvidence] = useState(false);
   const [scorecard, setScorecard] = useState(null);
   const [hoverId, setHoverId] = useState(null);
   const [selectedId, setSelectedId] = useState(openNodeId || null);
   const [info, setInfo] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [infoError, setInfoError] = useState(null);
+  const [scoreError, setScoreError] = useState(null);
   const [meta, setMeta] = useState(_meta);
   const [legend, setLegend] = useState(false);
   const [explain, setExplain] = useState(false);
   const [filter, setFilter] = useState("");
   const [category, setCategory] = useState(null);
   const scrolled = useRef(false);
+  const nodeCache = useRef(new Map());
+  const activeId = hoverId || selectedId;
+  const chooseVersion = (label) => {
+    const next = label || ((detail && detail.versions) || []).find((v) => v.status === "in_force")?.version_label || null;
+    setSelectedId(null); setHoverId(null); setInfo(null); setVersion(next);
+    history.replaceState({}, "", sourceUrl(sourceKey, next));
+  };
+  const pinNode = (id) => {
+    setInspect(true); setSelectedId(id);
+    history.replaceState({}, "", sourceUrl(sourceKey, doc.version, id));
+  };
 
-  useEffect(() => { getMeta().then(setMeta); }, []);
+  useEffect(() => { getMeta().then(setMeta).catch(() => {}); }, []);
   useEffect(() => {
-    setDetail(null); setDoc(null); scrolled.current = false; setFilter(""); setCategory(null);
-    api(`/api/clhear/sources/${sourceKey}`).then(setDetail);
-    api(`/api/clhear/sources/${sourceKey}/evals`).then(setScorecard).catch(() => setScorecard(null));
-    const q = version ? `?version_label=${encodeURIComponent(version)}` : "";
-    api(`/api/clhear/sources/${sourceKey}/document${q}`).then(setDoc);
+    let cancelled = false;
+    setDetail(null); setDoc(null); setLoadError(null); setInfo(null); setInfoError(null);
+    setScorecard(null); setScoreError(null); nodeCache.current.clear();
+    scrolled.current = false; setFilter(""); setCategory(null);
+    const load = async () => {
+      let requested = version;
+      // Old node links have no version. Resolve that immutable node's version
+      // before requesting text so a new current version cannot replace it.
+      if (!requested && openNodeId && selectedId === openNodeId) {
+        const linked = await api(`/api/clhear/nodes/${openNodeId}`);
+        if (linked.source_key !== sourceKey) throw new Error("This node belongs to a different source.");
+        requested = linked.version_label;
+      }
+      const q = requested ? `?version_label=${encodeURIComponent(requested)}` : "";
+      const [details, document] = await Promise.all([api(sourcePath(sourceKey)), api(`${sourcePath(sourceKey)}/document${q}`)]);
+      if (requested && document.version !== requested) throw new Error("The returned document does not match the requested version.");
+      if (cancelled) return;
+      setDetail(details); setDoc(document);
+      history.replaceState({}, "", sourceUrl(sourceKey, document.version, selectedId, openRef));
+      if (document.version) {
+        api(`${sourcePath(sourceKey)}/evals?version_label=${encodeURIComponent(document.version)}`)
+          .then((card) => { if (!cancelled) setScorecard(card); })
+          .catch((error) => { if (!cancelled) setScoreError(error); });
+      }
+    };
+    load().catch((error) => { if (!cancelled) setLoadError(error); });
+    return () => { cancelled = true; };
   }, [sourceKey, version]);
 
   useEffect(() => {
-    if (selectedId) api(`/api/clhear/nodes/${selectedId}`).then(setInfo).catch(() => setInfo(null));
-    else setInfo(null);
-  }, [selectedId]);
+    let cancelled = false;
+    setInfo(null); setInfoError(null);
+    if (!inspect || !doc || !activeId) return;
+    if (!doc.nodes.some((n) => n.id === activeId)) {
+      setInfoError(new Error("This node is not part of the selected version.")); return;
+    }
+    const key = `${sourceKey}:${doc.version}:${activeId}`;
+    if (nodeCache.current.has(key)) { setInfo(nodeCache.current.get(key)); return; }
+    const timer = setTimeout(() => {
+      const q = new URLSearchParams({ source_key: sourceKey, version_label: doc.version });
+      api(`/api/clhear/nodes/${activeId}?${q}`).then((record) => {
+        if (cancelled) return;
+        if (!recordMatches(record, sourceKey, doc)) throw new Error("The record does not match this source version.");
+        nodeCache.current.set(key, record); setInfo(record);
+      }).catch((error) => { if (!cancelled) setInfoError(error); });
+    }, hoverId ? 140 : 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [activeId, doc, inspect]);
 
   useEffect(() => {
     if (!doc || scrolled.current) return;
-    const target = openNodeId
+    const target = openNodeId && (!initialVersion || initialVersion === doc.version) && doc.nodes.some((n) => n.id === openNodeId)
       ? document.getElementById("node-" + openNodeId)
       : (openRef && doc.nodes.find((n) => n.ref === openRef)
           ? document.getElementById("node-" + doc.nodes.find((n) => n.ref === openRef).id)
@@ -445,15 +647,16 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
     if (target) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
       scrolled.current = true;
-      if (!selectedId) { setInspect(true); setSelectedId(Number(target.id.replace("node-", ""))); }
+      if (!selectedId) pinNode(Number(target.id.replace("node-", "")));
     }
   }, [doc]);
 
+  if (loadError) return html`<div><div class="crumbs"><a onClick=${back}>Sources</a> / ${sourceKey}</div><${ErrorNotice} error=${loadError} /></div>`;
   if (!detail || !doc) return html`<div class="spin">Loading ${sourceKey}…</div>`;
   const amended = new Set(doc.amended_refs || []);
   const toc = buildToc(doc.nodes);
   const { visible, matches } = computeVisible(doc.nodes, filter, category);
-  const selectedNode = selectedId && doc.nodes.find((n) => n.id === selectedId);
+  const selectedNode = activeId && doc.nodes.find((n) => n.id === activeId);
   const annotationHit = selectedNode ? inheritAnnotation(doc.nodes, selectedNode) : { annotation: null, from: null };
   const selectedAnnotation = annotationHit.annotation;
   const annotationFrom = annotationHit.from;
@@ -476,7 +679,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
 
   return html`
     <div>
-      <div class="crumbs"><a onClick=${back}>Library</a> / ${detail.short_name || detail.name}</div>
+      <div class="crumbs"><a onClick=${back}>Sources</a> / ${detail.short_name || detail.name}</div>
       <h2 style=${{ margin: "0 0 2px" }}>${detail.short_name || detail.name}</h2>
       ${detail.short_name && html`<div class="charter" style=${{ marginBottom: "8px" }}>${detail.name}</div>`}
       <div class="meta-grid">
@@ -484,49 +687,61 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
         <span>jurisdiction <b>${detail.jurisdiction}</b></span>
         <span>license <span class="badge ${detail.license}">${detail.license}</span> ${detail.license_ref}</span>
         <span>adapter <b>${detail.adapter}</b></span>
-        <span><a href=${detail.canonical_url} target="_blank" rel="noreferrer">official source ↗</a></span>
+        ${detail.canonical_url && html`<span><a href=${detail.canonical_url} target="_blank" rel="noreferrer">publisher source ↗</a></span>`}
       </div>
+      ${(doc.notice || detail.notice) && html`<div class="notice">${doc.notice || detail.notice}</div>`}
+      ${doc.real_publisher_verified === false && html`<div class="notice">Publisher verification is not recorded for this version. Source registration and stored text alone do not establish complete or accurate coverage.</div>`}
+      <${SourceAuditEvidence} audit=${detail.inventory} doc=${doc} />
       ${detail.about && html`
         <div class="about">${detail.about}
           ${(detail.topics || []).map((t) => html`<span class="topic" key=${t}>${t}</span>`)}
         </div>`}
       <${CurrentTextBadge} detail=${detail} doc=${doc} meta=${meta}
-        viewing=${doc.version} reset=${() => setVersion(null)} toggleLegend=${() => setLegend(!legend)} />
+        viewing=${doc.version} reset=${() => chooseVersion(null)} toggleLegend=${() => setLegend(!legend)} />
+      <div class="recordbar" style=${{ marginBottom: "12px" }}>
+        <label for="source-version">Stored version </label>
+        <select id="source-version" value=${doc.version || ""} onChange=${(e) => chooseVersion(e.target.value)} disabled=${!(detail.versions || []).length}>
+          ${!(detail.versions || []).length && html`<option value="">No stored version</option>`}
+          ${(detail.versions || []).map((v) => html`<option key=${v.version_label} value=${v.version_label}>${v.version_label} · ${v.status}</option>`)}
+        </select>
+        ${doc.source_version_id != null && html`<span class="mono">source version #${doc.source_version_id}</span>`}
+        ${doc.dataset_kind && html`<span class="badge">${doc.dataset_kind}</span>`}
+      </div>
       ${legend && html`<${KindLegend} meta=${meta} />`}
-      <${ProvenancePanel} detail=${detail} meta=${meta} viewing=${doc.version} openVersion=${setVersion} />
+      <${ProvenancePanel} detail=${detail} meta=${meta} viewing=${doc.version} openVersion=${chooseVersion} />
       ${doc.as_published_sibling && html`
         <div class="notice">
           You are reading the <b>${kindLabel(meta, doc.version_kind)}</b> text — enacting terms only.
           The preamble and recitals are part of the original act:${" "}
-          <a onClick=${() => setVersion(doc.as_published_sibling)}>open the as-published version →</a>
+          <a onClick=${() => chooseVersion(doc.as_published_sibling)}>open the as-published version →</a>
         </div>`}
       <div class="meta-grid">
-        <span>retrieved <b>${doc.retrieved_at}</b></span>
-        <span>sha256 <span class="mono">${(doc.content_hash || "").slice(0, 16)}…</span></span>
-        <span>original <span class="mono">${doc.s3_uri}</span></span>
+        <span>retrieved <b>${doc.retrieved_at || "not recorded"}</b></span>
+        <span>sha256 <span class="mono" title=${doc.content_hash}>${doc.content_hash ? doc.content_hash.slice(0, 16) + "…" : "not recorded"}</span></span>
+        <span>archived original <span class="mono">${doc.s3_uri || "not recorded"}</span></span>
         <span><b>${doc.total}</b> nodes</span>
       </div>
       <div class="tabs mode">
-        <button class=${!inspect && !evidence ? "active" : ""} onClick=${() => { setInspect(false); setEvidence(false); }}>document</button>
-        <button class=${inspect ? "active" : ""} onClick=${() => { setInspect(true); setEvidence(false); }}>inspect</button>
+        <button class=${!inspect && !evidence ? "active" : ""} onClick=${() => { setInspect(false); setEvidence(false); }}>Original text</button>
+        <button class=${inspect ? "active" : ""} onClick=${() => { setInspect(true); setEvidence(false); }}>Text + encoded records</button>
         <button class=${explain ? "active" : ""} onClick=${() => setExplain(!explain)}>explain</button>
-        <button class=${evidence ? "active" : ""} onClick=${() => { setEvidence(true); setInspect(false); }}>evidence</button>
+        <button class=${evidence ? "active" : ""} onClick=${() => { setEvidence(true); setInspect(false); }}>Evals</button>
       </div>
-      ${detail.changes.length > 0 && html`
+      ${(detail.changes || []).length > 0 && html`
         <div class="change">
-          latest change: <span class=${"kind-" + detail.changes[0].kind}>${detail.changes[0].kind}</span>
+          latest recorded source change (may differ from selected version): <span class=${"kind-" + detail.changes[0].kind}>${detail.changes[0].kind}</span>
           ${detail.changes[0].old_version ? ` ${detail.changes[0].old_version} → ` : " → "}${detail.changes[0].new_version}
           ${detail.changes[0].clause_refs.length > 0 && html`
             <div class="refs">${detail.changes[0].clause_refs.length} clause(s): ${detail.changes[0].clause_refs.slice(0, 25).join(", ")}${detail.changes[0].clause_refs.length > 25 ? " …" : ""}</div>`}
         </div>`}
-      ${doc.locked && html`
-        <div class="locked">This source is license-restricted: structure, references and integrity hashes are
-        public, verbatim text is not until a BYOL file is in <span class="mono">restricted/${sourceKey}/</span>.</div>`}
-      ${evidence && html`<${EvidencePanel} card=${scorecard} sourceKey=${sourceKey} />`}
+      ${doc.locked === true && html`<div class="locked">Original text is withheld for this account. ${doc.permission_reason || "Permission to view this version has not been established."} Available references and integrity records are shown below.</div>`}
+      ${doc.locked !== true && doc.permission_reason && html`<div class="notice">Access: ${doc.permission_reason}</div>`}
+      ${!doc.nodes.length && html`<div class="empty">${doc.version ? "This version has no document nodes available. No source text is displayed." : "No version has been imported for this source."}</div>`}
+      ${evidence && html`<${EvidencePanel} card=${scorecard} error=${scoreError} sourceKey=${sourceKey} version=${doc.version} sourceVersionId=${doc.source_version_id} contentHash=${doc.content_hash} />`}
       <div class="readerbar">
         <input aria-label="Filter this document" placeholder="Filter this document… (e.g. risk assessment)"
                value=${filter} onInput=${(e) => setFilter(e.target.value)} />
-        ${(meta ? meta.annotation_categories : []).map((c) => html`
+        ${((meta && meta.annotation_categories) || []).map((c) => html`
           <button key=${c} class=${"catchip" + (category === c ? " on" : "")}
                   onClick=${() => setCategory(category === c ? null : c)}>${c}</button>`)}
         ${(filter.trim().length >= 2 || category) && html`
@@ -553,9 +768,9 @@ function SourceView({ sourceKey, back, openRef, openNodeId }) {
               inspect=${inspect} explain=${explain} hover=${hoverId === n.id} selected=${selectedId === n.id}
               onEnter=${() => inspect && setHoverId(n.id)}
               onLeave=${() => hoverId === n.id && setHoverId(null)}
-              onClick=${() => { setInspect(true); setSelectedId(n.id); }} />`)}
+              onClick=${() => pinNode(n.id)} />`)}
         </div>
-        ${inspect && html`<${Inspector} info=${info} annotation=${selectedAnnotation} annotationFrom=${annotationFrom} contains=${containsPreview} />`}
+        ${inspect && html`<${Inspector} info=${info} error=${infoError} loading=${!!activeId && !info && !infoError} pinned=${!!selectedId && activeId === selectedId} clearPin=${() => { setSelectedId(null); history.replaceState({}, "", sourceUrl(sourceKey, doc.version)); }} annotation=${selectedAnnotation} annotationFrom=${annotationFrom} contains=${containsPreview} />`}
       </div>
     </div>`;
 }
@@ -654,20 +869,20 @@ function computeVisible(nodes, filter, category) {
 }
 
 function CurrentTextBadge({ detail, doc, meta, viewing, reset, toggleLegend }) {
-  const inForce = detail.versions.find((v) => v.status === "in_force");
+  const inForce = (detail.versions || []).find((v) => v.status === "in_force");
   const viewingCurrent = inForce && viewing === inForce.version_label;
-  const shown = detail.versions.find((v) => v.version_label === viewing) || inForce;
+  const shown = (detail.versions || []).find((v) => v.version_label === viewing) || inForce;
   if (!shown) return null;
   const when = shown.as_of_date || shown.version_label.split(":").pop();
   return html`
     <div class="curbadge" style=${viewingCurrent ? {} : { borderLeftColor: "var(--amber-600)" }}>
       ${viewingCurrent
-        ? html`<span>Current text</span>`
+        ? html`<span>Current stored text</span>`
         : html`<span>Viewing <b>${shown.status}</b> text</span>`}
       <span class="kindbadge ${shown.version_kind}" title=${kindDef(meta, shown.version_kind)}>
         ${kindLabel(meta, shown.version_kind)}${shown.version_kind === "edition" ? ` ${when}` : ` · ${when}`}
       </span>
-      ${!viewingCurrent && html`<a style=${{ cursor: "pointer" }} onClick=${reset}>back to current text</a>`}
+      ${!viewingCurrent && inForce && html`<a style=${{ cursor: "pointer" }} onClick=${reset}>back to current stored text</a>`}
       <button class="info" onClick=${toggleLegend}>version kinds ⓘ</button>
     </div>`;
 }
@@ -678,7 +893,7 @@ function KindLegend({ meta }) {
     <div class="legend">
       <b>What the version kinds mean</b>
       <dl>
-        ${Object.entries(meta.version_kinds).map(([kind, entry]) => html`
+        ${Object.entries(meta.version_kinds || {}).map(([kind, entry]) => html`
           <div key=${kind}>
             <dt><span class="kindbadge ${kind}">${entry.label}</span></dt>
             <dd>${entry.definition}</dd>
@@ -701,7 +916,7 @@ function ProvenancePanel({ detail, meta, viewing, openVersion }) {
           <span class="kindbadge ${v.version_kind}" title=${kindDef(meta, v.version_kind)}>${kindLabel(meta, v.version_kind)}</span>
           <span class="mono">${v.as_of_date || v.version_label}</span>
           <span class="badge ${v.status === "in_force" ? "open" : "citator"}">${v.status === "in_force" ? "in force" : "superseded"}</span>
-          <span class="mono" style=${{ opacity: 0.6 }}>sha ${v.content_hash.slice(0, 10)}</span>
+          <span class="mono" style=${{ opacity: 0.6 }}>sha ${(v.content_hash || "").slice(0, 10)}</span>
           ${v.version_label === viewing
             ? html`<span class="mono">viewing</span>`
             : html`<span class="open" onClick=${() => openVersion(v.version_label)}>open</span>`}
@@ -733,14 +948,16 @@ function DocLine({ n, first, amended, inspect, explain, hover, selected, onEnter
   const showLabel = n.label && !dupIn(n.heading) && !dupIn(body);
   const a = explain ? n.annotation : null;
   return html`
-    <div id=${"node-" + n.id} class=${classes} style=${{ paddingLeft: indent + "px" }}
-         onMouseEnter=${onEnter} onMouseLeave=${onLeave} onClick=${onClick}>
+    <div id=${"node-" + n.id} class=${classes} style=${{ paddingLeft: indent + "px" }} tabindex="0" role="button"
+         aria-label=${`Inspect ${n.ref || n.node_type} record ${n.id}`} aria-pressed=${!!selected}
+         onMouseEnter=${onEnter} onMouseLeave=${onLeave} onFocus=${onEnter} onBlur=${onLeave} onClick=${onClick}
+         onKeyDown=${(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}>
       ${showLabel && html`<span class="lab">${n.label}</span>`}
       ${n.heading && html`<span class="hd">${n.heading}</span>`}
-      ${body && html`${showLabel || n.heading ? " " : ""}${body}`}
+      ${body && html`<span class="rawbody">${showLabel || n.heading ? " " : ""}${body}</span>`}
       ${inspect && hover && html`
         <span class="float">
-          ${n.ref || n.node_type} · ${n.text_hash.slice(0, 8)}
+          node #${n.id} · ${n.ref || n.node_type} · ${(n.text_hash || "").slice(0, 8)} · click to pin
           ${amended ? " · amended" : ""}
         </span>`}
       ${a && (a.summary || a.category) && html`
@@ -773,11 +990,21 @@ function inheritAnnotation(nodes, selected) {
   return { annotation: null, from: null };
 }
 
-function Inspector({ info, annotation, annotationFrom, contains }) {
-  if (!info) return html`<aside class="inspector"><h3>Inspector</h3><div class="charter">Hover and click any element in the document to see its corpus record — id, hash, version, change history, permalink. This is the L2-ready layer.</div></aside>`;
-  const copy = () => navigator.clipboard.writeText(location.origin + info.permalink);
+function Inspector({ info, error, loading, pinned, clearPin, annotation, annotationFrom, contains }) {
+  const [copied, setCopied] = useState("");
+  useEffect(() => { setCopied(""); }, [info && info.id]);
+  if (!info) return html`<aside class="inspector"><h3>Encoded record</h3>${error ? html`<${ErrorNotice} error=${error} />` : html`<div class="charter">${loading ? "Loading this version’s record…" : "Hover over text to preview its stored record. Click or press Enter to pin it. The original text stays beside its source, version, node and clause identifiers."}</div>`}</aside>`;
+  const permalink = sourceUrl(info.source_key, info.version_label, info.id);
+  const copy = () => navigator.clipboard.writeText(location.origin + permalink).then(() => setCopied("Link copied")).catch(() => setCopied("Copy unavailable — use the record link below."));
+  const encoded = {
+    source_key: info.source_key, source_version_id: info.source_version_id, version_label: info.version_label,
+    node_id: info.id, node_type: info.node_type, ref: info.ref, seq: info.seq, depth: info.depth,
+    label: info.label, heading: info.heading, raw_text: info.raw_text, text_hash: info.text_hash,
+    clauses: info.clauses || [], dataset_kind: info.dataset_kind,
+  };
   return html`
     <aside class="inspector">
+      <div class="charter">${pinned ? "Pinned record" : "Hover preview · click text to pin"}${pinned && html` <button onClick=${clearPin}>Unpin</button>`}</div>
       <h3>${info.node_type}${info.ref ? ` · ${info.ref}` : ""}</h3>
       ${annotation && (annotation.summary || annotation.category) && html`
         <div class="annot">
@@ -787,31 +1014,50 @@ function Inspector({ info, annotation, annotationFrom, contains }) {
           ${annotation.summary && html`<div style=${{ marginTop: "4px" }}>${annotation.summary}</div>`}
         </div>`}
       <dl>
-        <dt>record id</dt><dd class="mono">${info.id}</dd>
+        <dt>source key</dt><dd class="mono">${info.source_key}</dd>
+        <dt>source version id</dt><dd class="mono">${info.source_version_id ?? "not recorded"}</dd>
+        <dt>node id · sequence · depth</dt><dd class="mono">${info.id} · ${info.seq ?? "—"} · ${info.depth ?? "—"}</dd>
+        <dt>reference</dt><dd class="mono">${info.ref || "—"}</dd>
         <dt>label</dt><dd>${info.label || "—"}</dd>
         <dt>sha256</dt><dd class="mono">${info.text_hash}</dd>
         <dt>version</dt><dd>${info.version_label}<div class="mono">retrieved ${info.retrieved_at}</div></dd>
         <dt>immutable original</dt><dd class="mono">${info.s3_uri}</dd>
         ${info.indexed_as && html`<dt>indexed as</dt><dd>${info.indexed_as}</dd>`}
         <dt>ancestors</dt>
-        <dd>${info.ancestors.length === 0 ? "—" : info.ancestors.map((a) => ancestorLabel(a)).join(" › ")}</dd>
-        ${info.changes.length > 0 && html`
+        <dd>${!(info.ancestors || []).length ? "—" : info.ancestors.map((a) => ancestorLabel(a)).join(" › ")}</dd>
+        ${(info.changes || []).length > 0 && html`
           <dt>changes touching this ref</dt>
           <dd>${info.changes.map((c) => html`<div class=${"kind-" + c.kind}>${c.kind} ${c.old_version || ""} → ${c.new_version}</div>`)}</dd>`}
       </dl>
+      ${info.permission_reason && html`<div class="charter">${info.permission_reason}</div>`}
+      <h4>Linked clauses</h4>
+      ${(info.clauses || []).length ? (info.clauses || []).map((c) => html`<details class="prov" key=${c.id}>
+        <summary>Clause #${c.id} · ${c.ref || "no ref"}</summary>
+        <dl><dt>source version id</dt><dd class="mono">${c.source_version_id ?? "—"}</dd>
+        <dt>path · ordering</dt><dd class="mono">${typeof c.path === "string" ? c.path : JSON.stringify(c.path)} · ${c.ordering ?? "—"}</dd>
+        <dt>stored character span</dt><dd class="mono">${c.span_start ?? "—"} → ${c.span_end ?? "—"}</dd>
+        <dt>sha256</dt><dd class="mono">${c.text_hash || "not recorded"}</dd></dl>
+      </details>`) : html`<div class="charter">No clause link returned for this node.</div>`}
       ${contains && html`
         <div class="annot">
           <span class="tag">contains — ${contains.count} element${contains.count === 1 ? "" : "s"} (scroll for full stored text)</span>
           <div class="contains" style=${{ marginTop: "4px" }}>${contains.text}</div>
         </div>`}
-      ${info.raw_text && html`<dt style=${{ marginTop: "10px" }}>raw text</dt><pre tabindex="0">${info.raw_text}</pre>`}
-      ${info.source_fragment && html`<dt>source fragment</dt><pre tabindex="0">${info.source_fragment}</pre>`}
-      <button onClick=${copy}>copy permalink</button>
+      ${info.raw_text && html`<h4>Raw text</h4><pre tabindex="0">${info.raw_text}</pre>`}
+      ${info.source_fragment && html`<h4>Source fragment</h4><pre tabindex="0">${info.source_fragment}</pre>`}
+      <details class="prov"><summary>Encoded record · JSON</summary><pre tabindex="0">${JSON.stringify(encoded, null, 2)}</pre></details>
+      <a href=${permalink}>Open version-pinned record ↗</a><br />
+      <button onClick=${copy}>Copy record link</button><div role="status" class="charter">${copied}</div>
     </aside>`;
 }
 
-function EvidencePanel({ card, sourceKey }) {
-  if (!card) return html`<div class="spin">Loading E1–E7 scorecard…</div>`;
+function EvidencePanel({ card, sourceKey, version, error, sourceVersionId, contentHash }) {
+  if (error) return html`<${ErrorNotice} error=${error} />`;
+  if (!version) return html`<div class="empty">No imported version is available to evaluate.</div>`;
+  if (!card) return html`<div class="spin">Loading this version’s recorded checks…</div>`;
+  const evidenceVersion = card.version || card.latest_version;
+  if (evidenceVersion && evidenceVersion !== version) return html`<div class="notice">The returned scorecard belongs to ${evidenceVersion}, not selected version ${version}. No pass result is shown for this version.</div>`;
+  if ((sourceVersionId != null && card.source_version_id !== sourceVersionId) || (contentHash && card.content_hash !== contentHash)) return html`<div class="notice">The returned evidence does not match the selected version ID and artifact hash. No pass result is shown for this version.</div>`;
   const suites = card.scorecard && card.scorecard.suites ? card.scorecard.suites : {};
   const order = ["e1_fidelity", "e2_completeness", "e3_roundtrip", "e4_change_replay", "e5_provenance", "e6_retrievability", "e7_closure"];
   const labels = {
@@ -825,13 +1071,20 @@ function EvidencePanel({ card, sourceKey }) {
   };
   return html`
     <div class="family" style=${{ marginBottom: "16px" }}>
-      <h3 style=${{ margin: "0 0 8px" }}>Evidence — ${sourceKey}</h3>
-      <div class="charter">Last fetch ${card.last_run ? card.last_run.ts : "never"} ·
+      <h3 style=${{ margin: "0 0 8px" }}>Evals — ${sourceKey}</h3>
+      <div class="charter">Selected version: <span class="mono">${version}</span>. These checks describe this stored document, not completeness of the publisher’s entire rulebook.</div>
+      <div class="rolegrid">
+        <div><b>Complete</b><p class="charter">${suites.e2_completeness ? (suites.e2_completeness.passed ? "Recorded completeness check passed." : "Recorded completeness check failed.") : "No completeness check recorded."} Scope and counts appear in the evidence below.</p></div>
+        <div><b>Accurate</b><p class="charter">${suites.e1_fidelity ? (suites.e1_fidelity.passed ? "Recorded source fidelity check passed." : "Recorded source fidelity check failed.") : "No source fidelity check recorded."} Review provenance and round-trip results alongside fidelity.</p></div>
+        <div><b>On time</b><p class="charter">${card.publisher_checked_at ? `Last successful publisher check: ${card.publisher_checked_at}.` : "No successful publisher check recorded for this version."} A stored version, cached artifact or attempted run does not establish current publisher freshness.</p></div>
+      </div>
+      <div class="charter">Imported ${card.retrieved_at || "not recorded"} · last recorded attempt ${card.last_run ? card.last_run.ts : "not recorded"} ·
         artifact <span class="mono">${card.s3_uri || "—"}</span> ·
         run ${card.last_run ? "#" + card.last_run.run_id : "—"}
         ${card.last_run && card.last_run.error ? html` · <span style=${{ color: "var(--rose-600)" }}>${card.last_run.error}</span>` : ""}
         ${card.last_run && card.last_run.note ? html` · ${card.last_run.note}` : ""}
       </div>
+      <p class="mono" style=${{ overflowWrap: "anywhere" }}>Source version #${card.source_version_id ?? "not recorded"} · SHA-256 ${card.content_hash || "not recorded"}</p>
       <table class="members">
         <thead><tr><th>suite</th><th>status</th><th>score</th></tr></thead>
         <tbody>
@@ -843,12 +1096,15 @@ function EvidencePanel({ card, sourceKey }) {
             return html`<tr key=${s}>
               <td>${labels[s]}</td>
               <td><span class=${"badge " + (ok === true ? "open" : ok === false ? "restricted" : "guidance")}>${ok === true ? "pass" : ok === false ? "fail" : "not run"}</span></td>
-              <td class="mono">${score === "" ? JSON.stringify(scores) : score}</td>
+              <td class="mono">${score === "" ? "No summary score recorded" : score}
+                ${row && html`<details><summary>Method, binding and result evidence</summary><pre tabindex="0">${JSON.stringify(row, null, 2)}</pre></details>`}</td>
             </tr>`;
           })}
         </tbody>
       </table>
-      <div class="charter">L2 gate: ${card.l2_ready ? "this open source is green" : "not green yet — L2 waits for every open source"} · https://clhear.reg42.ai</div>
+      <div class="charter">Reported downstream readiness: ${card.l2_ready === true ? "ready" : card.l2_ready === false ? "not ready" : "not recorded"}. ${card.readiness_reason || "Missing checks remain unverified."}</div>
+      <${SourceAuditEvidence} audit=${card.inventory} doc=${{ source_version_id: card.source_version_id, content_hash: card.content_hash }} />
+      <details><summary>Recorded source workflow (all attempts)</summary><${WorkflowEvidence} report=${card.workflow} /></details>
     </div>`;
 }
 
@@ -856,15 +1112,15 @@ function EvidenceIndex({ families, open }) {
   const members = (families || []).flatMap((f) => f.members);
   return html`
     <div>
-      <h2 style=${{ margin: "0 0 4px" }}>Evidence — E1–E7 per source</h2>
-      <div class="charter">A stranger can read a green (or honestly red) scorecard for every registry row.
-        Open a source’s Evidence tab for gauges, last fetch, artifact URI and run id.</div>
+      <h2 style=${{ margin: "0 0 4px" }}>Evals · Complete, Accurate, On time</h2>
+      <div class="notice">Coverage is measured against the registered source and selected document version. A successful import does not mean the entire publisher rulebook is complete. Missing checks are unverified.</div>
+      <div class="charter">Open a source, select a stored version, and choose Evals to inspect completeness, source fidelity, provenance and recorded check times.</div>
       <table class="members">
         <thead><tr><th>source</th><th>library</th><th>version</th><th>last run</th></tr></thead>
         <tbody>
           ${members.map((m) => html`
             <tr key=${m.key}>
-              <td><span class="srcname" onClick=${() => open(m.key)}>${m.short_name || m.name}</span>
+              <td><a class="srcname" href=${sourceUrl(m.key, m.latest_version)} onClick=${(e) => { e.preventDefault(); open(m.key, null, null, m.latest_version); }}>${m.short_name || m.name}</a>
                 <div class="mono">${m.key}</div></td>
               <td><span class=${"badge " + (m.library_status === "ingested" ? "open" : m.library_status === "failed-today" || m.library_status === "schedule-missed" ? "restricted" : "guidance")}>${m.library_status || "never-fetched"}</span></td>
               <td class="mono">${m.latest_version || "—"}</td>
@@ -883,7 +1139,9 @@ function ActivityView({ open }) {
   const [items, setItems] = useState(null);
   const [filter, setFilter] = useState("all");
   const [kind, setKind] = useState("all");
-  useEffect(() => { api("/api/clhear/activity?limit=200").then(setItems).catch(() => setItems([])); }, []);
+  const [error, setError] = useState(null);
+  useEffect(() => { api("/api/clhear/activity?limit=200").then(setItems).catch(setError); }, []);
+  if (error) return html`<${ErrorNotice} error=${error} />`;
   if (items === null) return html`<div class="spin">Loading the audit trail…</div>`;
   const visible = items.filter((i) => (filter === "all" || i.status === filter) && (kind === "all" || i.type === kind || i.kind === kind));
   const days = [];
@@ -894,9 +1152,8 @@ function ActivityView({ open }) {
   }
   return html`
     <div>
-      <h2 style=${{ margin: "0 0 4px" }}>Activity — production audit trail</h2>
-      <div class="charter">Every automated action the system takes (ingests, fleets, router decisions, repairs,
-        eval gates, human decisions) — a read-only projection of the append-only run ledger and AI ops feed.</div>
+      <h2 style=${{ margin: "0 0 4px" }}>Recorded activity</h2>
+      <div class="charter">Recorded runs, routing decisions, checks and decisions from the run ledger and AI operations feed.</div>
       <div class="filters">
         ${STATUS_FILTERS.map((s) => html`
           <button key=${s} class=${filter === s ? "on" : ""} onClick=${() => setFilter(s)}>${s}</button>`)}
@@ -917,7 +1174,7 @@ function ActivityView({ open }) {
                 <div class="links">
                   ${i.source_key && html`<a onClick=${() => open(i.source_key)}>open document</a>`}
                   ${i.links && i.links.review && html`<a href=${i.links.review}>review console</a>`}
-                  ${i.run_id && html`<a href=${`/sources?view=fleet`}>fleet view</a>`}
+                  ${i.run_id && html`<a href=${`/l1?view=fleet`}>fleet view</a>`}
                 </div>
                 ${i.details && Object.keys(i.details).length > 0 && html`
                   <details><summary class="mono">details</summary><pre tabindex="0">${JSON.stringify(i.details, null, 2)}</pre></details>`}
@@ -946,65 +1203,150 @@ function StageLegend({ meta }) {
     </div>`;
 }
 
+function workflowStepTable(recorded, emptyText) {
+  if (!recorded.length) return html`<p class="charter">${emptyText}</p>`;
+  const maxDuration = Math.max(1, ...recorded.filter((step) => Number.isFinite(step.duration_ms)).map((step) => step.duration_ms));
+  return html`<div style=${{ overflowX: "auto" }}><table class="members"><thead><tr><th>Step / attempt</th><th>Status</th><th>Recorded dependencies</th><th>Started / finished</th><th>Measured duration</th></tr></thead>
+    <tbody>${recorded.map((step) => html`<tr key=${step.step_id}>
+      <td><b>${evidenceLabel(step.stage)}</b><div class="mono">${step.step_id} · attempt ${step.attempt ?? "not recorded"}</div></td>
+      <td><span class=${"badge " + evidenceTone(step.status)}>${evidenceLabel(step.status)}</span></td>
+      <td class="mono">${Array.isArray(step.depends_on) ? (step.depends_on.length ? step.depends_on.join(", ") : "No dependencies") : "not recorded"}</td>
+      <td class="mono">${step.started_at || "not recorded"}<br />${step.finished_at || "not recorded"}</td>
+      <td><span class="mono">${measuredDuration(step.duration_ms)}</span>
+        ${Number.isFinite(step.duration_ms) && step.duration_ms >= 0 && html`<div aria-hidden="true" style=${{ marginTop: "4px", height: "5px", width: `${Math.max(1, step.duration_ms / maxDuration * 100)}%`, background: "var(--indigo-500)", borderRadius: "3px" }}></div>`}
+      </td></tr>`)}</tbody></table></div>`;
+}
+
+function WorkflowEvidence({ report }) {
+  if (!report || report.status !== "available") return html`<div class="notice">Workflow evidence unavailable. ${report && report.reason || "No worker task and step records have been published."}</div>`;
+  const tasks = report.tasks || [], steps = report.steps || [], jobs = report.jobs || [];
+  return html`<div>
+    <p class="charter">Durations come from completed worker measurements. Missing times and dependencies stay unrecorded; retries retain separate attempt records.</p>
+    ${!(tasks.length || jobs.length) && html`<div class="empty">No worker workflow has been recorded for this selection.</div>`}
+    ${(report.workflow_stages || []).length > 0 && html`<p class="charter">Configured stage order: ${report.workflow_stages.map(evidenceLabel).join(" → ")}. This order alone does not prove that a step ran.</p>`}
+    ${jobs.map((job) => {
+      const result = job.summary && job.summary.result;
+      const coordination = steps.filter((step) => step.job_id === job.job_id && step.task_id == null);
+      return html`<section class="family" key=${job.job_id}>
+      <h3 style=${{ marginTop: 0 }}><span class=${"badge " + evidenceTone(job.status)}>${evidenceLabel(job.status)}</span> Job <span class="mono">${job.job_id}</span></h3>
+      <div class="meta-grid"><span>Trigger <b>${job.trigger || "not recorded"}</b></span><span>Created <b>${job.created_at || "not recorded"}</b></span>
+        <span>Started <b>${job.started_at || "not recorded"}</b></span><span>Finished <b>${job.finished_at || "not recorded"}</b></span>
+        <span>Measured duration <b>${measuredDuration(job.duration_ms ?? (result && result.duration_ms))}</b></span></div>
+      <div class="mono">Event ${job.event_key || "not recorded"} · adapter ${job.adapter_key || "not recorded"}</div>
+      ${result && result.nightly_schedule_validation === "pending" && html`<p class="notice">Manual verification · nightly schedule validation pending</p>`}
+      ${result && html`<details class="rolecard" style=${{ marginTop: "12px" }}><summary>Persisted job result</summary><pre tabindex="0">${JSON.stringify(result, null, 2)}</pre></details>`}
+      ${coordination.length > 0 && html`<details class="rolecard" style=${{ marginTop: "12px" }} open><summary><b>Job coordination steps</b> · ${coordination.length} recorded</summary>
+        ${workflowStepTable(coordination, "No measured job coordination steps recorded.")}</details>`}
+      ${tasks.filter((task) => task.job_id === job.job_id).map((task) => {
+        const recorded = steps.filter((step) => step.task_id === task.task_id && step.job_id === task.job_id);
+        return html`<details class="rolecard" key=${task.task_id} style=${{ marginTop: "12px" }} open>
+          <summary><b>${task.source_key || "Job coordination"}</b> · ${evidenceLabel(task.status)} · attempt ${task.attempt ?? "not recorded"}${task.max_attempts != null ? ` / ${task.max_attempts}` : ""}</summary>
+          <div class="meta-grid"><span>Task <span class="mono">${task.task_id}</span></span><span>Worker <span class="mono">${task.worker || "not recorded"}</span></span>
+            <span>Queue wait <b>${measuredDuration(task.queue_wait_ms)}</b></span><span>Heartbeat <b>${task.heartbeat_at || "not recorded"}</b></span>
+            <span>Lease until <b>${task.lease_until || "not recorded"}</b></span><span>Next attempt <b>${task.next_attempt_at || "not scheduled"}</b></span></div>
+          <div class="charter">Started ${task.started_at || "not recorded"} · finished ${task.finished_at || "not recorded"}</div>
+          ${task.error && html`<div class="notice">${typeof task.error === "string" ? task.error : JSON.stringify(task.error)}</div>`}
+          ${workflowStepTable(recorded, "No measured steps recorded for this task.")}
+        </details>`;
+      })}
+    </section>`; })}
+    ${tasks.some((task) => !jobs.some((job) => job.job_id === task.job_id)) && html`<div class="notice">Some task records have no matching job in this response. Workflow evidence is incomplete.</div>`}
+  </div>`;
+}
+
 function FleetView({ open }) {
   const [board, setBoard] = useState(null);
   const [job, setJob] = useState(null);
-  const [mode, setMode] = useState("canvas");
+  const [mode, setMode] = useState("team");
   const [runId, setRunId] = useState(null);
   const [run, setRun] = useState(null);
   const [meta, setMeta] = useState(_meta);
   const [stageLegend, setStageLegend] = useState(false);
+  const [boardError, setBoardError] = useState(null);
+  const [jobError, setJobError] = useState(null);
+  const [runError, setRunError] = useState(null);
 
-  useEffect(() => { getMeta().then(setMeta); }, []);
+  useEffect(() => { getMeta().then(setMeta).catch(() => {}); }, []);
 
   const load = () => {
-    api("/api/clhear/fleet").then(setBoard).catch(() => setBoard([]));
-    api("/api/clhear/jobs/latest").then(setJob).catch(() => setJob(false));
+    api("/api/clhear/fleet").then((value) => { setBoard(value); setBoardError(null); }).catch(setBoardError);
+    api("/api/clhear/l1/workflow").then((value) => { setJob(value); setJobError(null); }).catch(setJobError);
   };
   useEffect(() => { load(); }, []);
   useEffect(() => {
     // real-time: poll while the latest job (or any run) is executing
-    const active = (job && job.running) || (board && board.some((r) => r.last_run && r.last_run.status === "running"));
+    const active = (job && (job.tasks || []).some((task) => ["running", "queued", "retry_wait"].includes(task.status))) || (board && board.some((r) => r.last_run && r.last_run.status === "running"));
     if (!active) return;
     const t = setInterval(load, 2500);
     return () => clearInterval(t);
   }, [board, job]);
   useEffect(() => {
-    if (runId) api(`/api/clhear/runs/${runId}`).then(setRun).catch(() => setRun(null));
+    setRunError(null);
+    if (runId) { setRun(null); api(`/api/clhear/runs/${runId}`).then(setRun).catch(setRunError); }
     else setRun(null);
   }, [runId]);
 
-  if (board === null) return html`<div class="spin">Loading fleet…</div>`;
   return html`
     <div>
-      <h2 style=${{ margin: "0 0 4px" }}>Fleet — the ingestion pipeline, live</h2>
-      <div class="charter">Every source runs fetch → parse → fidelity gate (99.5% + invariants) →
-        repair tiers (learned hints → LLM proposals → bounded salvage) → persist → diff.
-        Click a task to see its pipeline; press play to replay the job from the ledger.</div>
+      <h2 style=${{ margin: "0 0 4px" }}>Fleet · L1 team and runs</h2>
+      <div class="charter">Meet the named roles, inspect their execution bindings, then follow recorded jobs through fetch, parse, validation, persistence and change detection. A persona describes a responsibility; the worker and run records show what executed.</div>
       ${meta && meta.schedules && html`
-        <div class="schedbar">
-          <strong>Automatic schedule (UTC)</strong> — the fleet re-checks every source without human action:
+        <details class="schedbar">
+          <summary>Configured schedules (UTC)</summary>
           ${Object.entries(meta.schedules).map(([k, s]) => html`
             <span class="scheditem" key=${k} title=${s.covers}>
               <span class="mono">${k}</span> ${s.cadence} · ${s.utc_time}
             </span>`)}
           <div class="charter" style=${{ margin: "4px 0 0" }}>
-            Unchanged sources record an "unchanged/up-to-date" run; new official versions are ingested through the
-            full fidelity pipeline and appear in Changes + Activity automatically.
+            Schedule configuration does not establish that a worker ran. Compare it with recorded runs and timestamps below.
           </div>
-        </div>`}
+        </details>`}
       <div class="tabs mode">
-        <button class=${mode === "canvas" ? "active" : ""} onClick=${() => setMode("canvas")}>workflow</button>
-        <button class=${mode === "table" ? "active" : ""} onClick=${() => setMode("table")}>table</button>
+        <button class=${mode === "team" ? "active" : ""} onClick=${() => setMode("team")}>Team roles</button>
+        <button class=${mode === "canvas" ? "active" : ""} onClick=${() => setMode("canvas")}>Workflow</button>
+        <button class=${mode === "table" ? "active" : ""} onClick=${() => setMode("table")}>Source runs</button>
+        <button class=${mode === "activity" ? "active" : ""} onClick=${() => setMode("activity")}>Activity</button>
         <button class=${stageLegend ? "active" : ""} onClick=${() => setStageLegend(!stageLegend)}>stages ⓘ</button>
       </div>
       ${stageLegend && html`<${StageLegend} meta=${meta} />`}
-      ${mode === "canvas" && (job
-        ? html`<${JobCanvas} job=${job} selectRun=${setRunId} selectedRun=${runId} />`
-        : html`<div class="empty">No fleet job recorded yet — run scripts/build_corpus.py.</div>`)}
+      ${mode === "team" && html`<${TeamRoles} selectRun=${(id) => { setRunId(id); }} />`}
+      ${mode === "activity" && html`<${ActivityView} open=${open} />`}
+      ${mode === "canvas" && (jobError ? html`<${ErrorNotice} error=${jobError} />` : job === null ? html`<div class="spin">Loading recorded workflow…</div>` : html`<${WorkflowEvidence} report=${job} />`)}
+      ${runError && html`<${ErrorNotice} error=${runError} />`}
       ${run && html`<${RunDag} run=${run} close=${() => setRunId(null)} meta=${meta} />`}
-      ${mode === "table" && html`<${FleetTable} board=${board} open=${open} setRunId=${setRunId} meta=${meta} />`}
+      ${mode === "table" && (boardError ? html`<${ErrorNotice} error=${boardError} />` : board === null ? html`<div class="spin">Loading recorded source runs…</div>` : html`<${FleetTable} board=${board} open=${open} setRunId=${setRunId} meta=${meta} />`)}
     </div>`;
+}
+
+function TeamRoles({ selectRun }) {
+  const [team, setTeam] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => { api("/api/clhear/team?layer=L1").then(setTeam).catch(setError); }, []);
+  if (error) return html`<${ErrorNotice} error=${error} />`;
+  if (!team) return html`<div class="spin">Loading L1 team roles…</div>`;
+  return html`<div>
+    <div class="charter">Role metadata checked ${team.as_of || "at an unrecorded time"}. Tool lists describe supported capabilities; recorded use appears only when execution evidence is available.</div>
+    <div class="rolegrid">${(team.fleets || []).map((role) => html`<article class="rolecard" key=${role.id}>
+      <h3>${role.name} <span class="badge">${role.layer}</span></h3>
+      <div class="mono">${role.execution_kind || "descriptive role"}</div>
+      <p>${role.mission}</p>
+      <dl>
+        <dt>Execution binding</dt><dd class="mono">${role.fleet || "not supplied"}${role.task_id ? ` · task ${role.task_id}` : ""}</dd>
+        ${role.evidence_state && html`<dt>Execution evidence</dt><dd>${role.evidence_state === "recorded_run" ? "Recorded run available" : role.evidence_state === "no_recorded_run" ? "No recorded run" : role.evidence_state}</dd>`}
+        ${role.implemented != null && html`<dt>Implementation</dt><dd>${role.implemented ? "Implemented" : "Not implemented"}</dd>`}
+        ${role.enabled != null && html`<dt>Enabled</dt><dd>${role.enabled ? "Enabled by configuration" : "Disabled by configuration"}</dd>`}
+        <dt>${role.tools_basis === "configured" ? "Configured tools" : "Supported tools"}</dt><dd>${(role.tools || []).join(" · ") || "Not supplied"}</dd>
+        <dt>Last recorded run</dt><dd>${role.last_run ? html`${role.last_run.status} · ${role.last_run.ts || "timestamp unavailable"}${role.last_run.run_id && html` <button class="catchip" onClick=${() => selectRun(role.last_run.run_id)}>Run #${role.last_run.run_id}</button>`}` : "No execution recorded for this binding"}</dd>
+        <dt>Model routing record</dt><dd>${role.model ? `${role.model.model || "No model selected"}${role.model.tier ? ` · ${role.model.tier}` : ""}` : "No model routing record supplied"}</dd>
+      </dl>
+      <details><summary>Role details and recorded metadata</summary>
+        ${role.model && role.model.reason && html`<p>${role.model.reason}</p>`}
+        <p>Configuration is separate from observed model use. Missing tool, model or prompt version evidence is not inferred from the role name.</p>
+        <pre tabindex="0">${JSON.stringify(role, null, 2)}</pre>
+      </details>
+    </article>`)}</div>
+    ${!(team.fleets || []).length && html`<div class="empty">No L1 roles are configured.</div>`}
+  </div>`;
 }
 
 function FleetTable({ board, open, setRunId, meta }) {
@@ -1016,7 +1358,7 @@ function FleetTable({ board, open, setRunId, meta }) {
         <tbody>
         ${board.map((r) => html`
           <tr key=${r.source_key}>
-            <td><a onClick=${() => open(r.source_key)} title=${r.source_name}>${r.short_name || r.source_name}</a><div class="mono">${r.source_key}</div></td>
+            <td><a href=${sourceUrl(r.source_key, r.current_version)} onClick=${(e) => { e.preventDefault(); open(r.source_key, null, null, r.current_version); }} title=${r.source_name}>${r.short_name || r.source_name}</a><div class="mono">${r.source_key}</div></td>
             <td class="mono">${r.adapter}</td>
             <td>
               ${r.current_version_kind && html`<span class="kindbadge ${r.current_version_kind}">${r.current_version_kind.replace("_", " ")}</span>`}
@@ -1044,178 +1386,24 @@ function FleetTable({ board, open, setRunId, meta }) {
       </table>`;
 }
 
-/* Databricks-style job workflow canvas: lanes per source, task cards with
-   live statuses, start/relay convergence, replay from the ledger. */
-function JobCanvas({ job, selectRun, selectedRun }) {
-  const allTasks = job.lanes.flatMap((l) => l.tasks).concat(job.relay ? [job.relay] : []);
-  const ordered = [...allTasks].sort((a, b) => a.run_id - b.run_id);
-  const [lit, setLit] = useState(new Set(ordered.map((t) => t.run_id)));
-  const replay = () => {
-    setLit(new Set());
-    const total = Math.max(1, ordered.reduce((a, t) => a + (t.duration_ms || 1), 0));
-    const scale = Math.min(1, 6000 / total);
-    let t = 0;
-    ordered.forEach((task) => {
-      t += Math.max(200, (task.duration_ms || 1) * scale);
-      setTimeout(() => setLit((prev) => new Set([...prev, task.run_id])), t);
-    });
-  };
-
-  const W = 208, H = 66, GAPX = 54, LANEH = 86, LEFT = 96;
-  const maxLen = Math.max(...job.lanes.map((l) => l.tasks.length));
-  const relayX = LEFT + maxLen * (W + GAPX) + 30;
-  const width = relayX + W + 30;
-  const height = Math.max(2, job.lanes.length) * LANEH + 30;
-  const midY = height / 2;
-  const laneY = (i) => 20 + i * LANEH + H / 2;
-  const pos = {};
-  job.lanes.forEach((lane, li) =>
-    lane.tasks.forEach((task, ti) => { pos[task.run_id] = { x: LEFT + ti * (W + GAPX), y: laneY(li) }; })
-  );
-  if (job.relay) pos[job.relay.run_id] = { x: relayX, y: midY };
-
-  const statusColor = (task) =>
-    !lit.has(task.run_id) ? "var(--pearl-dark)"
-    : task.status === "failure" ? "var(--rose-600)"
-    : task.status === "warning" ? "var(--amber-600)"
-    : task.status === "running" ? "var(--indigo-500)"
-    : task.status === "info" ? "var(--indigo-100)"
-    : "var(--mint-600)";
-  const counts = job.status_counts || {};
-
-  const edgePath = (from, to) => {
-    const x1 = from === 0 ? 44 : pos[from].x + W;
-    const y1 = from === 0 ? midY : pos[from].y;
-    const x2 = pos[to].x;
-    const y2 = pos[to].y;
-    const mx = (x1 + x2) / 2;
-    return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
-  };
-
-  return html`
-    <div class="dagwrap">
-      <h3><span class="mono">${job.job_id}</span> · trigger ${job.trigger} · started ${job.started_at}
-        · ${(job.total_duration_ms / 1000).toFixed(1)}s
-        ${job.running ? html` · <span class="dot running"></span> running` : ""}</h3>
-      <div class="charter">
-        ${allTasks.length} tasks —
-        ${["success", "warning", "failure", "running", "info"].filter((s) => counts[s])
-          .map((s) => `${counts[s]} ${s}`).join(" · ")}
-        · ${allTasks.reduce((a, t) => a + (t.nodes || 0), 0).toLocaleString()} document nodes processed
-        in ${(job.total_duration_ms / 1000).toFixed(1)}s — real measured throughput, per stage below
-        · click a task for its stage pipeline
-      </div>
-      <div style=${{ overflowX: "auto" }}>
-        <svg width=${width} height=${height} style=${{ display: "block" }}>
-          ${job.edges.map(([from, to], i) => {
-            const on = (from === 0 || lit.has(from)) && lit.has(to);
-            return html`<path key=${i} d=${edgePath(from, to)} fill="none"
-              stroke=${on ? "var(--indigo-500)" : "var(--pearl-dark)"} stroke-width="1.8" />`;
-          })}
-          <circle cx="32" cy=${midY} r="13" fill="var(--ind-700)" />
-          <text x="32" y=${midY + 4} text-anchor="middle" font-size="11" fill="white">▶</text>
-          <text x="32" y=${midY + 30} text-anchor="middle" font-size="10.5" fill="var(--muted)">job start</text>
-          ${allTasks.map((task) => {
-            const p = pos[task.run_id];
-            const selected = selectedRun === task.run_id;
-            return html`
-              <g key=${task.run_id} style=${{ cursor: "pointer" }} onClick=${() => selectRun(task.run_id)}>
-                <rect x=${p.x} y=${p.y - H / 2} width=${W} height=${H} rx="10"
-                      fill="var(--canvas)" stroke=${statusColor(task)} stroke-width=${selected ? 3.5 : 2.2} />
-                <circle cx=${p.x + 14} cy=${p.y - H / 2 + 15} r="4.5" fill=${statusColor(task)} />
-                <text x=${p.x + 26} y=${p.y - H / 2 + 19}
-                      font-family="ui-monospace, Menlo, monospace" font-size="11" fill="var(--muted)">
-                  ${task.fleet} · #${task.run_id}</text>
-                <text x=${p.x + 12} y=${p.y + 6} font-size="12" font-weight="700" fill="var(--ink)">
-                  ${(task.short_name || task.source || "").slice(0, 26)}</text>
-                <text x=${p.x + 12} y=${p.y + 22} font-size="10.5" fill="var(--muted)">
-                  ${task.step.slice(0, 30)}${task.coverage != null ? ` · ${(task.coverage * 100).toFixed(1)}%` : ""}${task.duration_ms != null ? ` · ${(task.duration_ms / 1000).toFixed(1)}s` : ""}</text>
-              </g>`;
-          })}
-        </svg>
-      </div>
-      <button class="playbtn" onClick=${replay}>▶ replay job</button>
-    </div>`;
-}
-
-function chipStatus(stage, runStatus) {
-  if (stage.stage === "salvage" || stage.stage === "llm_repair" || stage.stage === "hints") return "warning";
-  if (stage.stage === "gate" && stage.coverage != null && stage.coverage < 0.995) return runStatus === "failure" ? "failure" : "warning";
-  return runStatus === "failure" ? "failure" : "success";
-}
-
+/* Legacy run records remain inspectable without inventing step dependencies. */
 function RunDag({ run, close, meta }) {
-  const [lit, setLit] = useState(run.stages.length); // all lit by default
-  const stages = run.stages;
-  const W = 148, H = 92, GAP = 26;
-  const width = Math.max(600, stages.length * (W + GAP));
-  const replay = () => {
-    setLit(0);
-    const total = Math.max(1, stages.reduce((a, s) => a + (s.ms || 1), 0));
-    const scale = Math.min(1, 4000 / total); // compress to <= 4s
-    let t = 0;
-    stages.forEach((s, i) => {
-      t += Math.max(120, (s.ms || 1) * scale);
-      setTimeout(() => setLit(i + 1), t);
-    });
-  };
-  const color = (s, i) => {
-    if (i >= lit) return "var(--pearl-dark)";
-    if (["salvage", "llm_repair", "hints"].includes(s.stage)) return "var(--amber-600)";
-    if (s.stage === "gate" && s.coverage != null && s.coverage < 0.995) return "var(--amber-600)";
-    return run.status === "failed" && i === stages.length - 1 ? "var(--rose-600)" : "var(--mint-600)";
-  };
-  return html`
-    <div class="dagwrap">
-      <h3>run #${run.id} · <span class="mono">${run.fleet}</span> · ${run.status}
-        ${run.outputs.coverage != null && html` · coverage ${(run.outputs.coverage * 100).toFixed(2)}%`}
-        ${run.outputs.version && html` · <span class="mono">${run.outputs.version}</span>`}
-      </h3>
-      <div class="charter">
-        trigger ${run.trigger} · ${run.created_at} · ${(run.duration_ms / 1000).toFixed(1)}s total
-        ${run.outputs.llm_assisted ? " · LLM-assisted repair (ratification pending)" : ""}
-        ${run.outputs.hints_used ? ` · ${run.outputs.hints_used.length} learned hint(s) applied` : ""}
-      </div>
-      <div style=${{ overflowX: "auto" }}>
-        <svg width=${width} height=${H + 40} style=${{ display: "block" }}>
-          ${stages.map((s, i) => {
-            const x = i * (W + GAP);
-            const attemptLoop = i > 0 && STAGE_ORDER.indexOf(s.stage) <= STAGE_ORDER.indexOf(stages[i - 1].stage);
-            return html`
-              <g key=${i}>
-                <title>${meta && meta.stages ? meta.stages[s.stage] || s.stage : s.stage}</title>
-                ${i > 0 && html`
-                  <line x1=${x - GAP} y1=${H / 2} x2=${x} y2=${H / 2}
-                        stroke=${i < lit ? "var(--indigo-500)" : "var(--pearl-dark)"} stroke-width="2" />
-                  <polygon points=${`${x},${H / 2} ${x - 7},${H / 2 - 4} ${x - 7},${H / 2 + 4}`}
-                           fill=${i < lit ? "var(--indigo-500)" : "var(--pearl-dark)"} />`}
-                ${attemptLoop && html`
-                  <path d=${`M ${x + W / 2} ${H - 6} C ${x + W / 2 - 40} ${H + 28}, ${x - GAP - W / 2 + 40} ${H + 28}, ${x - GAP - W / 2} ${H - 6}`}
-                        fill="none" stroke="var(--amber-600)" stroke-width="1.5" stroke-dasharray="4 3" />`}
-                <rect x=${x} y=${H / 2 - 32} width=${W} height="64" rx="10"
-                      fill="var(--canvas)" stroke=${color(s, i)} stroke-width="2.5" />
-                <text x=${x + W / 2} y=${H / 2 - 8} text-anchor="middle"
-                      font-family="ui-monospace, Menlo, monospace" font-size="13" font-weight="700"
-                      fill="var(--ink)">${s.stage}${s.attempt > 1 ? ` #${s.attempt}` : ""}</text>
-                <text x=${x + W / 2} y=${H / 2 + 12} text-anchor="middle" font-size="11" fill="var(--muted)">
-                  ${s.coverage != null ? `${(s.coverage * 100).toFixed(2)}% · ` : ""}${s.nodes ? `${s.nodes} nodes · ` : ""}${s.ms}ms
-                </text>
-                ${s.stage === "diff" && html`
-                  <text x=${x + W / 2} y=${H / 2 + 26} text-anchor="middle" font-size="10.5" fill="var(--muted)">
-                    +${s.added || 0} ~${s.amended || 0} −${s.removed || 0}
-                  </text>`}
-                ${s.stage === "persist" && s.version && html`
-                  <text x=${x + W / 2} y=${H / 2 + 26} text-anchor="middle" font-size="10.5" fill="var(--muted)">
-                    ${String(s.version).slice(0, 22)}
-                  </text>`}
-              </g>`;
-          })}
-        </svg>
-      </div>
-      <button class="playbtn" onClick=${replay}>▶ replay run</button>
-      ${" "}
-      <button class="playbtn" onClick=${close}>close</button>
-    </div>`;
+  const outputs = run.outputs || {};
+  const stages = outputs.stages || [];
+  return html`<div class="dagwrap">
+    <h3>Run #${run.id} · <span class="mono">${run.fleet}</span> · ${run.status || "unverified"}</h3>
+    <p class="charter">Trigger ${run.trigger || "not recorded"} · recorded ${run.created_at || "not recorded"} · measured duration ${measuredDuration(run.duration_ms)}.</p>
+    <p class="charter">This legacy run lists recorded stages. Step dependencies, heartbeats and worker leases were not recorded here; use Workflow for current task evidence.</p>
+    <p class="mono" style=${{ overflowWrap: "anywhere" }}>${outputs.version || "Version not recorded"} · SHA-256 ${outputs.content_hash || "not recorded"}</p>
+    ${!stages.length && html`<div class="empty">No measured stage records.</div>`}
+    <table class="members"><thead><tr><th>Recorded stage</th><th>Attempt</th><th>Measured duration</th><th>Recorded result</th></tr></thead>
+      <tbody>${stages.map((stage, i) => html`<tr key=${i}>
+        <td title=${meta && meta.stages && meta.stages[stage.stage] || ""}>${stage.stage}</td>
+        <td>${stage.attempt ?? "not recorded"}</td><td>${measuredDuration(stage.ms)}</td>
+        <td>${stage.status || "status not recorded"}${stage.coverage != null ? ` · reported coverage ${(stage.coverage * 100).toFixed(2)}%` : ""}</td>
+      </tr>`)}</tbody></table>
+    <button class="playbtn" onClick=${close}>Close run</button>
+  </div>`;
 }
 
 /* --------------------------------- search ----------------------------------- */
@@ -1225,14 +1413,18 @@ function SearchView({ q, open, back }) {
   const [scope, setScope] = useState(null);
   const [families, setFamilies] = useState([]);
   const [meta, setMeta] = useState(_meta);
-  useEffect(() => { getMeta().then(setMeta); api("/api/clhear/sources").then(setFamilies).catch(() => {}); }, []);
+  const [error, setError] = useState(null);
+  useEffect(() => { getMeta().then(setMeta).catch(() => {}); api("/api/clhear/sources").then(setFamilies).catch(() => {}); }, []);
   useEffect(() => {
-    setResults(null);
+    let cancelled = false;
+    setResults(null); setError(null);
     const params = new URLSearchParams({ q });
     if (category) params.set("category", category);
     if (scope) params.set("scope", scope);
-    api(`/api/clhear/search?${params}`).then(setResults);
+    api(`/api/clhear/search?${params}`).then((data) => { if (!cancelled) setResults(data); }).catch((err) => { if (!cancelled) setError(err); });
+    return () => { cancelled = true; };
   }, [q, category, scope]);
+  if (error) return html`<${ErrorNotice} error=${error} />`;
   if (results === null) return html`<div class="spin">Searching “${q}”…</div>`;
   const groups = [];
   for (const r of results) {
@@ -1250,7 +1442,7 @@ function SearchView({ q, open, back }) {
           <button key=${f.key} class=${"catchip" + (scope === f.key ? " on" : "")}
                   onClick=${() => setScope(scope === f.key ? null : f.key)}>${f.name.split(" (")[0]}</button>`)}
         <span class="count">type:</span>
-        ${(meta ? meta.annotation_categories : []).map((c) => html`
+        ${((meta && meta.annotation_categories) || []).map((c) => html`
           <button key=${c} class=${"catchip" + (category === c ? " on" : "")}
                   onClick=${() => setCategory(category === c ? null : c)}>${c}</button>`)}
       </div>
@@ -1259,7 +1451,7 @@ function SearchView({ q, open, back }) {
         <div key=${g.key}>
           <div class="dayhead">${g.name} · ${g.items.length} hit${g.items.length === 1 ? "" : "s"}</div>
           ${g.items.map((r, i) => html`
-            <div class="result" key=${i} onClick=${() => open(r.source_key, r.ref, r.doc_node_id)}>
+            <div class="result" key=${i} onClick=${() => open(r.source_key, r.ref, r.doc_node_id, r.version_label)}>
               <div class="where">
                 <span class="mono">${r.ref || r.grain}</span>
                 ${r.context ? ` · ${r.context}` : ""}
@@ -1272,7 +1464,9 @@ function SearchView({ q, open, back }) {
 
 function ChangesView({ open }) {
   const [changes, setChanges] = useState(null);
-  useEffect(() => { api("/api/clhear/changes").then(setChanges); }, []);
+  const [error, setError] = useState(null);
+  useEffect(() => { api("/api/clhear/changes").then(setChanges).catch(setError); }, []);
+  if (error) return html`<${ErrorNotice} error=${error} />`;
   if (changes === null) return html`<div class="spin">Loading changes…</div>`;
   return html`
     <div>
@@ -1280,7 +1474,7 @@ function ChangesView({ open }) {
       ${changes.length === 0 && html`<div class="empty">No changes detected yet.</div>`}
       ${changes.map((c) => html`
         <div class="change" key=${c.id}>
-          <a onClick=${() => open(c.source_key)}>${c.source_name}</a> —
+          <a href=${sourceUrl(c.source_key, c.new_version)} onClick=${(e) => { e.preventDefault(); open(c.source_key, null, null, c.new_version); }}>${c.source_name}</a> —
           <span class=${"kind-" + c.kind}>${c.kind}</span>
           ${c.old_version ? ` ${c.old_version} → ` : " → "}${c.new_version}
           <span style=${{ color: "var(--muted)" }}> · detected ${c.detected_at}</span>

@@ -36,7 +36,8 @@ def test_summary_table_published(engine, client, monkeypatch):
 
     # The release job publishes the same table as an artifact for the public repo.
     rel = (ROOT / ".github/workflows/release.yml").read_text()
-    assert "app.clhear.platform.gates summary" in rel and "evals-summary.json" in rel
+    assert "app.clhear.workers --once --envelope-file" in rel
+    assert "app.clhear.fleets nightly" not in rel
 
 
 def test_eval_runs_mirror_to_langfuse_when_configured_and_never_carry_text(engine, monkeypatch):

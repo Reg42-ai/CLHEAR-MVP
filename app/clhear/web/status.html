@@ -21,6 +21,7 @@
   .overall b { font-size: 20px; text-transform: capitalize; }
   .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; border: 1px solid var(--edge); color: var(--muted); white-space: nowrap; }
   .badge.ok { color: var(--ok); border-color: var(--ok); } .badge.bad { color: var(--bad); border-color: var(--bad); } .badge.empty { color: var(--faint); }
+  .reg td .badge, .note .badge { margin: 2px; }
   table.reg { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   table.reg th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--edge); }
   table.reg td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
@@ -94,7 +95,7 @@ function App() {
             <h2 id="gates">Evaluation gates</h2>
             <table class="reg"><thead><tr><th scope="col">Layer</th><th scope="col">Gate</th><th scope="col">Suites</th></tr></thead>
             <tbody>${Object.entries(st.gates).map(([l, g]) => html`<tr key=${l}><td><b>${l}</b></td><td><span class=${"badge " + (g.passed ? "ok" : "bad")}>${g.passed ? "passed" : g.missing.length ? "not run" : "failed"}</span></td>
-              <td>${Object.entries(g.suites).map(([s, ok]) => html`<span key=${s} class=${"badge " + (ok ? "ok" : "bad")} style="margin:2px">${s}</span>`)}${g.missing.map((s) => html`<span key=${s} class="badge empty" style="margin:2px">${s}</span>`)}</td></tr>`)}</tbody></table>
+              <td>${Object.entries(g.suites).map(([s, ok]) => html`<span key=${s} class=${"badge " + (ok ? "ok" : "bad")}>${s}</span>`)}${g.missing.map((s) => html`<span key=${s} class="badge empty">${s}</span>`)}</td></tr>`)}</tbody></table>
             <p class="note">Method and per-suite scores: <a class="navlink" href="/evals">evals dashboard</a>. Raw series: <a class="navlink" href="/metrics">/metrics</a>.</p>
           </section>
         </div>
@@ -105,7 +106,7 @@ function App() {
               <span class="kpi"><b>${age(st.dr.age_seconds)} ago</b>finished ${new Date(st.dr.finished_at).toLocaleString()} (target ≤ ${age(st.dr.max_age_seconds)})</span>
               <span class="kpi"><b>${age(st.dr.rpo_seconds)}</b>recovery point (target ≤ ${age(st.dr.targets.rpo_seconds)})</span>
               <span class="kpi"><b>${age(st.dr.rto_seconds)}</b>recovery time (target ≤ ${age(st.dr.targets.rto_seconds)})</span></div>
-            <p class="note">${Object.entries(st.dr.checks || {}).map(([k, ok]) => html`<span key=${k} class=${"badge " + (ok ? "ok" : "bad")} style="margin:2px">${k}</span>`)}
+            <p class="note">${Object.entries(st.dr.checks || {}).map(([k, ok]) => html`<span key=${k} class=${"badge " + (ok ? "ok" : "bad")}>${k}</span>`)}
               — record restored into a scratch database and compared row-for-row; graph projection rebuilt from the restored record and checksum-matched; datalake replica sampled in the second region.</p>`}
         </section>
         <p class="note">Uptime history is kept by an independent Upptime probe of <span class="mono">/status.json</span> (five-minute cadence, 30-day availability). Disaster-recovery restores of Postgres and the Neo4j projection are rehearsed nightly by a scheduled job; the last drill result is part of the SOC 2 evidence pack on the <a class="navlink" href="/security">security page</a>.</p>`}

@@ -183,12 +183,12 @@ _uk("uk-data-products", "uksi/2017/752", "PSRs 2017", "Payment Services Regulati
 _src("us-broker-dealer", "usc/15/exchange-act", "Exchange Act 1934", "Securities Exchange Act of 1934 (15 USC ch. 2B)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm", "govinfo_us", "root", "binding", ["securities", "us"], ["US-001", "GRP-002", "GRP-005", "GRP-006"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm"})
 _src("us-broker-dealer", "cfr/17/240-bd", "SEC BD rules (17 CFR 240)", "SEC broker-dealer rules — 15c3-1, 15c3-3, 17a-3/4/5, 10b-10, 606", "regulation", "US", "SEC (published by GPO/eCFR)", "https://www.ecfr.gov/current/title-17/chapter-II/part-240", "govinfo_us", "implements", "binding", ["broker-dealer", "us"], ["US-001", "US-003"], 2, fetch={"url": "https://www.ecfr.gov/current/title-17/chapter-II/part-240"})
 _src("us-broker-dealer", "cfr/17/reg-bi-sp", "Reg BI / S-P / S-ID", "SEC Regulations Best Interest, S-P (as amended 2024), S-ID", "regulation", "US", "SEC (eCFR)", "https://www.ecfr.gov/current/title-17/chapter-II/part-240/subpart-N", "govinfo_us", "implements", "binding", ["conduct", "privacy", "us"], ["US-002", "US-004", "US-005"], 2, fetch={"ecfr_title": "17", "ecfr_sections": ["240.15l-1", "248.30", "248.201"], "chapter": "II", "part": "240"})
-_src("us-broker-dealer", "finra/rulebook", "FINRA Rulebook", "FINRA rules 3110/3120/3130, 2210, 2090/2111, 3310, 4511, 4530, 1210", "regulation", "US", "FINRA", "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "finra", "supplements", "binding", ["supervision", "aml", "communications", "us"], ["US-006", "US-007", "US-008"], 2, fetch={"url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "channel": "finra"}, rights_basis="derived_only", publisher="FINRA (via SEC EDGAR 19b-4 channel)")
-# HLD v2 starter corpus: SEC + FINRA through the EDGAR channel.
+_src("us-broker-dealer", "finra/rulebook", "FINRA Rulebook", "FINRA rules 3110/3120/3130, 2210, 2090/2111, 3310, 4511, 4530, 1210", "regulation", "US", "FINRA", "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "finra", "supplements", "binding", ["supervision", "aml", "communications", "us"], ["US-006", "US-007", "US-008"], 2, fetch={"url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "channel": "finra"}, rights_basis="derived_only", publisher="FINRA (official rulebook on finra.org)")
+# FINRA text is retrieved directly from finra.org; SEC releases use sec.gov.
 for _rule, _ids in [("3110", ["US-006"]), ("2111", ["US-007"]), ("3310", ["US-008"]), ("2210", ["US-007"]), ("4511", ["US-006"])]:
-    _src("us-broker-dealer", f"finra/rule/{_rule}", f"FINRA {_rule}", f"FINRA Rule {_rule} (as published; changes via SR-FINRA 19b-4 filings on EDGAR)", "regulation", "US", "FINRA",
+    _src("us-broker-dealer", f"finra/rule/{_rule}", f"FINRA {_rule}", f"FINRA Rule {_rule} (current official rulebook text)", "regulation", "US", "FINRA",
          f"https://www.finra.org/rules-guidance/rulebooks/finra-rules/{_rule}", "finra", "supplements", "binding", ["supervision", "us"], _ids, 2,
-         fetch={"url": f"https://www.finra.org/rules-guidance/rulebooks/finra-rules/{_rule}", "channel": "finra"}, rights_basis="derived_only", publisher="FINRA (via SEC EDGAR 19b-4 channel)")
+         fetch={"url": f"https://www.finra.org/rules-guidance/rulebooks/finra-rules/{_rule}", "channel": "finra"}, rights_basis="derived_only", publisher="FINRA (official rulebook on finra.org)")
 _src("us-broker-dealer", "sec/release/34-86031", "Reg BI adopting release", "SEC Release 34-86031 — Regulation Best Interest (adopting release)", "regulation", "US", "U.S. Securities and Exchange Commission",
      "https://www.sec.gov/files/rules/final/2019/34-86031.pdf", "sec_edgar", "implements", "guidance", ["conduct", "us"], ["US-002"], 2,
      fetch={"url": "https://www.sec.gov/files/rules/final/2019/34-86031.pdf", "channel": "sec"}, rights_basis="public_domain", publisher="U.S. Securities and Exchange Commission")
@@ -255,8 +255,9 @@ _src("au-afsl", "au/asic-rg271", "ASIC RG 271", "ASIC Regulatory Guide 271 — I
 _src("il-isa", "il/securities-law-5728", "IL Securities Law", "Israel Securities Law 5728-1968 (ISA English translation)", "law", "IL", "Israel Securities Authority", "https://www.isa.gov.il/sites/ISAEng/1489/1511/Pages/default.aspx", "isa", "root", "binding", ["securities", "israel"], ["IL-001"], 3, fetch={"url": "https://www.isa.gov.il/sites/ISAEng/1489/1511/Pages/default.aspx", "kind": "pdf"}, rights_basis="derived_only")
 _src("sg-mas", "sg/mas-psn02", "MAS PSN02", "MAS Notice PSN02 — Prevention of Money Laundering and Countering the Financing of Terrorism (digital payment token services)", "guidance", "SG", "MAS", "https://www.mas.gov.sg/regulation/notices/psn02-aml-cft-notice---digital-payment-token-service", "mas", "supplements", "binding", ["aml", "crypto", "sg"], ["SG-003"], 3, fetch={"url": "https://www.mas.gov.sg/regulation/notices/psn02-aml-cft-notice---digital-payment-token-service", "kind": "pdf"})
 _src("standards", "wolfsberg/standards", "Wolfsberg", "Wolfsberg Group standards (CBDDQ, payment transparency, monitoring)", "standard", "INTL", "Wolfsberg Group", "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "wolfsberg", "supplements", "guidance", ["aml", "standards"], ["GRP-027"], 3, fetch={"url": "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "kind": "pdf"})
-_src("standards", "iso/27001-2022", "ISO 27001", "ISO/IEC 27001:2022 + Amd 1:2024 [RESTRICTED — P3 importer + BYOL]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/27001", "restricted_file", "supplements", "guidance", ["infosec", "standards"], ["STD-001"], 4, license="restricted")
-_src("standards", "aicpa/soc2-tsc", "SOC 2 TSC", "AICPA Trust Services Criteria 2017 (2022 points of focus) [RESTRICTED]", "standard", "US", "AICPA", "https://www.aicpa-cima.com/", "restricted_file", "supplements", "guidance", ["infosec", "assurance", "standards"], ["STD-002"], 4, license="restricted")
+_src("standards", "iso/27001-2022", "ISO 27001:2022", "ISO/IEC 27001:2022 — base standard [RESTRICTED]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/27001", "restricted_file", "supplements", "guidance", ["infosec", "standards"], ["STD-001"], 4, license="restricted")
+_src("standards", "iso/27001-2022-amd1-2024", "ISO 27001 Amd 1:2024", "ISO/IEC 27001:2022/Amd 1:2024 — Climate action changes [RESTRICTED]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/88435.html", "restricted_file", "amends", "guidance", ["infosec", "standards"], ["STD-001-A1"], 4, license="restricted")
+_src("standards", "aicpa/soc2-tsc", "SOC 2 TSC", "AICPA Trust Services Criteria 2017 (2022 points of focus) [RESTRICTED]", "standard", "US", "AICPA", "https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022", "restricted_file", "supplements", "guidance", ["infosec", "assurance", "standards"], ["STD-002"], 4, license="restricted")
 _src("standards", "pci/dss-v4", "PCI DSS v4", "PCI DSS v4.x [RESTRICTED — license check]", "standard", "INTL", "PCI SSC", "https://www.pcisecuritystandards.org/", "restricted_file", "supplements", "guidance", ["payments", "infosec"], ["STD-004"], 4, license="restricted")
 _src("standards", "ifrs/standards", "IFRS", "IFRS as issued by the IASB [RESTRICTED — IFRS Foundation license]", "standard", "INTL", "IFRS Foundation", "https://www.ifrs.org/", "restricted_file", "supplements", "guidance", ["financial-reporting"], ["GRP-009"], 4, license="restricted")
 
@@ -318,7 +319,8 @@ def source_meta(entry: dict) -> SourceMeta:
         short_name=entry["short_name"],
         about=_about(entry),
         topics=entry["topics"],
-        version_policy="as_published" if entry["adapter"] == "eur_lex" else "consolidated",
+        version_policy=("as_published" if entry["adapter"] == "eur_lex" else
+                        "edition" if entry["adapter"] == "restricted_file" else "consolidated"),
     )
 
 
@@ -390,6 +392,14 @@ def seed(engine: Engine) -> dict:
                         .where(sources.c.id == existing_id)
                         .values(short_name=s["short_name"], about=_about(s), topics=s["topics"])
                     )
+                if s["key"] in {"iso/27001-2022", "iso/27001-2022-amd1-2024", "aicpa/soc2-tsc"}:
+                    # Correct the declared publisher identity through the
+                    # ordinary worker registry seed. Existing text versions and
+                    # artifact hashes remain untouched and require their own
+                    # edition review; renaming metadata never certifies them.
+                    conn.execute(sources.update().where(sources.c.id == existing_id).values(
+                        name=s["name"], short_name=s["short_name"], canonical_url=s["canonical_url"],
+                        instrument=s["instrument"], about=_about(s)))
                 member = conn.execute(
                     sa.select(family_members.c.source_id).where(
                         family_members.c.family_id == family_ids[s["family"]],

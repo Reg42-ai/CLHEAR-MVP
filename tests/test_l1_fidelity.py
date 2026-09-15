@@ -262,7 +262,7 @@ def test_activity_feed_and_fleet_board(engine, client, tmp_path):
     assert "fine text" not in json.dumps(feed)
 
 
-def test_stale_running_run_is_failed_not_spinner(engine, client, tmp_path):
+def test_stale_running_run_is_unknown_without_completion_evidence(engine, client, tmp_path):
     """Midnight TNA 202 crashes left status=running; Fleet must not pulse forever."""
     from datetime import datetime, timedelta, timezone
 
@@ -282,6 +282,6 @@ def test_stale_running_run_is_failed_not_spinner(engine, client, tmp_path):
         )
     board = client.get("/api/clhear/fleet").json()
     row = next(r for r in board if r["source_key"] == "gappy/ok")
-    assert row["last_run"]["status"] == "failure"
-    assert row["last_run"]["raw_status"] == "failed"
-    assert "crashed before finish" in (row["last_run"].get("error") or "")
+    assert row["last_run"]["status"] == "info"
+    assert row["last_run"]["raw_status"] == "unknown"
+    assert not row["last_run"].get("error")

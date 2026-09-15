@@ -159,7 +159,7 @@ def test_build_refuses_invalid_profiles_honestly(engine, client):
 
 def test_no_paywall(engine, client):
     """I9 — open by mode: the whole describe → blueprint path needs no account, key or payment."""
-    home = client.get("/")
+    home = client.get("/solon")
     assert home.status_code == 200
     text = home.text
     assert "No account, no key, no paywall" in text
@@ -174,7 +174,7 @@ def test_no_paywall(engine, client):
                  "/watch/feed", "/evals/summary", "/solon/examples"):
         assert client.get(path).status_code == 200, path
     # the pages themselves are open too
-    for page in ("/", "/explore", "/learn", "/watch", "/build", "/evals", "/stack"):
+    for page in ("/", "/solon", "/explore", "/learn", "/watch", "/build", "/evals", "/stack"):
         r = client.get(page)
         assert r.status_code == 200 and "Cache-Control" in r.headers, page
 

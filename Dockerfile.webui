@@ -1,0 +1,12 @@
+# Build native dependencies on the same OS/Python as the deployed Lambda.
+FROM public.ecr.aws/lambda/python:3.12@sha256:7ff4d0d3415ebe892b2b021a75b8750b8321969b1858cba37966fbdf2b12012f AS build
+WORKDIR /build
+COPY requirements.lock .
+RUN pip install --no-cache-dir --target /build/dependencies -r requirements.lock
+COPY app ./app
+COPY migrations ./migrations
+COPY scripts/package_webui.py ./scripts/package_webui.py
+RUN python scripts/package_webui.py --dependencies /build/dependencies --output /output/webui.zip
+
+FROM scratch AS artifact
+COPY --from=build /output/ /

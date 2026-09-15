@@ -1,0 +1,132 @@
+name: deploy-l1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: clhear-l1-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'Reg42-ai/CLHEAR-MVP' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: clhear-l1
+    env:
+      AWS_REGION: us-east-1
+      CLHEAR_DEPLOY_ROLE_ARN: ${{ vars.CLHEAR_DEPLOY_ROLE_ARN }}
+      CLHEAR_REVIEWER_EMAILS: ${{ vars.CLHEAR_REVIEWER_EMAILS }}
+      CLHEAR_DEPLOY_ENVIRONMENT: clhear-l1
+      DEPLOY_BUCKET: clhear-deploy-730649732189
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the exact commit to have passed every CI job
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {data} = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'ci.yml', head_sha: context.sha,
+              branch: 'main', event: 'push', per_page: 20
+            });
+            const run = data.workflow_runs.find(r => r.head_sha === context.sha);
+            if (!run || run.status !== 'completed' || run.conclusion !== 'success') {
+              core.setFailed('The deployed main commit must first pass CI. Re-dispatch after CI finishes.');
+              return;
+            }
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo, run_id: run.id, filter: 'latest', per_page: 100
+            });
+            for (const name of ['tests', 'a11y-axe', 'terraform']) {
+              if (!jobs.some(j => j.name === name && j.conclusion === 'success')) {
+                core.setFailed(`Required CI job has not succeeded: ${name}`);
+              }
+            }
+      - name: Require deployment authority and reviewer configuration
+        shell: bash
+        run: |
+          [[ "$CLHEAR_DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::730649732189:role/[A-Za-z0-9+=,.@_/-]+$ ]] || { echo 'Configure CLHEAR_DEPLOY_ROLE_ARN in the protected clhear-l1 environment.' >&2; exit 1; }
+          test -n "$CLHEAR_REVIEWER_EMAILS" || { echo 'Configure the approved CLHEAR_REVIEWER_EMAILS in clhear-l1.' >&2; exit 1; }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.lock
+      - name: Configure dedicated CLHEAR deployment identity
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.CLHEAR_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 10800
+      - name: Verify the assumed account before publishing code
+        run: test "$(aws sts get-caller-identity --query Account --output text)" = '730649732189'
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Build immutable worker image
+        id: worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: 730649732189.dkr.ecr.us-east-1.amazonaws.com/clhear-workers:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          provenance: true
+          sbom: true
+      - name: Build Lambda code with compatible native dependencies
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.webui
+          platforms: linux/amd64
+          outputs: type=local,dest=artifacts/lambda
+      - name: Upload immutable UI code
+        id: ui
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import boto3
+          root = Path('artifacts/lambda')
+          manifest = json.loads((root / 'webui.json').read_text())
+          key = f"webui/deployments/{os.environ['GITHUB_SHA']}/{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}/webui.zip"
+          with (root / 'webui.zip').open('rb') as body:
+              result = boto3.client('s3').put_object(Bucket=os.environ['DEPLOY_BUCKET'], Key=key,
+                  Body=body, IfNoneMatch='*', ServerSideEncryption='AES256',
+                  Metadata={'sha256': manifest['sha256'], 'git-sha': os.environ['GITHUB_SHA'], 'kind': 'application-code'})
+          version = result.get('VersionId')
+          if not version or version == 'null':
+              raise RuntimeError('Deployment bucket must have versioning enabled')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f"key={key}\nversion={version}\nsha256={manifest['sha256']}\n")
+          PY
+      - name: Deploy code and execute CLHEAR L0/L1 verification
+        env:
+          WORKER_DIGEST: ${{ steps.worker.outputs.digest }}
+          UI_KEY: ${{ steps.ui.outputs.key }}
+          UI_VERSION: ${{ steps.ui.outputs.version }}
+          UI_SHA256: ${{ steps.ui.outputs.sha256 }}
+        run: >-
+          python scripts/deploy_l1.py
+          --sha "$GITHUB_SHA"
+          --image "730649732189.dkr.ecr.us-east-1.amazonaws.com/clhear-workers@$WORKER_DIGEST"
+          --ui-key "$UI_KEY" --ui-version "$UI_VERSION" --ui-sha256 "$UI_SHA256"
+          --deployment-id "l1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          --reviewer-emails "$CLHEAR_REVIEWER_EMAILS"
+          --output artifacts/deployment-result.json --apply
+      - name: Retain code deployment evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l1-deployment-${{ github.sha }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            artifacts/deployment-result.json
+            artifacts/lambda/webui.json

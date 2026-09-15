@@ -1,0 +1,343 @@
+"""L0-owned private candidate projection from the authoritative database.
+
+The viewer is a separately generated SQLite projection, never a copy of the
+operational database or an accepted release. Its full empty schema preserves
+read-route compatibility; only explicitly allowed L1/evidence tables receive
+rows. Sessions, accounts, API credentials, model prompts and lease tokens do
+not cross this boundary. No CLI or request-time export path is provided.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import tempfile
+import uuid
+from contextlib import nullcontext
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse
+
+import sqlalchemy as sa
+
+from app.clhear.db import make_engine, run_migrations
+from app.clhear.l1 import inventory, models, permissions, rights, workflow
+from app.clhear.models import eval_runs, llm_calls, runs
+
+CORPUS_TABLES = (models.source_families, models.sources, models.family_members,
+                 models.source_versions, models.doc_nodes, models.clauses,
+                 models.clause_annotations, models.citations, models.rights_records,
+                 models.change_events, models.search_units)
+EVIDENCE_TABLES = (permissions.source_permissions, inventory.inventory_snapshots,
+                   inventory.inventory_audits, inventory.inventory_reviews, inventory.artifact_reviews,
+                   workflow.jobs, workflow.tasks, workflow.steps, runs, eval_runs, llm_calls)
+STATE = sa.Table(
+    "viewer_snapshot_state", sa.MetaData(),
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("manifest", sa.JSON, nullable=False),
+)
+_REDACTED_FIELDS = {"error", "errors", "traceback", "stack", "prompt", "system_prompt", "completion",
+                    "raw_response", "reasoning", "missing_preview", "missing_spans", "owner_token",
+                    "password", "secret", "api_key", "access_token", "refresh_token", "authorization",
+                    "raw_text", "source_fragment", "text", "expected_text", "parsed_text", "excerpt"}
+_STRING_FIELDS = {
+    "status", "stored_status", "stage", "fleet", "trigger", "source_key", "source", "adapter", "adapter_key",
+    "job_id", "task_id", "step_id", "event_id", "event_key", "consumer", "subject_ref", "worker",
+    "version_label", "version", "version_kind", "scope", "scope_version", "inventory_hash", "content_hash",
+    "sha256", "implementation_sha256", "canonical_text_hash", "projection_hash", "bindings_hash",
+    "audience", "dataset_kind", "origin", "freshness", "publisher_checked_at", "checked_at", "audited_at",
+    "started_at", "finished_at", "created_at", "retrieved_at", "expires_at", "valid_from", "recorded_at",
+    "operation", "reason", "code", "name", "url", "uri", "artifact_uri", "canonical_url",
+    "publisher_edition", "expected_edition", "evidence_ref", "approved_by", "reviewed_at", "coverage",
+    "method", "model", "provider", "prompt_hash", "error_type", "readiness", "acceptance", "publication",
+    "downstream", "key", "family", "short_name", "kind", "issuer", "jurisdiction", "license", "license_ref",
+    "rights_basis", "publisher", "instrument", "relation", "tier", "topics", "registry_ids", "modules",
+    "source_keys", "blocked_operations", "reasons", "depends_on", "channel", "doc", "celex", "celex_version",
+    "ecfr_title", "ecfr_sections", "usc_title", "usc_sections", "as_of", "edition", "chapter", "chapters", "part",
+    "sourcebook", "language", "allowed_origins", "hash", "permission_id", "finding_codes",
+    "verification_id", "phase", "evidence_mode", "nightly_schedule_validation",
+    "before_bindings_hash", "after_bindings_hash", "successful_sources", "failed_sources",
+}
+
+
+def configured_uri():
+    return os.environ.get("CLHEAR_VIEWER_SNAPSHOT_S3_URI", "")
+
+
+def request_refresh(engine, *, reason, job_id=None):
+    """Durable L0 export request, joining a caller Connection's transaction."""
+    if not configured_uri():
+        return None
+    from app.clhear.platform.events import emit
+    with (engine.begin() if isinstance(engine, sa.engine.Engine) else nullcontext(engine)) as conn:
+        return emit(conn, layer="l0", kind="ViewerSnapshotRequested", subject_ref="viewer/current",
+                    payload={"reason": reason, "job_id": job_id}, producer="l1.worker")
+
+
+def _metadata(value, key=""):
+    """An allowlist for display evidence, not a generic secret-key scrubber.
+
+    Unknown free text and explicit error/provider payloads are omitted. Numeric
+    metric maps and known identifiers/status/timing fields remain inspectable.
+    """
+    if key.lower() in _REDACTED_FIELDS:
+        return None
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value if key in _STRING_FIELDS else None
+    if isinstance(value, dict):
+        return {str(k): clean for k, v in value.items() if (clean := _metadata(v, str(k))) is not None}
+    if isinstance(value, list):
+        return [clean for v in value if (clean := _metadata(v, key)) is not None]
+    return None
+
+
+def _empty_schema(target):
+    # This helper may initialize only a brand-new disposable SQLite projection.
+    # Reject an operational DB even if a future caller passes the wrong engine.
+    if target.dialect.name != "sqlite":
+        raise ValueError("Viewer schema initialization requires a new empty SQLite database")
+    with target.connect() as conn:
+        if sa.inspect(conn).get_table_names():
+            raise ValueError("Viewer schema initialization requires a new empty SQLite database")
+    # Existing numbered migrations define all compatibility tables. They run
+    # only on the newly created local candidate, never on the source engine.
+    run_migrations(target)
+    with target.begin() as conn:
+        conn.exec_driver_sql("PRAGMA secure_delete = ON")
+        for name in sa.inspect(conn).get_table_names():
+            # Deleting FTS5 shadow tables individually corrupts its index.
+            # The virtual table's DELETE maintains its own shadow structures.
+            if name not in {"schema_migrations", "sqlite_sequence"} and not name.startswith("search_units_fts_"):
+                conn.exec_driver_sql('DELETE FROM "' + name.replace('"', '""') + '"')
+        STATE.create(conn, checkfirst=True)
+
+
+def _required_tables(conn):
+    inspector = sa.inspect(conn)
+    missing = [table.fullname for table in (*CORPUS_TABLES, *EVIDENCE_TABLES)
+               if not inspector.has_table(table.name, schema=table.schema if conn.dialect.name == "postgresql" else None)]
+    if missing:
+        raise RuntimeError("Viewer snapshot requires migrated evidence tables: " + ", ".join(missing))
+
+
+def _corpus_query(table, permitted_sources, public_sources):
+    permitted_versions = sa.select(models.source_versions.c.id).where(models.source_versions.c.source_id.in_(permitted_sources))
+    public_versions = sa.select(models.source_versions.c.id).where(models.source_versions.c.source_id.in_(public_sources))
+    permitted_clauses = sa.select(models.clauses.c.id).where(models.clauses.c.source_version_id.in_(permitted_versions))
+    public_clauses = sa.select(models.clauses.c.id).where(models.clauses.c.source_version_id.in_(public_versions))
+    # Text is selected conditionally in the source database so an unapproved
+    # source's text is not fetched into the snapshot worker at all.
+    allowed = None
+    publicly_allowed = None
+    fields = set()
+    if table is models.doc_nodes:
+        allowed = table.c.source_version_id.in_(permitted_versions)
+        publicly_allowed = table.c.source_version_id.in_(public_versions)
+        fields = {"raw_text", "source_fragment", "heading", "label"}
+    elif table is models.clauses:
+        allowed = table.c.source_version_id.in_(permitted_versions)
+        publicly_allowed = table.c.source_version_id.in_(public_versions)
+        fields = {"text", "path"}
+    elif table is models.clause_annotations:
+        allowed = table.c.clause_id.in_(permitted_clauses)
+        fields = {"summary"}
+    elif table is models.citations:
+        allowed = table.c.from_clause_id.in_(permitted_clauses)
+        fields = {"raw_text", "reason"}
+    elif table is models.rights_records:
+        allowed = table.c.source_id.in_(permitted_sources)
+        fields = {"basis_ref"}
+    elif table is models.search_units:
+        # Search remains public-corpus-only; internal text is read explicitly
+        # in the authenticated source inspector, not copied to a public index.
+        allowed = table.c.source_version_id.in_(public_versions)
+        publicly_allowed = allowed
+        fields = {"text", "heading", "path", "short_name"}
+    columns = []
+    for column in table.c:
+        if column.name.startswith("embedding") or column.name == "embedded_at":
+            columns.append(sa.cast(sa.null(), column.type).label(column.name))
+        elif column.name in fields:
+            columns.append(sa.case((allowed, column), else_="").label(column.name))
+        elif table is models.change_events and column.name == "clause_refs":
+            columns.append(sa.case((table.c.source_id.in_(permitted_sources), column),
+                else_=sa.literal([], type_=column.type)).label(column.name))
+        elif column.name == "public_ok" and publicly_allowed is not None:
+            columns.append(sa.and_(column, publicly_allowed).label(column.name))
+        else:
+            columns.append(column)
+    query = sa.select(*columns)
+    if table is models.clause_annotations:
+        query = query.where(allowed)  # topic arrays can contain source excerpts
+    return query
+
+
+def _evidence_query(table):
+    query = sa.select(table)
+    if table is runs:
+        query = query.where(sa.or_(table.c.fleet.like("l1.%"), table.c.fleet == "worker",
+                                   table.c.fleet == "l0.deployment_verification"))
+    elif table is llm_calls:
+        query = query.where(table.c.fleet.like("l1.%"))
+    elif table is eval_runs:
+        from app.clhear.platform.evals import SOURCE_SUITES
+        query = query.where(sa.or_(table.c.suite.like("l1_%"), table.c.suite.in_(SOURCE_SUITES)))
+    return query
+
+
+def _clean_row(table, row):
+    out = dict(row)
+    for key, value in list(out.items()):
+        if key in {"owner_token", "error", "reasoning", "routing_reason"}:
+            out[key] = None
+        elif key in {"model_manifest", "review"}:
+            # Free-form model/reviewer context can contain source excerpts or
+            # provider payloads. Exact parser and formal reviewed evidence live
+            # in the dedicated inventory/run ledgers copied separately.
+            out[key] = None
+        elif table in {runs, eval_runs, llm_calls, workflow.jobs, workflow.tasks, workflow.steps} and isinstance(value, (dict, list)):
+            out[key] = _metadata(value) or ({} if isinstance(value, dict) else [])
+    return out
+
+
+def _authorization_binding(conn):
+    """Current exact grant decisions and source rights labels, without text."""
+    binding = []
+    for source in conn.execute(sa.select(models.sources).order_by(models.sources.c.key)).mappings():
+        protected = permissions.required_for(source)
+        decisions = {op: {k: choice.get(k) for k in ("permission_id", "allowed", "reason", "expires_at")}
+                     for op in ("store", "display_internal", "display_public")
+                     for choice in [permissions.decision(conn, source["key"], op)]} if protected else {}
+        binding.append({"source_key": source["key"], "protected": protected,
+                        "license": source["license"], "rights_basis": source["rights_basis"], "decisions": decisions})
+    return binding
+
+
+def compile_viewer_snapshot(engine, destination: Path, *, job_id=None):
+    """Compile one consistent, private candidate; fail before any publication."""
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    target = make_engine(f"sqlite:///{destination}")
+    try:
+        _empty_schema(target)
+        with engine.connect() as conn:
+            if engine.dialect.name == "postgresql":
+                conn = conn.execution_options(isolation_level="REPEATABLE READ")
+            with conn.begin():
+                if engine.dialect.name == "postgresql":
+                    conn.exec_driver_sql("SET TRANSACTION READ ONLY")
+                elif engine.dialect.name == "sqlite":
+                    conn.exec_driver_sql("BEGIN")  # pin SQLite's legacy driver to a real read transaction
+                _required_tables(conn)
+                authorization_binding = _authorization_binding(conn)
+                source_rows = list(conn.execute(sa.select(models.sources)).mappings())
+                permitted, publicly_allowed, redacted = [], [], []
+                for source in source_rows:
+                    if permissions.required_for(source):
+                        internal = permissions.decision(conn, source["key"], "display_internal")["allowed"]
+                        public = permissions.decision(conn, source["key"], "display_public")["allowed"]
+                        store = permissions.decision(conn, source["key"], "store")["allowed"]
+                        may_copy = store and (internal or public)
+                    else:
+                        public = source["license"] == "open" and rights.republishable(source["rights_basis"])
+                        may_copy = public
+                    if may_copy:
+                        permitted.append(source["id"])
+                    else:
+                        redacted.append(source["key"])
+                    if may_copy and public:
+                        publicly_allowed.append(source["id"])
+                counts = {}
+                with target.begin() as out:
+                    for table in (*CORPUS_TABLES, *EVIDENCE_TABLES):
+                        query = _corpus_query(table, permitted, publicly_allowed) if table in CORPUS_TABLES else _evidence_query(table)
+                        count = 0
+                        result = conn.execute(query).mappings()
+                        while batch := result.fetchmany(250):
+                            rows = [_clean_row(table, row) for row in batch]
+                            out.execute(table.insert(), rows)
+                            count += len(rows)
+                        counts[table.name] = count
+                    if sa.inspect(out).has_table("search_units_fts"):
+                        out.exec_driver_sql("INSERT INTO search_units_fts(rowid, text) SELECT id, text FROM search_units WHERE text <> ''")
+                    manifest = {"status": "available", "kind": "candidate_viewer", "viewer_snapshot": True,
+                                "revision": str(uuid.uuid4()), "generated_at": datetime.now(timezone.utc).isoformat(),
+                                "database_backend": engine.dialect.name,
+                                "source_environment": "authoritative_postgresql" if engine.dialect.name == "postgresql" else "local_sqlite_test",
+                                "worker_job_id": job_id, "accepted_release": False, "audience": "restricted-reviewers",
+                                "authorization_binding": authorization_binding,
+                                "counts": counts, "redacted_source_keys": sorted(redacted),
+                                "omitted_layers": [f"L{n}" for n in range(2, 9)],
+                                "omitted_operational_data": ["accounts", "sessions", "API credentials", "model prompts", "lease tokens", "private exception details"],
+                                "table_allowlist": [t.name for t in (*CORPUS_TABLES, *EVIDENCE_TABLES)]}
+                    out.execute(STATE.insert().values(id=1, manifest=manifest))
+        with target.connect() as check:
+            if check.exec_driver_sql("PRAGMA integrity_check").scalar_one() != "ok":
+                raise RuntimeError("Candidate viewer SQLite integrity verification failed")
+        return manifest
+    except Exception:
+        target.dispose()
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        target.dispose()
+
+
+def publish_viewer_snapshot(engine, uri, region, *, job_id=None, s3_client=None):
+    """L0 publishes only after local compilation and integrity verification.
+
+    A single atomic S3 PutObject replaces the private viewer object. A failed
+    compilation/upload leaves the previous object intact. This never changes
+    accepted-release pointers or the authoritative DATABASE_URL.
+    """
+    parsed = urlparse(uri)
+    if (parsed.scheme != "s3" or not parsed.netloc or parsed.username or parsed.password
+            or not parsed.path.startswith("/webui/") or parsed.query or parsed.fragment):
+        raise ValueError("A configured private s3://bucket/webui/... viewer URI is required")
+    if s3_client is None:
+        import boto3
+        s3_client = boto3.client("s3", region_name=region)
+    # Compare-and-swap prevents a slower event from replacing a newer viewer.
+    # Capture the ETag before compilation, not just before uploading.
+    from botocore.exceptions import ClientError
+    try:
+        previous = s3_client.head_object(Bucket=parsed.netloc, Key=parsed.path.lstrip("/"))
+        expected_etag = previous["ETag"]
+        condition = {"IfMatch": expected_etag}
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") not in {"404", "NoSuchKey", "NotFound"}:
+            raise
+        condition = {"IfNoneMatch": "*"}
+    with tempfile.TemporaryDirectory(prefix="clhear-viewer-") as directory:
+        path = Path(directory) / "candidate.db"
+        manifest = compile_viewer_snapshot(engine, path, job_id=job_id)
+        hasher = hashlib.sha256()
+        with path.open("rb") as content:
+            for chunk in iter(lambda: content.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        digest = hasher.hexdigest()
+        with engine.connect() as conn:
+            if _authorization_binding(conn) != manifest["authorization_binding"]:
+                raise PermissionError("Source permissions changed while compiling the viewer; rerun required")
+        with path.open("rb") as body:
+            s3_client.put_object(Bucket=parsed.netloc, Key=parsed.path.lstrip("/"), Body=body,
+                ContentType="application/vnd.sqlite3", CacheControl="private, no-store", ServerSideEncryption="AES256",
+                Metadata={"revision": manifest["revision"], "sha256": digest, "kind": "candidate-viewer",
+                          "source-environment": manifest["source_environment"]}, **condition)
+        return {**manifest, "snapshot_uri": uri, "sha256": digest, "byte_count": path.stat().st_size}
+
+
+def read_viewer_state(engine):
+    with engine.connect() as conn:
+        if sa.inspect(conn).has_table(STATE.name):
+            value = conn.execute(sa.select(STATE.c.manifest).where(STATE.c.id == 1)).scalar_one_or_none()
+            if value:
+                return value
+    return {"status": "not_a_viewer_snapshot", "viewer_snapshot": False, "kind": "direct_database",
+            "database_backend": engine.dialect.name,
+            "source_environment": "direct_postgresql" if engine.dialect.name == "postgresql" else "local_sqlite",
+            "accepted_release": False, "omitted_layers": []}

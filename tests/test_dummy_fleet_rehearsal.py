@@ -75,8 +75,7 @@ def test_dummy_fleet_rehearsal(engine, client, tmp_path):
     records = run_all(engine, release=RELEASE)
     by_suite = {r["suite"]: r["passed"] for r in records}
     assert all(by_suite[s] for s in GLOBAL_SUITES)
-    assert by_suite["l1_family_completeness"] is False
-    assert by_suite["l1_currency"] is False
+    assert by_suite["l1_inventory_acceptance"] is False
     assert release_gate(engine, RELEASE) is True
 
     out_dir = tmp_path / "public-repo"

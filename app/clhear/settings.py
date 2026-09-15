@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # ARCH: stand-in for reg42-os auth; comma-separated identities with the
     # `maintainer` role. Replace with the existing session/role dependency on merge.
     clhear_maintainers: str = "avner@reg42.ai"
+    # Private review deployment. Authentication is checked before any corpus API,
+    # not merely before rendering HTML. This never grants publisher text rights.
+    clhear_restricted_access: bool = False
+    clhear_reviewer_emails: str = ""
+    clhear_l1_only: bool = False  # enable on worker deployments while accepting L1
 
     # Exporter target: local checkout dir and optional remote (public `clhear` repo).
     clhear_public_repo_dir: str = "./clhear-public"
@@ -132,6 +137,11 @@ class Settings(BaseSettings):
     @property
     def maintainer_set(self) -> set[str]:
         return {m.strip() for m in self.clhear_maintainers.split(",") if m.strip()}
+
+    @property
+    def reviewer_set(self) -> set[str]:
+        configured = self.clhear_reviewer_emails or self.clhear_maintainers
+        return {email.strip().lower() for email in configured.split(",") if email.strip()}
 
 
 @lru_cache

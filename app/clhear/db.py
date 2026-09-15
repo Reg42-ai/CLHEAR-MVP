@@ -67,14 +67,23 @@ def dispose_engine() -> None:
 
 
 def run_migrations(engine: Engine) -> list[int]:
-    """Apply pending numbered migrations from the top-level `migrations` package."""
+    """Apply numbered migrations under one transaction and PostgreSQL lock.
+
+    The transaction-scoped lock serializes the ledger read and every pending
+    migration across fleet boots. PostgreSQL releases it on commit, rollback
+    or connection loss; no session lock can leak into the connection pool.
+    """
     with engine.begin() as conn:
         if engine.dialect.name == "postgresql":
+            conn.execute(sa.text("SELECT pg_advisory_xact_lock(:key)"), {"key": 0x434C48454152})
             for schema in all_schemas():
                 conn.execute(sa.text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
             # HLD v2 I7: pgvector lives beside the record (Aurora Postgres).
             try:
-                conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+                # A failed optional extension statement aborts PostgreSQL's
+                # transaction unless isolated behind a savepoint.
+                with conn.begin_nested():
+                    conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
             except Exception:  # pragma: no cover - extension not available on this host
                 log.warning("pgvector extension unavailable; embeddings stay JSON")
         schema_migrations.create(conn, checkfirst=True)
@@ -85,31 +94,30 @@ def run_migrations(engine: Engine) -> list[int]:
         audit_log.create(conn, checkfirst=True)
         applied = {row.version for row in conn.execute(sa.select(schema_migrations.c.version))}
 
-    import migrations as migrations_pkg
+        import migrations as migrations_pkg
 
-    available = []
-    for mod_info in pkgutil.iter_modules(migrations_pkg.__path__):
-        if mod_info.name.startswith("m"):
-            version = int(mod_info.name.split("_")[0][1:])
-            available.append((version, mod_info.name))
-    available.sort()
+        available = []
+        for mod_info in pkgutil.iter_modules(migrations_pkg.__path__):
+            if mod_info.name.startswith("m"):
+                version = int(mod_info.name.split("_")[0][1:])
+                available.append((version, mod_info.name))
+        available.sort()
 
-    newly_applied = []
-    for version, name in available:
-        if version in applied:
-            continue
-        module = importlib.import_module(f"migrations.{name}")
-        from app.clhear.platform import audit
+        newly_applied = []
+        for version, name in available:
+            if version in applied:
+                continue
+            module = importlib.import_module(f"migrations.{name}")
+            from app.clhear.platform import audit
 
-        token = audit.bind_actor(audit.system_actor(f"migration:{name}"))
-        try:
-            with engine.begin() as conn:
+            token = audit.bind_actor(audit.system_actor(f"migration:{name}"))
+            try:
                 module.upgrade(conn)
                 conn.execute(schema_migrations.insert().values(version=version, name=name))
-        finally:
-            audit.reset_actor(token)
-        log.info("applied migration %s", name)
-        newly_applied.append(version)
+            finally:
+                audit.reset_actor(token)
+            log.info("applied migration %s", name)
+            newly_applied.append(version)
     return newly_applied
 
 

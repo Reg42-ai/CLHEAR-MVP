@@ -9,7 +9,10 @@ from tests.test_l1_synthetic_amendment import V1, V2, SyntheticAdapter
 
 
 def _seed(engine, tmp_path):
+    from app.clhear.l1.permissions import record_permission
     store = pipeline.LocalStore(tmp_path / "lake")
+    record_permission(engine, source_key="synthetic/finra-3110", permissions={"acquire": True, "store": True, "parse": True},
+                      evidence_ref="test:original-api-fixture", approved_by="test", approved=True)
     pipeline.ingest(engine, SyntheticAdapter(V1, "2026-01-01"), store)
     pipeline.ingest(engine, SyntheticAdapter(V2, "2026-06-01"), store)
     pipeline.ingest(
@@ -154,7 +157,8 @@ def test_l1_browser_page_is_served(client):
     resp = client.get("/l1")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    for needle in ("watch this instrument", "/l1/sources", "/l1/families/", "/l1/changes", "Family tree", "rights-derived_only"):
+    for needle in ("Sources", "Fleet", "Evals", "Changes", "source_version_id", "recordMatches"):
         assert needle in resp.text
+    assert client.get("/sources").text == resp.text
     # The JSON API under the same prefix still answers.
     assert client.get("/l1/sources").json()["total"] == 0

@@ -15,7 +15,7 @@
   .lead { color: var(--muted); margin: 0 0 16px; max-width: 800px; }
   .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
   .tab { border: 1px solid var(--edge); background: var(--panel-strong); color: var(--muted); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
-  .tab[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
+  .tab[aria-pressed="true"], .tab[aria-selected="true"] { color: var(--ink); border-color: var(--accent); }
   .card { background: var(--panel); border: 1px solid var(--edge); border-radius: 16px; padding: 18px 20px; margin-bottom: 14px; }
   .card h2 { margin: 0 0 8px; font-size: 17px; }
   .card h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
@@ -44,6 +44,7 @@
   .err { color: var(--bad); font-size: 13px; margin-top: 8px; }
   .note { color: var(--muted); font-size: 13px; }
   .banner { border: 1px solid var(--warn); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; background: rgba(251,191,36,0.08); }
+  .banner a { text-decoration: underline; text-underline-offset: 2px; }
   .check { display: flex; gap: 8px; align-items: baseline; font-size: 13px; padding: 4px 0; }
   .check code { font-family: var(--mono); font-size: 12px; }
   .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0 12px; }
@@ -94,7 +95,7 @@ function CLABanner({ cla, onSigned, me }) {
   const [open, setOpen] = useState(false);
   const [ack, setAck] = useState(false);
   const [err, setErr] = useState("");
-  if (!me) return html`<div class="banner" role="status">Sign in to contribute — <a href="/auth/google">Google</a> or <a href="/stack#signin">email link</a>. Reading never needs an account.</div>`;
+  if (!me) return html`<div class="banner" role="status">Sign in to contribute — <a href="/auth/google">Google</a> or <a href="/signin">email link</a>. Reading never needs an account.</div>`;
   if (cla && cla.signed) return html`<p class="note">CLA v${cla.version} signed ${fmt(cla.signed.signed_at)} as <b>${me.email}</b>.</p>`;
   const sign = async () => { setErr(""); try { await api("/cla/sign", { method: "POST", body: JSON.stringify({ acknowledge_patent_grant: true }) }); onSigned(); } catch (e) { setErr(e.message); } };
   return html`<div class="banner">
@@ -332,7 +333,7 @@ function App() {
       <p class="lead">Corrections, missing sources, equivalences, characteristics, ontology entries, golden cases — filed here or by pull request, checked by the fleets, decided by two reviewers, shipped with your name and the count of blueprints it changed.</p>
       <div class="tabs" role="tablist" aria-label="Sections">
         ${[["contribute", "Contribute"], ["contributions", "Contributions"], ["contributors", "Contributors"], ["governance", "Governance"], ["roadmap", "Roadmap"]].map(([k, l]) =>
-          html`<button key=${k} class="tab" role="tab" aria-pressed=${tab === k} aria-selected=${tab === k} onClick=${() => go(k)}>${l}</button>`)}
+          html`<button key=${k} class="tab" role="tab" aria-selected=${tab === k} onClick=${() => go(k)}>${l}</button>`)}
       </div>
       ${body}
     </main></div>`;

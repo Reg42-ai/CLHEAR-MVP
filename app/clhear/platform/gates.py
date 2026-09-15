@@ -23,7 +23,7 @@ log = logging.getLogger("clhear.gates")
 # must all pass for the layer to publish. Later items extend these tuples.
 LAYER_GATES: dict[str, tuple[str, ...]] = {
     "L0": ("l0_smoke",),
-    "L1": ("e1_fidelity", "e2_completeness", "e5_provenance", "e7_closure", "l1_family_completeness", "l1_currency", "l1_boundary_f1"),
+    "L1": ("l1_inventory_acceptance", "l1_boundary_f1"),
     "L2": ("l2_coverage", "l2_precision", "l2_dedupe", "l2_change_inference", "l2_basis_integrity"),
     "L3": ("l3_completeness", "l3_characteristics", "l3_reuse", "l3_precision", "l3_l5_referential"),
     "L4": ("l4_validity", "l4_applicability", "l4_grounding"),
@@ -74,6 +74,12 @@ def gate_status(engine: Engine, layer: str, release: str | None = None) -> dict:
     latest = latest_suite_runs(engine, suites, release)
     missing = [s for s in suites if s not in latest]
     failed = [s for s, r in latest.items() if not r["passed"]]
+    evidence = None
+    if layer == "L1":
+        from app.clhear.l1.inventory import acceptance_status
+        evidence = acceptance_status(engine)
+        if not evidence["passed"] and "l1_inventory_acceptance" not in failed:
+            failed.append("l1_inventory_acceptance")
     passed = not missing and not failed
     return {
         "layer": layer,
@@ -82,6 +88,7 @@ def gate_status(engine: Engine, layer: str, release: str | None = None) -> dict:
         "missing": missing,
         "failed": failed,
         "thresholds": GATE_THRESHOLDS.get(layer, {}),
+        "inventory_acceptance": evidence,
     }
 
 

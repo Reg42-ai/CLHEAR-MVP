@@ -144,9 +144,9 @@ resource "aws_ecs_task_definition" "langfuse" {
   execution_role_arn       = aws_iam_role.worker_execution.arn
 
   container_definitions = jsonencode([{
-    name      = "langfuse"
-    image     = var.langfuse_image
-    essential = true
+    name         = "langfuse"
+    image        = var.langfuse_image
+    essential    = true
     portMappings = [{ containerPort = 3000, protocol = "tcp" }]
     environment = [
       { name = "NEXTAUTH_URL", value = local.langfuse_url },

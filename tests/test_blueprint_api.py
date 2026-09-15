@@ -27,12 +27,16 @@ def test_blueprint_requires_auth(client):
 def test_blueprint_tailored_to_profile(client, engine):
     _seed_corpus(engine)
     run_extraction(engine)
-    publish_release(engine, release_id="clhear-v20260830")
+    candidate = publish_release(engine, release_id="clhear-v20260830")
+    assert candidate["status"] == "blocked"
+    assert "L1" not in candidate["layers"]
     resp = client.post("/v1/blueprint", json=PROFILE, headers=AUTH)
     assert resp.status_code == 200, resp.text
     bp = resp.json()
     assert bp["obligations_triggered"] == 2
-    assert bp["release"] == "clhear-v20260830"
+    # Preparing an unverified corpus never promotes it to the app's baseline.
+    assert bp["release"] == "clhear-vLIVE"
+    assert client.get("/v1/releases/latest", headers=AUTH).json()["id"] == "clhear-vLIVE"
     assert bp["engine_version"] == "composer-v2"
     assert bp["coverage_summary"]["total"] == 2
     assert bp["layer_status"]["L2"] == "derived"

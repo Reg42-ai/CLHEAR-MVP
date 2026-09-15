@@ -25,6 +25,8 @@
   @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } dl.kv { grid-template-columns: 1fr; } }
   .badge { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 11.5px; border: 1px solid var(--edge); color: var(--muted); white-space: nowrap; }
   .badge.ok { color: var(--ok); border-color: var(--ok); }
+  #h-av + p .badge { margin: 2px; }
+  #h-docs + ul li { padding-block: 3px; }
   .empty { color: var(--muted); font-size: 13.5px; padding: 12px 0; }
   .note { color: var(--muted); font-size: 13px; }
 </style>
@@ -115,7 +117,7 @@ function App() {
         </div>
         <section class="card" aria-labelledby="h-av">
           <h2 id="h-av">Availability and recovery</h2>
-          <p>Live objectives on the <a class="navlink" href="/status">status page</a>: ${(p.availability ? p.availability.slos : []).map((s) => html`<span key=${s} class="badge" style="margin:2px">${s}</span>`)}. Disaster recovery: ${p.availability && p.availability.dr}.</p>
+          <p>Live objectives on the <a class="navlink" href="/status">status page</a>: ${(p.availability ? p.availability.slos : []).map((s) => html`<span key=${s} class="badge">${s}</span>`)}. Disaster recovery: ${p.availability && p.availability.dr}.</p>
         </section>
         <section class="card" aria-labelledby="h-docs">
           <h2 id="h-docs">Documents</h2>

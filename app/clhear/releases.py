@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,7 +53,6 @@ def is_release_id(value: str) -> bool:
 def _local_root() -> Path:
     settings = get_settings()
     root = Path(settings.clhear_artifacts_dir) / "releases"
-    root.mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -66,7 +67,10 @@ def _s3_parts() -> tuple[str, str] | None:
 
 def _put_json_local(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, default=str))
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2, default=str))
+    temporary.chmod(0o600)
+    os.replace(temporary, path)
 
 
 def _get_json_local(path: Path) -> dict | None:
@@ -93,9 +97,41 @@ def _put_json_s3(bucket: str, key: str, payload: dict) -> None:
 def _get_json_s3(bucket: str, key: str) -> dict | None:
     try:
         body = _s3().get_object(Bucket=bucket, Key=key)["Body"].read()
-    except Exception:
-        return None
+    except Exception as exc:
+        if getattr(exc, "response", {}).get("Error", {}).get("Code") in {"NoSuchKey", "404", "NotFound"}:
+            return None
+        raise
     return json.loads(body)
+
+
+def _latest_s3_etag(bucket: str, key: str) -> str | None:
+    try:
+        response = _s3().get_object(Bucket=bucket, Key=key)
+        response["Body"].close()
+        return response["ETag"]
+    except Exception as exc:
+        if getattr(exc, "response", {}).get("Error", {}).get("Code") in {"NoSuchKey", "404", "NotFound"}:
+            return None
+        raise
+
+
+def _immutable_s3_file(path: Path, bucket: str, key: str) -> None:
+    """Conditional create prevents concurrent preparations from overwriting originals."""
+    try:
+        with path.open("rb") as content:
+            _s3().put_object(Bucket=bucket, Key=key, Body=content, IfNoneMatch="*")
+    except Exception as exc:
+        if getattr(exc, "response", {}).get("Error", {}).get("Code") not in {"PreconditionFailed", "412"}:
+            raise
+        stream = _s3().get_object(Bucket=bucket, Key=key)["Body"]
+        try:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+            if digest.hexdigest() != _sha256_file(path):
+                raise ValueError("Immutable release object already contains different bytes")
+        finally:
+            stream.close()
 
 
 def _copy_snapshot_s3(src_uri: str, dest_bucket: str, dest_key: str) -> None:
@@ -147,7 +183,7 @@ def _write_reserved_prefixes(release_id: str, reserved: list[str] | None = None)
 def corpus_counts(engine) -> dict[str, int]:
     import sqlalchemy as sa
 
-    from app.clhear.l1.models import change_events, clauses, source_families, sources
+    from app.clhear.l1.models import change_events, clauses, source_families, sources, source_versions
 
     with engine.connect() as conn:
         def _count(table) -> int:
@@ -159,7 +195,9 @@ def corpus_counts(engine) -> dict[str, int]:
         return {
             "families": _count(source_families),
             "sources": _count(sources),
-            "clauses": _count(clauses),
+            "clauses": int(conn.execute(sa.select(sa.func.count()).select_from(clauses)
+                .join(source_versions, clauses.c.source_version_id == source_versions.c.id)
+                .where(source_versions.c.status == "in_force")).scalar() or 0),
             "change_events": _count(change_events),
         }
 
@@ -173,7 +211,7 @@ def _gate_layers(engine) -> tuple[list[str], list[str], dict]:
     reserved: list[str] = []
     statuses: dict = {}
     if engine is None:
-        return list(PUBLISHED_LAYERS), [l for l in LAYER_CATALOG if l not in PUBLISHED_LAYERS], {}
+        return ["L0"], [l for l in LAYER_CATALOG if l != "L0"], {}
     for layer, meta in LAYER_CATALOG.items():
         if layer == "L0":
             continue
@@ -182,11 +220,6 @@ def _gate_layers(engine) -> tuple[list[str], list[str], dict]:
         # A layer publishes when it is live in the catalog AND its gate passed.
         if meta["published"] and st["passed"]:
             published.append(layer)
-        elif meta["published"] and not st["passed"] and not st["suites"]:
-            # No gate suites have ever run (fresh install): keep the catalog's
-            # published flag but mark the gate as unverified so verify_release flags it.
-            published.append(layer)
-            statuses[layer]["unverified"] = True
         else:
             reserved.append(layer)
     return published, reserved, statuses
@@ -236,7 +269,7 @@ def build_manifest(
         },
         "sbom_uri": "",
         "delta": _delta(previous, counts, published),
-        "licence": {"data": "ODC-By-1.0", "text_and_schemas": "CC-BY-4.0", "code": "Apache-2.0"},
+        "licence": {"data": "source-specific", "text_and_schemas": "source-specific", "code": "Apache-2.0"},
         # HLD v2 §6: every accepted community contribution ships with attribution and
         # the impact it had (blueprints / obligations changed).
         "contributions": {
@@ -250,7 +283,7 @@ def build_manifest(
 
 
 def _manifest_hash(manifest: dict) -> str:
-    body = {k: v for k, v in manifest.items() if k not in {"manifest_hash", "signature"}}
+    body = {k: v for k, v in manifest.items() if k != "manifest_hash"}
     return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
@@ -278,60 +311,175 @@ def publish_release(
     snapshot_path: str | None = None,
     snapshot_uri: str | None = None,
     release_id: str | None = None,
+    sbom_path: str | None = None,
 ) -> dict:
-    """Write an immutable named release from the current L1 snapshot."""
+    """Prepare an immutable private candidate; only verified promotion moves latest.
+
+    Legacy snapshot arguments remain accepted but raw operational DB snapshots
+    are never copied. L0 compiles the L1 table allowlist from its actual engine.
+    """
+    from app.clhear.l1 import inventory, release_snapshot
+    from app.clhear.platform.release_verification import TRUSTED_RELEASE_IDENTITY
+
     rid = release_id or release_id_for()
-    settings = get_settings()
-    counts = corpus_counts(engine)
-    content_hash = ""
-    dest_uri = ""
-
-    src_path = Path(snapshot_path) if snapshot_path else None
-    if src_path and src_path.exists():
-        content_hash = _sha256_file(src_path)
-
+    if not is_release_id(rid):
+        raise ValueError("Invalid release id")
+    root = _local_root() / rid
+    if (root / MANIFEST_NAME).exists():
+        return _get_json_local(root / MANIFEST_NAME)
+    # Reserve this local candidate atomically. A crashed preparation requires a
+    # new candidate ID; it must not overwrite an earlier snapshot or manifest.
+    root.mkdir(parents=True, exist_ok=False)
+    acceptance = inventory.acceptance_status(engine)
     previous = get_latest(engine=None)
-    _, reserved, _ = _gate_layers(engine)
-    _write_reserved_prefixes(rid, reserved)
-    shipped = _ship_contributions(engine, rid)
-
-    s3 = _s3_parts()
-    if s3:
-        bucket, prefix = s3
-        dest_key = f"{prefix}/{rid}/l1/snapshot.db".lstrip("/")
-        if snapshot_uri and snapshot_uri.startswith("s3://"):
-            _copy_snapshot_s3(snapshot_uri, bucket, dest_key)
-        elif src_path and src_path.exists():
-            _s3().upload_file(str(src_path), bucket, dest_key)
-        dest_uri = f"s3://{bucket}/{dest_key}"
-        manifest = build_manifest(
-            release_id=rid, snapshot_uri=dest_uri, content_hash=content_hash, counts=counts, engine=engine, previous=previous,
-            contributions=shipped,
-        )
-        _put_json_s3(bucket, f"{prefix}/{rid}/{MANIFEST_NAME}".lstrip("/"), manifest)
-        _put_json_s3(bucket, f"{prefix}/{LATEST_NAME}".lstrip("/"), {"id": rid, "manifest_uri": f"s3://{bucket}/{prefix}/{rid}/{MANIFEST_NAME}"})
-        return manifest
-
-    root = _local_root()
-    dest = root / rid / "l1" / "snapshot.db"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if src_path and src_path.exists():
-        shutil.copy2(src_path, dest)
-        content_hash = content_hash or _sha256_file(dest)
-        dest_uri = dest.resolve().as_uri()
-    elif settings.database_url.startswith("sqlite:///"):
-        db_path = settings.database_url.replace("sqlite:///", "", 1)
-        if os.path.exists(db_path):
-            shutil.copy2(db_path, dest)
-            content_hash = _sha256_file(dest)
-            dest_uri = dest.resolve().as_uri()
+    counts = corpus_counts(engine)
+    content_hash, dest_uri = "", ""
+    projection = None
+    if acceptance.get("passed"):
+        dest = root / "l1" / "snapshot.db"
+        projection = release_snapshot.compile_snapshot(engine, dest)
+        content_hash, dest_uri = _sha256_file(dest), dest.resolve().as_uri()
+        if _s3_parts():
+            bucket, prefix = _s3_parts()
+            dest_uri = f"s3://{bucket}/{prefix}/{rid}/l1/snapshot.db"
+        after = inventory.acceptance_status(engine)
+        if not after.get("passed") or any(after.get(k) != acceptance.get(k) for k in ("inventory_hash", "bindings_hash")):
+            raise RuntimeError("Inventory changed during snapshot preparation")
     manifest = build_manifest(
         release_id=rid, snapshot_uri=dest_uri, content_hash=content_hash, counts=counts, engine=engine, previous=previous,
-        contributions=shipped,
+        contributions=[],
     )
-    _put_json_local(root / rid / MANIFEST_NAME, manifest)
-    _put_json_local(root / LATEST_NAME, {"id": rid})
+    manifest.update(status="candidate" if acceptance.get("passed") else "blocked", audience="restricted-reviewers",
+                    acceptance=acceptance, projection=projection)
+    # Downstream layers stay preview until independently accepted after L1.
+    manifest["layers"] = ["L0", "L1"] if acceptance.get("passed") else ["L0"]
+    manifest["reserved_layers"] = [f"L{n}" for n in range(1, 9) if f"L{n}" not in manifest["layers"]]
+    manifest["signature"].update(bundle_uri="manifest.sigstore.json", identity=TRUSTED_RELEASE_IDENTITY,
+                                 status="verification_required")
+    if sbom_path:
+        source_sbom = Path(sbom_path)
+        shutil.copyfile(source_sbom, root / "sbom.spdx.json")
+        manifest.update(sbom_uri="sbom.spdx.json", sbom_sha256=_sha256_file(root / "sbom.spdx.json"))
+    manifest["manifest_hash"] = _manifest_hash(manifest)
+    _put_json_local(root / MANIFEST_NAME, manifest)
     return manifest
+
+
+@contextmanager
+def _local_promotion_lock():
+    import fcntl
+    root = _local_root()
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / ".promotion.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def promote_release(engine, release_id: str) -> dict:
+    # A filesystem lock serializes local callers; S3 additionally compares the
+    # previously observed pointer ETag across independent worker hosts.
+    with _local_promotion_lock():
+        return _promote_release(engine, release_id)
+
+
+def _promote_release(engine, release_id: str) -> dict:
+    """L0 promotes only final signed bytes that still match the audited corpus."""
+    from app.clhear.l1 import inventory, release_snapshot
+    from app.clhear.platform.release_verification import verify
+
+    if not is_release_id(release_id):
+        raise ValueError("Invalid release id")
+    root = _local_root() / release_id
+    s3 = _s3_parts()
+    pointer_key = f"{s3[1]}/{LATEST_NAME}".lstrip("/") if s3 else None
+    observed_etag = _latest_s3_etag(s3[0], pointer_key) if s3 else None
+    ok, problems, manifest = verify(root, require_signature=True)
+    if not ok:
+        raise ValueError("Release verification failed: " + "; ".join(problems))
+    if manifest.get("id") != release_id:
+        raise ValueError("Signed manifest id differs from the requested release directory")
+    if manifest.get("audience") != "restricted-reviewers":
+        raise ValueError("This release worker promotes restricted review artifacts only")
+    if s3:
+        expected_uri = f"s3://{s3[0]}/{s3[1]}/{release_id}/l1/snapshot.db"
+        if ((manifest.get("l1") or {}).get("snapshot_uri") != expected_uri
+                or ((manifest.get("artifacts") or {}).get("snapshot") or {}).get("uri") != expected_uri):
+            raise ValueError("Signed snapshot URI differs from the configured immutable destination")
+    acceptance = inventory.acceptance_status(engine)
+    frozen = manifest.get("acceptance") or {}
+    if (manifest.get("status") != "candidate" or "L1" not in manifest.get("layers", [])
+            or not acceptance.get("passed") or not frozen.get("passed")):
+        raise ValueError("L1 inventory is not accepted; latest retained")
+    if any(acceptance.get(k) != frozen.get(k) for k in ("inventory_hash", "bindings_hash")):
+        raise ValueError("Audited corpus changed; latest retained")
+    projection = manifest.get("projection") or {}
+    expected = projection.get("bindings")
+    if not expected or not release_snapshot.verify_snapshot_bindings(root / "l1" / "snapshot.db", expected):
+        raise ValueError("Release snapshot does not match declared version bindings")
+    with engine.connect() as conn:
+        if release_snapshot.current_bindings(conn) != expected:
+            raise ValueError("Current database differs from signed release snapshot")
+    previous = get_latest()
+    if previous and previous.get("generated_at", "") > manifest.get("generated_at", ""):
+        raise ValueError("A newer accepted release exists; latest retained")
+    receipt = {"id": release_id, "manifest_hash": manifest["manifest_hash"], "verified_signature": True,
+               "promoted_at": _now().isoformat(), "audit_id": acceptance.get("audit_id"), "status": "accepted"}
+    if s3:
+        bucket, prefix = s3
+        existing = _get_json_s3(bucket, f"{prefix}/{release_id}/{MANIFEST_NAME}".lstrip("/"))
+        if existing and existing.get("manifest_hash") != manifest["manifest_hash"]:
+            raise ValueError("Release id already names different immutable content")
+        for relative in ("l1/snapshot.db", "manifest.sigstore.json", MANIFEST_NAME, "sbom.spdx.json"):
+            path = root / relative
+            if path.exists():
+                _immutable_s3_file(path, bucket, f"{prefix}/{release_id}/{relative}".lstrip("/"))
+        final_acceptance = inventory.acceptance_status(engine)
+        if not final_acceptance.get("passed") or any(final_acceptance.get(k) != frozen.get(k) for k in ("inventory_hash", "bindings_hash")):
+            raise ValueError("Inventory changed during upload; latest retained")
+        condition = {"IfMatch": observed_etag} if observed_etag else {"IfNoneMatch": "*"}
+        _s3().put_object(Bucket=bucket, Key=pointer_key,
+                         Body=json.dumps(receipt, sort_keys=True).encode(), ContentType="application/json", **condition)
+        # The successful conditional pointer write is the commit point. A
+        # secondary receipt failure cannot undo that accepted publication or
+        # cause the worker to falsely report that latest was retained.
+        try:
+            _put_json_s3(bucket, f"{prefix}/{release_id}/promotion.json".lstrip("/"), receipt)
+        except Exception:
+            logging.getLogger(__name__).exception("Release %s committed; remote receipt copy needs repair", release_id)
+    else:
+        _put_json_local(_local_root() / LATEST_NAME, receipt)
+    try:
+        _put_json_local(root / "promotion.json", receipt)
+    except Exception:
+        logging.getLogger(__name__).exception("Release %s committed; local receipt copy needs repair", release_id)
+    return receipt
+
+
+def get_promotion(release_id: str) -> dict | None:
+    """Read acceptance without trusting a stale declared manifest hash.
+
+    Latest contains the durable commit receipt. It also proves the current
+    release's acceptance when an ancillary per-release receipt copy failed.
+    """
+    manifest = get_release(release_id)
+    if not manifest or not verify_manifest_hash(manifest):
+        return None
+    release_id = manifest["id"]
+    s3 = _s3_parts()
+    receipt = (_get_json_s3(s3[0], f"{s3[1]}/{release_id}/promotion.json".lstrip("/")) if s3
+               else _get_json_local(_local_root() / release_id / "promotion.json"))
+    def matches(value):
+        return (isinstance(value, dict) and value.get("id") == release_id
+                and value.get("verified_signature") is True and value.get("status") == "accepted"
+                and value.get("manifest_hash") == manifest["manifest_hash"])
+    if matches(receipt):
+        return receipt
+    latest = (_get_json_s3(s3[0], f"{s3[1]}/{LATEST_NAME}".lstrip("/")) if s3
+              else _get_json_local(_local_root() / LATEST_NAME))
+    return latest if matches(latest) else None
 
 
 def _ship_contributions(engine, release_id: str) -> list[dict]:
@@ -354,7 +502,9 @@ def _ship_contributions(engine, release_id: str) -> list[dict]:
 def _live_manifest(engine) -> dict:
     return build_manifest(
         release_id="clhear-vLIVE",
-        snapshot_uri=get_settings().database_url,
+        # A live preview has no immutable artifact. Database connection URLs
+        # may contain credentials and must never become API metadata.
+        snapshot_uri="",
         content_hash="",
         counts=corpus_counts(engine),
         engine=engine,

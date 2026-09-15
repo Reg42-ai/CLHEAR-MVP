@@ -8,10 +8,31 @@ itself. # ARCH: swap to the view when Aurora is wired.
 """
 import sqlalchemy as sa
 
-from app.clhear.l1.models import clauses, doc_nodes
+from app.clhear.l1.models import clauses, doc_nodes, source_versions, sources
 
 
-def clauses_public_select() -> sa.Select:
+def _allowed_source_ids(conn=None):
+    """Recheck the current operation ledger, including revocation and expiry."""
+    from app.clhear.l1 import permissions
+    if conn is None:
+        from app.clhear.db import get_engine
+        with get_engine().connect() as connection:
+            return _allowed_source_ids(connection)
+    rows = conn.execute(sa.select(sources)).mappings().all()
+    protected = [row for row in rows if permissions.required_for(row)]
+    allowed = [row["id"] for row in rows if not permissions.required_for(row)]
+    schema = None if conn.dialect.name == "sqlite" else permissions.L1_SCHEMA
+    if protected and sa.inspect(conn).has_table(permissions.source_permissions.name, schema=schema):
+        allowed.extend(row["id"] for row in protected
+                       if permissions.decision(conn, row["key"], "display_public")["allowed"])
+    return allowed
+
+
+def _public_version_ids(conn=None):
+    return sa.select(source_versions.c.id).where(source_versions.c.source_id.in_(_allowed_source_ids(conn)))
+
+
+def clauses_public_select(conn=None) -> sa.Select:
     """SELECT over clauses restricted to public_ok rows — the ONLY way to read
     clause text for an external caller."""
     return sa.select(
@@ -23,7 +44,7 @@ def clauses_public_select() -> sa.Select:
         clauses.c.ordering,
         clauses.c.text,
         clauses.c.text_hash,
-    ).where(clauses.c.public_ok.is_(True))
+    ).where(clauses.c.public_ok.is_(True), clauses.c.source_version_id.in_(_public_version_ids(conn)))
 
 
 def clause_refs_select() -> sa.Select:
@@ -39,7 +60,7 @@ def clause_refs_select() -> sa.Select:
     )
 
 
-def nodes_public_select() -> sa.Select:
+def nodes_public_select(conn=None) -> sa.Select:
     """Document reconstruction rows with raw_text (public_ok only)."""
     return sa.select(
         doc_nodes.c.id,
@@ -54,7 +75,7 @@ def nodes_public_select() -> sa.Select:
         doc_nodes.c.text_hash,
         doc_nodes.c.public_ok,
         doc_nodes.c.source_version_id,
-    ).where(doc_nodes.c.public_ok.is_(True))
+    ).where(doc_nodes.c.public_ok.is_(True), doc_nodes.c.source_version_id.in_(_public_version_ids(conn)))
 
 
 def nodes_refs_select() -> sa.Select:

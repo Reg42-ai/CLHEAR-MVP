@@ -127,16 +127,12 @@ resource "aws_cloudwatch_event_target" "adapter_to_sqs" {
   for_each = local.adapter_schedules
   rule     = aws_cloudwatch_event_rule.adapter[each.key].name
   arn      = local.fleet_queue["l1"].arn
-  input = jsonencode({
-    event_id       = "schedule-${each.key}" # replaced by relay-produced ids for real events
-    layer          = "l1"
-    kind           = "AdapterRunRequested"
-    subject_ref    = each.key
-    payload        = { adapter = each.key }
-    schema_version = 1
-    producer       = "eventbridge"
-    ts             = ""
-  })
+  input_transformer {
+    input_paths    = { event_id = "$.id", event_time = "$.time" }
+    input_template = <<-JSON
+{"event_id":<event_id>,"layer":"l1","kind":"AdapterRunRequested","subject_ref":"${each.key}","payload":{"adapter":"${each.key}"},"schema_version":1,"producer":"eventbridge","ts":<event_time>}
+    JSON
+  }
 }
 
 # Nightly projection rebuild (HLD v2 I7): Neo4j graph + pgvector index are
@@ -151,16 +147,12 @@ resource "aws_cloudwatch_event_rule" "graph_rebuild" {
 resource "aws_cloudwatch_event_target" "graph_rebuild_to_sqs" {
   rule = aws_cloudwatch_event_rule.graph_rebuild.name
   arn  = local.fleet_queue["l0"].arn
-  input = jsonencode({
-    event_id       = "schedule-graph-rebuild"
-    layer          = "l0"
-    kind           = "GraphRebuildRequested"
-    subject_ref    = "all"
-    payload        = { index = true, force = false }
-    schema_version = 1
-    producer       = "eventbridge"
-    ts             = ""
-  })
+  input_transformer {
+    input_paths    = { event_id = "$.id", event_time = "$.time" }
+    input_template = <<-JSON
+{"event_id":<event_id>,"layer":"l0","kind":"GraphRebuildRequested","subject_ref":"all","payload":{"index":true,"force":false},"schema_version":1,"producer":"eventbridge","ts":<event_time>}
+    JSON
+  }
 }
 
 # Nightly DR drill (HLD v2 §7.1, item 17): the L0 fleet pg_dumps the record,
@@ -177,16 +169,12 @@ resource "aws_cloudwatch_event_rule" "dr_drill" {
 resource "aws_cloudwatch_event_target" "dr_drill_to_sqs" {
   rule = aws_cloudwatch_event_rule.dr_drill.name
   arn  = local.fleet_queue["l0"].arn
-  input = jsonencode({
-    event_id       = "schedule-dr-drill"
-    layer          = "l0"
-    kind           = "DrDrillRequested"
-    subject_ref    = "all"
-    payload        = { neo4j_database = "drill" }
-    schema_version = 1
-    producer       = "eventbridge"
-    ts             = ""
-  })
+  input_transformer {
+    input_paths    = { event_id = "$.id", event_time = "$.time" }
+    input_template = <<-JSON
+{"event_id":<event_id>,"layer":"l0","kind":"DrDrillRequested","subject_ref":"all","payload":{"neo4j_database":"drill"},"schema_version":1,"producer":"eventbridge","ts":<event_time>}
+    JSON
+  }
 }
 
 # Nightly named release (semantic date). The L0 fleet snapshots the record,
@@ -200,14 +188,10 @@ resource "aws_cloudwatch_event_rule" "eod_publish" {
 resource "aws_cloudwatch_event_target" "eod_publish_to_sqs" {
   rule = aws_cloudwatch_event_rule.eod_publish.name
   arn  = local.fleet_queue["l0"].arn
-  input = jsonencode({
-    event_id       = "schedule-eod-publish"
-    layer          = "l0"
-    kind           = "PublishReleaseRequested"
-    subject_ref    = "all"
-    payload        = { layers = "gated" }
-    schema_version = 1
-    producer       = "eventbridge"
-    ts             = ""
-  })
+  input_transformer {
+    input_paths    = { event_id = "$.id", event_time = "$.time" }
+    input_template = <<-JSON
+{"event_id":<event_id>,"layer":"l0","kind":"PublishReleaseRequested","subject_ref":"all","payload":{"layers":"gated"},"schema_version":1,"producer":"eventbridge","ts":<event_time>}
+    JSON
+  }
 }

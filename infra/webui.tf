@@ -80,7 +80,7 @@ resource "aws_iam_role_policy" "webui_db" {
         # Community write path: read-only web app enqueues ops for the worker.
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
-        Resource = aws_sqs_queue.events.arn
+        Resource = aws_sqs_queue.fleet["l0"].arn
       },
       {
         # Contributor magic-link emails.
@@ -140,8 +140,10 @@ resource "aws_lambda_function" "webui" {
       CLHEAR_RELEASES_S3_PREFIX       = "s3://${aws_s3_bucket.deploy.bucket}/releases"
       CLHEAR_APP_KEYS                 = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key"
       REG42_CLHEAR_ENABLED            = "true"
-      CLHEAR_EVENTS_QUEUE_URL         = aws_sqs_queue.events.url
+      CLHEAR_EVENTS_QUEUE_URL         = aws_sqs_queue.fleet["l0"].url
       CLHEAR_SESSION_SECRET           = data.aws_ssm_parameter.session_secret[0].value
+      CLHEAR_RESTRICTED_ACCESS        = "true"
+      CLHEAR_AUTH_DEBUG               = "false"
       GOOGLE_OAUTH_CLIENT_ID          = data.aws_ssm_parameter.google_oauth_client_id[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.google_oauth_client_id[0].value
       GOOGLE_OAUTH_CLIENT_SECRET      = data.aws_ssm_parameter.google_oauth_client_secret[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.google_oauth_client_secret[0].value
       CLHEAR_SES_SENDER               = "CLHEAR <noreply@${var.clhear_hostname}>"
@@ -153,8 +155,8 @@ resource "aws_lambda_function" "webui" {
       CLHEAR_COGNITO_DOMAIN           = local.deploy_cognito ? "https://${local.cognito_domain}.auth.${var.aws_region}.amazoncognito.com" : ""
       CLHEAR_SAML_DOMAINS             = local.deploy_cognito ? aws_ssm_parameter.cognito_saml_domains[0].value : ""
       # GlitchTip error tracking (observability.tf); empty = off. Scrubbed in app/clhear/platform/errors.py.
-      SENTRY_DSN                      = data.aws_ssm_parameter.sentry_dsn[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.sentry_dsn[0].value
-      CLHEAR_ENV                      = "prod"
+      SENTRY_DSN = data.aws_ssm_parameter.sentry_dsn[0].value == "CHANGEME" ? "" : data.aws_ssm_parameter.sentry_dsn[0].value
+      CLHEAR_ENV = "prod"
     }
   }
 }

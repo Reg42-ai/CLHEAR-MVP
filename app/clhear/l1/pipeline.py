@@ -15,9 +15,12 @@ logged, recorded, emitted as IngestFidelityFailed, and filed as an
 ratify). Daily jobs stay LLM-free unless tiers 1-3 cannot reach the goal.
 """
 import hashlib
+import inspect
 import json
 import logging
 import time
+import uuid
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -26,7 +29,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection, Engine
 
 from app.clhear.platform import record
-from app.clhear.l1 import change_detect, fidelity, rights, spans
+from app.clhear.l1 import change_detect, fidelity, permissions, rights, spans
 from app.clhear.l1.adapters.base import CLAUSE_TYPES, Adapter, DocNode, FetchResult, SourceMeta
 from app.clhear.l1.models import (
     change_events,
@@ -55,15 +58,28 @@ REPAIR_FLEET = "l1.repair"
 class ArtifactStore(Protocol):
     def put(self, key: str, content: bytes, content_type: str) -> str: ...
 
+    def get(self, key: str) -> bytes | None: ...
+
 
 class LocalStore:
     """Filesystem stand-in for the datalake (offline dev/tests)."""
 
     def __init__(self, base_dir: str | Path):
-        self.base_dir = Path(base_dir)
+        self.base_dir = Path(base_dir).resolve()
+
+    def get(self, key: str) -> bytes | None:
+        path = (self.base_dir / key).resolve()
+        if not path.is_relative_to(self.base_dir):
+            raise ValueError("artifact key escapes the configured store")
+        try:
+            return path.read_bytes()
+        except FileNotFoundError:
+            return None
 
     def put(self, key: str, content: bytes, content_type: str) -> str:
-        path = self.base_dir / key
+        path = (self.base_dir / key).resolve()
+        if not path.is_relative_to(self.base_dir):
+            raise ValueError("artifact key escapes the configured store")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         return path.as_uri()
@@ -85,8 +101,11 @@ class S3Store:
     def get(self, key: str) -> bytes | None:
         try:
             return self._client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
-        except Exception:
-            return None
+        except Exception as exc:
+            code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            if code in {"NoSuchKey", "404", "NotFound"}:
+                return None
+            raise
 
 
 def sha256(data: bytes) -> str:
@@ -101,6 +120,12 @@ class RunRecorder:
     groups tasks by it)."""
 
     def __init__(self, engine: Engine, fleet: str, trigger: str, inputs: dict):
+        from app.clhear.l1.workflow import execution_context
+
+        execution = execution_context()
+        inputs = {**inputs, **{k: execution[k] for k in ("job_id", "task_id", "attempt") if k in execution}}
+        self._source = inputs.get("source")
+        self._protected = bool(inputs.get("protected_source"))
         self._engine = engine
         self._started = time.monotonic()
         self._last_stage_at = self._started
@@ -118,8 +143,11 @@ class RunRecorder:
             "stage": name,
             "ts": datetime.now(timezone.utc).isoformat(),
             "ms": int((now - self._last_stage_at) * 1000),
+            "measurement": "interval_between_reports",
             **detail,
         }
+        if self._protected:
+            entry.pop("missing_preview", None)
         self._last_stage_at = now
         self.stages.append(entry)
         with self._engine.begin() as conn:
@@ -130,6 +158,14 @@ class RunRecorder:
             )
 
     def finish(self, status: str, summary: dict) -> dict:
+        from app.clhear.l1 import http as l1_http
+
+        summary = dict(summary)
+        if self._source:
+            summary.setdefault("fetch_evidence", l1_http.fetch_evidence())
+            summary.setdefault("publisher_checked_at", l1_http.publisher_checked_at())
+        if self._protected:
+            summary.pop("missing_preview", None)
         outputs = {**summary, "status": status, "stages": self.stages}
         with self._engine.begin() as conn:
             conn.execute(
@@ -237,6 +273,60 @@ def diff_clauses(old: dict[str, str], new: dict[str, str]) -> dict[str, list[str
     return {"added": added, "removed": removed, "amended": amended}
 
 
+def _projection_matches(conn: Connection, version_id: int, tree: list[DocNode], public_ok: bool) -> bool:
+    """Unchanged bytes do not prove that an older parser stored this tree.
+
+    Strict adapters check both the document and its clause projection before
+    accepting a hash hit, including repairs of already corrupted stored rows.
+    """
+    expected = [node for root in tree for node in root.walk()]
+    rows = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.source_version_id == version_id)
+                        .order_by(doc_nodes.c.seq)).mappings().all()
+    if len(rows) != len(expected):
+        return False
+    seq_by_object = {id(node): i for i, node in enumerate(expected, 1)}
+    parents = {}
+
+    def visit(node, parent=None, depth=0):
+        parents[id(node)] = (seq_by_object.get(id(parent)), depth)
+        for child in node.children:
+            visit(child, node, depth + 1)
+
+    for root in tree:
+        visit(root)
+    seq_by_id = {row["id"]: row["seq"] for row in rows}
+    fields = ("node_type", "ref", "label", "heading", "raw_text", "source_fragment")
+    for seq, (row, node) in enumerate(zip(rows, expected), 1):
+        if row["seq"] != seq or row["public_ok"] != public_ok:
+            return False
+        if any(row[field] != getattr(node, field) for field in fields):
+            return False
+        if (seq_by_id.get(row["parent_id"]), row["depth"]) != parents[id(node)]:
+            return False
+        if row["parent_id"] is not None and row["parent_id"] not in seq_by_id:
+            return False
+        if row["text_hash"] != sha256("\n".join(getattr(node, f) for f in fields[:-1]).encode()):
+            return False
+    projected = conn.execute(sa.select(clauses).where(clauses.c.source_version_id == version_id)).mappings().all()
+    expected_clauses = {seq: node for seq, node in enumerate(expected, 1) if node.node_type in CLAUSE_TYPES and node.ref}
+    if len(projected) != len(expected_clauses):
+        return False
+    layout = spans.span_layout(tree)
+    seen = set()
+    for row in projected:
+        seq = seq_by_id.get(row["doc_node_id"])
+        node = expected_clauses.get(seq)
+        if node is None or seq in seen:
+            return False
+        seen.add(seq)
+        text = node.subtree_text()
+        if (row["ref"], row["ordering"], row["text"], row["text_hash"], row["public_ok"]) != (node.ref, seq, text, sha256(text.encode()), public_ok):
+            return False
+        if (row["span_start"], row["span_end"]) != layout[id(node)]:
+            return False
+    return seen == set(expected_clauses)
+
+
 def _load_active_hints(conn: Connection, source_id: int) -> list[dict]:
     rows = conn.execute(
         sa.select(parse_hints)
@@ -308,7 +398,34 @@ def _llm_propose_hints(gateway, artifacts, missing_spans: list[str]) -> list[dic
     return [h for h in hints if isinstance(h, dict) and h.get("match") and h.get("node_type")]
 
 
-def ingest(
+def ingest(engine: Engine, adapter: Adapter, store: ArtifactStore, **kwargs) -> dict:
+    """Worker entrypoint: evidence is scoped to this acquisition only."""
+    from app.clhear.l1 import http as l1_http
+    l1_http.begin_fetch()
+    summary = _ingest(engine, adapter, store, **kwargs)
+    summary.setdefault("fetch_evidence", l1_http.fetch_evidence())
+    summary.setdefault("publisher_checked_at", l1_http.publisher_checked_at())
+    if permissions.required_for(adapter.meta()):
+        summary.pop("missing_preview", None)
+    return summary
+
+
+def parser_identity(adapter: Adapter) -> dict:
+    modules = [inspect.getmodule(type(adapter)), inspect.getmodule(ingest), fidelity, spans]
+    if getattr(adapter, "key", "") == "finra":
+        from app.clhear.l1.adapters import finra
+        modules.append(finra)
+    parts = []
+    for module in modules:
+        path = getattr(module, "__file__", None)
+        if path:
+            parts.append((module.__name__, Path(path).read_bytes()))
+    return {"adapter": adapter.meta().adapter, "method": "implementation-modules-sha256",
+            "implementation_sha256": sha256(b"".join(name.encode() + b"\0" + body for name, body in sorted(parts))),
+            "modules": [name for name, _ in sorted(parts)]}
+
+
+def _ingest(
     engine: Engine,
     adapter: Adapter,
     store: ArtifactStore,
@@ -317,21 +434,59 @@ def ingest(
     gateway=None,
     job_id: str | None = None,
     force: bool = False,
+    index_embeddings: bool = True,
 ) -> dict:
     """Run one adapter through fetch -> fidelity gate/repair loop -> persist.
 
-    Returns the run summary. status: added|amended|unchanged|up-to-date|
+    Returns the run summary. status: rights-blocked|added|amended|unchanged|up-to-date|
     stale|failed|not-fully-successful. `llm_assisted`/`recovered_spans`/
     `hints_used` mark degraded-but-successful runs (warnings in the Activity
     feed). A crash in fetch() always `finish()`es the run: previous version
     kept as `stale`, first ingest recorded as `failed`.
+
+    Set index_embeddings=False for an L1-only import: the global embedding
+    projection is left untouched and no embedding provider is called.
     """
     settings = get_settings()
     meta = adapter.meta()
-    inputs = {"source": meta.source_key}
+    inputs = {"source": meta.source_key, "protected_source": permissions.required_for(meta)}
     if job_id:
         inputs["job_id"] = job_id
     recorder = RunRecorder(engine, f"l1.{meta.adapter}", trigger, inputs)
+    identity = parser_identity(adapter)
+    from app.clhear.l1 import workflow
+
+    protected = permissions.required_for(meta)
+    permission_checks = {}
+    public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
+    if protected:
+        with workflow.stage("permission", details={"source": meta.source_key}) as step, engine.connect() as conn:
+            permission_checks = {operation: permissions.decision(conn, meta.source_key, operation)
+                                 for operation in ("acquire", "store", "parse", "infer", "embed", "derive", "display_public")}
+            existing_id = conn.execute(sa.select(sources.c.id).where(sources.c.key == meta.source_key)).scalar()
+            previous = _latest_version(conn, existing_id) if existing_id is not None else None
+            step.details["decisions"] = permission_checks
+            if any(not permission_checks[operation]["allowed"] for operation in ("acquire", "store", "parse")):
+                step.status = "blocked"
+        blocked = [operation for operation in ("acquire", "store", "parse")
+                   if not permission_checks[operation]["allowed"]]
+        recorder.stage("permissions", decisions=permission_checks, blocked_operations=blocked)
+        if blocked:
+            summary = {
+                "source": meta.source_key, "version": previous.version_label if previous else None,
+                "content_hash": previous.content_hash if previous else None,
+                "source_version_id": previous.id if previous else None,
+                "blocked_operations": blocked, "permission_decisions": permission_checks,
+                "previous_version_preserved": previous is not None, "freshness": "not_checked",
+                "error": "Protected source requires approved, current permissions for: " + ", ".join(blocked),
+            }
+            outputs = recorder.finish("rights-blocked", summary)
+            return {**summary, "status": "rights-blocked", "run_id": recorder.run_id, "stages": outputs["stages"]}
+        if not permission_checks["infer"]["allowed"]:
+            gateway = None
+        if not permission_checks["embed"]["allowed"]:
+            index_embeddings = False
+        public_ok = permission_checks["display_public"]["allowed"]
 
     with engine.begin() as conn:
         family_id, source_id = ensure_source(conn, meta)
@@ -343,7 +498,8 @@ def ingest(
     from app.clhear.l1 import http as l1_http
 
     try:
-        result = adapter.fetch(None)
+        with workflow.stage("acquisition_parse", details={"source": meta.source_key, "parser_identity": identity}):
+            result = adapter.fetch(None)
     except Exception as exc:
         error = str(exc)[:500]
         log.exception("fetch crashed for %s", meta.source_key)
@@ -351,6 +507,8 @@ def ingest(
             summary = {
                 "source": meta.source_key,
                 "version": previous.version_label,
+                "content_hash": previous.content_hash,
+                "source_version_id": previous.id,
                 "error": error,
                 "freshness": "stale",
             }
@@ -359,28 +517,69 @@ def ingest(
         summary = {"source": meta.source_key, "error": error}
         outputs = recorder.finish("failed", summary)
         return {**summary, "status": "failed", "run_id": recorder.run_id, "stages": outputs["stages"]}
-    freshness = "stale" if l1_http.last_good_used() else "live"
+    observations = l1_http.fetch_evidence()
+    freshness = ("stale" if l1_http.last_good_used() else
+                 "live" if l1_http.publisher_checked_at() else
+                 "fixture" if observations and all(o["origin"] == "fixture" for o in observations) else
+                 "local_snapshot" if getattr(adapter, "fetch_origin", None) == "local_snapshot" else
+                 "artifact" if meta.adapter == "restricted_file" else "not_checked")
     recorder.stage("fetch", artifacts=len(result.artifacts) if result else 0, freshness=freshness)
+    if freshness == "stale":
+        summary = {"source": meta.source_key, "freshness": "stale", "previous_version_preserved": previous is not None,
+                   "source_version_id": previous.id if previous else None,
+                   "content_hash": previous.content_hash if previous else None,
+                   "version": previous.version_label if previous else None,
+                   "error": "Publisher check failed; cached bytes cannot advance the candidate."}
+        outputs = recorder.finish("stale", summary)
+        return {**outputs, "run_id": recorder.run_id}
     if result is None:
+        if previous is None:
+            outputs = recorder.finish("failed", {"source": meta.source_key, "freshness": "not_checked",
+                                                 "error": "Adapter returned no artifact and there is no stored version."})
+            return {**outputs, "run_id": recorder.run_id}
         summary = {
             "source": meta.source_key,
             "version": previous.version_label if previous else None,
-            "freshness": "probed",
-            "note": "probed, unchanged",
+            "content_hash": previous.content_hash,
+            "source_version_id": previous.id,
+            "freshness": freshness,
+            "note": "No new artifact; freshness requires successful publisher evidence.",
         }
-        outputs = recorder.finish("up-to-date", summary)
-        return {**summary, "status": "up-to-date", "run_id": recorder.run_id, "stages": outputs["stages"]}
+        outputs = recorder.finish("up-to-date" if l1_http.publisher_checked_at() else "stale", summary)
+        return {**outputs, "run_id": recorder.run_id}
 
     content_hash = sha256(b"".join(a.content for a in sorted(result.artifacts, key=lambda a: a.name)))
-    if previous is not None and previous.content_hash == content_hash and not force:
-        summary = {
-            "source": meta.source_key,
-            "version": previous.version_label,
-            "freshness": freshness,
-            "note": "probed, unchanged",
-        }
-        outputs = recorder.finish("unchanged", summary)
-        return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"]}
+    validator = getattr(adapter, "validate_tree", None)
+    strict_violations = validator(result.tree, result.artifacts) if validator else []
+    if previous is not None and previous.content_hash == content_hash and not force and not strict_violations:
+        with engine.connect() as conn:
+            matching = _projection_matches(conn, previous.id, result.tree, public_ok)
+            prior_manifest = None
+            for previous_run in conn.execute(sa.select(runs.c.outputs)
+                    .where(runs.c.inputs["source"].as_string() == meta.source_key).order_by(runs.c.id.desc())):
+                evidence = previous_run.outputs or {}
+                if (evidence.get("source_version_id") == previous.id and evidence.get("content_hash") == content_hash
+                        and evidence.get("artifact_manifest")):
+                    prior_manifest = evidence["artifact_manifest"]
+                    break
+            # Legacy imports without a complete archive manifest get an
+            # append-only repair, not invented acquisition provenance.
+            matching = matching and prior_manifest is not None
+        if matching:
+            summary = {
+                "source": meta.source_key,
+                "version": previous.version_label,
+                "content_hash": previous.content_hash,
+                "source_version_id": previous.id,
+                "freshness": freshness,
+                "note": "Artifact bytes and stored projection are unchanged.",
+                "parser_identity": identity,
+                "canonical_text_hash": sha256(spans.canonical_text(result.tree).encode()),
+                "artifact_manifest": prior_manifest,
+            }
+            outputs = recorder.finish("unchanged", summary)
+            return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"]}
+        recorder.stage("projection_repair", reason="stored projection differs from validated source parse")
 
     # ---- fidelity gate + escalation loop -----------------------------------
     threshold = settings.clhear_fidelity_threshold
@@ -396,7 +595,8 @@ def ingest(
 
     for attempt in range(1, max_attempts + 1):
         if attempt > 1:
-            refetched = adapter.fetch(None)  # fresh fetch: guards against a corrupted download
+            with workflow.stage("acquisition_parse", details={"attempt": attempt, "parser_identity": identity}):
+                refetched = adapter.fetch(None)
             recorder.stage("fetch", attempt=attempt, artifacts=len(refetched.artifacts) if refetched else 0)
             if refetched is not None:
                 result = refetched
@@ -405,7 +605,13 @@ def ingest(
         node_count = sum(1 for n in tree for _ in n.walk())
         recorder.stage("parse", attempt=attempt, nodes=node_count)
 
-        report = fidelity.check(tree, expected)
+        with workflow.stage("fidelity", details={"attempt": attempt}) as step:
+            report = fidelity.check(tree, expected)
+            step.details.update({k: v for k, v in report.summary().items() if k != "missing_preview"})
+        # Publisher-specific exact checks are gates too. A substring coverage
+        # score cannot establish ordering, multiplicity or clause boundaries.
+        if validator:
+            report.violations.extend(validator(tree, result.artifacts))
         recorder.stage("gate", attempt=attempt, **report.summary())
 
         # Tier 1b: learned hints (deterministic; zero LLM).
@@ -416,6 +622,10 @@ def ingest(
                 report = fidelity.check(tree, expected)
                 recorder.stage("hints", attempt=attempt, hints_used=used, **report.summary())
 
+        if protected and gateway is not None:
+            with engine.connect() as conn:
+                if not permissions.decision(conn, meta.source_key, "infer")["allowed"]:
+                    gateway = None
         # Tier 4: LLM-proposed hints for NOVEL gaps (only if deterministic tiers
         # can't close the gap within the salvage cap).
         if (
@@ -489,11 +699,27 @@ def ingest(
 
     # ---- persist (gate green) ------------------------------------------------
     try:
-        return _persist(
-            engine, store, meta, source_id, previous, result, content_hash, report,
-            hints_used, new_llm_hints, recovered_spans, llm_assisted, recorder,
-            force=force, llm_router=gateway,
-        )
+        # A repair retry can return different bytes; hash the artifact actually
+        # persisted, never the first (failed) fetch.
+        content_hash = sha256(b"".join(a.content for a in sorted(result.artifacts, key=lambda a: a.name)))
+        with engine.connect() as conn:
+            existing_label = conn.execute(sa.select(source_versions.c.id).where(
+                source_versions.c.source_id == source_id,
+                source_versions.c.version_label == result.version_label,
+            )).scalar()
+        if existing_label is not None:
+            # Every adapter preserves historical clause identities on repair.
+            result.version_label += f":parse-{uuid.uuid4().hex[:12]}"
+        if l1_http.last_good_used():
+            raise RuntimeError("Repair acquisition used stale cached bytes; previous version retained")
+        with workflow.stage("persistence", details={"parser_identity": identity}):
+            return _persist(
+                engine, store, meta, source_id, previous, result, content_hash, report,
+                hints_used, new_llm_hints, recovered_spans, llm_assisted, recorder,
+                force=force, llm_router=gateway, index_embeddings=index_embeddings, freshness=freshness,
+                public_ok=public_ok, protected=protected, permission_checks=permission_checks,
+                parser=identity,
+            )
     except Exception as exc:
         recorder.finish("failed", {"source": meta.source_key, "error": str(exc)[:300]})
         return {"source": meta.source_key, "status": "failed", "error": str(exc)[:300], "run_id": recorder.run_id}
@@ -515,56 +741,61 @@ def _persist(
     recorder: RunRecorder,
     force: bool = False,
     llm_router=None,
+    index_embeddings: bool = True,
+    freshness: str = "live",
+    public_ok: bool | None = None,
+    protected: bool = False,
+    permission_checks: dict | None = None,
+    parser: dict | None = None,
 ) -> dict:
-    prefix = "public-ok" if meta.license == "open" else "restricted"
+    if protected:
+        with engine.connect() as conn:
+            current = {operation: permissions.decision(conn, meta.source_key, operation)
+                       for operation in ("store", "parse", "derive", "infer", "display_public")}
+        if any(not current[operation]["allowed"] for operation in ("store", "parse")):
+            raise PermissionError("Source permissions changed before persistence; previous version retained")
+        public_ok = current["display_public"]["allowed"]
+    if public_ok is None:
+        public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
+    # Displaying clauses does not authorize redistribution of full originals.
+    prefix = "public-ok" if public_ok and not protected else "restricted"
     artifact_uris = []
+    artifact_manifest = []
+    names = [a.name for a in result.artifacts]
+    if not names or len(set(names)) != len(names):
+        raise ValueError("An artifact manifest requires unique, nonempty artifact names")
     for artifact in result.artifacts:
-        key = f"{prefix}/{meta.source_key}/{result.version_label}/{artifact.name}"
-        artifact_uris.append(store.put(key, artifact.content, artifact.content_type))
+        if not artifact.name or "/" in artifact.name or "\\" in artifact.name or artifact.name in {".", ".."}:
+            raise ValueError("Artifact names must be a single safe path component")
+        from app.clhear.l1 import workflow
+        workflow.assert_ownership()
+        # Content addressing prevents a stale lease from overwriting another
+        # worker's original before its database fencing check rejects it.
+        key = f"{prefix}/{meta.source_key}/sha256-{content_hash}/{artifact.name}"
+        uri = store.put(key, artifact.content, artifact.content_type)
+        artifact_uris.append(uri)
+        artifact_manifest.append({"name": artifact.name, "key": key, "uri": uri,
+                                  "sha256": sha256(artifact.content), "byte_count": len(artifact.content),
+                                  "content_type": artifact.content_type})
 
     # Text is public only when the licence is open AND the rights basis allows
     # republication (derived_only sources keep hashes/derived facts public).
-    public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
     tree = result.tree
 
     with engine.begin() as conn:
-        # Same publisher version, different bytes/parse (parser upgrades,
-        # normalization drift): ALWAYS replace the tree in place —
-        # (source_id, version_label) is unique and a second insert would fail.
-        # A truly unchanged document never reaches this code (hash short-
-        # circuits upstream), so this branch is safe and idempotent.
-        reuse = previous is not None and previous.version_label == result.version_label
-        if reuse:
-            version_id = previous.id
-            _clear_version_tree(conn, version_id)
-            conn.execute(
-                source_versions.update()
-                .where(source_versions.c.id == version_id)
-                .values(
-                    s3_uri=artifact_uris[0] if artifact_uris else previous.s3_uri,
-                    content_hash=content_hash,
-                    status="in_force",
-                )
-            )
-        else:
-            if previous is not None:
-                conn.execute(
-                    source_versions.update().where(source_versions.c.id == previous.id).values(status="superseded")
-                )
-            version_id = conn.execute(
-                source_versions.insert()
-                .values(
-                    source_id=source_id,
-                    version_label=result.version_label,
-                    version_kind=result.version_kind,
-                    as_of_date=result.as_of_date,
-                    effective_date=result.effective_date,
-                    s3_uri=artifact_uris[0] if artifact_uris else "",
-                    content_hash=content_hash,
-                    status="in_force",
-                )
-                .returning(source_versions.c.id)
-            ).scalar_one()
+        from app.clhear.l1 import workflow
+        workflow.assert_ownership(conn)
+        if previous is not None:
+            conn.execute(source_versions.update().where(source_versions.c.id == previous.id).values(status="superseded"))
+        version_id = conn.execute(
+            source_versions.insert().values(
+                source_id=source_id, version_label=result.version_label,
+                version_kind=result.version_kind, as_of_date=result.as_of_date,
+                effective_date=result.effective_date,
+                s3_uri=artifact_uris[0] if artifact_uris else "",
+                content_hash=content_hash, status="in_force",
+            ).returning(source_versions.c.id)
+        ).scalar_one()
 
         clause_rows = persist_tree(
             conn, version_id, tree, public_ok,
@@ -576,11 +807,14 @@ def _persist(
         from app.clhear.l1 import annotate as l1_annotate
         from app.clhear.l1 import retrieval as l1_retrieval
 
-        annotation_count = l1_annotate.heuristics_for_version(conn, version_id, list(meta.topics))
-        unit_count = l1_retrieval.build_units_for_version(conn, meta, source_id, version_id, tree)
+        derivation_allowed = not protected or permissions.decision(conn, meta.source_key, "derive")["allowed"]
+        annotation_count = l1_annotate.heuristics_for_version(conn, version_id, list(meta.topics)) if derivation_allowed else 0
+        search_meta = replace(meta, license="open" if public_ok else "restricted")
+        unit_count = l1_retrieval.build_units_for_version(conn, search_meta, source_id, version_id, tree)
         from app.clhear.l1 import families as l1_families
 
-        citation_counts = l1_families.mine_citations(conn, source_id, version_id)
+        citation_counts = (l1_families.mine_citations(conn, source_id, version_id) if derivation_allowed
+                           else {"status": "skipped", "reason": "derive permission not granted"})
 
         new_map = {row["ref"]: row["text_hash"] for row in clause_rows}
         old_map = _clause_map(conn, previous.id) if previous is not None else {}
@@ -604,7 +838,8 @@ def _persist(
             publisher_as_of=result.as_of_date,
             detected_on=datetime.now(timezone.utc).date(),
         )
-        if previous is not None and effective.basis != "text" and llm_router is not None:
+        infer_allowed = not protected or permissions.decision(conn, meta.source_key, "infer")["allowed"]
+        if previous is not None and effective.basis != "text" and llm_router is not None and infer_allowed:
             effective = change_detect.refine_with_router(llm_router, meta.source_key, changed_texts, effective)
 
         diff_uri = ""
@@ -729,6 +964,7 @@ def _persist(
     summary = {
         "source": meta.source_key,
         "version": result.version_label,
+        "source_version_id": version_id,
         "version_kind": result.version_kind,
         "nodes": node_count,
         "clauses": len(clause_rows),
@@ -739,9 +975,14 @@ def _persist(
         "effective_date": effective.value.isoformat() if effective.value else None,
         "effective_date_basis": effective.basis,
         "artifacts": artifact_uris,
+        "artifact_manifest": artifact_manifest,
+        "parser_identity": parser,
+        "canonical_text_hash": sha256(spans.canonical_text(tree).encode()),
         "content_hash": content_hash,
-        "freshness": "live",
+        "freshness": freshness,
     }
+    if permission_checks:
+        summary["permission_decisions"] = permission_checks
     if hints_used:
         summary["hints_used"] = hints_used
     if recovered_spans:
@@ -757,8 +998,12 @@ def _persist(
     try:
         from app.clhear.platform import embeddings, graph
 
-        vec = embeddings.rebuild_index(engine, trigger="ingest", release=result.version_label)
-        summary["embeddings"] = {"embedded": vec["embedded"], "model": vec["model"]}
+        if index_embeddings:
+            vec = embeddings.rebuild_index(engine, trigger="ingest", release=result.version_label)
+            summary["embeddings"] = {"embedded": vec["embedded"], "model": vec["model"]}
+        else:
+            reason = "embed permission not granted" if protected and not (permission_checks or {}).get("embed", {}).get("allowed") else "L1-only import"
+            summary["embeddings"] = {"status": "skipped", "reason": reason}
         graph.invalidate(engine)
     except Exception:  # pragma: no cover - the index is a projection; ingest succeeded
         log.exception("embedding index update failed for %s", meta.source_key)
@@ -791,6 +1036,7 @@ def persist_tree(
     def visit(node: DocNode, parent_id: int | None, depth: int, path_parts: list[str]) -> None:
         nonlocal seq
         seq += 1
+        node_seq = seq
         payload = "\n".join([node.node_type, node.ref, node.label, node.heading, node.raw_text]).encode()
         node_id = conn.execute(
             doc_nodes.insert()
@@ -828,7 +1074,7 @@ def persist_tree(
                     "doc_node_id": node_id,
                     "ref": node.ref,
                     "path": " > ".join(p for p in path_parts if p),
-                    "ordering": seq,
+                    "ordering": node_seq,
                     "text": clause_text,
                     "text_hash": sha256(clause_text.encode()),
                     "public_ok": public_ok,

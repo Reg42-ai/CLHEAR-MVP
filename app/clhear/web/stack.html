@@ -46,6 +46,43 @@
   .slab .purpose { font-size: 13px; color: var(--muted); max-width: 640px; }
   .slab .right { text-align: right; display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
   .slab .countline { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .layeraccordion { margin-bottom: 12px; }
+  .layeraccordion > summary { list-style: none; margin-bottom: 0; }
+  .layeraccordion > summary::-webkit-details-marker { display: none; }
+  .layeraccordion > summary::after { content: "+"; position: absolute; right: 12px; color: var(--accent); }
+  .layeraccordion[open] > summary::after { content: "−"; }
+  .layeraccordion[open] > summary { border-radius: 16px 16px 0 0; }
+  .layeraccordion > summary:hover { transform: none; }
+  .layeraccordion .slab { padding-right: 38px; animation: none; }
+  .layername { display: block; font-size: 16.5px; font-weight: 700; margin-bottom: 3px; }
+  .layerbody { padding: 20px 22px; border: 1px solid var(--edge); border-top: 0; border-radius: 0 0 16px 16px; background: var(--panel); }
+  .layerbody h3 { margin: 0 0 8px; font-size: 14px; }
+  .layerbody p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  .overviewcols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .overviewactions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .overviewactions a { text-decoration: none; }
+  .overviewstate { border: 1px solid var(--edge); border-radius: 999px; padding: 3px 9px; color: var(--muted); font-size: 11px; font-weight: 700; }
+  .overviewstate.published { color: var(--ok); border-color: var(--ok); }
+  .overviewstate.candidate { color: var(--warn); border-color: var(--warn); }
+  .statelegend { max-width: 860px; margin: 22px auto 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
+  .statelegend dt { display: inline; font-weight: 700; color: var(--ink); }
+  .statelegend dd { display: inline; margin: 0 16px 0 5px; }
+  .platformsection { max-width: 860px; margin: 30px auto 0; }
+  .platformsection > h2, .stackwrap > h2 { font-size: 16px; color: var(--muted); }
+  .primarynav { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+  .navmore { position: relative; }
+  .navmore summary { cursor: pointer; }
+  .navmore[open] { z-index: 50; }
+  .navmore .morelinks { position: absolute; right: 0; top: 100%; min-width: 210px; max-height: 75vh; overflow-y: auto;
+    padding: 8px; background: var(--canvas); border: 1px solid var(--edge-bright); border-radius: 10px; box-shadow: var(--glow); }
+  .navmore .morelinks a { display: block; }
+  @media (max-width: 650px) {
+    .slab { grid-template-columns: 44px 1fr; gap: 10px; padding: 15px; }
+    .slab .right { grid-column: 2; align-items: flex-start; text-align: left; }
+    .overviewcols { grid-template-columns: 1fr; gap: 16px; }
+    .flowline { display: none; }
+    .layerbody { padding: 16px; }
+  }
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
   /* -------------------------------------------------------- layer pages */
@@ -267,7 +304,7 @@ const COUNT_LABELS = {
   sample_programs: "sample programs", blueprints_requested: "blueprints requested",
   risk_areas: "risk areas", benchmark_definitions: "definitions", aggregates_published: "published",
 };
-function countline(counts, pick) {
+function countline(counts = {}, pick) {
   return (pick || Object.keys(counts)).filter((k) => counts[k] !== undefined)
     .map((k) => `${counts[k]} ${COUNT_LABELS[k] || k}`).join(" · ");
 }
@@ -277,31 +314,108 @@ const HOME_COUNTS = {
   L6: ["sample_programs", "blueprints_requested"],
 };
 
+const OVERVIEW_STATES = ["published", "candidate", "unknown"];
+const STATE_LABELS = { published: "Published", candidate: "Candidate", unknown: "Unknown" };
+const STATE_NOTICES = {
+  published: "Published output. Check the stated scope and evidence before using it.",
+  candidate: "Stored output is available to inspect; it has not been accepted for publication.",
+  unknown: "Publication and verification evidence has not been reported.",
+};
+function overviewState(layer) {
+  // Legacy LIVE/DERIVED labels and record counts do not prove publication.
+  const state = layer.overview && layer.overview.state;
+  return OVERVIEW_STATES.includes(state) ? state : "unknown";
+}
+
+function LayerAccordion({ layer }) {
+  const [expanded, setExpanded] = useState(layer.layer === "L1");
+  const overview = layer.overview || {};
+  const inventory = overview.inventory;
+  const viewer = overview.viewer_snapshot;
+  const job = overview.workflow && overview.workflow.jobs && overview.workflow.jobs[0];
+  const state = overviewState(layer);
+  const platform = layer.layer === "L0";
+  const counts = overview.counts || layer.counts || {};
+  const output = overview.available_in_projection === false ? "Not in this viewer snapshot" : Number.isFinite(overview.output_count)
+    ? `${overview.output_count} ${overview.output_unit || "records"}`
+    : countline(counts, HOME_COUNTS[layer.layer]) || "Counts not reported";
+  const derivation = layer.derivation || {};
+  const verification = { passed: "Passed", failed: "Failed", not_evaluated: "Not evaluated" }[overview.verification] || "Not reported";
+  const preview = layer.layer === "L1" ? "/l1?view=sources" : `/${layer.layer.toLowerCase()}`;
+  return html`
+    <details class="layeraccordion" data-layer=${layer.layer} open=${expanded}
+             onToggle=${(event) => setExpanded(event.currentTarget.open)}>
+      <summary class="slab">
+        <span class="code">${layer.layer}</span>
+        <span><span class="layername" id=${`overview-${layer.layer}`}>${layer.name}</span><span class="purpose">${layer.purpose}</span></span>
+        <span class="right"><span class=${`overviewstate ${state}`}>${STATE_LABELS[state]}</span><span class="countline">${output}</span>
+          ${layer.layer === "L1" && inventory && html`<span class="countline">${inventory.verified ?? "—"} / ${inventory.known_expected ?? "—"} declared sources verified · ${inventory.unresolved ?? "—"} unresolved</span>`}</span>
+      </summary>
+      <div class="layerbody">
+        <div class="overviewcols">
+          <div>
+            <h3>${platform ? "Execution evidence" : "Output and evidence"}</h3>
+            <p>${overview.notice || overview.detail || STATE_NOTICES[state]}</p>
+            <p><b>Verification:</b> ${verification}${overview.scope ? ` · ${overview.scope}` : " · scope not reported"}</p>
+            ${overview.dataset_kind && html`<p><b>Dataset:</b> ${overview.dataset_kind}</p>`}
+            ${viewer && html`<p><b>Viewer origin:</b> ${viewer.source_environment || "not recorded"}${viewer.viewer_snapshot ? ` · revision ${viewer.revision || "not recorded"} · refreshed ${viewer.generated_at || "not recorded"}` : " · direct database; no viewer revision recorded"}.</p>
+              ${viewer.viewer_snapshot && html`<p>This L1 projection is a candidate view. It is not an accepted release; ${(viewer.omitted_layers || []).join(", ")} output is not included.</p>`}`}
+            ${overview.checked_at && html`<p><b>Checked:</b> <time>${overview.checked_at}</time></p>`}
+            <p><b>Stored records:</b> ${output}. Counts alone do not establish completeness, accuracy or freshness.</p>
+            ${overview.job_id && html`<p><b>Evidence job:</b> <span class="chip">${overview.job_id}</span></p>`}
+            ${layer.layer === "L1" && inventory && html`<div>
+              <p><b>Declared inventory:</b> ${inventory.verified ?? "not recorded"} verified of ${inventory.known_expected ?? "unknown"} expected documents · ${inventory.unresolved ?? "unknown"} unresolved.</p>
+              <p>${inventory.discovery_complete === true ? "Publisher discovery recorded as complete." : "Publisher discovery is incomplete or unverified; this count does not establish the complete publisher scope."}</p>
+              ${["unavailable", "migration_required", "not_run"].includes(inventory.status) && html`<p><b>Evidence unavailable:</b> ${inventory.reason || "No worker audit recorded."}</p>`}
+              ${inventory.audit_id != null && inventory.current_binding_valid === false && html`<p><b>Audit outdated:</b> current source versions no longer match the recorded audit.</p>`}
+              <p><b>Blockers:</b> permissions unverified ${inventory.counts && inventory.counts.permission_unverified != null ? inventory.counts.permission_unverified : "unknown"}; permissions blocked ${inventory.counts && inventory.counts.permission_blocked != null ? inventory.counts.permission_blocked : "unknown"}; awaiting artifact ${inventory.counts && inventory.counts.awaiting_artifact != null ? inventory.counts.awaiting_artifact : "unknown"}.</p>
+              <p class="mono" style=${{ overflowWrap: "anywhere" }}>Inventory SHA-256: ${inventory.inventory_hash || "not recorded"}</p>
+              ${(inventory.findings || []).length > 0 && html`<details><summary>Scope findings (${inventory.findings.length})</summary><ul>${inventory.findings.map((finding, i) => html`<li key=${i}>${finding.detail || finding.code}</li>`)}</ul></details>`}
+            </div>`}
+          </div>
+          <div>
+            <h3>How this layer is produced</h3>
+            <p>${derivation.method || "Method not reported."}</p>
+            <div class="kv">${(derivation.inputs || []).map((code) => html`<a class="chip linky" key=${code} href=${`#/layer/${code.toLowerCase()}`}>Input ${code}</a>`)}</div>
+            ${layer.layer === "L1" && html`<p>Read original text alongside encoded records, inspect the fleet run, and open Evals for complete, accurate and fresh checks.</p>`}
+            ${layer.layer === "L1" && html`<p><b>Latest recorded worker job:</b> ${job ? `${job.job_id} · ${job.status || "status not recorded"} · started ${job.started_at || "not recorded"}` : "No workflow evidence recorded."}</p>`}
+            ${!platform && layer.layer !== "L1" && html`<p>Browse the available preview and its evidence. Preview availability does not imply publication.</p>`}
+          </div>
+        </div>
+        <div class="overviewactions">
+          ${!platform && overview.available_in_projection !== false && html`<a class="bigbtn" href=${preview}>${layer.layer === "L1" ? "Open L1 sources" : `Browse ${layer.layer} preview`}</a>`}
+          ${layer.layer === "L1" && html`
+            <a class="navlink" href="/l1?view=fleet">Fleet</a>
+            <a class="navlink" href="/l1?view=evals">Evals</a>
+            <a class="navlink" href="/l1?view=changes">Changes</a>`}
+          ${platform && html`<a class="navlink" href="#/ops">Operations</a><a class="navlink" href="/console">Review</a><a class="navlink" href="#/eval">Human evaluation samples</a>`}
+          <a class="navlink" href=${`#/layer/${layer.layer.toLowerCase()}`}>Method and lineage</a>
+        </div>
+      </div>
+    </details>`;
+}
+
 function Home({ layers }) {
-  const ordered = [...layers].sort((a, b) => b.layer.localeCompare(a.layer, undefined, { numeric: true }));
+  const outputs = layers.filter((l) => /^L[1-8]$/.test(l.layer)).sort((a, b) => a.layer.localeCompare(b.layer, undefined, { numeric: true }));
+  const platform = layers.find((l) => l.layer === "L0");
   return html`
     <div>
       <div class="hero">
         <h1>Regulatory truth, <span class="grad">layer by layer</span></h1>
-        <p>CLHEAR builds compliance from the ground up: immutable verbatim law at the bottom,
-           derived knowledge above it — and every claim, at every layer, traceable back to the
-           exact clause that justifies it.</p>
+        <p>Start with L1 sources. Inspect the original text, encoded records and evidence,
+           then follow the outputs through the eight layers. Each layer reports its own scope and state.</p>
       </div>
-      <div class="stackwrap">
-        <div class="flowline"></div>
-        ${ordered.map((l) => html`
-          <div class="slab" key=${l.layer} onClick=${() => nav(`/layer/${l.slug}`)}>
-            <div class="code">${l.layer}</div>
-            <div>
-              <h3>${l.name}</h3>
-              <div class="purpose">${l.purpose}</div>
-            </div>
-            <div class="right">
-              <${Led} status=${l.status} />
-              <div class="countline">${countline(l.counts, HOME_COUNTS[l.layer])}</div>
-            </div>
-          </div>`)}
-      </div>
+      <dl class="statelegend" aria-label="Output states">
+        <dt>Published</dt><dd>released for a stated scope</dd>
+        <dt>Candidate</dt><dd>stored, awaiting acceptance</dd>
+        <dt>Unknown</dt><dd>evidence not reported</dd>
+      </dl>
+      <section class="stackwrap" aria-labelledby="output-layers">
+        <h2 id="output-layers">L1–L8 · Output layers</h2>
+        ${outputs.map((l) => html`<${LayerAccordion} key=${l.layer} layer=${l} />`)}
+        ${outputs.length === 0 && html`<p class="demobanner">No layer overview was returned.</p>`}
+      </section>
+      ${platform && html`<section class="platformsection" aria-labelledby="platform-layer"><h2 id="platform-layer">L0 · Supporting platform</h2><${LayerAccordion} layer=${platform} /></section>`}
     </div>`;
 }
 
@@ -1351,7 +1465,16 @@ function App() {
   const [theme, toggleTheme] = useTheme();
   const [auth, refreshAuth] = useAuth();
   const [layers, setLayers] = useState(null);
-  useEffect(() => { jget("/api/clhear/layers").then((d) => setLayers(d.layers)).catch(() => setLayers([])); }, []);
+  const [layerError, setLayerError] = useState(null);
+  function loadLayers() {
+    setLayerError(null);
+    setLayers(null);
+    jget("/api/clhear/layers").then((d) => {
+      if (!Array.isArray(d.layers)) throw new Error("Layer overview unavailable.");
+      setLayers(d.layers);
+    }).catch((error) => setLayerError(error.message || "Layer overview unavailable."));
+  }
+  useEffect(() => { loadLayers(); }, []);
   const layerMatch = route.match(/^\/layer\/(l[0-8])$/);
   const page = route.startsWith("/contribute") ? "contribute"
     : route.startsWith("/how") ? "how"
@@ -1370,18 +1493,31 @@ function App() {
           <b>CLHEAR</b><span>the compliance stack</span>
         </div>
         <div class="spacer"></div>
-        <a class="navlink" href="/">Start</a>
-        <span class=${"navlink" + (page === "home" || page === "layer" ? " active" : "")} onClick=${() => nav("/")}>Stack</span>
-        <a class="navlink" href="/explore">Explore</a>
-        <a class="navlink" href="/sources">Explorer</a>
-        <span class=${"navlink" + (page === "how" ? " active" : "")} onClick=${() => nav("/how")}>How it works</span>
-        <span class=${"navlink" + (page === "team" ? " active" : "")} onClick=${() => nav("/team")}>Team</span>
-        <span class=${"navlink" + (page === "ops" ? " active" : "")} onClick=${() => nav("/ops")}>AI Ops</span>
-        <span class=${"navlink" + (page === "eval" ? " active" : "")} onClick=${() => nav("/eval")}>Eval</span>
-        <span class=${"navlink" + (page === "docs" ? " active" : "")} onClick=${() => nav("/docs")}>API</span>
-        <span class=${"navlink" + (page === "contribute" ? " active" : "")} onClick=${() => nav("/contribute")}>
-          ${auth.user ? `☺ ${auth.user.display_name}` : "Contribute"}</span>
-        <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
+        <nav class="primarynav" aria-label="Primary">
+          <a class=${"navlink" + (page === "home" ? " active" : "")} href="#/" aria-current=${page === "home" ? "page" : undefined}>Overview</a>
+          <a class="navlink" href="/l1?view=sources">L1 Sources</a>
+          <a class="navlink" href="/l1?view=fleet">Fleet</a>
+          <a class="navlink" href="/l1?view=evals">Evals</a>
+          <a class="navlink" href="/l1?view=changes">Changes</a>
+          <a class="navlink" href="/solon">Ask Solon</a>
+          <details class="navmore">
+            <summary class="navlink">More</summary>
+            <div class="morelinks">
+              <a class="navlink" href="/explore">Explore lineage</a>
+              <a class="navlink" href="/build">Build a blueprint</a>
+              <a class="navlink" href="/watch">Watch changes</a>
+              <a class="navlink" href="/learn">Learn</a>
+              <a class="navlink" href="/console">Review proposals</a>
+              <a class="navlink" href="#/how">How it works</a>
+              <a class="navlink" href="#/team">Team</a>
+              <a class="navlink" href="#/ops">AI Ops</a>
+              <a class="navlink" href="#/eval">Human evaluation samples</a>
+              <a class="navlink" href="#/docs">API</a>
+              <a class="navlink" href="#/contribute">${auth.user ? `☺ ${auth.user.display_name}` : "Contribute"}</a>
+            </div>
+          </details>
+        </nav>
+        <button class="themebtn" aria-label="Toggle color theme" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
       </header>
       <main id="main">
         ${page === "contribute" && html`<${ContributePage} auth=${auth} refreshAuth=${refreshAuth} prefill=${prefill} />`}
@@ -1391,9 +1527,11 @@ function App() {
         ${page === "eval" && html`<${EvalPage} auth=${auth} />`}
         ${page === "docs" && html`<${DocsPage} />`}
         ${page === "layer" && html`<${LayerPage} slug=${layerMatch[1]} key=${layerMatch[1]} auth=${auth} />`}
-        ${page === "home" && (layers === null
-          ? html`<div class="spin">BOOTING THE STACK…</div>`
-          : html`<${Home} layers=${layers} />`)}
+        ${page === "home" && (layerError
+          ? html`<div class="panel" role="alert"><h1>Layer overview unavailable</h1><p>${layerError}</p><button class="bigbtn" onClick=${loadLayers}>Retry</button></div>`
+          : layers === null
+            ? html`<div class="spin" role="status">Loading the layer overview…</div>`
+            : html`<${Home} layers=${layers} />`)}
       </main>
       <footer class="sitefoot">
         <span>CLHEAR by Reg42 — the open compliance stack.</span>

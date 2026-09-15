@@ -127,11 +127,12 @@ def test_lists_ofac_grain():
     assert any(n.ref == "lists/ofac-sdn/1" for n in tree[0].children)
 
 
-def test_restricted_placeholder_ingests(engine, tmp_path):
+def test_restricted_source_without_permission_is_blocked_before_fetch(engine, tmp_path, monkeypatch):
     store = pipeline.LocalStore(tmp_path / "lake")
     adapter = RestrictedFileAdapter("iso/27001-2022", "ISO 27001")
+    monkeypatch.setattr(adapter, "fetch", lambda *_: pytest.fail("permission must be checked before fetch"))
     summary = pipeline.ingest(engine, adapter, store)
-    assert summary["status"] == "added"
+    assert summary["status"] == "rights-blocked"
     assert summary["source"] == "iso/27001-2022"
 
 

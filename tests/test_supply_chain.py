@@ -52,11 +52,21 @@ def test_ci_and_release_install_the_lock_and_release_ships_sbom_and_signature():
     rel = (ROOT / ".github/workflows/release.yml").read_text()
     assert "pip install -r requirements.lock" in ci and "pip install -r requirements.txt" not in ci.replace("requirements.lock", "")
     assert "pip install -r requirements.lock" in rel
+    assert "app.clhear.platform.exporter" not in ci  # sole operational release path is private L0 prepare/sign/promote
     assert "anchore/sbom-action" in rel and "sbom.spdx.json" in rel
     assert "sigstore/cosign-installer" in rel and "cosign sign-blob" in rel
     assert "agnostic_scan" in rel  # I5 on every release
-    verify = (ROOT / "scripts/verify_release.py").read_text()
-    assert "verify-blob" in verify or "verify_blob" in verify
+    # The compatibility script delegates to the very same strict verifier as
+    # the L0 promotion worker; it must not retain a permissive second verifier.
+    import importlib.util
+    from app.clhear.platform import release_verification
+    spec = importlib.util.spec_from_file_location("compat_release_verifier", ROOT / "scripts/verify_release.py")
+    compat = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(compat)
+    assert compat.verify is release_verification.verify
+    assert compat.main is release_verification.main
+    assert "--certificate-identity" in (ROOT / "app/clhear/platform/release_verification.py").read_text()
+    assert 'python -m app.clhear.workers --once --envelope-file artifacts/promote-envelope.json' in rel
 
 
 def test_lock_header_documents_regeneration():
