@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "verified_on": "2026-09-15",
+  "template": "clhear-deployment-role.json",
+  "template_sha256": "1c020ce28649b3591c30122d9e58f48f022f9a8cdadb87e82821c3caab62bcae",
+  "account": "730649732189",
+  "region": "us-east-1",
+  "cloud_mutations_performed": false,
+  "inline_policy_characters": 10226,
+  "aggregate_inline_policy_limit": 10240,
+  "local_tests": {
+    "command": "python3 -m pytest -q tests/test_deployment_bootstrap.py",
+    "passed": 4,
+    "failed": 0
+  },
+  "cloudformation_validate_template": {
+    "passed": true,
+    "capabilities": [
+      "CAPABILITY_NAMED_IAM"
+    ],
+    "declared_resources": [
+      "AWS::IAM::Role"
+    ]
+  },
+  "access_analyzer_identity_policy": {
+    "findings": []
+  },
+  "access_analyzer_trust_policy": {
+    "findings": [
+      {
+        "type": "SUGGESTION",
+        "code": "CONFIRM_AUDIENCE_CLAIM_TYPE",
+        "reference": "https://docs.aws.amazon.com/IAM/latest/UserGuide/access-analyzer-reference-policy-checks.html#access-analyzer-reference-policy-checks-suggestion-confirm-audience-claim-type"
+      },
+      {
+        "type": "WARNING",
+        "code": "SPECIFIC_GITHUB_REPO_AND_BRANCH_RECOMMENDED",
+        "reference": "https://docs.aws.amazon.com/IAM/latest/UserGuide/access-analyzer-reference-policy-checks.html#access-analyzer-reference-policy-checks-general-warning-specific-github-repo-and-branch-recommended"
+      }
+    ],
+    "review": [
+      {
+        "code": "CONFIRM_AUDIENCE_CLAIM_TYPE",
+        "disposition": "Reviewed: audience uses single-valued StringEquals without a set qualifier."
+      },
+      {
+        "code": "SPECIFIC_GITHUB_REPO_AND_BRANCH_RECOMMENDED",
+        "disposition": "Reviewed warning remains: subject pins the exact repository and environment with no wildcard. Main-only deployment is enforced by the GitHub environment branch rule, required Reg42-ai reviewer, and disabled administrator bypass. The environment subject itself contains neither branch nor workflow filename.",
+        "reference": "https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws"
+      }
+    ]
+  },
+  "github_environment": {
+    "name": "clhear-l1",
+    "required_reviewer": "Reg42-ai",
+    "prevent_self_review": false,
+    "can_admins_bypass": false,
+    "allowed_branches": [
+      {
+        "name": "main",
+        "type": "branch"
+      }
+    ]
+  },
+  "custom_policy_simulations": {
+    "executed_actions": false,
+    "scope": "Selected direct AWS permission cases; request contexts include region, cluster, encryption, target ARN, passed-to-service and other required policy keys. All final evaluations report no missing context. Runtime roles, permission boundaries and organization policies can change effective results.",
+    "cases": [
+      {
+        "case": "run_l0",
+        "expected": "allowed",
+        "actual": [
+          {
+            "decision": "allowed",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "hold_l2",
+        "expected": "implicitDeny",
+        "actual": [
+          {
+            "decision": "implicitDeny",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "other_cluster",
+        "expected": "implicitDeny",
+        "actual": [
+          {
+            "decision": "implicitDeny",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "own_viewer",
+        "expected": "allowed",
+        "actual": [
+          {
+            "decision": "allowed",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "other_viewer",
+        "expected": "implicitDeny",
+        "actual": [
+          {
+            "decision": "implicitDeny",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "no_iam_creation",
+        "expected": "implicitDeny",
+        "actual": [
+          {
+            "decision": "implicitDeny",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "no_db_delete",
+        "expected": "implicitDeny",
+        "actual": [
+          {
+            "decision": "implicitDeny",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "worker_pass",
+        "expected": "allowed",
+        "actual": [
+          {
+            "decision": "allowed",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "other_role",
+        "expected": "implicitDeny",
+        "actual": [
+          {
+            "decision": "implicitDeny",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "artifact_write",
+        "expected": "allowed",
+        "actual": [
+          {
+            "decision": "allowed",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "no_release_write",
+        "expected": "implicitDeny",
+        "actual": [
+          {
+            "decision": "implicitDeny",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "schedule_queue",
+        "expected": "allowed",
+        "actual": [
+          {
+            "decision": "allowed",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "other_queue",
+        "expected": "implicitDeny",
+        "actual": [
+          {
+            "decision": "implicitDeny",
+            "missing": []
+          }
+        ],
+        "pass": true
+      },
+      {
+        "case": "wrong_region",
+        "expected": "explicitDeny",
+        "actual": [
+          {
+            "decision": "explicitDeny",
+            "missing": []
+          }
+        ],
+        "pass": true
+      }
+    ]
+  },
+  "pending": [
+    "Founder review and merge of bootstrap artifact",
+    "Owner creation of deployment role",
+    "GitHub environment deployment role ARN variable",
+    "Owner reconciliation of existing Terraform-managed viewer L0 SendMessage grant",
+    "Actual GitHub OIDC exchange and protected deployment workflow",
+    "Worker-run deployment verification and private viewer checks",
+    "Two actual nightly cycles"
+  ],
+  "authority_boundary": "This is a production deployment identity. Direct API restrictions do not prevent data or release effects through replacement application code, existing runtime roles, or database credentials. Reviewed code must preserve the L1 hold and accepted release."
+}

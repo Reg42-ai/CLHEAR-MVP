@@ -1,0 +1,423 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Owner-managed deployment role for CLHEAR in account 730649732189, us-east-1. Creates no application infrastructure.",
+  "Metadata": {
+    "IntendedAccount": "730649732189",
+    "IntendedRegion": "us-east-1",
+    "ResourceEvidenceDate": "2026-09-15",
+    "AuthorityNotes": [
+      "Trust uses the currently configured legacy default GitHub environment subject. Enforce main-only deployment and required owner approval in the clhear-l1 environment; this subject does not encode the branch or workflow filename.",
+      "Only existing CLHEAR resources are managed. The controller executes corpus work through CLHEAR L0/L1 workers. Candidate HEAD permission necessarily also permits reading that single S3 object.",
+      "The live DATABASE_URL SecureString and its AWS-managed SSM key are pinned. Recreated autoscaling targets or changed secret keys require owner review.",
+      "DescribeTaskDefinition, DescribeScalableTargets, ListRules and ECR GetAuthorizationToken require wildcard resources. Fargate ListTasks is constrained by the exact ECS cluster. Schedule target reads are limited to the adapter name prefix; target writes enumerate all 32 declared rules.",
+      "The role has no direct IAM provisioning, accepted-release S3 write, SQS message mutation, database mutation or networking API grants. Deployment code executes with existing runtime permissions, and reading DATABASE_URL exposes database credentials; those capabilities can affect application data and releases. Existing runtime roles and viewer L0 SendMessage permission remain owner-managed prerequisites."
+    ]
+  },
+  "Parameters": {
+    "PermissionsBoundaryArn": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional existing owner-approved permissions boundary for this role; leave empty if none is required.",
+      "AllowedPattern": "^$|^arn:aws:iam::730649732189:policy/[A-Za-z0-9+=,.@_/-]+$",
+      "ConstraintDescription": "Must be empty or an existing IAM policy ARN in account 730649732189."
+    }
+  },
+  "Conditions": {
+    "HasPermissionsBoundary": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "PermissionsBoundaryArn"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "DeploymentRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "clhear-github-deploy",
+        "Path": "/",
+        "MaxSessionDuration": 10800,
+        "Description": "Protected GitHub clhear-l1 deployment control plane for existing CLHEAR resources.",
+        "PermissionsBoundary": {
+          "Fn::If": [
+            "HasPermissionsBoundary",
+            {
+              "Ref": "PermissionsBoundaryArn"
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": "arn:aws:iam::730649732189:oidc-provider/token.actions.githubusercontent.com"
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": "repo:Reg42-ai/CLHEAR-MVP:environment:clhear-l1"
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "clhear-l1-existing-resource-deployment",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Deny",
+                  "Action": "*",
+                  "Resource": "*",
+                  "Condition": {
+                    "StringNotEquals": {
+                      "aws:RequestedRegion": "us-east-1"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecs:DescribeTaskDefinition",
+                    "application-autoscaling:DescribeScalableTargets",
+                    "events:ListRules",
+                    "ecr:GetAuthorizationToken"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:InitiateLayerUpload",
+                    "ecr:UploadLayerPart",
+                    "ecr:CompleteLayerUpload",
+                    "ecr:PutImage",
+                    "ecr:BatchGetImage",
+                    "ecr:DescribeImages"
+                  ],
+                  "Resource": "arn:aws:ecr:us-east-1:730649732189:repository/clhear-workers"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketPublicAccessBlock",
+                    "s3:GetBucketVersioning"
+                  ],
+                  "Resource": "arn:aws:s3:::clhear-deploy-730649732189"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:GetObjectVersion",
+                  "Resource": [
+                    "arn:aws:s3:::clhear-deploy-730649732189/webui/deployments/*/webui.zip",
+                    "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/*/previous-viewer.zip"
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:GetObject",
+                  "Resource": "arn:aws:s3:::clhear-deploy-730649732189/webui/l1/candidate.db"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:PutObject",
+                  "Resource": [
+                    "arn:aws:s3:::clhear-deploy-730649732189/webui/deployments/*/webui.zip",
+                    "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/*/previous-viewer.zip",
+                    "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/*/rollback.json",
+                    "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/*/result.json",
+                    "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/*/failure.json"
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "s3:x-amz-server-side-encryption": "AES256"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "rds:DescribeDBClusters",
+                  "Resource": "arn:aws:rds:us-east-1:730649732189:cluster:clhear-record"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:GetParameter",
+                  "Resource": "arn:aws:ssm:us-east-1:730649732189:parameter/clhear/DATABASE_URL"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": "arn:aws:kms:us-east-1:730649732189:key/46624ba8-3571-4a06-b88d-21431821a0f9",
+                  "Condition": {
+                    "StringEquals": {
+                      "kms:ViaService": "ssm.us-east-1.amazonaws.com",
+                      "kms:EncryptionContext:PARAMETER_ARN": "arn:aws:ssm:us-east-1:730649732189:parameter/clhear/DATABASE_URL"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:GetQueueAttributes",
+                  "Resource": [
+                    "arn:aws:sqs:us-east-1:730649732189:clhear-fleet-l0",
+                    "arn:aws:sqs:us-east-1:730649732189:clhear-events",
+                    "arn:aws:sqs:us-east-1:730649732189:clhear-fleet-l2",
+                    "arn:aws:sqs:us-east-1:730649732189:clhear-fleet-l3",
+                    "arn:aws:sqs:us-east-1:730649732189:clhear-fleet-l4",
+                    "arn:aws:sqs:us-east-1:730649732189:clhear-fleet-l5",
+                    "arn:aws:sqs:us-east-1:730649732189:clhear-fleet-l6",
+                    "arn:aws:sqs:us-east-1:730649732189:clhear-fleet-l7",
+                    "arn:aws:sqs:us-east-1:730649732189:clhear-fleet-l8"
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecs:DescribeServices",
+                    "ecs:UpdateService"
+                  ],
+                  "Resource": [
+                    "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l0",
+                    "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l1",
+                    "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l2",
+                    "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l3",
+                    "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l4",
+                    "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l5",
+                    "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l6",
+                    "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l7",
+                    "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l8"
+                  ],
+                  "Condition": {
+                    "ArnEquals": {
+                      "ecs:cluster": "arn:aws:ecs:us-east-1:730649732189:cluster/clhear-cluster"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ecs:ListTasks",
+                  "Resource": "*",
+                  "Condition": {
+                    "ArnEquals": {
+                      "ecs:cluster": "arn:aws:ecs:us-east-1:730649732189:cluster/clhear-cluster"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ecs:DescribeTasks",
+                    "ecs:StopTask"
+                  ],
+                  "Resource": "arn:aws:ecs:us-east-1:730649732189:task/clhear-cluster/*",
+                  "Condition": {
+                    "ArnEquals": {
+                      "ecs:cluster": "arn:aws:ecs:us-east-1:730649732189:cluster/clhear-cluster"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ecs:RegisterTaskDefinition",
+                  "Resource": [
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l0:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l1:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l2:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l3:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l4:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l5:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l6:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l7:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l8:*"
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ecs:TagResource",
+                  "Resource": [
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l0:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l1:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l2:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l3:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l4:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l5:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l6:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l7:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l8:*"
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "ecs:CreateAction": "RegisterTaskDefinition"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ecs:RunTask",
+                  "Resource": [
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l0:*",
+                    "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l1:*"
+                  ],
+                  "Condition": {
+                    "ArnEquals": {
+                      "ecs:cluster": "arn:aws:ecs:us-east-1:730649732189:cluster/clhear-cluster"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "application-autoscaling:RegisterScalableTarget",
+                  "Resource": [
+                    "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec59175e73f66a64a27955c59e834cfbde6",
+                    "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec5653b3b25b85240a6b852b21265dabff2",
+                    "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec53ef2b8464f2647939deb4c4fd2580150",
+                    "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec50cb4b6c52acf4aa38cd508aa9f8c33fa",
+                    "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec53fb5c72e2e334d9abe29df9fc49e0233",
+                    "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec586a2bec7ee894c4a9d97f9d98fc56b97",
+                    "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec522c7f8af49364fc7a6f685a184ad405d",
+                    "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec508d4e333458c44aaafbaddb8e7e7f409",
+                    "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec5cc0ea3fa9a9d43d1a0f854014b2175b9"
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "application-autoscaling:service-namespace": "ecs",
+                      "application-autoscaling:scalable-dimension": "ecs:service:DesiredCount"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:GetFunction",
+                    "lambda:GetFunctionConfiguration",
+                    "lambda:GetFunctionConcurrency",
+                    "lambda:UpdateFunctionCode",
+                    "lambda:UpdateFunctionConfiguration",
+                    "lambda:PutFunctionConcurrency",
+                    "lambda:DeleteFunctionConcurrency",
+                    "lambda:InvokeFunction"
+                  ],
+                  "Resource": "arn:aws:lambda:us-east-1:730649732189:function:clhear-webui"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "iam:PassRole",
+                  "Resource": [
+                    "arn:aws:iam::730649732189:role/clhear-worker-task",
+                    "arn:aws:iam::730649732189:role/clhear-worker-execution"
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "iam:PassedToService": "ecs-tasks.amazonaws.com"
+                    }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "iam:SimulatePrincipalPolicy",
+                  "Resource": "arn:aws:iam::730649732189:role/clhear-webui"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "events:DescribeRule",
+                    "events:ListTargetsByRule"
+                  ],
+                  "Resource": "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "events:PutTargets",
+                  "Resource": [
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-uk_legislation",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-eur_lex",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-govinfo_us",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-fca_handbook",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-sec_edgar",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-fca_enforcement",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-sec_enforcement",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-finra_enforcement",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-esma",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-bis_basel",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-iosco",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-asic",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-isa",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-au_legislation",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-sg_legislation",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-finra",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-adgm",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-nydfs",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-nasdaq",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-malta",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-uae",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-cysec",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-mas",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-fatf",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-wolfsberg",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-irs_gov",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-lists",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-overlay",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-restricted_file",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-seychelles",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-gibraltar",
+                    "arn:aws:events:us-east-1:730649732189:rule/clhear-adapter-israel"
+                  ],
+                  "Condition": {
+                    "ForAllValues:ArnEquals": {
+                      "events:TargetArn": [
+                        "arn:aws:sqs:us-east-1:730649732189:clhear-events"
+                      ]
+                    },
+                    "Null": {
+                      "events:TargetArn": "false"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "CLHEAR"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          },
+          {
+            "Key": "Purpose",
+            "Value": "clhear-l1-deployment"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "DeploymentRoleArn": {
+      "Description": "Set as CLHEAR_DEPLOY_ROLE_ARN in the protected GitHub clhear-l1 environment.",
+      "Value": {
+        "Fn::GetAtt": [
+          "DeploymentRole",
+          "Arn"
+        ]
+      }
+    }
+  }
+}

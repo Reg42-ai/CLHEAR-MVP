@@ -8,6 +8,12 @@ candidate at `webui/l1/candidate.db`; the legacy snapshot is not overwritten.
 
 ## Deployment authority and prerequisites
 
+The owner enrollment template and console procedure are in
+[`infra/bootstrap`](../infra/bootstrap/README.md). The template creates only
+the new deployment role; CloudFormation owns that role, while Terraform keeps
+ownership of the existing viewer/worker infrastructure. Its creation requires
+the authorized owner's reviewed execution and is not a workforce-seat action.
+
 An authorized infrastructure owner must create a dedicated GitHub OIDC role in
 account `730649732189`, region `us-east-1`. The role must trust only the GitHub
 subject `repo:Reg42-ai/CLHEAR-MVP:environment:clhear-l1`, with audience
