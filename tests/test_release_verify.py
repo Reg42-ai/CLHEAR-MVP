@@ -23,6 +23,16 @@ def test_release_id_is_semantic_date():
     assert not releases.is_release_id("v1")
 
 
+def test_live_preview_never_exposes_database_connection_url(engine, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(releases, "get_settings", lambda: SimpleNamespace(
+        database_url="postgresql://test-user:private-test-password@database.example/test"))
+    manifest = releases._live_manifest(engine)
+    assert manifest["l1"]["snapshot_uri"] == ""
+    assert manifest["artifacts"]["snapshot"]["uri"] == ""
+    assert "private-test-password" not in json.dumps(manifest)
+
+
 def test_model_manifest_complete_and_clean():
     m = mm.build_model_manifest(release_id="2026.09.28")
     assert mm.check_manifest(m) == []

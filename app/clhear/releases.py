@@ -502,7 +502,9 @@ def _ship_contributions(engine, release_id: str) -> list[dict]:
 def _live_manifest(engine) -> dict:
     return build_manifest(
         release_id="clhear-vLIVE",
-        snapshot_uri=get_settings().database_url,
+        # A live preview has no immutable artifact. Database connection URLs
+        # may contain credentials and must never become API metadata.
+        snapshot_uri="",
         content_hash="",
         counts=corpus_counts(engine),
         engine=engine,
