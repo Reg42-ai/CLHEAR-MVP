@@ -72,6 +72,10 @@ There is no arbitrary deployment ref input. The workflow:
 1. Builds locked dependencies into an ECR image referenced by digest and an
    immutable, versioned Lambda ZIP built on the Lambda Python 3.12 runtime.
    Neither bundle contains a corpus database.
+   The worker image includes the existing clause-boundary golden fixtures and
+   runs CLHEAR's offline boundary evaluator with network disabled during the
+   build. Missing or failing fixtures stop the build before any runtime cutover.
+   These are evaluation inputs, not accepted regulatory records.
 2. Checks the live Aurora writer configuration, private/versioned storage,
    fleet identities, reviewer access and code artifact hashes. Archives the
    previous Lambda code and non-secret rollback metadata privately.
@@ -83,6 +87,14 @@ There is no arbitrary deployment ref input. The workflow:
    Lambda can change its revision when traffic is paused. The controller
    refreshes that revision only after confirming the code and configuration
    still match the reviewed baseline, then uses conditional updates at cutover.
+   Code and configuration updates are asynchronous: their initial response
+   revision can differ from the revision after completion. After each update,
+   the controller waits for success and verifies the expected code hash and
+   unchanged configuration, including any intended environment change. It uses
+   that verified completed revision for the next conditional write. Only
+   documented service-generated update fields are excluded from the comparison;
+   unknown fields remain checked. The completed configuration is checked again
+   before viewer traffic resumes.
 4. Runs L0 `bootstrap`: migrations and registered-source metadata, followed by
    a worker-built candidate snapshot. Switches Lambda code/configuration to
    restricted review against that candidate.
@@ -110,6 +122,14 @@ means review evidence is available with explicit coverage/permission gaps; exit
 1 means an operational check failed. Bootstrap/publish require exit 0. The
 controller permits review-ready deployment without calling it accepted L1.
 Two entirely blocked imports cannot pass the unchanged-import check.
+
+AWS describes these transitions in [function update states](https://docs.aws.amazon.com/lambda/latest/dg/functions-states.html#functions-states-updates).
+The `RevisionId` argument to [UpdateFunctionCode](https://docs.aws.amazon.com/lambda/latest/api/API_UpdateFunctionCode.html)
+guards the write; its response is not a promise that the revision stays unchanged
+through asynchronous completion. Either update can also install a newer
+[managed runtime patch](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-update.html).
+Regression tests exercise the SDK waiter's pending/success/failure states,
+completion revision changes and unexpected configuration or code changes.
 
 ## Viewer acceptance and later daily validation
 
@@ -171,6 +191,11 @@ fix is merged and CI passes. Its audited plan restores L0/L1 desired capacity
 one, L2–L8 zero, and removes the temporary viewer concurrency reservation after
 successful access checks. L0 bootstrap already applied migrations 24–26;
 recovery reruns that work through the same idempotent L0 worker handler.
+The subsequent failed attempt `l1-34973791949-1` preserved those same original
+targets. Its L0 bootstrap completed, then the old completion-revision check
+rejected the Lambda update and rolled back code. The original reviewed recovery
+plan remains usable only if fresh preflight verifies its exact resource/code
+bindings and maintenance hold; a failed-run report alone does not establish that.
 
 Correct the failed prerequisite or worker, then dispatch a fresh deployment
 attempt with that plan. If restoring previous behavior manually, the authorized

@@ -49,6 +49,12 @@ TASK_FIELDS = {
 }
 SUSPENDED = {"DynamicScalingInSuspended": True, "DynamicScalingOutSuspended": True,
              "ScheduledScalingSuspended": True}
+# These service-generated outputs can change while an accepted update finishes.
+# RuntimeVersionConfig is the managed runtime patch, not the Runtime setting:
+# https://docs.aws.amazon.com/lambda/latest/dg/runtimes-update.html
+LAMBDA_UPDATE_OUTPUTS = {"ResponseMetadata", "RevisionId", "LastModified", "ConfigSha256",
+    "LastUpdateStatus", "LastUpdateStatusReason", "LastUpdateStatusReasonCode",
+    "State", "StateReason", "StateReasonCode", "RuntimeVersionConfig"}
 
 
 class DeploymentError(RuntimeError):
@@ -609,6 +615,50 @@ class Deployer:
         require(task.get("lastStatus") == "STOPPED" and code in ({0, 2} if action == "verify" else {0}), f"{action} worker failed; deployment remains held")
         return code
 
+    def _complete_lambda_update(self, before, response, *, phase, expected_code_hash):
+        started = time.monotonic()
+        evidence = {"phase": phase, "response_revision": response.get("RevisionId"),
+                    "response_update_status": response.get("LastUpdateStatus"), "result": "waiting"}
+        self.report.setdefault("lambda_updates", []).append(evidence)
+        try:
+            # The response can be InProgress. Its revision is not a completion
+            # token: Lambda may assign a different revision as it finishes.
+            # https://docs.aws.amazon.com/lambda/latest/dg/functions-states.html
+            self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
+            current = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
+            ignored = LAMBDA_UPDATE_OUTPUTS | {"CodeSha256"}
+            if phase in {"code", "rollback"}:
+                ignored |= {"CodeSize", "SigningJobArn", "SigningProfileVersionArn"}
+            # Compare every other field, including unknown future fields. Only
+            # the explicit code hash and intended Environment delta are allowed.
+            configuration_matches = ({k: v for k, v in current.items() if k not in ignored}
+                                     == {k: v for k, v in before.items() if k not in ignored})
+            status_ok = current.get("State") == "Active" and current.get("LastUpdateStatus") == "Successful"
+            evidence.update(completed_revision=current.get("RevisionId"),
+                            revision_transition=current.get("RevisionId") != response.get("RevisionId"),
+                            state=current.get("State"), completed_update_status=current.get("LastUpdateStatus"),
+                            status_ok=status_ok, code_matches=current.get("CodeSha256") == expected_code_hash,
+                            configuration_matches=configuration_matches)
+            for valid, outcome, reason in (
+                (status_ok, "mismatch_status", "Lambda update completion status is not successful"),
+                (evidence["code_matches"], "mismatch_code", "Lambda update completed with unexpected code"),
+                (configuration_matches, "mismatch_configuration", "Lambda update completed with unexpected configuration"),
+                (isinstance(current.get("RevisionId"), str) and bool(current["RevisionId"]),
+                 "missing_revision", "Lambda update completed without a revision"),
+            ):
+                if not valid:
+                    evidence["result"] = outcome
+                    raise DeploymentError(reason)
+            evidence["result"] = "verified"
+            return current
+        except Exception:
+            if evidence["result"] == "waiting":
+                evidence["result"] = "completion_read_or_wait_failed"
+            raise
+        finally:
+            # Never put environment values or raw SDK errors in diagnostics.
+            evidence["duration_ms"] = round((time.monotonic() - started) * 1000)
+
     def _viewer(self):
         # Compare revisions so a concurrent operator change cannot be overwritten.
         old = self.state["function"]["Configuration"]
@@ -617,26 +667,17 @@ class Deployer:
         updated = self._write("lambda", "update_function_code", FunctionName=FUNCTION, S3Bucket=BUCKET,
             S3Key=self.inputs.ui_key, S3ObjectVersion=self.inputs.ui_version, RevisionId=current["RevisionId"], Publish=False)
         self.state["viewer_code_changed"] = True
-        self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
-        config = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
-        require(config.get("RevisionId") == updated.get("RevisionId")
-                and config.get("Environment", {}).get("Variables", {}) == old.get("Environment", {}).get("Variables", {}),
-                "Viewer configuration changed during the code cutover")
-        require(config.get("CodeSha256") == base64.b64encode(bytes.fromhex(self.inputs.ui_sha256)).decode(), "Deployed viewer code hash does not match")
+        code_hash = base64.b64encode(bytes.fromhex(self.inputs.ui_sha256)).decode()
+        config = self._complete_lambda_update(current, updated, phase="code", expected_code_hash=code_hash)
         env = dict(old.get("Environment", {}).get("Variables", {}))
         env.update(CLHEAR_RESTRICTED_ACCESS="true", CLHEAR_AUTH_DEBUG="false", CLHEAR_REVIEWER_EMAILS=self.state["reviewers"],
                    CLHEAR_DB_S3_URI=f"s3://{BUCKET}/{self.inputs.viewer_key}", CLHEAR_RELEASES_S3_PREFIX=RELEASES,
                    CLHEAR_EVENTS_QUEUE_URL=QUEUES["l0"])
         updated_config = self._write("lambda", "update_function_configuration", FunctionName=FUNCTION,
             RevisionId=config["RevisionId"], Environment={"Variables": env})
-        self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
-        current = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
-        require(current.get("Environment", {}).get("Variables") == env, "Restricted viewer configuration was not retained")
-        require(current.get("RevisionId") == updated_config.get("RevisionId")
-                and current.get("CodeSha256") == base64.b64encode(bytes.fromhex(self.inputs.ui_sha256)).decode()
-                and current.get("State", "Active") == "Active"
-                and current.get("LastUpdateStatus", "Successful") == "Successful",
-                "Viewer code or revision changed during the configuration cutover")
+        expected_config = copy.deepcopy(config)
+        expected_config["Environment"] = {"Variables": env}
+        current = self._complete_lambda_update(expected_config, updated_config, phase="configuration", expected_code_hash=code_hash)
         # Capture only after our conditional update has completed. Its service
         # fields (such as LastModified) may legitimately differ from preflight;
         # the completed configuration must stay unchanged until traffic resumes.
@@ -706,10 +747,11 @@ class Deployer:
                 else:
                     # Only undo this deployment's code. The conditional write
                     # also prevents a new change after this ownership check.
-                    self._write("lambda", "update_function_code", FunctionName=FUNCTION, S3Bucket=BUCKET,
+                    updated = self._write("lambda", "update_function_code", FunctionName=FUNCTION, S3Bucket=BUCKET,
                         S3Key=f"{self.prefix}/previous-viewer.zip", S3ObjectVersion=self.state["previous_code_version"],
                         RevisionId=config["RevisionId"], Publish=False)
-                    self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
+                    self._complete_lambda_update(config, updated, phase="rollback",
+                        expected_code_hash=self.state["function"]["Configuration"]["CodeSha256"])
             except Exception:
                 errors.append("viewer_code_rollback_failed")
         elif self.state.get("viewer_code_changed"):

@@ -12,6 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 from botocore.exceptions import ClientError
+from botocore.loaders import Loader
+from botocore.waiter import Waiter, WaiterModel
 
 from scripts.deploy_l1 import (ACCOUNT, ADAPTER_SCHEDULES, BUCKET, CLUSTER, ENVIRONMENT, FLEETS, FUNCTION,
                               QUEUES, REGION, SUSPENDED, WORKFLOW, Deployer, DeploymentError, Inputs)
@@ -22,6 +24,7 @@ ROLE = f"arn:aws:iam::{ACCOUNT}:role/clhear-l1-deployment"
 DSN_SECRET = f"arn:aws:ssm:{REGION}:{ACCOUNT}:parameter/clhear/DATABASE_URL"
 ENDPOINT = f"clhear-record.cluster-abcdef.{REGION}.rds.amazonaws.com"
 NEW_CODE, OLD_CODE = b"new test-only code artifact", b"previous test-only code artifact"
+LAMBDA_WAITER_MODEL = Loader().load_service_model("lambda", "waiters-2")
 WRITES = {"put_object", "register_scalable_target", "put_function_concurrency", "delete_function_concurrency",
           "update_service", "stop_task", "register_task_definition", "run_task", "update_function_code",
           "update_function_configuration", "invoke", "put_targets"}
@@ -110,11 +113,23 @@ class Cloud:
                 "GOOGLE_OAUTH_CLIENT_SECRET": "private-oauth-value", "CLHEAR_SES_SENDER": "review@example.test",
                 "CLHEAR_RESTRICTED_ACCESS": "false", "CLHEAR_AUTH_DEBUG": "true", "CLHEAR_DB_S3_URI": f"s3://{BUCKET}/webui/legacy.db"}}}
         self.concurrency = None
+        self.pending_lambda_update = None
+        self.lambda_update_evidence = []
+        self.advance_completion_revision = True
+        self.lambda_failure_modes = {}
         self.clients = {name: Client(self, name) for name in
                         ("sts", "s3", "ecr", "rds", "ssm", "secretsmanager", "ecs", "lambda", "application-autoscaling", "sqs", "iam", "events")}
 
     def call(self, service, operation, args):
         self.calls.append((service, operation, copy.deepcopy(args)))
+        if operation == "wait:function_updated_v2":
+            # Use the SDK's real acceptors. Reads must observe InProgress and
+            # then Successful; completion changes revision like live Lambda.
+            model = copy.deepcopy(LAMBDA_WAITER_MODEL)
+            model["waiters"]["FunctionUpdatedV2"]["delay"] = 0
+            waiter = Waiter("FunctionUpdatedV2", WaiterModel(model).get_waiter("FunctionUpdatedV2"),
+                            lambda **kw: self.call("lambda", "get_function", kw))
+            return waiter.wait(**args)
         if operation.startswith("wait:"):
             return None
         if operation == "get_caller_identity":
@@ -156,6 +171,27 @@ class Cloud:
         if operation == "describe_scalable_targets":
             return {"ScalableTargets": [copy.deepcopy(self.scaling[args["ResourceIds"][0].rsplit("-", 1)[-1]])]}
         if operation == "get_function":
+            if self.pending_lambda_update is not None:
+                failure = self.lambda_failure_modes.get(self.pending_lambda_update["kind"])
+                if failure == "waiter_failed":
+                    self.config.update(LastUpdateStatus="Failed", LastUpdateStatusReason="private-service-status-detail",
+                                       LastUpdateStatusReasonCode="InternalError")
+                    self.lambda_update_evidence[-1]["completed"] = copy.deepcopy(self.config)
+                    self.pending_lambda_update = None
+                elif failure == "waiter_timeout":
+                    # The actual modeled operation stays pending. A rollback
+                    # write must conflict instead of mutating code under it.
+                    pass
+                elif self.pending_lambda_update["reads_remaining"]:
+                    self.pending_lambda_update["reads_remaining"] -= 1
+                else:
+                    self.config["LastUpdateStatus"] = "Successful"
+                    self.config.pop("LastUpdateStatusReason", None)
+                    self.config.pop("LastUpdateStatusReasonCode", None)
+                    if self.advance_completion_revision:
+                        self.config["RevisionId"] += "-completed"
+                    self.lambda_update_evidence[-1]["completed"] = copy.deepcopy(self.config)
+                    self.pending_lambda_update = None
             return {"Configuration": copy.deepcopy(self.config), "Code": {"Location": "https://awslambda-us-east-1.s3.amazonaws.com/test-code?test-signed-query"}}
         if operation == "get_function_configuration":
             return copy.deepcopy(self.config)
@@ -215,18 +251,21 @@ class Cloud:
                     tasks.append({"taskArn": arn, "lastStatus": "RUNNING" if any(arn in old for old in self.old_tasks.values()) else "STOPPED"})
             return {"tasks": tasks}
         if operation == "update_function_code":
+            self.require_no_lambda_update("UpdateFunctionCode")
             if args["RevisionId"] != self.config["RevisionId"]:
                 raise ClientError({"Error": {"Code": "PreconditionFailedException", "Message": "test-only-private-sdk-message"}},
                                   "UpdateFunctionCode")
             code = OLD_CODE if args["S3Key"].endswith("previous-viewer.zip") else NEW_CODE
             self.config["CodeSha256"] = base64.b64encode(hashlib.sha256(code).digest()).decode()
-            self.config["RevisionId"] += "-code"
-            return copy.deepcopy(self.config)
+            self.config["CodeSize"] = len(code)
+            return self.start_lambda_update("rollback" if code == OLD_CODE else "code")
         if operation == "update_function_configuration":
-            assert args["RevisionId"] == self.config["RevisionId"]
+            self.require_no_lambda_update("UpdateFunctionConfiguration")
+            if args["RevisionId"] != self.config["RevisionId"]:
+                raise ClientError({"Error": {"Code": "PreconditionFailedException", "Message": "test-only-private-sdk-message"}},
+                                  "UpdateFunctionConfiguration")
             self.config["Environment"] = copy.deepcopy(args["Environment"])
-            self.config["RevisionId"] += "-config"
-            return copy.deepcopy(self.config)
+            return self.start_lambda_update("configuration")
         if operation == "invoke":
             path = json.loads(args["Payload"])["rawPath"]
             if not path.endswith("health"):
@@ -234,6 +273,21 @@ class Cloud:
             result = {"statusCode": 200 if path.endswith("health") else self.anonymous_status, "body": "{}"}
             return {"Payload": io.BytesIO(json.dumps(result).encode())}
         raise AssertionError(f"Unexpected mocked AWS operation {service}.{operation}")
+
+    def require_no_lambda_update(self, operation):
+        if self.pending_lambda_update is not None:
+            raise ClientError({"Error": {"Code": "ResourceConflictException", "Message": "A function update is in progress."},
+                               "ResponseMetadata": {"HTTPStatusCode": 409}}, operation)
+
+    def start_lambda_update(self, kind):
+        assert self.pending_lambda_update is None, "Lambda does not accept another update while one is pending"
+        self.config.update(LastUpdateStatus="InProgress", LastUpdateStatusReason="The function is being updated.",
+                           LastUpdateStatusReasonCode="Creating")
+        self.config["RevisionId"] += f"-{kind}-in-progress"
+        self.pending_lambda_update = {"reads_remaining": 1, "kind": kind}
+        response = copy.deepcopy(self.config)
+        self.lambda_update_evidence.append({"kind": kind, "response": response})
+        return response
 
     def deployer(self, **kw):
         return Deployer(kw.pop("input", inputs()), self.clients, environ=kw.pop("environ", environment()),
@@ -426,6 +480,63 @@ def test_own_concurrency_revision_change_is_refreshed_before_conditional_code_cu
     assert deployer.state["function"]["Configuration"]["RevisionId"] == old_revision
 
 
+def test_async_code_and_configuration_completion_revisions_drive_next_conditional_write():
+    cloud = Cloud()
+    deployer = cloud.deployer()
+    result = deployer.deploy()
+    assert result["status"] == "verified"
+    assert [row["kind"] for row in cloud.lambda_update_evidence] == ["code", "configuration"]
+    for row in cloud.lambda_update_evidence:
+        assert row["response"]["LastUpdateStatus"] == "InProgress"
+        assert row["completed"]["LastUpdateStatus"] == "Successful"
+        assert row["response"]["RevisionId"] != row["completed"]["RevisionId"]
+    config_write = next(args for _, op, args in cloud.calls if op == "update_function_configuration")
+    assert config_write["RevisionId"] == cloud.lambda_update_evidence[0]["completed"]["RevisionId"]
+    assert deployer.state["verified_viewer_configuration"]["RevisionId"] == cloud.lambda_update_evidence[1]["completed"]["RevisionId"]
+
+
+def test_async_completion_also_accepts_a_revision_that_did_not_change():
+    cloud = Cloud()
+    cloud.advance_completion_revision = False
+    result = cloud.deployer().deploy()
+    assert result["status"] == "verified"
+    assert all(row["result"] == "verified" and row["revision_transition"] is False for row in result["lambda_updates"])
+
+
+@pytest.mark.parametrize("operation", ["update_function_code", "update_function_configuration"])
+def test_mock_lambda_rejects_overlapping_writes_before_any_mutation(operation):
+    cloud = Cloud()
+    cloud.call("lambda", "update_function_code", {"RevisionId": cloud.config["RevisionId"], "S3Key": "new-viewer.zip"})
+    before = copy.deepcopy(cloud.config)
+    args = {"RevisionId": before["RevisionId"]}
+    args.update({"S3Key": "previous-viewer.zip"} if operation == "update_function_code" else {"Environment": {"Variables": {"BAD": "value"}}})
+    with pytest.raises(ClientError) as error:
+        cloud.call("lambda", operation, args)
+    assert error.value.response["Error"]["Code"] == "ResourceConflictException"
+    assert cloud.config == before and cloud.config["LastUpdateStatus"] == "InProgress"
+
+
+def test_configuration_cas_rejects_change_after_verified_code_completion(monkeypatch):
+    cloud = Cloud()
+    original_call = cloud.call
+
+    def call(service, operation, args):
+        if operation == "update_function_configuration":
+            cloud.config["RevisionId"] += "-external"
+            cloud.config["Environment"]["Variables"]["EXTERNAL_SETTING"] = "private-race-value"
+        return original_call(service, operation, args)
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    assert result["failure_operation"] == "UpdateFunctionConfiguration"
+    assert result["failure_code"] == "PreconditionFailedException"
+    assert cloud.config["Environment"]["Variables"]["EXTERNAL_SETTING"] == "private-race-value"
+    assert cloud.config["Environment"]["Variables"]["CLHEAR_RESTRICTED_ACCESS"] == "false"
+    assert not any(op == "invoke" for _, op, _ in cloud.calls)
+    assert "private-race-value" not in json.dumps(result)
+
+
 @pytest.mark.parametrize("stage", ["before_pause", "during_pause", "after_pause"])
 @pytest.mark.parametrize("field,value", [
     ("CodeSha256", "external-code-digest"),
@@ -512,7 +623,7 @@ def test_conditional_code_update_still_rejects_race_after_final_revision_check(m
     assert "test-only-private-sdk-message" not in documents
 
 
-@pytest.mark.parametrize("drift", ["code", "revision"])
+@pytest.mark.parametrize("drift", ["code", "configuration"])
 def test_configuration_cutover_cannot_accept_concurrent_code_update(drift, monkeypatch):
     cloud = Cloud()
     original_call = cloud.call
@@ -523,7 +634,7 @@ def test_configuration_cutover_cannot_accept_concurrent_code_update(drift, monke
             if drift == "code":
                 cloud.config["CodeSha256"] = "external-code-digest"
             else:
-                cloud.config["RevisionId"] += "-external"
+                cloud.config["Role"] = f"arn:aws:iam::{ACCOUNT}:role/external-role"
         return result
 
     monkeypatch.setattr(cloud, "call", call)
@@ -554,6 +665,141 @@ def test_failed_worker_does_not_roll_back_an_external_code_update(monkeypatch):
     assert cloud.config["CodeSha256"] == "external-code-digest"
     assert "viewer_code_rollback_skipped_code_drift" in result["recovery_errors"]
     assert len([op for _, op, _ in cloud.calls if op == "update_function_code"]) == 1
+
+
+@pytest.mark.parametrize("phase", ["code", "configuration"])
+@pytest.mark.parametrize("field,value", [
+    ("CodeSha256", "external-code-digest"),
+    ("Environment", {"Variables": {"UNEXPECTED": "private-completion-drift-secret"}}),
+    ("Role", f"arn:aws:iam::{ACCOUNT}:role/external-role"),
+    ("Runtime", "python3.14"),
+    ("Handler", "external.handler"),
+    ("Architectures", ["arm64"]),
+    ("VpcConfig", {"SubnetIds": ["subnet-external"]}),
+    ("KMSKeyArn", f"arn:aws:kms:{REGION}:{ACCOUNT}:key/external-key"),
+    ("MemorySize", 4096),
+    ("Timeout", 600),
+    ("Layers", [{"Arn": f"arn:aws:lambda:{REGION}:{ACCOUNT}:layer:external:1"}]),
+    ("FutureConfigurationField", {"unexpected": True}),
+])
+def test_async_completion_rejects_true_code_or_configuration_drift(phase, field, value, monkeypatch):
+    cloud = Cloud()
+    original_call, injected = cloud.call, False
+
+    def call(service, operation, args):
+        nonlocal injected
+        result = original_call(service, operation, args)
+        if (not injected and operation == "get_function" and cloud.lambda_update_evidence
+                and cloud.lambda_update_evidence[-1]["kind"] == phase
+                and result["Configuration"]["LastUpdateStatus"] == "Successful"):
+            injected = True
+            cloud.config[field] = copy.deepcopy(value)
+            cloud.config["RevisionId"] += "-external"
+            result["Configuration"] = copy.deepcopy(cloud.config)
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert injected and result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    evidence = next(row for row in result["lambda_updates"] if row["phase"] == phase)
+    assert evidence["result"] == ("mismatch_code" if field == "CodeSha256" else "mismatch_configuration")
+    assert not any(op == "invoke" for _, op, _ in cloud.calls)
+    if phase == "code":
+        assert not any(op == "update_function_configuration" for _, op, _ in cloud.calls)
+    assert "private-completion-drift-secret" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("phase", ["code", "configuration"])
+def test_documented_server_output_transitions_are_verified_and_captured(phase, monkeypatch):
+    cloud = Cloud()
+    cloud.config.update(Runtime="python3.12", RuntimeVersionConfig={"RuntimeVersionArn": "arn:before"},
+                        LastModified="before", ConfigSha256="before")
+    original_call, injected = cloud.call, False
+
+    def call(service, operation, args):
+        nonlocal injected
+        result = original_call(service, operation, args)
+        if (not injected and operation == "get_function" and cloud.lambda_update_evidence
+                and cloud.lambda_update_evidence[-1]["kind"] == phase
+                and result["Configuration"]["LastUpdateStatus"] == "Successful"):
+            injected = True
+            cloud.config.update(RuntimeVersionConfig={"RuntimeVersionArn": "arn:after"},
+                                LastModified="after", ConfigSha256="after")
+            result["Configuration"] = copy.deepcopy(cloud.config)
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    deployer = cloud.deployer()
+    result = deployer.deploy()
+    assert injected and result["status"] == "verified"
+    assert all(row["result"] == "verified" and row["revision_transition"] for row in result["lambda_updates"])
+    assert deployer.state["verified_viewer_configuration"]["RuntimeVersionConfig"] == {"RuntimeVersionArn": "arn:after"}
+
+
+@pytest.mark.parametrize("phase", ["code", "configuration"])
+@pytest.mark.parametrize("failure", ["waiter_failed", "waiter_timeout", "readback_in_progress", "readback_inactive"])
+def test_async_completion_failure_never_advances_to_configuration_or_traffic(phase, failure, monkeypatch):
+    cloud = Cloud()
+    if failure.startswith("waiter_"):
+        cloud.lambda_failure_modes[phase] = failure
+    original_call = cloud.call
+
+    def call(service, operation, args):
+        result = original_call(service, operation, args)
+        if cloud.lambda_update_evidence and cloud.lambda_update_evidence[-1]["kind"] == phase:
+            if operation == "get_function_configuration" and failure.startswith("readback_"):
+                cloud.config["LastUpdateStatus" if failure == "readback_in_progress" else "State"] = "InProgress" if failure == "readback_in_progress" else "Inactive"
+                if failure == "readback_in_progress":
+                    cloud.pending_lambda_update = {"kind": "external", "reads_remaining": 1}
+                result = copy.deepcopy(cloud.config)
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    evidence = next(row for row in result["lambda_updates"] if row["phase"] == phase)
+    assert evidence["result"] == ("completion_read_or_wait_failed" if failure.startswith("waiter_") else "mismatch_status")
+    assert not any(op == "invoke" for _, op, _ in cloud.calls)
+    if phase == "code":
+        assert not any(op == "update_function_configuration" for _, op, _ in cloud.calls)
+    if failure in {"waiter_timeout", "readback_in_progress"}:
+        assert cloud.pending_lambda_update is not None and cloud.config["LastUpdateStatus"] == "InProgress"
+        assert "viewer_code_rollback_failed" in result["recovery_errors"]
+        assert cloud.config["CodeSha256"] == base64.b64encode(hashlib.sha256(NEW_CODE).digest()).decode()
+    assert "private-service-status-detail" not in json.dumps(result)
+
+
+def test_rollback_completion_proves_original_code_with_distinct_completed_revision():
+    cloud = Cloud()
+    cloud.exits["verify"] = 1
+    result = cloud.deployer().deploy()
+    evidence = result["lambda_updates"][-1]
+    assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    assert evidence["phase"] == "rollback" and evidence["result"] == "verified" and evidence["revision_transition"]
+    assert cloud.config["CodeSha256"] == base64.b64encode(hashlib.sha256(OLD_CODE).digest()).decode()
+    assert cloud.lambda_update_evidence[-1]["completed"]["RevisionId"] == cloud.config["RevisionId"]
+
+
+@pytest.mark.parametrize("field,value", [("CodeSha256", "external-code-digest"), ("Role", "external-role")])
+def test_rollback_completion_reports_wrong_artifact_or_config_instead_of_success(field, value, monkeypatch):
+    cloud = Cloud()
+    cloud.exits["verify"] = 1
+    original_call = cloud.call
+
+    def call(service, operation, args):
+        result = original_call(service, operation, args)
+        if (operation == "get_function" and cloud.lambda_update_evidence
+                and cloud.lambda_update_evidence[-1]["kind"] == "rollback"
+                and result["Configuration"]["LastUpdateStatus"] == "Successful"):
+            cloud.config[field] = value
+            result["Configuration"] = copy.deepcopy(cloud.config)
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    assert "viewer_code_rollback_failed" in result["recovery_errors"]
+    assert result["lambda_updates"][-1]["result"] == ("mismatch_code" if field == "CodeSha256" else "mismatch_configuration")
 
 
 @pytest.mark.parametrize("field,value", [
