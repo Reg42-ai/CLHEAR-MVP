@@ -137,6 +137,13 @@ def test_offline_import_roundtrip_and_idempotence(engine, tmp_path, monkeypatch)
     assert item["import"]["freshness"] == "local_snapshot"
     assert rows(engine, runs)[-1]["outputs"]["freshness"] == "local_snapshot"
     versions = rows(engine, models.source_versions)
+    artifact_identity = {"schema": "artifact-set-v2", "artifacts": [{
+        "name": "page.html", "content_type": "text/html", "sha256": acquisition["sha256"],
+        "byte_count": acquisition["bytes"],
+    }]}
+    expected_hash = command.digest(json.dumps(artifact_identity, sort_keys=True, separators=(",", ":")).encode())
+    assert versions[0]["content_hash"] == expected_hash != acquisition["sha256"]
+    assert item["audit"]["content_hash_scheme"] == "artifact-set-v2"
     assert versions[0]["retrieved_at"] == datetime.fromisoformat(acquisition["retrieved_at"]).replace(tzinfo=None)
     assert versions[0]["as_of_date"] is None
     assert versions[0]["effective_date"] is None
@@ -222,3 +229,47 @@ def test_missing_archived_bytes_and_input_overwrite_are_rejected(engine, tmp_pat
     assert command.main(["--database", str(database), "--artifact-dir", str(directory),
                          "--report", str(database), "--import"]) == 2
     assert database.read_bytes() == before
+
+
+def test_legacy_single_file_hash_audit_preserves_old_version_and_artifact(engine, tmp_path):
+    from urllib.parse import unquote, urlparse
+    directory = tmp_path / "snapshots"
+    content = snapshot(directory)
+    assert invoke(engine, tmp_path, "--import")[0] == 0
+    version = rows(engine, models.source_versions)[0]
+    current_archive = Path(unquote(urlparse(version["s3_uri"]).path))
+    legacy_archive = directory / "imported" / "restricted" / "finra" / "rule" / "2210" / "old-version" / "page.html"
+    legacy_archive.parent.mkdir(parents=True)
+    legacy_archive.write_bytes(content)
+    with engine.begin() as conn:
+        conn.execute(models.source_versions.update().values(content_hash=command.digest(content), s3_uri=legacy_archive.as_uri()))
+    old_versions = rows(engine, models.source_versions)
+    old_database = Path(engine.url.database).read_bytes()
+    code, report = invoke(engine, tmp_path)
+    assert code == 0 and report["all_bytes_verified"]
+    assert report["results"][0]["audit"]["content_hash_scheme"] == "legacy-single-artifact-sha256"
+    assert Path(engine.url.database).read_bytes() == old_database
+    assert rows(engine, models.source_versions) == old_versions
+    assert legacy_archive.read_bytes() == current_archive.read_bytes() == content
+    assert invoke(engine, tmp_path, "--import")[1]["results"][0]["import"] is None
+    assert rows(engine, models.source_versions) == old_versions
+
+
+@pytest.mark.parametrize("corrupt", ["logical_hash", "archive_path"])
+def test_framed_hash_and_archive_identity_are_verified(engine, tmp_path, corrupt):
+    directory = tmp_path / "snapshots"
+    content = snapshot(directory)
+    assert invoke(engine, tmp_path, "--import")[0] == 0
+    if corrupt == "logical_hash":
+        update = {"content_hash": "f" * 64}
+        message = "stored source content_hash differs"
+    else:
+        wrong_path = directory / "imported" / "unrelated.html"
+        wrong_path.write_bytes(content)
+        update = {"s3_uri": wrong_path.as_uri()}
+        message = "path differs from its framed source and byte identities"
+    with engine.begin() as conn:
+        conn.execute(models.source_versions.update().values(**update))
+    code, report = invoke(engine, tmp_path)
+    assert code == 1
+    assert any(message in error for error in report["results"][0]["audit"]["errors"])

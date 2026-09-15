@@ -114,69 +114,16 @@ class GovInfoUscAdapter:
         for sec in self.sections:
             content = http.get(self._url_template.format(ed=self.edition, sec=sec, title=self.title))
             artifacts.append(Artifact(name=f"sec{sec}.htm", content=content, content_type="text/html"))
-            html = content.decode("utf-8", errors="replace")
-            # The GPO page delimits its own sections with field comments; the
-            # statute field is the law, the notes fields are annotations.
-            statute = _field(html, "statute")
-            head_html = _field(html, "head")
-            head = BeautifulSoup(head_html, "html.parser").get_text(" ", strip=True) if head_html else f"§{sec}"
-            children: list[DocNode] = []
-            current: DocNode | None = None
-            for el in BeautifulSoup(statute, "html.parser").find_all(["h4", "p"]):
-                if not isinstance(el, Tag):
-                    continue
-                classes = [str(c) for c in (el.get("class") or [])]
-                heading_class = next((c for c in classes if c.endswith("-head")), None)
-                if el.name == "h4" and heading_class == "subsection-head":
-                    heading = "".join(el.strings).strip()
-                    match = re.match(r"\(([a-z0-9]+)\)", heading)
-                    sub_ref = f"sec{sec}({match.group(1)})" if match else f"sec{sec}-{len(children)}"
-                    current = DocNode(
-                        node_type="subsection",
-                        ref=sub_ref,
-                        heading=heading,  # heading carries the printed "(a)" marker
-                        source_fragment=str(el),
-                    )
-                    children.append(current)
-                    continue
-                if el.name == "h4" and heading_class:
-                    # deeper heads inside a subsection: (1) In general, (A) …
-                    node = DocNode(node_type="heading", raw_text="".join(el.strings).strip(), source_fragment=str(el))
-                elif el.name == "p" and any(c.startswith("statutory-body") for c in classes):
-                    node = DocNode(node_type="paragraph", raw_text="".join(el.strings), source_fragment=str(el))
-                else:
-                    continue
-                if current is None:
-                    current = DocNode(node_type="subsection", ref=f"sec{sec}(pre)", children=[node])
-                    children.append(current)
-                else:
-                    current.children.append(node)
-            tree.append(
-                DocNode(
-                    node_type="section",
-                    ref=f"sec{sec}",
-                    heading=head,  # heading carries the printed "§1471." marker
-                    source_fragment=head_html,
-                    children=children,
-                )
-            )
+            from app.clhear.l1.adapters.dom_document import parse
+            tree.extend(parse(content, self.meta().source_key, len(artifacts)))
         return FetchResult(
             version_label=version_label, artifacts=artifacts, tree=tree, version_kind="edition"
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
-        """Fidelity oracle: the statute field of each page (between GPO's
-        field-start/end comment markers) + the section heading. Declared
-        exclusions: notes/source-credit/amendment fields (annotation, not law)."""
-        spans: list[str] = []
-        for artifact in artifacts:
-            html = artifact.content.decode("utf-8", errors="replace")
-            for field_name in ("head", "statute"):
-                fragment = _field(html, field_name)
-                if fragment:
-                    parsed = BeautifulSoup(fragment, "html.parser")
-                    spans.extend(str(s) for s in parsed.strings if str(s).strip())
-        return spans
+        from app.clhear.l1.adapters.dom_document import original_records
+        return [row[7] for part, artifact in enumerate(artifacts, 1)
+                for row in original_records(artifact.content, self.meta().source_key, part) if row[7].strip()]
 
 
 class GovInfoEcfrAdapter:
@@ -250,62 +197,8 @@ class GovInfoEcfrAdapter:
                 )
             )
             artifacts.append(Artifact(name=f"{section}.xml", content=content, content_type="application/xml"))
-            root = ET.fromstring(content)
-            head = (root.findtext("HEAD") or f"§ {section}").strip()
-            children: list[DocNode] = []
-            current: DocNode | None = None
-            expected = "a"
-
-            def emit(node: DocNode) -> None:
-                nonlocal current
-                if current is None:
-                    current = DocNode(node_type="subsection", ref=f"{section}(pre)", children=[node])
-                    children.append(current)
-                else:
-                    current.children.append(node)
-
-            # Document order over the section's block elements: P paragraphs,
-            # HD*/HED headings (outline + examples), PSPACE example bodies.
-            nested_skip = set()
-            for wrapper in root.iter("PSPACE"):
-                for descendant in wrapper.iter():
-                    if descendant is not wrapper:
-                        nested_skip.add(id(descendant))
-            for el in root.iter():
-                if id(el) in nested_skip:
-                    continue
-                tag = el.tag
-                text = "".join(el.itertext())
-                if not text.strip():
-                    continue
-                fragment = ET.tostring(el, encoding="unicode")
-                if tag == "P":
-                    if expected is not None and text.lstrip().startswith(f"({expected})"):
-                        current = DocNode(
-                            node_type="subsection",
-                            ref=f"{section}({expected})",
-                            source_fragment=fragment,
-                            children=[DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment)],
-                        )
-                        children.append(current)
-                        expected = chr(ord(expected) + 1) if expected != "z" else None
-                    else:
-                        emit(DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment))
-                elif tag in ("HD1", "HD2", "HD3", "HED"):
-                    emit(DocNode(node_type="heading", raw_text=text, source_fragment=fragment))
-                elif tag in ("PSPACE", "FP"):
-                    emit(DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment))
-                elif tag == "CITA":
-                    children.append(DocNode(node_type="note", raw_text=text, source_fragment=fragment))
-            tree.append(
-                DocNode(
-                    node_type="section",
-                    ref=section,
-                    heading=head,  # heading carries the printed "§ 1.1471-0" marker
-                    source_fragment=ET.tostring(root, encoding="unicode"),
-                    children=children,
-                )
-            )
+            from app.clhear.l1.adapters.xml_document import parse
+            tree.extend(parse(content, self.meta().source_key, "govinfo_us", len(artifacts)))
         try:
             as_of_date = date.fromisoformat(self.as_of)
         except ValueError:
@@ -319,9 +212,7 @@ class GovInfoEcfrAdapter:
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
-        """Fidelity oracle: every text piece of each eCFR section XML."""
-        spans: list[str] = []
-        for artifact in artifacts:
-            root = ET.fromstring(artifact.content)
-            spans.extend(piece for piece in root.itertext() if piece.strip())
-        return spans
+        from app.clhear.l1.adapters.xml_document import original_records
+        return [row[7] for part, artifact in enumerate(artifacts, 1)
+                for row in original_records(artifact.content, self.meta().source_key, "govinfo_us", part)
+                if row[7].strip()]

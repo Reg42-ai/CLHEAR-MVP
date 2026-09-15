@@ -68,6 +68,24 @@ assert.equal(recordMatches({...record, version_label: undefined}, "finra/2210", 
 ''')
 
 
+def test_structured_reader_prints_source_text_once_without_metadata_prose():
+    run_js(r'''
+const container = {id: 91, node_type: "article", ref: "art_1", label: "div", heading: "Subject matter", depth: 1,
+  source_locator: {structure: "legal-html-element", presentation_fields: ["label", "heading"]}};
+const original = DocLine({n: container, inspect: false});
+assert.match(original, /node-91/);
+assert.doesNotMatch(original, /Subject matter|Encoded container|class="lab"/);
+assert.match(DocLine({n: container, inspect: true}), /Encoded container · art_1/);
+assert.equal(tocLabel(container), "Subject matter");
+for (const structure of ["xml-text", "legal-html-text", "json-value"]) {
+  const text = {id: 92, node_type: "paragraph", label: "raw_field_name", raw_text: "Genuine publisher wording Ω 😀", depth: 2, source_locator: {structure}};
+  const rendered = DocLine({n: text, inspect: false});
+  assert.equal(rendered.split("Genuine publisher wording Ω 😀").length - 1, 1);
+  assert.doesNotMatch(rendered, /raw_field_name/);
+}
+''')
+
+
 def test_evidence_cannot_show_a_pass_from_another_version():
     run_js(r'''
 const wrong = EvidencePanel({sourceKey: "finra/2210", version: "v1", card: {version: "v2", scorecard: {suites: {e1_fidelity: {passed: true}}}}});

@@ -124,15 +124,23 @@ def build_units_for_version(
         if node.node_type in CLAUSE_TYPES:
             head = node.heading or ws(node.raw_text)[:100] or node.label or node.ref
             clause_context = ws(f"{node.label} {head}")[:160]
+        paragraph_text = node.raw_text
+        if not paragraph_text and node.node_type == "point" and node.source_locator.get("structure") == "legal-html-element":
+            # A lossless table point keeps its text in source-addressed cells.
+            # Index that existing text with the checked article context; never
+            # duplicate it into the verbatim record merely to serve search.
+            paragraph_text = node.subtree_text()
+            if node.label and paragraph_text.startswith(node.label + "\n"):
+                paragraph_text = paragraph_text[len(node.label) + 1:]
         if (
             node.node_type in PARAGRAPH_TYPES
-            and len(ws(node.raw_text)) >= PARAGRAPH_MIN_CHARS
+            and len(ws(paragraph_text)) >= PARAGRAPH_MIN_CHARS
             and getattr(node, "db_id", None) is not None
         ):
             _insert(
                 "paragraph",
                 node.ref,
-                f"{meta.short_name} · {clause_context}\n{ws(node.label + ' ' + node.raw_text)}",
+                f"{meta.short_name} · {clause_context}\n{ws(node.label + ' ' + paragraph_text)}",
                 doc_node_id=node.db_id,
             )
         for child in node.children:

@@ -7,6 +7,12 @@ on:
     types: [completed]
   workflow_dispatch:
     inputs:
+      operation:
+        description: 'Deploy tested code, or request a full L1 cycle using the deployed workers'
+        type: choice
+        options: [deploy, verify-l1]
+        required: true
+        default: deploy
       recovery_plan:
         description: 'Optional owner-reviewed capacity plan ID from infra/recovery (l1-RUN-ATTEMPT)'
         type: string
@@ -47,7 +53,7 @@ jobs:
           path: artifacts/eligibility-precheck.json
   deploy:
     needs: eligibility
-    if: needs.eligibility.outputs.eligible == 'true' && github.repository == 'Reg42-ai/CLHEAR-MVP' && github.ref == 'refs/heads/main'
+    if: needs.eligibility.outputs.eligible == 'true' && inputs.operation != 'verify-l1' && github.repository == 'Reg42-ai/CLHEAR-MVP' && github.ref == 'refs/heads/main'
     concurrency:
       group: clhear-l1-deployment
       cancel-in-progress: false
@@ -203,3 +209,54 @@ jobs:
             artifacts/eligibility-apply.json
             artifacts/deployment-scope.json
             artifacts/viewer-release.json
+  verify-l1:
+    needs: eligibility
+    if: needs.eligibility.outputs.eligible == 'true' && github.event_name == 'workflow_dispatch' && inputs.operation == 'verify-l1'
+    concurrency:
+      group: clhear-l1-deployment
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: clhear-l1
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      CLHEAR_DEPLOY_ROLE_ARN: ${{ vars.CLHEAR_DEPLOY_ROLE_ARN }}
+      CLHEAR_DEPLOY_ENVIRONMENT: clhear-l1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.lock
+      - name: Recheck owner merge and CI under the shared rollout lock
+        id: locked
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/deployment_eligibility.py --stage locked --output artifacts/verification-eligibility.json
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.locked.outputs.eligible == 'true'
+        with:
+          role-to-assume: ${{ env.CLHEAR_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Submit full corpus verification through deployed L0
+        if: steps.locked.outputs.eligible == 'true'
+        run: python scripts/deploy_l1.py verify --sha "$GITHUB_SHA" --verification-id "l1-cycle-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --output artifacts/l1-cycle-submission.json
+      - name: Retain submission receipt; acceptance is in CLHEAR worker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l1-cycle-submission-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            artifacts/l1-cycle-submission.json
+            artifacts/verification-eligibility.json

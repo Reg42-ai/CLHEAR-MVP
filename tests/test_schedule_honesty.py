@@ -13,7 +13,7 @@ def test_schedule_kept_fails_when_nothing_attempted(engine):
     assert record["scores"]["attempted_24h"] == 0
 
 
-def test_schedule_kept_passes_when_every_source_attempted(engine):
+def test_unbound_run_rows_do_not_prove_scheduler_delivery(engine):
     with engine.begin() as conn:
         for entry in S:
             conn.execute(
@@ -25,8 +25,9 @@ def test_schedule_kept_passes_when_every_source_attempted(engine):
                 )
             )
     record = run_suite(engine, "l1_schedule_kept")
-    assert record["passed"] is True, record["scores"]["missed"][:5]
-    assert record["scores"]["missed_count"] == 0
+    assert record["passed"] is False
+    assert record["scores"]["received_adapters"] == 0
+    assert record["scores"]["attempted_24h"] == 0
 
 
 def test_fleet_board_reports_schedule_missed(client, engine):

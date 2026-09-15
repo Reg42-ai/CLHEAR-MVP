@@ -97,7 +97,8 @@ def test_authenticated_preview_reads_snapshot_without_startup_or_auth_or_read_wr
         assert evidence["snapshot_age_seconds"] >= 0
         assert evidence["publisher_checks_live"] is False
         for path in ("/", "/l1", "/sources", "/api/clhear/layers", "/api/clhear/sources",
-                     "/api/clhear/l1/inventory", "/api/clhear/l1/workflow", "/api/clhear/team?layer=L1"):
+                     "/api/clhear/l1/inventory", "/api/clhear/l1/publishers", "/api/clhear/l1/cycles",
+                     "/api/clhear/l1/workflow", "/api/clhear/team?layer=L1"):
             response = client.get(path)
             assert response.status_code == 200, (path, response.text)
             assert response.headers["x-clhear-preview"] == "read-only"

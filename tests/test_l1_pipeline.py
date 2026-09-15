@@ -17,7 +17,7 @@ from app.clhear.models import events
 
 
 class _StubAdapter:
-    """Deterministic in-memory adapter for pipeline unit tests."""
+    """Deterministic CLML fixture using the real parser and independent reader."""
 
     key = "stub"
 
@@ -37,38 +37,34 @@ class _StubAdapter:
             jurisdiction="XX",
             license=self.license,
             canonical_url="https://example.invalid/stub",
-            adapter="stub",
+            adapter="uk_legislation",
         )
 
     def fetch(self, since_version=None):
+        from app.clhear.l1.adapters.xml_document import parse
         if since_version == self.version:
             return None
+        root = ET.Element("Legislation")
+        body = ET.SubElement(ET.SubElement(root, "Secondary"), "Body")
+        for node in self.tree:
+            provision = ET.SubElement(body, "P1", id=node.ref)
+            if node.label:
+                ET.SubElement(provision, "Pnumber").text = node.label
+            if node.heading:
+                ET.SubElement(provision, "Title").text = node.heading
+            ET.SubElement(provision, "Text").text = node.raw_text
+        content = ET.tostring(root, encoding="utf-8")
         return FetchResult(
             version_label=self.version,
-            artifacts=[Artifact(name="doc.txt", content=self.version.encode(), content_type="text/plain")],
-            tree=[
-                DocNode(
-                    node_type=n.node_type,
-                    ref=n.ref,
-                    label=n.label,
-                    heading=n.heading,
-                    raw_text=n.raw_text,
-                    source_fragment=n.source_fragment,
-                    children=list(n.children),
-                )
-                for n in self.tree
-            ],
+            artifacts=[Artifact(name="doc.xml", content=content, content_type="application/xml")],
+            tree=parse(content, self.meta().source_key, self.meta().adapter),
         )
 
     def expected_text(self, artifacts):
-        # Trivial oracle: the stub's own node text (always consistent).
-        out = []
-        for node in self.tree:
-            for n in node.walk():
-                for piece in (n.label, n.heading, n.raw_text):
-                    if piece.strip():
-                        out.append(piece)
-        return out
+        from app.clhear.l1.adapters.xml_document import original_records
+        return [row[7] for part, artifact in enumerate(artifacts, 1)
+                for row in original_records(artifact.content, self.meta().source_key, self.meta().adapter, part)
+                if row[7].strip()]
 
 
 def _tree(*items: tuple[str, str]) -> list[DocNode]:
@@ -81,7 +77,7 @@ def test_pipeline_diff_and_events(engine, tmp_path):
     v1 = _StubAdapter("v1", _tree(("r1", "alpha"), ("r2", "bravo"), ("r3", "charlie")))
     s1 = pipeline.ingest(engine, v1, store)
     assert s1["status"] == "added" and s1["clauses"] == 3
-    assert s1["nodes"] == 3
+    assert s1["nodes"] == 10  # Body plus P1/Text/text-node per provision.
 
     # Re-ingest of the same artifact is a probed hash match (not a label skip).
     assert pipeline.ingest(engine, v1, store)["status"] == "unchanged"
@@ -117,7 +113,7 @@ def test_pipeline_diff_and_events(engine, tmp_path):
         nodes = conn.execute(
             sa.select(doc_nodes).where(doc_nodes.c.ref == "r2").where(doc_nodes.c.source_version_id == latest)
         ).all()
-        assert any(n.raw_text == "bravo AMENDED" for n in nodes)
+        assert any("bravo AMENDED" in n.source_fragment for n in nodes)
         clause = conn.execute(
             sa.select(clauses).where(clauses.c.ref == "r2").where(clauses.c.source_version_id == latest)
         ).one()
@@ -139,7 +135,18 @@ def test_p1_done_test_mlr_replay(engine, tmp_path):
     assert new["status"] == "amended"
     assert "regulation-3" in new["diff"]["amended"]
     assert len(new["diff"]["amended"]) > 10
-    assert new["diff"]["removed"] == []
+    # The lossless grammar now includes addressable historical alternatives
+    # omitted by the old renderer. Verify deletions against both actual CLML
+    # snapshots using the independent minidom reader.
+    from app.clhear.l1.adapters.base import CLAUSE_TYPES
+    from app.clhear.l1.adapters.xml_document import original_records
+    def original_refs(url):
+        return {row[5] for row in original_records(get(url), "uksi/2017/692", "uk_legislation")
+                if row[4] in CLAUSE_TYPES and row[5]}
+    old_refs = original_refs("https://www.legislation.gov.uk/uksi/2017/692/2020-01-09/data.xml")
+    current_refs = original_refs("https://www.legislation.gov.uk/uksi/2017/692/data.xml")
+    assert set(new["diff"]["removed"]) == old_refs - current_refs
+    assert set(new["diff"]["added"]) == current_refs - old_refs
 
     with engine.connect() as conn:
         emitted = conn.execute(
@@ -258,7 +265,7 @@ def test_restricted_discipline(engine, client, tmp_path):
     with engine.connect() as conn:
         row = conn.execute(sa.select(clauses)).one()
         assert row.public_ok is False
-        node = conn.execute(sa.select(doc_nodes)).one()
+        node = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.raw_text == secret_text)).one()
         assert node.public_ok is False and secret_text in node.raw_text
 
     payload = client.get("/api/clhear/sources/stub/source-restricted/clauses").json()

@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 from app.clhear.l1 import pipeline, retrieval
 from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta, flatten
 from app.clhear.l1.adapters.eur_lex import EurLexAdapter
+from app.clhear.l1.adapters.dom_document import parse as parse_document
+from app.clhear.l1 import originals, spans
 from app.clhear.l1.models import clauses, doc_nodes
 
 FIXTURE = Path(__file__).parent / "fixtures" / "oj_spine.html"
@@ -36,8 +38,7 @@ class _SpineAdapter:
 
     def fetch(self, since_version=None):
         content = FIXTURE.read_bytes()
-        soup = BeautifulSoup(content, "html.parser")
-        tree = EurLexAdapter(celex="32023R1114", celex_version="32023R1114")._parse_oj(soup)
+        tree = parse_document(content, self.meta().source_key)
         return FetchResult(
             version_label="as-published:fixture",
             artifacts=[Artifact(name="spine.xhtml", content=content, content_type="application/xhtml+xml")],
@@ -81,8 +82,7 @@ _ARABIC_AND_PART = """
 
 
 def test_oj_arabic_chapters_and_part_wrappers():
-    soup = BeautifulSoup(_ARABIC_AND_PART, "html.parser")
-    tree = EurLexAdapter(celex="32014R0596", celex_version="32014R0596")._parse_oj(soup)
+    tree = parse_document(_ARABIC_AND_PART.encode(), "celex/32014R0596")
     chapters = [n for n in flatten(tree) if n.node_type == "chapter"]
     assert any(c.ref == "cpt_1" and c.heading == "General provisions" for c in chapters)
     assert any(c.ref == "art_1" for c in flatten(tree) if c.ref == "art_1")
@@ -96,8 +96,7 @@ def test_oj_arabic_chapters_and_part_wrappers():
 
 
 def test_oj_roman_titles_become_parts_and_nest_articles():
-    soup = BeautifulSoup(FIXTURE.read_bytes(), "html.parser")
-    tree = EurLexAdapter(celex="32023R1114", celex_version="32023R1114")._parse_oj(soup)
+    tree = parse_document(FIXTURE.read_bytes(), "celex/32023R1114-fixture")
     parts = [n for n in flatten(tree) if n.node_type == "part"]
     assert [p.ref for p in parts] == ["tis_I", "tis_VI"]
     assert parts[0].label == "TITLE I"
@@ -111,12 +110,13 @@ def test_oj_roman_titles_become_parts_and_nest_articles():
     art91 = next(n for n in flatten(tree) if n.ref == "art_91")
     assert art91.heading == "Prohibition of market manipulation"
     assert any(c.node_type == "heading" and c.heading == "Quoted chapter heading" for c in flatten([art91]))
-    annex = next(n for n in tree if n.node_type == "schedule")
+    annex = next(n for n in flatten(tree) if n.node_type == "schedule")
     assert annex.label == "ANNEX I"
 
 
 def test_ingest_sets_clause_path_and_search_context(engine, client, tmp_path):
-    pipeline.ingest(engine, _SpineAdapter(), pipeline.LocalStore(tmp_path / "lake"))
+    result = pipeline.ingest(engine, _SpineAdapter(), pipeline.LocalStore(tmp_path / "lake"))
+    assert result["status"] == "added", result
     with engine.connect() as conn:
         path = conn.execute(sa.select(clauses.c.path).where(clauses.c.ref == "art_91")).scalar()
         assert "TITLE VI — PREVENTION AND PROHIBITION OF MARKET ABUSE" in (path or "")
@@ -142,3 +142,20 @@ def test_ingest_sets_clause_path_and_search_context(engine, client, tmp_path):
     assert any(
         "Prohibition of market manipulation" in (h.get("context") or "") for h in mica
     ), f"expected article heading in paragraph-grain context, got {[h.get('context') for h in mica]}"
+
+
+def test_display_heading_is_original_bound_and_not_duplicated_in_clause():
+    adapter = _SpineAdapter()
+    result = adapter.fetch()
+    meta = adapter.meta()
+    assert originals.attach_source_locations(meta.source_key, meta.adapter, result.artifacts, result.tree)
+    proof = originals.verify_original_projection(meta.source_key, meta.adapter, result.artifacts, result.tree)
+    assert proof["verified"], proof["findings"]
+    article = next(n for n in flatten(result.tree) if n.ref == "art_91")
+    assert article.heading == "Prohibition of market manipulation"
+    assert article.source_locator["presentation_fields"] == ["label", "heading"]
+    assert article.subtree_text().count(article.heading) == 1
+    start, end = spans.span_layout(result.tree)[id(article)]
+    assert spans.canonical_text(result.tree)[start:end] == article.subtree_text()
+    article.heading = "Invented heading"
+    assert not originals.verify_original_projection(meta.source_key, meta.adapter, result.artifacts, result.tree)["verified"]

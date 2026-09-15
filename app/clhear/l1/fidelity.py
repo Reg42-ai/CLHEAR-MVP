@@ -92,6 +92,11 @@ def lint(tree: list[DocNode]) -> list[str]:
 def check(tree: list[DocNode], expected_spans: list[str]) -> FidelityReport:
     """Token coverage of the oracle spans by the tree + invariant lint."""
     haystack = f" {tree_text(tree)} "
+    # Structured feeds contain many repeated metadata fields. Exact field
+    # membership avoids repeatedly scanning a multi-megabyte document while
+    # retaining the same diagnostic semantics. The independent originals gate
+    # separately requires ordered multiplicity and complete structure.
+    field_values = {ws(piece) for node in flatten(tree) for piece in (node.label, node.heading, node.raw_text) if piece}
     total_tokens = 0
     missing: list[str] = []
     missing_tokens = 0
@@ -101,15 +106,15 @@ def check(tree: list[DocNode], expected_spans: list[str]) -> FidelityReport:
             continue
         tokens = len(normalized.split())
         total_tokens += tokens
-        if f" {normalized} " not in haystack and normalized not in haystack:
+        if normalized not in field_values and f" {normalized} " not in haystack and normalized not in haystack:
             missing.append(span)
             missing_tokens += tokens
-    coverage = 1.0 if total_tokens == 0 else 1.0 - (missing_tokens / total_tokens)
+    coverage = 0.0 if total_tokens == 0 else 1.0 - (missing_tokens / total_tokens)
     return FidelityReport(
         coverage=coverage,
         total_tokens=total_tokens,
         missing_spans=missing,
-        violations=lint(tree),
+        violations=lint(tree) + (["empty original text oracle"] if total_tokens == 0 else []),
     )
 
 

@@ -22,6 +22,7 @@ that need a browser to render their text.
 """
 import re
 from datetime import date
+import hashlib
 
 from bs4 import BeautifulSoup, Tag
 
@@ -166,8 +167,7 @@ class _PublisherBase:
             return ""
 
     def version_of(self, content: bytes) -> tuple[str, date | None]:
-        today = date.today()
-        return f"{self.version_kind}:{today.isoformat()}", today
+        return f"{self.version_kind}:acquired-sha256-{hashlib.sha256(content).hexdigest()}", None
 
     def artifact_name(self) -> str:
         return "page.html"
@@ -220,45 +220,38 @@ class _PublisherBase:
         """Line-based structural parse shared by the PDF adapter and the HTML
         adapter's PDF fallback (publishers that serve a PDF from an HTML url)."""
         nodes: list[DocNode] = []
-        section: DocNode | None = None
-        provision: DocNode | None = None
+        section = provision = None
         context = {"part": part, "section": "", "seen": seen}
         seq = 0
-        for page in pages:
+        for page_number, page in enumerate(pages, 1):
             for raw in page.splitlines():
                 line = raw.strip()
                 if not line:
                     continue
                 seq += 1
+                locator = {"structure": "publisher-pdf-line", "page": page_number, "line": seq, "part": part}
                 match = self.PROVISION.match(line) if self.PROVISION else None
-                heading = self.HEADING.match(line) if (self.HEADING and not match) else None
+                heading = self.HEADING.match(line) if self.HEADING and not match else None
                 if heading:
-                    section = DocNode(
-                        node_type="group",
-                        ref=unique_ref(f"{self._source_key}/p{part}s{seq}", seen),
-                        heading=line,
-                    )
+                    ref = f"{self._source_key}/p{part}s{seq}"
+                    if ref in seen:
+                        raise ValueError("Duplicate PDF heading identity")
+                    seen.add(ref)
+                    section = DocNode(node_type="group", ref=ref, heading=line, source_locator=locator)
                     context["section"] = line
                     nodes.append(section)
                     provision = None
-                    continue
-                if match:
-                    ref = unique_ref(self.make_ref(match, context), seen)
-                    provision = DocNode(
-                        node_type="provision",
-                        ref=ref,
-                        label=line[: match.end()].strip(),
-                        raw_text=line[match.end() :].strip(),
-                        status=self.status_of(match),
-                    )
-                    (section.children if section is not None else nodes).append(provision)
-                    continue
-                if provision is not None:
-                    provision.raw_text = f"{provision.raw_text}\n{line}" if provision.raw_text else line
-                    continue
-                para = DocNode(node_type="paragraph", raw_text=line)
-                (section.children if section is not None else nodes).append(para)
-        _promote_groups_without_provisions(nodes)
+                elif match:
+                    ref = self.make_ref(match, context)
+                    if ref in seen:
+                        raise ValueError("Duplicate PDF provision; publisher scope requires disambiguation")
+                    seen.add(ref)
+                    provision = DocNode(node_type="provision", ref=ref, label=line[:match.end()].strip(),
+                                        raw_text=line[match.end():].strip(), status=self.status_of(match), source_locator=locator)
+                    (section.children if section else nodes).append(provision)
+                else:
+                    node = DocNode(node_type="paragraph", raw_text=line, source_locator=locator)
+                    (provision.children if provision else section.children if section else nodes).append(node)
         return nodes
 
 
@@ -270,8 +263,8 @@ class NumberedHtmlAdapter(_PublisherBase):
                 for page in extract_pdf_pages(artifact.content):
                     spans.extend(p.strip() for p in page.splitlines() if p.strip())
                 continue
-            soup = _strip_chrome(BeautifulSoup(artifact.content, "html.parser"))
-            spans.extend(_visible_strings(soup))
+            from app.clhear.l1.originals import html_text
+            spans.append(html_text(artifact.content))
         return spans
 
     def _blocks(self, soup: BeautifulSoup) -> list[tuple[str, str, Tag]]:
@@ -301,72 +294,16 @@ class NumberedHtmlAdapter(_PublisherBase):
     def _parse_into(self, content: bytes, seen: set[str], *, part: int) -> list[DocNode]:
         if content[:5] == b"%PDF-":
             return self._parse_pages(extract_pdf_pages(content), seen, part=part)
-        soup = _strip_chrome(BeautifulSoup(content, "html.parser"))
-        title_el = soup.find("title")
-        page_title = title_el.get_text(" ", strip=True) if title_el else ""
-        nodes: list[DocNode] = []
-        section: DocNode | None = None
-        provision: DocNode | None = None
-        context = {"part": part, "section": "", "seen": seen}
-        seq = 0
-        for kind, text, el in self._blocks(soup):
-            seq += 1
-            fragment = str(el)[:2000]
-            match = self.PROVISION.match(text) if self.PROVISION else None
-            if kind == "heading" and not match:
-                section = DocNode(
-                    node_type="group",
-                    ref=unique_ref(f"{self._source_key}/p{part}s{seq}", seen),
-                    heading=text,
-                    source_fragment=fragment,
-                )
-                context["section"] = text
-                nodes.append(section)
-                provision = None
-                continue
-            if match:
-                ref = unique_ref(self.make_ref(match, context), seen)
-                label = text[: match.end()].strip()
-                body = text[match.end() :].strip()
-                provision = DocNode(
-                    node_type="provision",
-                    ref=ref,
-                    label=label,
-                    raw_text=body,
-                    source_fragment=fragment,
-                    status=self.status_of(match),
-                )
-                (section.children if section is not None else nodes).append(provision)
-                continue
-            para = DocNode(node_type="paragraph", raw_text=text, source_fragment=fragment)
-            target = provision if provision is not None else section
-            (target.children if target is not None else nodes).append(para)
-        _promote_groups_without_provisions(nodes)
-        # Fidelity: anything visible that the walk did not capture lands in a note.
-        haystack = " ".join(piece for n in nodes for m in n.walk() for piece in (m.label, m.heading, m.raw_text) if piece)
-        haystack = f"{self._title} {page_title} {haystack}"
-        leftover = []
-        for span in _visible_strings(soup):
-            if span not in haystack:
-                leftover.append(span)
-                haystack += " " + span
-        if leftover:
-            note = DocNode(
-                node_type="note",
-                ref=unique_ref(f"{self._source_key}/p{part}/visible", seen),
-                heading="Visible text not captured as a heading, provision or paragraph",
-            )
-            for span in leftover:
-                note.children.append(DocNode(node_type="paragraph", raw_text=span))
-            nodes.append(note)
-        # One chapter per fetched page (FCA chapter, Basel chapter, FINRA rule page).
-        chapter = DocNode(
-            node_type="chapter",
-            ref=unique_ref(f"{self._source_key}/p{part}", seen),
-            heading=page_title or f"Part {part}",
-            children=nodes,
-        )
-        return [chapter]
+        from app.clhear.l1.adapters.html_document import parse
+        roots = parse(content, self._source_key, provision=self.PROVISION,
+                      make_ref=self.make_ref, status_of=self.status_of, part=part)
+        for node in roots[0].children:
+            for item in node.walk():
+                if item.ref:
+                    if item.ref in seen:
+                        raise ValueError("Repeated publisher provision across original artifacts")
+                    seen.add(item.ref)
+        return roots[0].children
 
 
 class NumberedPdfAdapter(_PublisherBase):
@@ -377,21 +314,10 @@ class NumberedPdfAdapter(_PublisherBase):
         return "document.pdf"
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
-        spans: list[str] = []
-        for artifact in artifacts:
-            if artifact.content[:5] == b"%PDF-":
-                for page in extract_pdf_pages(artifact.content):
-                    spans.extend(p.strip() for p in page.splitlines() if p.strip())
-            else:
-                soup = _strip_chrome(BeautifulSoup(artifact.content, "html.parser"))
-                spans.extend(_visible_strings(soup))
-        return spans
+        from app.clhear.l1.originals import pdf_original
+        return [pdf_original(artifact.content)[0] for artifact in artifacts]
 
     def _parse_into(self, content: bytes, seen: set[str], *, part: int) -> list[DocNode]:
-        if content[:5] == b"%PDF-":
-            pages = extract_pdf_pages(content)
-        else:
-            # Landing page or HTML edition: treat visible strings as lines.
-            soup = _strip_chrome(BeautifulSoup(content, "html.parser"))
-            pages = ["\n".join(_visible_strings(soup))]
-        return self._parse_pages(pages, seen, part=part)
+        if not content.startswith(b"%PDF-"):
+            raise ValueError("Expected publisher PDF bytes; a landing page cannot stand in for the document")
+        return self._parse_pages(extract_pdf_pages(content), seen, part=part)

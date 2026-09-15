@@ -116,10 +116,11 @@ def test_cognito_bearer_requires_verified_allowlisted_email(restricted_client, m
     ("x" * 31, "false"), (TEST_SECRET, "true"),
 ])
 def test_insecure_restricted_configuration_fails_closed(restricted_client, monkeypatch, secret, debug):
+    # A previously issued session must not bypass a now-invalid configuration.
+    _session(restricted_client)
     monkeypatch.setenv("CLHEAR_SESSION_SECRET", secret)
     monkeypatch.setenv("CLHEAR_AUTH_DEBUG", debug)
     get_settings.cache_clear()
-    _session(restricted_client)
     response = restricted_client.get("/api/clhear/sources")
     assert response.status_code == 503
     assert "no-store" in response.headers["cache-control"]

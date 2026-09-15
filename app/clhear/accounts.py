@@ -37,6 +37,8 @@ MAGIC_TTL_S = 15 * 60
 
 
 def _sign(payload: dict, purpose: str) -> str:
+    if not get_settings().clhear_session_secret.strip():
+        raise HTTPException(503, "Sign-in is not configured")
     if get_settings().clhear_preview_mode:
         purpose = f"preview:{purpose}"
     secret = get_settings().clhear_session_secret.encode()
@@ -46,6 +48,8 @@ def _sign(payload: dict, purpose: str) -> str:
 
 
 def _verify(token: str, purpose: str) -> dict | None:
+    if not get_settings().clhear_session_secret.strip():
+        return None
     if get_settings().clhear_preview_mode:
         purpose = f"preview:{purpose}"
     try:

@@ -1,7 +1,7 @@
 """L8 cohort engine — k≥5 aggregates over accumulated blueprint requests.
 
-Publishes real aggregates only when a cohort reaches k. Until then a clearly
-labeled synthetic demo cohort is the only public row. Zero LLM.
+Publishes real aggregates only when a cohort reaches k. An empty result means
+no eligible peer cohort exists. Test fixtures are never published.
 """
 from __future__ import annotations
 
@@ -17,18 +17,7 @@ from app.clhear.models import cohorts
 log = logging.getLogger("clhear.l8.cohorts")
 
 K = 5
-SYNTHETIC = {
-    "id": "COH:demo-uk-emi",
-    "label": "Synthetic demo — UK EMI-shaped (not real peers)",
-    "n": 0,
-    "k_threshold": K,
-    "synthetic": True,
-    "published": True,
-    "aggregates": {
-        "mean_coverage_ratio": None,
-        "note": "k-anonymity not met — this row is a labeled synthetic placeholder, not a peer benchmark",
-    },
-}
+
 
 
 def _jurisdiction_key(profile: dict) -> str:
@@ -55,16 +44,9 @@ def refresh_cohorts(engine: Engine, k: int = K) -> dict:
     published = 0
     synthetic = 0
     now = datetime.now(timezone.utc)
-    # Always upsert the labeled synthetic so the UI is never empty-and-lying.
+    # Retain historical test rows, but remove them from publication eligibility.
     with engine.begin() as conn:
-        exists = conn.execute(sa.select(cohorts.c.id).where(cohorts.c.id == SYNTHETIC["id"])).first()
-        values = {k: SYNTHETIC[k] for k in ("label", "n", "k_threshold", "synthetic", "published", "aggregates")}
-        values["updated_at"] = now
-        if exists:
-            conn.execute(cohorts.update().where(cohorts.c.id == SYNTHETIC["id"]).values(**values))
-        else:
-            conn.execute(cohorts.insert().values(id=SYNTHETIC["id"], **values))
-        synthetic = 1
+        conn.execute(cohorts.update().where(cohorts.c.synthetic.is_(True)).values(published=False))
         for key, items in buckets.items():
             ratios = [i["ratio"] for i in items if i["ratio"] is not None]
             meet = len(items) >= k
@@ -95,7 +77,7 @@ def refresh_cohorts(engine: Engine, k: int = K) -> dict:
 
         ai_ops.record(
             engine, kind="fleet_generation", layer="L8", fleet="l8.cohorts",
-            reasoning=f"Registrar: {published} k≥{k} cohorts published; synthetic demo labeled until peers exist",
+            reasoning=f"Registrar: {published} k≥{k} cohorts published; no eligible cohorts are published before the threshold is met",
             detail={"published": published, "synthetic": synthetic, "buckets": {k: len(v) for k, v in buckets.items()}},
         )
     except Exception:
@@ -105,7 +87,7 @@ def refresh_cohorts(engine: Engine, k: int = K) -> dict:
 
 def list_cohorts(engine: Engine) -> list[dict]:
     with engine.connect() as conn:
-        rows = [dict(r) for r in conn.execute(sa.select(cohorts)).mappings()]
+        rows = [dict(r) for r in conn.execute(sa.select(cohorts).where(cohorts.c.synthetic.is_(False))).mappings()]
     for r in rows:
         r["updated_at"] = str(r.get("updated_at"))
     return rows

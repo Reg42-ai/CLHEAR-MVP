@@ -44,17 +44,19 @@ def _free_port() -> int:
 
 def start_app(port: int) -> subprocess.Popen:
     """Start the app on a seeded offline corpus so the browsers render real rows, not empty states."""
-    db = ROOT / ".a11y-axe.db"
-    if db.exists():
-        db.unlink()
-    sys.path.insert(0, str(ROOT / "scripts"))
-    from nyc_demo import seed_synthetic_corpus
+    import tempfile
+    fixture_directory = tempfile.TemporaryDirectory(prefix="clhear-a11y-test-")
+    db = Path(fixture_directory.name) / "corpus.db"
+    sys.path.insert(0, str(ROOT))
+    from tests.support.journey import seed_synthetic_corpus
 
     seed_synthetic_corpus(db)
-    env = {**os.environ, "CLHEAR_HTTP_MODE": "replay", "DATABASE_URL": f"sqlite:///{db}",
-           "CLHEAR_AUTH_DEBUG": "true", "PYTHONPATH": str(ROOT)}
+    env = {**os.environ, "CLHEAR_HTTP_MODE": "replay", "CLHEAR_LLM_PROVIDER": "fake", "CLHEAR_ARTIFACT_STORE": "local", "DATABASE_URL": f"sqlite:///{db}",
+           "CLHEAR_AUTH_DEBUG": "true", "CLHEAR_SESSION_SECRET": "isolated-a11y-test-session-secret", "CLHEAR_APP_KEYS": "", "PYTHONPATH": str(ROOT)}
     proc = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port), "--log-level", "warning"],
                             cwd=ROOT, env=env)
+    proc.fixture_directory = fixture_directory
+    proc.fixture_database = db
     deadline = time.time() + 60
     while time.time() < deadline:
         try:
@@ -70,10 +72,10 @@ def start_app(port: int) -> subprocess.Popen:
 
 def build_blueprint(base: str) -> str | None:
     """Compose one blueprint through the public API so /l6#BLU-… has a programme to render."""
-    from nyc_demo import Demo
+    from tests.support.journey import Journey
 
     try:
-        out = Demo(base, quiet=True).run_api()
+        out = Journey(base, quiet=True).run_api()
     except Exception as exc:
         print(f"a11y-axe: warning — could not compose a blueprint for the l6 page audit: {exc}")
         return None
@@ -149,7 +151,11 @@ def main(argv: list[str] | None = None) -> int:
                 from app.clhear.db import make_engine
                 from app.clhear.l7 import score as l7_score
 
-                l7_score.score_items(make_engine(f"sqlite:///{ROOT / '.a11y-axe.db'}"))
+                engine = make_engine(f"sqlite:///{proc.fixture_database}")
+                try:
+                    l7_score.score_items(engine)
+                finally:
+                    engine.dispose()
             except Exception as exc:
                 print(f"a11y-axe: warning — could not score items for the l7 page audit: {exc}")
             args.pages = [*PAGES, f"/l6#{bid}", f"/l7#{bid}"]
@@ -165,9 +171,7 @@ def main(argv: list[str] | None = None) -> int:
                 proc.wait(10)
             except Exception:
                 proc.kill()
-            db = ROOT / ".a11y-axe.db"
-            if db.exists():
-                db.unlink()
+            proc.fixture_directory.cleanup()
 
     if args.json:
         Path(args.json).write_text(json.dumps(findings, indent=2))

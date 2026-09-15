@@ -168,7 +168,7 @@ def _manifest(engine) -> dict:
             raise ValueError("invalid snapshot timestamp")
         from app.clhear.l1.viewer_snapshot import _required_tables
         with engine.connect() as conn:
-            _required_tables(conn)
+            _required_tables(conn, historical_manifest=value)
         return value
     except Exception as exc:
         raise PreviewUnavailable("Preview requires a valid authoritative L0 worker snapshot with its evidence tables") from exc
@@ -230,7 +230,7 @@ def status() -> dict:
 # Deliberately exclude GET endpoints that create records (such as eval studio's
 # sample_tasks), model calls and exports. New surfaces need an explicit review.
 _READ_FUNCTIONS = {
-    "app.clhear.l1.routes": {"viewer_snapshot_state", "l1_inventory", "l1_workflow", "list_sources",
+    "app.clhear.l1.routes": {"viewer_snapshot_state", "l1_inventory", "l1_publishers", "l1_cycles", "l1_workflow", "list_sources",
                             "source_document", "node_inspector", "source_clauses", "source_evals", "source_inventory",
                             "source_detail", "meta", "recent_changes", "search_clauses", "activity", "fleet_board",
                             "latest_job", "job_detail", "run_detail", "sources_explorer", "l1_browser"},

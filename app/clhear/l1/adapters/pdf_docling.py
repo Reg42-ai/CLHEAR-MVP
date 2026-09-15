@@ -1,35 +1,22 @@
 """PDF → DocNode helper (Class C).
 
-Prefers Docling when installed; otherwise uses pypdf page text. The oracle is
-the same page-level extraction used as a dumb concatenation — the structural
-parse only groups pages/paragraphs. Publisher text is never rewritten.
+Uses pypdf for parsing and an independent pdfminer text/layout oracle. Numbered
+sections are retained; ambiguous or image-only documents require review.
 """
 from datetime import date
+import hashlib
+import re
 
 from app.clhear.l1 import http
 from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
 
 
 def extract_pdf_pages(content: bytes) -> list[str]:
-    """Return one string per PDF page (Docling if present, else pypdf)."""
-    try:
-        from docling.document_converter import DocumentConverter
+    """Deterministic pypdf extraction; pdfminer independently verifies it.
 
-        import tempfile
-        import os
-
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(content)
-            path = tmp.name
-        try:
-            doc = DocumentConverter().convert(path).document
-            text = doc.export_to_text() if hasattr(doc, "export_to_text") else str(doc)
-            pages = [p.strip() for p in text.split("\f") if p.strip()]
-            return pages or ([text] if text.strip() else [])
-        finally:
-            os.unlink(path)
-    except Exception:
-        pass
+    Never silently switch decoders after a failure or collapse a whole PDF
+    into one pretend page. Scanned/empty pages require explicit review.
+    """
     from pypdf import PdfReader
     import io
 
@@ -37,28 +24,47 @@ def extract_pdf_pages(content: bytes) -> list[str]:
     pages = []
     for page in reader.pages:
         pages.append(page.extract_text() or "")
+    if not pages or any(not page.strip() for page in pages):
+        raise ValueError("PDF has empty/scanned pages; independent OCR/visual review required")
     return pages
 
 
 def pages_to_tree(pages: list[str], source_key: str, title: str) -> list[DocNode]:
-    root = DocNode(node_type="title", ref=source_key, heading=title)
-    for i, page in enumerate(pages, start=1):
-        chapter = DocNode(
-            node_type="chapter",
-            ref=f"{source_key}/p{i}",
-            label=f"Page {i}",
-            heading=f"Page {i}",
-        )
-        for para in [p.strip() for p in page.split("\n\n") if p.strip()]:
-            chapter.children.append(DocNode(node_type="paragraph", raw_text=para))
-        if not chapter.children and page.strip():
-            chapter.children.append(DocNode(node_type="paragraph", raw_text=page.strip()))
-        root.children.append(chapter)
+    root = DocNode(node_type="title", ref=source_key, heading=title, source_locator={"structure": "pdf-root"})
+    current, sections, seen = root, [], set()
+    for page_number, page in enumerate(pages, 1):
+        for line_number, raw in enumerate(page.splitlines(), 1):
+            text = raw.strip()
+            if not text:
+                continue
+            locator = {"structure": "pdf-line", "page": page_number, "line": line_number}
+            match = SECTION.match(text)
+            if match:
+                marker = match.group("ref")
+                if marker in seen:
+                    raise ValueError("PDF repeats a section/control marker; contents/header/body scope must be resolved")
+                seen.add(marker)
+                depth = marker.count(".")
+                while sections and sections[-1][0] >= depth:
+                    sections.pop()
+                node = DocNode(node_type="section", ref=f"{source_key}/section/{marker}",
+                               label=text[:match.end()].strip(), raw_text=text[match.end():].strip(), source_locator=locator)
+                (sections[-1][1] if sections else root).children.append(node)
+                sections.append((depth, node))
+                current = node
+            else:
+                current.children.append(DocNode(node_type="paragraph", raw_text=text, source_locator=locator))
+    if not seen:
+        raise ValueError("PDF section/control numbering is unrecognized; a publisher-specific structural parser is required")
     return [root]
 
 
+# Numeric standard sections / Annex A controls and AICPA TSC identifiers.
+SECTION = re.compile(r"^(?P<ref>(?:A\.)?\d+(?:\.\d+){0,5}|(?:CC|PI|P|A|C)\d+(?:\.\d+){0,5})(?:[.)])?\s+(?=\S)")
+
+
 class PdfOfficialAdapter:
-    """Fetch a PDF (or HTML landing page that links one) and emit a DocNode tree."""
+    """Fetch an explicit PDF artifact; a landing page is not its full text."""
 
     key = "pdf_official"
 
@@ -122,38 +128,23 @@ class PdfOfficialAdapter:
         content = http.get(self._url)
         ctype = "application/pdf" if content[:5] == b"%PDF-" else "application/octet-stream"
         if content[:5] != b"%PDF-":
-            # Landing page: keep the bytes as an HTML artifact and parse as PDF-or-text.
-            from app.clhear.l1.adapters.official_html import OfficialHtmlAdapter
-
-            html = OfficialHtmlAdapter(
-                source_key=self._source_key,
-                title=self._title,
-                url=self._url,
-                adapter=self.key,
-                meta=self.meta(),
-            )
-            result = html.fetch(since_version)
-            if result is None:
-                return None
-            result.artifacts = [Artifact(name="page.html", content=content, content_type="text/html")]
-            return result
+            raise ValueError("Expected a publisher PDF artifact; landing pages require a resolved document URL")
         pages = extract_pdf_pages(content)
         tree = pages_to_tree(pages, self._source_key, self._title)
-        today = date.today()
         return FetchResult(
-            version_label=f"edition:{today.isoformat()}",
+            version_label=f"edition:acquired-sha256-{hashlib.sha256(content).hexdigest()}",
             artifacts=[Artifact(name="document.pdf", content=content, content_type=ctype)],
             tree=tree,
             version_kind="edition",
-            as_of_date=today,
+            as_of_date=None,
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
         spans: list[str] = []
         for artifact in artifacts:
             if artifact.content[:5] == b"%PDF-":
-                for page in extract_pdf_pages(artifact.content):
-                    spans.extend(p.strip() for p in page.splitlines() if p.strip())
+                from app.clhear.l1.originals import pdf_original
+                spans.append(pdf_original(artifact.content)[0])
             else:
                 from bs4 import BeautifulSoup
 

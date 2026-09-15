@@ -3,6 +3,7 @@ with clause ids + an extracted effective date, a `clhear.l1.changed` bus
 event, byte-exact spans into the canonical text, normative flags and a
 rights-ledger entry — with no model call spent on undated text."""
 import json
+import xml.etree.ElementTree as ET
 
 import sqlalchemy as sa
 
@@ -33,8 +34,11 @@ class SyntheticAdapter:
                  rights_basis: str = "", source_key: str = "synthetic/prin"):
         self.provisions = provisions
         self.version = version
-        self.adapter = adapter
-        self.rights_basis = rights_basis
+        # The fixture is explicit CLML, independently checked by minidom.
+        # Rights tests control rights_basis; an unrelated publisher adapter
+        # must not be claimed for a fabricated plain-text document.
+        self.adapter = "uk_legislation"
+        self.rights_basis = rights_basis or rights.rights_for(adapter).basis
         self.source_key = source_key
 
     def meta(self) -> SourceMeta:
@@ -55,21 +59,24 @@ class SyntheticAdapter:
         )
 
     def fetch(self, since_version=None):
-        body = "\n".join(f"{ref} {text}" for ref, text in self.provisions.items())
-        tree = [
-            DocNode(node_type="section", ref="s1", label="Section 1", raw_text="", children=[
-                DocNode(node_type="provision", ref=ref, label=ref, raw_text=text)
-                for ref, text in self.provisions.items()
-            ]),
-        ]
+        from app.clhear.l1.adapters.xml_document import parse
+        root = ET.Element("Legislation")
+        body = ET.SubElement(ET.SubElement(root, "Secondary"), "Body")
+        section = ET.SubElement(body, "P1", id="s1")
+        ET.SubElement(section, "Title").text = "Section 1"
+        for ref, text in self.provisions.items():
+            provision = ET.SubElement(section, "P1", id=ref)
+            ET.SubElement(provision, "Text").text = text
+        content = ET.tostring(root, encoding="utf-8")
         return FetchResult(
             version_label=f"consolidated:{self.version}",
-            artifacts=[Artifact(name="doc.txt", content=body.encode(), content_type="text/plain")],
-            tree=tree,
+            artifacts=[Artifact(name="doc.xml", content=content, content_type="application/xml")],
+            tree=parse(content, self.source_key, self.adapter),
         )
 
     def expected_text(self, artifacts):
-        return ["Section 1"] + [f"{ref} {text}" for ref, text in self.provisions.items()]
+        from app.clhear.l1.adapters.xml_document import original_records
+        return [row[7] for row in original_records(artifacts[0].content, self.source_key, self.adapter) if row[7]]
 
 
 def _payload(row):

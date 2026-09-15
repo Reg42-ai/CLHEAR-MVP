@@ -383,31 +383,38 @@ def stage(name, details=None):
     return StageRecorder(name, details)
 
 
-def workflow_summary(engine: Engine, job_id=None, source_key=None):
+def workflow_summary(engine: Engine, job_id=None, source_key=None, *, task_offset=0, task_limit=200,
+                     step_offset=0, step_limit=500, job_offset=0, job_limit=50):
     empty = dict(jobs=[], tasks=[], steps=[], workflow_stages=WORKFLOW_STAGES)
     schema = None if engine.dialect.name == "sqlite" else metadata.schema
     inspector = sa.inspect(engine)
     if not all(inspector.has_table(table.name, schema=schema) for table in (jobs, tasks, steps)):
         return {**empty, "status": "unavailable", "reason": "Workflow migration has not been applied."}
+    task_offset, step_offset, job_offset = (max(0, int(n)) for n in (task_offset, step_offset, job_offset))
+    task_limit, step_limit, job_limit = (max(1, min(int(n), 1000)) for n in (task_limit, step_limit, job_limit))
     with engine.connect() as conn:
-        task_query = sa.select(tasks)
-        if job_id:
-            task_query = task_query.where(tasks.c.job_id == job_id)
-        if source_key:
-            task_query = task_query.where(tasks.c.source_key == source_key)
-        found_tasks = list(conn.execute(task_query.order_by(tasks.c.created_at.desc()).limit(200)).mappings())
-        ids = {r["job_id"] for r in found_tasks}
         query = sa.select(jobs)
         if job_id:
             query = query.where(jobs.c.job_id == job_id)
         elif source_key:
-            query = query.where(jobs.c.job_id.in_(ids))
-        found_jobs = list(conn.execute(query.order_by(jobs.c.created_at.desc()).limit(50)).mappings())
+            query = query.where(jobs.c.job_id.in_(sa.select(tasks.c.job_id).where(tasks.c.source_key == source_key)))
+        job_total = conn.execute(sa.select(sa.func.count()).select_from(query.subquery())).scalar_one()
+        found_jobs = list(conn.execute(query.order_by(jobs.c.created_at.desc(), jobs.c.job_id)
+                                      .offset(job_offset).limit(job_limit)).mappings())
         ids = {r["job_id"] for r in found_jobs}
+        task_query = sa.select(tasks).where(tasks.c.job_id.in_(ids))
+        if source_key:
+            task_query = task_query.where(tasks.c.source_key == source_key)
+        task_total = conn.execute(sa.select(sa.func.count()).select_from(task_query.subquery())).scalar_one()
+        found_tasks = list(conn.execute(task_query.order_by(tasks.c.created_at.desc(), tasks.c.task_id)
+                                       .offset(task_offset).limit(task_limit)).mappings())
         step_query = sa.select(steps).where(steps.c.job_id.in_(ids))
         if source_key:
-            step_query = step_query.where(sa.or_(steps.c.task_id.is_(None), steps.c.task_id.in_([t["task_id"] for t in found_tasks])))
-        found_steps = list(conn.execute(step_query.order_by(steps.c.started_at.desc()).limit(500)).mappings())
+            step_query = step_query.where(sa.or_(steps.c.task_id.is_(None), steps.c.task_id.in_(
+                sa.select(tasks.c.task_id).where(tasks.c.job_id.in_(ids), tasks.c.source_key == source_key))))
+        step_total = conn.execute(sa.select(sa.func.count()).select_from(step_query.subquery())).scalar_one()
+        found_steps = list(conn.execute(step_query.order_by(steps.c.started_at.desc(), steps.c.step_id)
+                                       .offset(step_offset).limit(step_limit)).mappings())
     def clean(row):
         out = {k: (_aware(v).isoformat() if isinstance(v, datetime) else v) for k, v in row.items() if k != "owner_token"}
         if row.get("status") == "running" and row.get("lease_until") and _aware(row["lease_until"]) <= utcnow():
@@ -416,4 +423,8 @@ def workflow_summary(engine: Engine, job_id=None, source_key=None):
         return out
     return dict(status="available", workflow_stages=WORKFLOW_STAGES, jobs=[clean(r) for r in found_jobs],
                 tasks=[clean(r) for r in found_tasks if r["job_id"] in ids],
-                steps=[clean(r) for r in reversed(found_steps)])
+                steps=[clean(r) for r in reversed(found_steps)],
+                job_total=job_total, task_total=task_total, step_total=step_total,
+                pagination={"jobs": {"offset": job_offset, "limit": job_limit, "has_more": job_offset + len(found_jobs) < job_total},
+                            "tasks": {"offset": task_offset, "limit": task_limit, "has_more": task_offset + len(found_tasks) < task_total},
+                            "steps": {"offset": step_offset, "limit": step_limit, "has_more": step_offset + len(found_steps) < step_total}})

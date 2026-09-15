@@ -1,5 +1,6 @@
 """Fleet kernel: every registry row has an adapter; crash → failed; HTML/lists/BYOL."""
 import sqlalchemy as sa
+import pytest
 
 from app.clhear.l1 import fidelity, pipeline
 from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
@@ -79,14 +80,17 @@ class _OkThenBoom:
     def fetch(self, since_version=None):
         if self.boom:
             raise RuntimeError("TNA 202")
+        from app.clhear.l1.adapters.html_document import parse
+        body = b"<main><h1>Fixture</h1><p>hello world from publisher</p></main>"
         return FetchResult(
             version_label="v1",
-            artifacts=[Artifact(name="a.txt", content=b"hello world from publisher", content_type="text/plain")],
-            tree=[DocNode(node_type="provision", ref="r1", raw_text="hello world from publisher")],
+            artifacts=[Artifact(name="a.html", content=body, content_type="text/html")],
+            tree=parse(body, self.meta().source_key),
         )
 
     def expected_text(self, artifacts):
-        return ["hello world from publisher"]
+        from app.clhear.l1.originals import html_text
+        return [html_text(a.content) for a in artifacts]
 
 
 def test_fleet_plan_has_an_adapter_for_every_s_row():

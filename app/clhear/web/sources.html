@@ -403,6 +403,7 @@ function ViewerSnapshotNotice() {
   return html`<div class="charter" style=${{ marginBottom: "16px" }}>
     <b>${state.viewer_snapshot ? "L1 candidate viewer" : "Direct database view"}</b> · ${evidenceLabel(state.source_environment)}
     ${state.viewer_snapshot && html` · refreshed ${state.generated_at || "at an unrecorded time"} · revision <span class="mono">${state.revision || "not recorded"}</span>
+      ${state.cycle_id && html`<br />Cycle <a href=${`/l1?view=fleet&cycle=${encodeURIComponent(state.cycle_id)}`}>${state.cycle_id}</a> · ${evidenceLabel(state.cycle_status)} · finished ${state.cycle_finished_at || "at an unrecorded time"}`}
       <br />This projection is not an accepted release. ${(state.omitted_layers || []).join("–")} output is not included.
       ${(state.redacted_source_keys || []).length} sources have text withheld by recorded permissions.`}
     ${!state.viewer_snapshot && html` · no viewer snapshot revision is recorded; this does not establish acceptance.`}
@@ -414,8 +415,25 @@ function Findings({ findings = [] }) {
   return html`<ul>${findings.map((f, i) => html`<li key=${i}><b>${evidenceLabel(f.code)}</b>${f.operation ? ` · ${evidenceLabel(f.operation)}` : ""}${f.source_key ? ` · ${f.source_key}` : ""} — ${f.detail || f.reason || "Detail not recorded"}</li>`)}</ul>`;
 }
 
+function PublisherInventory() {
+  const [data, setData] = useState(null), [error, setError] = useState(null);
+  const [publisher, setPublisher] = useState("");
+  useEffect(() => { api("/api/clhear/l1/publishers").then(setData).catch(setError); }, []);
+  if (error) return html`<${ErrorNotice} error=${error} />`;
+  const profiles = data && data.publishers || [];
+  return html`<details><summary>Publisher scope contracts (${data ? data.total : "loading"})</summary>
+    <p class="charter">${data && data.notice} Each contract defines what must be discovered; it does not establish completeness.</p>
+    <label>Publisher <select value=${publisher} onChange=${e => setPublisher(e.target.value)}><option value="">All publishers</option>${profiles.map(p => html`<option key=${p.publisher_id} value=${p.publisher_id}>${p.name}</option>`)}</select></label>
+    ${profiles.filter(p => !publisher || p.publisher_id === publisher).map(p => html`<article class="family" key=${p.publisher_id}>
+      <h3>${p.name}</h3><p>${evidenceLabel(p.catalog_status)} · denominator unknown · profile ${p.profile_version}</p>
+      <p class="charter">${(p.categories || []).join(" · ")}</p>
+      <details><summary>Exact boundaries, collections and acquisition requirements</summary><pre tabindex="0">${JSON.stringify(p, null, 2)}</pre></details>
+    </article>`)}
+  </details>`;
+}
+
 function InventoryOverview() {
-  const [scope, setScope] = useState("registered");
+  const [scope, setScope] = useState("all_publishers");
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
   useEffect(() => {
@@ -428,9 +446,10 @@ function InventoryOverview() {
   return html`<section class="family" aria-label="Declared L1 inventory">
     <div class="recordbar"><h2 style=${{ margin: 0 }}>Declared L1 inventory</h2>
       <label for="inventory-scope">Scope </label><select id="inventory-scope" value=${scope} onChange=${(e) => setScope(e.target.value)}>
-        <option value="registered">All registered sources</option><option value="finra">FINRA library</option>
+        <option value="all_publishers">All publishers</option><option value="registered">Registered sources</option><option value="finra">FINRA library</option>
       </select></div>
     ${error ? html`<${ErrorNotice} error=${error} />` : !report ? html`<p class="charter">Loading worker-produced inventory evidence…</p>` : html`<${InventorySummary} report=${report} />`}
+    <${PublisherInventory} />
   </section>`;
 }
 
@@ -500,9 +519,12 @@ function SourceAuditEvidence({ audit, doc }) {
 
 function Library({ families, open }) {
   const [meta, setMeta] = useState(_meta);
+  const [publisher, setPublisher] = useState("");
   useEffect(() => { getMeta().then(setMeta).catch(() => {}); }, []);
   const allMembers = families.flatMap((f) => f.members);
-  const ingested = allMembers.filter((m) => m.library_status === "ingested" || m.latest_version);
+  const publishers = [...new Set(allMembers.map(m => m.publisher).filter(Boolean))].sort();
+  const filtered = families.map(f => ({...f, members: f.members.filter(m => !publisher || m.publisher === publisher)})).filter(f => f.members.length);
+  const ingested = allMembers.filter((m) => m.source_role === "document" && m.latest_version);
   const failed = allMembers.filter((m) => m.library_status === "failed-today");
   const never = allMembers.filter((m) => m.library_status === "never-fetched" || m.library_status === "schedule-missed");
   const locked = allMembers.filter((m) => m.library_status === "locked-restricted");
@@ -516,16 +538,17 @@ function Library({ families, open }) {
               <span class="mono">${k}</span> ${s.cadence} · ${s.utc_time} UTC
             </span>`)}
         </div>`}
-      ${families.length === 0 && html`<div class="empty">No sources ingested yet.</div>`}
-      ${families.map((f) => html`
+      <div class="recordbar"><label>Publisher <select aria-label="Filter source publisher" value=${publisher} onChange=${e => setPublisher(e.target.value)}><option value="">All publishers</option>${publishers.map(name => html`<option key=${name} value=${name}>${name}</option>`)}</select></label><span>${new Set(filtered.flatMap(f => f.members.map(m => m.key))).size} distinct source declarations</span></div>
+      ${filtered.length === 0 && html`<div class="empty">No sources match this selection.</div>`}
+      ${filtered.map((f) => html`
         <div class="family" key=${f.key}>
           <h2>${f.name}</h2>
           ${f.scope_charter && f.scope_charter.binding && html`
             <div class="charter">charter — binding: ${f.scope_charter.binding}${f.scope_charter.out ? ` · out of scope: ${[].concat(f.scope_charter.out).join(", ")}` : ""}</div>`}
           ${f.scope_charter && f.scope_charter.registry && html`
-            <div class="charter">${f.scope_charter.registry}${f.scope_charter.partner ? ` · partner: ${f.scope_charter.partner}` : ""}</div>`}
+            <div class="charter">${f.scope_charter.registry}</div>`}
           <table class="members">
-            <thead><tr><th>source</th><th>relation</th><th>tier</th><th>license</th><th>version</th><th>clauses</th><th>added via</th></tr></thead>
+            <thead><tr><th>source</th><th>relation</th><th>tier</th><th>acquisition</th><th>import / version</th><th>verification</th><th>clauses</th></tr></thead>
             <tbody>
             ${f.members.map((m) => html`
               <tr key=${m.key}>
@@ -539,10 +562,10 @@ function Library({ families, open }) {
                 </td>
                 <td><span class="badge ${m.relation === "root" ? "root" : "binding"}">${m.relation}</span></td>
                 <td><span class="badge ${m.tier}">${m.tier}</span></td>
-                <td><span class="badge ${m.license}">${m.license}</span></td>
-                <td class="mono">${m.latest_version || m.library_status || "never-fetched"}</td>
+                <td><span class=${"badge " + evidenceTone(m.acquisition_status)}>${evidenceLabel(m.acquisition_status)}</span><div class="charter">License classification: ${m.license}</div></td>
+                <td>${evidenceLabel(m.source_role === "document" ? m.import_status : m.source_role)}<div class="mono">${m.latest_version || "No stored version"}</div></td>
+                <td><a href=${sourceUrl(m.key, m.latest_version)}>Inspect version evidence</a><div class="charter">${evidenceLabel(m.verification_status)}</div></td>
                 <td class="mono">${m.clauses ?? "—"}</td>
-                <td>${m.added_via === "citator" ? html`<span class="badge citator">citator</span>` : m.added_via}</td>
               </tr>`)}
             </tbody>
           </table>
@@ -575,7 +598,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
   const [category, setCategory] = useState(null);
   const scrolled = useRef(false);
   const nodeCache = useRef(new Map());
-  const activeId = hoverId || selectedId;
+  const activeId = selectedId || hoverId;
   const chooseVersion = (label) => {
     const next = label || ((detail && detail.versions) || []).find((v) => v.status === "in_force")?.version_label || null;
     setSelectedId(null); setHoverId(null); setInfo(null); setVersion(next);
@@ -685,7 +708,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
       <div class="meta-grid">
         <span>issuer <b>${detail.issuer}</b></span>
         <span>jurisdiction <b>${detail.jurisdiction}</b></span>
-        <span>license <span class="badge ${detail.license}">${detail.license}</span> ${detail.license_ref}</span>
+        <span>License classification <span class="badge">${detail.license}</span> ${detail.license_ref} · operation permissions are evaluated separately</span>
         <span>adapter <b>${detail.adapter}</b></span>
         ${detail.canonical_url && html`<span><a href=${detail.canonical_url} target="_blank" rel="noreferrer">publisher source ↗</a></span>`}
       </div>
@@ -777,8 +800,21 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
 
 const TOC_SPINE = new Set(["part", "chapter", "section", "group"]);
 const TOC_ARTICLE = new Set(["article", "provision", "control"]);
+const STRUCTURED_RECORDS = new Set(["json-value", "xml-element", "xml-text", "legal-html-element", "legal-html-text"]);
+const structuredRecord = (n) => STRUCTURED_RECORDS.has((n.source_locator || {}).structure);
+
+function originalFields(n) {
+  const projected = new Set((n.source_locator || {}).presentation_fields || []);
+  const structural = structuredRecord(n);
+  return {
+    label: structural || projected.has("label") ? "" : n.label || "",
+    heading: structural || projected.has("heading") ? "" : n.heading || "",
+    body: projected.has("raw_text") ? "" : n.raw_text || "",
+  };
+}
 
 function tocLabel(n) {
+  if (structuredRecord(n)) return ws(n.heading || n.ref || "");
   const label = ws(n.label || "");
   const heading = ws(n.heading || "");
   if (label && heading && heading !== label) return `${label} — ${heading}`;
@@ -786,7 +822,7 @@ function tocLabel(n) {
 }
 
 function buildToc(nodes) {
-  const labeled = (n) => !!(ws(n.heading || "") || ws(n.label || ""));
+  const labeled = (n) => !!(ws(n.heading || "") || ws((structuredRecord(n) ? n.ref : n.label) || ""));
   const spine = nodes.filter((n) => labeled(n) && TOC_SPINE.has(n.node_type));
   const annexes = nodes.filter((n) => n.node_type === "schedule" && labeled(n));
   const articles = nodes.filter((n) =>
@@ -941,20 +977,24 @@ function DocLine({ n, first, amended, inspect, explain, hover, selected, onEnter
   const indent = centered ? 0 : Math.max(0, n.depth - 1) * 18;
   const classes = ["n", n.node_type, first && n.node_type === "title" && "docfirst",
                    amended && "amended", selected && "selected"].filter(Boolean).join(" ");
-  const body = n.raw_text || "";
+  const {label, heading, body} = originalFields(n);
+  // Structural containers remain linkable, while publisher text appears once
+  // in its source text nodes. Encoded field/tag names are never legal prose.
+  if (!inspect && !label && !heading && !body) return html`<span id=${"node-" + n.id}></span>`;
   // Official-layout dedup: never print the label when the visible text already
   // begins with it (the data-level invariant forbids it too; this is defense).
-  const dupIn = (text) => text && ws(text).startsWith(ws(n.label)) && !/^[A-Za-z0-9]/.test(ws(text).slice(ws(n.label).length, ws(n.label).length + 1));
-  const showLabel = n.label && !dupIn(n.heading) && !dupIn(body);
+  const dupIn = (text) => text && ws(text).startsWith(ws(label)) && !/^[A-Za-z0-9]/.test(ws(text).slice(ws(label).length, ws(label).length + 1));
+  const showLabel = label && !dupIn(heading) && !dupIn(body);
   const a = explain ? n.annotation : null;
   return html`
     <div id=${"node-" + n.id} class=${classes} style=${{ paddingLeft: indent + "px" }} tabindex="0" role="button"
          aria-label=${`Inspect ${n.ref || n.node_type} record ${n.id}`} aria-pressed=${!!selected}
          onMouseEnter=${onEnter} onMouseLeave=${onLeave} onFocus=${onEnter} onBlur=${onLeave} onClick=${onClick}
          onKeyDown=${(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}>
-      ${showLabel && html`<span class="lab">${n.label}</span>`}
-      ${n.heading && html`<span class="hd">${n.heading}</span>`}
-      ${body && html`<span class="rawbody">${showLabel || n.heading ? " " : ""}${body}</span>`}
+      ${showLabel && html`<span class="lab">${label}</span>`}
+      ${heading && html`<span class="hd">${heading}</span>`}
+      ${body && html`<span class="rawbody">${showLabel || heading ? " " : ""}${body}</span>`}
+      ${inspect && !label && !heading && !body && html`<span class="mono">Encoded container · ${n.ref || n.node_type}</span>`}
       ${inspect && hover && html`
         <span class="float">
           node #${n.id} · ${n.ref || n.node_type} · ${(n.text_hash || "").slice(0, 8)} · click to pin
@@ -1001,6 +1041,7 @@ function Inspector({ info, error, loading, pinned, clearPin, annotation, annotat
     node_id: info.id, node_type: info.node_type, ref: info.ref, seq: info.seq, depth: info.depth,
     label: info.label, heading: info.heading, raw_text: info.raw_text, text_hash: info.text_hash,
     clauses: info.clauses || [], dataset_kind: info.dataset_kind,
+    source_locator: info.source_locator || null, canonical_offset_unit: info.canonical_offset_unit || "not recorded",
   };
   return html`
     <aside class="inspector">
@@ -1104,7 +1145,7 @@ function EvidencePanel({ card, sourceKey, version, error, sourceVersionId, conte
       </table>
       <div class="charter">Reported downstream readiness: ${card.l2_ready === true ? "ready" : card.l2_ready === false ? "not ready" : "not recorded"}. ${card.readiness_reason || "Missing checks remain unverified."}</div>
       <${SourceAuditEvidence} audit=${card.inventory} doc=${{ source_version_id: card.source_version_id, content_hash: card.content_hash }} />
-      <details><summary>Recorded source workflow (all attempts)</summary><${WorkflowEvidence} report=${card.workflow} /></details>
+      <details><summary>Recorded source workflow (all attempts)</summary><${WorkflowBrowser} sourceKey=${sourceKey} /></details>
     </div>`;
 }
 
@@ -1217,6 +1258,65 @@ function workflowStepTable(recorded, emptyText) {
       </td></tr>`)}</tbody></table></div>`;
 }
 
+function WorkflowBrowser({ jobId, sourceKey }) {
+  const [offsets, setOffsets] = useState({jobs: 0, tasks: 0, steps: 0});
+  const [data, setData] = useState(null), [error, setError] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const query = new URLSearchParams({job_offset: offsets.jobs, job_limit: 10, task_offset: offsets.tasks, task_limit: 100, step_offset: offsets.steps, step_limit: 200});
+    if (jobId) query.set("job_id", jobId);
+    if (sourceKey) query.set("source_key", sourceKey);
+    setData(null); setError(null);
+    api(`/api/clhear/l1/workflow?${query}`).then(value => { if (!cancelled) setData(value); }).catch(value => { if (!cancelled) setError(value); });
+    return () => { cancelled = true; };
+  }, [jobId, sourceKey, offsets]);
+  if (error) return html`<${ErrorNotice} error=${error} />`;
+  if (!data) return html`<p>Loading measured workflow…</p>`;
+  return html`<div>
+    <div class="recordbar">${["jobs", "tasks", "steps"].map(kind => {
+      const page = (data.pagination || {})[kind], total = data[kind.slice(0, -1) + "_total"];
+      if (!page) return null;
+      const move = delta => setOffsets({...offsets, [kind]: Math.max(0, page.offset + delta * page.limit), ...(kind === "jobs" ? {tasks: 0, steps: 0} : {})});
+      return html`<span key=${kind}>${kind}: ${total || 0} total · ${page.offset + (total ? 1 : 0)}–${Math.min(page.offset + page.limit, total || 0)}
+        <button disabled=${!page.offset} onClick=${() => move(-1)} aria-label=${`Previous ${kind}`}>Previous</button>
+        <button disabled=${!page.has_more} onClick=${() => move(1)} aria-label=${`Next ${kind}`}>Next</button></span>`;
+    })}</div>
+    <${WorkflowEvidence} report=${data} />
+    <details><summary>Exact records on this page</summary><pre tabindex="0">${JSON.stringify(data, null, 2)}</pre></details>
+  </div>`;
+}
+
+function CycleBoard() {
+  const [offset, setOffset] = useState(0), [selected, setSelected] = useState(() => new URLSearchParams(location.search).get("cycle") || "");
+  const [data, setData] = useState(null), [error, setError] = useState(null), [revision, refresh] = useState(0);
+  const [jobId, setJobId] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    const query = new URLSearchParams({offset, limit: 10});
+    if (selected) query.set("cycle_id", selected);
+    setError(null); setData(null);
+    api(`/api/clhear/l1/cycles?${query}`).then(value => { if (!cancelled) setData(value); }).catch(value => { if (!cancelled) setError(value); });
+    return () => { cancelled = true; };
+  }, [offset, selected, revision]);
+  return html`<section>
+    <h2>Verification cycles</h2>
+    <p class="charter">L0 coordinates discovery, freezes the inventory and dispatches the normal L1 workers. Only genuine EventBridge occurrences count toward nightly validation. Completed execution can still have unresolved corpus gaps.</p>
+    <div class="recordbar"><label>Cycle ID <input aria-label="Filter cycle ID" value=${selected} onChange=${e => { setSelected(e.target.value); setOffset(0); }} /></label><button onClick=${() => refresh(revision + 1)}>Refresh recorded evidence</button></div>
+    ${error && html`<${ErrorNotice} error=${error} />`}
+    ${data && data.status !== "available" && html`<div class="notice">No cycle evidence has been published by the deployed workers.</div>`}
+    ${data && data.status === "available" && html`<p>${data.total} recorded cycles <button disabled=${offset === 0} onClick=${() => setOffset(Math.max(0, offset - 10))}>Previous cycles</button><button disabled=${!data.has_more} onClick=${() => setOffset(offset + 10)}>Next cycles</button></p>`}
+    ${data && (data.cycles || []).map(cycle => html`<article class="family" key=${cycle.cycle_id}>
+      <h3 class="mono">${cycle.cycle_id}</h3>
+      <p><span class="badge">${cycle.origin}</span> · ${evidenceLabel(cycle.status)} · ${cycle.created_at} → ${cycle.finished_at || "unfinished"}</p>
+      <p class="charter">Worker revision <span class="mono">${cycle.code_revision || "not recorded"}</span><br />Image <span class="mono">${cycle.worker_image_digest || "not recorded"}</span></p>
+      <div style=${{overflowX: "auto"}}><table class="members"><thead><tr><th>Adapter lane</th><th>Execution</th><th>Expected documents</th><th>Occurrence</th><th>Workflow</th></tr></thead><tbody>
+      ${(data.children || []).filter(c => c.cycle_id === cycle.cycle_id).map(child => html`<tr key=${child.child_id}><td>${child.adapter_key}</td><td>${evidenceLabel(child.status)}</td><td>${(child.source_keys || []).length}</td><td class="mono">${child.event_id || "No event ID"}<br />${child.event_time || "No scheduler timestamp"}</td><td>${child.job_id ? html`<button onClick=${() => setJobId(child.job_id)}>Steps and durations</button>` : "Not dispatched"}</td></tr>`)}</tbody></table></div>
+      <details><summary>Frozen inventory and acceptance findings</summary><pre tabindex="0">${JSON.stringify({manifest: cycle.manifest, result: cycle.result}, null, 2)}</pre></details>
+    </article>`)}
+    ${jobId && html`<section class="family"><h3>Selected worker workflow</h3><${WorkflowBrowser} key=${jobId} jobId=${jobId} /></section>`}
+  </section>`;
+}
+
 function WorkflowEvidence({ report }) {
   if (!report || report.status !== "available") return html`<div class="notice">Workflow evidence unavailable. ${report && report.reason || "No worker task and step records have been published."}</div>`;
   const tasks = report.tasks || [], steps = report.steps || [], jobs = report.jobs || [];
@@ -1257,7 +1357,7 @@ function WorkflowEvidence({ report }) {
 function FleetView({ open }) {
   const [board, setBoard] = useState(null);
   const [job, setJob] = useState(null);
-  const [mode, setMode] = useState("team");
+  const [mode, setMode] = useState("cycles");
   const [runId, setRunId] = useState(null);
   const [run, setRun] = useState(null);
   const [meta, setMeta] = useState(_meta);
@@ -1302,6 +1402,7 @@ function FleetView({ open }) {
           </div>
         </details>`}
       <div class="tabs mode">
+        <button class=${mode === "cycles" ? "active" : ""} onClick=${() => setMode("cycles")}>Verification cycles</button>
         <button class=${mode === "team" ? "active" : ""} onClick=${() => setMode("team")}>Team roles</button>
         <button class=${mode === "canvas" ? "active" : ""} onClick=${() => setMode("canvas")}>Workflow</button>
         <button class=${mode === "table" ? "active" : ""} onClick=${() => setMode("table")}>Source runs</button>
@@ -1309,9 +1410,10 @@ function FleetView({ open }) {
         <button class=${stageLegend ? "active" : ""} onClick=${() => setStageLegend(!stageLegend)}>stages ⓘ</button>
       </div>
       ${stageLegend && html`<${StageLegend} meta=${meta} />`}
+      ${mode === "cycles" && html`<${CycleBoard} />`}
       ${mode === "team" && html`<${TeamRoles} selectRun=${(id) => { setRunId(id); }} />`}
       ${mode === "activity" && html`<${ActivityView} open=${open} />`}
-      ${mode === "canvas" && (jobError ? html`<${ErrorNotice} error=${jobError} />` : job === null ? html`<div class="spin">Loading recorded workflow…</div>` : html`<${WorkflowEvidence} report=${job} />`)}
+      ${mode === "canvas" && html`<${WorkflowBrowser} />`}
       ${runError && html`<${ErrorNotice} error=${runError} />`}
       ${run && html`<${RunDag} run=${run} close=${() => setRunId(null)} meta=${meta} />`}
       ${mode === "table" && (boardError ? html`<${ErrorNotice} error=${boardError} />` : board === null ? html`<div class="spin">Loading recorded source runs…</div>` : html`<${FleetTable} board=${board} open=${open} setRunId=${setRunId} meta=${meta} />`)}
