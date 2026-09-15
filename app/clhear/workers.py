@@ -502,7 +502,7 @@ def _owned_handler(kind, fleet):
 
 def handle_envelope(engine: Engine, gateway: Gateway, body: str) -> dict | None:
     from app.clhear.l1 import workflow
-    envelope = Envelope.model_validate_json(body)
+    envelope = l0_events.resolve_envelope(engine, body)
     if get_settings().clhear_l1_only and envelope.kind in {
         "clhear.l1.changed", "clhear.l2.changed", "clhear.l4.changed", "clhear.l5.changed",
         "PublishReleaseRequested", "GraphRebuildRequested", "DrDrillRequested"
@@ -545,7 +545,7 @@ class RoutedOutboxTransport:
         self.bus = EventBridgeTransport(region, bus_name=os.environ.get("CLHEAR_EVENT_BUS_NAME", "clhear"))
 
     def send(self, body):
-        env = Envelope.model_validate_json(body)
+        env = l0_events.parse_transport(body)
         if env.kind.startswith("clhear."):
             # EventBridge's HTTP 200 can contain per-entry errors; do not let
             # relay_once mark an event relayed unless the entry was accepted.
@@ -598,6 +598,19 @@ def main() -> None:
     published back after each handled batch — the public explorer picks the
     new snapshot up on its next TTL check.
     """
+    logging.basicConfig(level=logging.INFO)
+    settings = get_settings()
+    fleet = os.environ.get("CLHEAR_FLEET", "all").lower()
+    if settings.clhear_l1_only and fleet in {f"l{layer}" for layer in range(2, 9)}:
+        # A dispatch-time rejection is too late: ReceiveMessage increments the
+        # retry count and can send intentionally held work to the dead-letter queue.
+        # Keep the service alive without touching its queue, DB, or providers.
+        # The deployment setting is fixed for this process; releasing the hold
+        # requires starting the task with CLHEAR_L1_ONLY disabled.
+        log.warning("L1 acceptance hold: fleet %s paused before startup and queue polling", fleet)
+        while True:
+            time.sleep(60)
+
     import boto3
 
     from app.clhear import db
@@ -605,8 +618,6 @@ def main() -> None:
     from app.clhear.platform.events import SqsTransport, relay_once
     from app.clhear.platform.router import Router, build_providers, record_missing_providers
 
-    logging.basicConfig(level=logging.INFO)
-    settings = get_settings()
     from app.clhear.platform import errors
 
     errors.init(component=f"fleet-{os.environ.get('CLHEAR_FLEET', 'L0').lower()}")
@@ -633,7 +644,6 @@ def main() -> None:
     if not providers:
         record_missing_providers(engine)
     gateway = Router(engine, providers)
-    fleet = os.environ.get("CLHEAR_FLEET", "all").lower()
     if fleet == "l0":
         transport = RoutedOutboxTransport(json.loads(os.environ.get("CLHEAR_FLEET_QUEUE_URLS", "{}")), settings.aws_region)
     else:
