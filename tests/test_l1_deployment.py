@@ -242,6 +242,90 @@ def test_preflight_only_reads_live_configuration_and_artifact_bytes():
     assert len([c for c in cloud.calls if c[1] == "get_parameter"]) == 1
 
 
+@pytest.mark.parametrize("invocation", [
+    {"entryPoint": ["python", "-m", "app.clhear.workers"]},
+    {"entryPoint": ["python", "-m", "app.clhear.workers"], "command": []},
+    {"entryPoint": ["python"], "command": ["-m", "app.clhear.workers"]},
+    {"entryPoint": ["python", "-m"], "command": ["app.clhear.workers"]},
+])
+def test_preflight_accepts_only_equivalent_explicit_worker_argv_splits(invocation):
+    cloud = Cloud()
+    worker = cloud.definitions[cloud.services["l0"]["taskDefinition"]]["containerDefinitions"][0]
+    worker.update(invocation)
+    assert cloud.deployer().preflight()["status"] == "preflight_passed"
+    assert not cloud.mutations
+
+
+@pytest.mark.parametrize("invocation", [
+    {"entryPoint": ["python"], "command": ["-m", "app.other.workers"]},
+    {"entryPoint": ["python", "-m", "app.clhear.workers"], "command": ["--once"]},
+    {"entryPoint": ["sh", "-c"], "command": ["python -m app.clhear.workers"]},
+    {"entryPoint": ["env", "python"], "command": ["-m", "app.clhear.workers"]},
+    {"entryPoint": ["python", "-c"], "command": ["import app.clhear.workers"]},
+    {"entryPoint": ["python", "-m"], "command": ["app.clhear.workers;unexpected"]},
+    {"entryPoint": ["python", "-m", "app.clhear.workers", "unexpected"], "command": []},
+    {"entryPoint": [], "command": ["python", "-m", "app.clhear.workers"]},
+    {"entryPoint": None, "command": ["python", "-m", "app.clhear.workers"]},
+    {"entryPoint": "python -m app.clhear.workers", "command": []},
+    {"entryPoint": ["python"], "command": "-m app.clhear.workers"},
+    {"entryPoint": ["python", "-m", "app.clhear.workers"], "command": None},
+])
+def test_preflight_rejects_unrecognized_worker_invocations_before_writes(invocation):
+    cloud = Cloud()
+    worker = cloud.definitions[cloud.services["l0"]["taskDefinition"]]["containerDefinitions"][0]
+    worker.update(invocation)
+    with pytest.raises(DeploymentError, match="worker entrypoint"):
+        cloud.deployer().deploy()
+    assert not cloud.mutations
+
+
+def test_split_worker_entrypoint_is_canonicalized_before_phase_command_overrides():
+    cloud = Cloud()
+    for definition in cloud.definitions.values():
+        definition["containerDefinitions"][0].update(entryPoint=["python"], command=["-m", "app.clhear.workers"])
+    original = copy.deepcopy(cloud.definitions)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "verified"
+    for fleet in FLEETS:
+        worker = cloud.definitions[cloud.services[fleet]["taskDefinition"]]["containerDefinitions"][0]
+        assert worker["entryPoint"] == ["python", "-m", "app.clhear.workers"] and worker["command"] == []
+    launches = [args for _, operation, args in cloud.calls if operation == "run_task"]
+    for action, args in zip(("bootstrap", "verify", "publish"), launches, strict=True):
+        definition = cloud.definitions[args["taskDefinition"]]
+        worker = next(c for c in definition["containerDefinitions"] if c["name"] == "worker")
+        override = args["overrides"]["containerOverrides"][0]["command"]
+        assert worker["entryPoint"] + override == [
+            "python", "-m", "app.clhear.workers", "--verify-deployment", action,
+            "--verification-id", inputs().deployment_id,
+        ]
+    assert all(cloud.definitions[arn] == definition for arn, definition in original.items())
+
+
+def test_missing_legacy_queue_map_is_checked_read_only_then_registered_for_every_fleet():
+    cloud = Cloud()
+    for definition in cloud.definitions.values():
+        worker = definition["containerDefinitions"][0]
+        worker["environment"] = [item for item in worker["environment"] if item["name"] != "CLHEAR_FLEET_QUEUE_URLS"]
+    assert cloud.deployer().preflight()["status"] == "preflight_passed"
+    assert not cloud.mutations
+    assert cloud.deployer().deploy()["status"] == "verified"
+    for fleet in FLEETS:
+        worker = cloud.definitions[cloud.services[fleet]["taskDefinition"]]["containerDefinitions"][0]
+        env = {item["name"]: item["value"] for item in worker["environment"]}
+        assert json.loads(env["CLHEAR_FLEET_QUEUE_URLS"]) == QUEUES
+        assert env["CLHEAR_EVENTS_QUEUE_URL"] == QUEUES[fleet]
+
+
+@pytest.mark.parametrize("queue_map", ["", "not-json", "{}", "null", "[]", json.dumps(QUEUES | {"l0": QUEUES["l1"]})])
+def test_explicitly_invalid_queue_maps_still_fail_before_writes(queue_map):
+    cloud = Cloud()
+    worker = cloud.definitions[cloud.services["l0"]["taskDefinition"]]["containerDefinitions"][0]
+    next(item for item in worker["environment"] if item["name"] == "CLHEAR_FLEET_QUEUE_URLS")["value"] = queue_map
+    with pytest.raises(DeploymentError, match="owning queues"):
+        cloud.deployer().deploy()
+    assert not cloud.mutations
+
+
 @pytest.mark.parametrize("change", ["account", "role", "workflow", "sha", "environment", "oidc"])
 def test_apply_guard_rejects_wrong_context_before_any_write(change):
     cloud, env = Cloud(), environment()

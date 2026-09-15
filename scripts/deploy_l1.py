@@ -29,6 +29,7 @@ CLUSTER = "clhear-cluster"
 FUNCTION = "clhear-webui"
 BUCKET = f"clhear-deploy-{ACCOUNT}"
 FLEETS = tuple(f"l{i}" for i in range(9))
+WORKER_ENTRYPOINT = ("python", "-m", "app.clhear.workers")
 ENVIRONMENT = "clhear-l1"
 WORKFLOW = "Reg42-ai/CLHEAR-MVP/.github/workflows/deploy-l1.yml@refs/heads/main"
 RELEASES = f"s3://{BUCKET}/releases"
@@ -51,6 +52,14 @@ class DeploymentError(RuntimeError):
 def require(condition, message):
     if not condition:
         raise DeploymentError(message)
+
+
+def _supported_worker_invocation(worker):
+    # Recognize an explicit argv split, without interpreting shell syntax or
+    # guessing an entrypoint inherited from an uninspected legacy image.
+    entrypoint, command = worker.get("entryPoint"), worker.get("command", [])
+    return (isinstance(entrypoint, list) and bool(entrypoint) and isinstance(command, list)
+            and entrypoint + command == list(WORKER_ENTRYPOINT))
 
 
 def digest_stream(stream, limit=300 * 1024 * 1024):
@@ -280,16 +289,20 @@ class Deployer:
             workers = [c for c in task["containerDefinitions"] if c["name"] == "worker"]
             require(len(workers) == 1, "Each fleet requires exactly one worker container")
             worker = workers[0]
-            require(worker.get("entryPoint") == ["python", "-m", "app.clhear.workers"], "Unsupported worker entrypoint")
+            require(_supported_worker_invocation(worker), "Unsupported worker entrypoint")
             environment = {v["name"]: v["value"] for v in worker.get("environment", [])}
             secrets = {v["name"]: v["valueFrom"] for v in worker.get("secrets", [])}
             require(environment.get("CLHEAR_FLEET") == fleet.upper(), "Fleet identity does not match its service")
             require(environment.get("CLHEAR_EVENTS_QUEUE_URL") == QUEUES[fleet], "A fleet is not bound to its owning queue")
-            try:
-                queue_map = json.loads(environment.get("CLHEAR_FLEET_QUEUE_URLS", "{}"))
-            except (ValueError, TypeError):
-                queue_map = None
-            require(queue_map == QUEUES, "All nine owning queues must be configured for the L0 outbox relay")
+            # Known legacy tasks omit the relay map. The owning queue and all
+            # queue identities are checked above; registration adds the map.
+            # An explicitly configured conflicting or malformed map is unsafe.
+            if "CLHEAR_FLEET_QUEUE_URLS" in environment:
+                try:
+                    queue_map = json.loads(environment["CLHEAR_FLEET_QUEUE_URLS"])
+                except (ValueError, TypeError):
+                    queue_map = None
+                require(queue_map == QUEUES, "All nine owning queues must be configured for the L0 outbox relay")
             require(environment.get("CLHEAR_LLM_PROVIDER", "").lower() != "fake", "Production workers cannot use fake-provider mode")
             require("DATABASE_URL" not in environment and secrets.get("DATABASE_URL"), "DATABASE_URL must be supplied only through a secret reference")
             require(environment.get("CLHEAR_SNAPSHOT_S3_URI", "") == "" and "CLHEAR_SNAPSHOT_S3_URI" not in secrets,
@@ -469,9 +482,13 @@ class Deployer:
             task = {k: copy.deepcopy(v) for k, v in old["task"].items() if k in TASK_FIELDS}
             worker = next(c for c in task["containerDefinitions"] if c["name"] == "worker")
             worker["image"] = self.inputs.image
+            # ECS one-off overrides replace command, so the module invocation
+            # must be entirely in entryPoint even for the legacy Python split.
+            worker["entryPoint"] = list(WORKER_ENTRYPOINT)
             worker["command"] = []  # services poll normally; one-offs use explicit commands
             env = {v["name"]: v["value"] for v in worker.get("environment", [])}
             env.update(CLHEAR_L1_ONLY="true", CLHEAR_SNAPSHOT_S3_URI="", CLHEAR_HTTP_MODE="live", CLHEAR_ARTIFACT_STORE="s3",
+                       CLHEAR_FLEET_QUEUE_URLS=json.dumps(QUEUES),
                        CLHEAR_VIEWER_SNAPSHOT_S3_URI=f"s3://{BUCKET}/{self.inputs.viewer_key}", CLHEAR_RELEASES_S3_PREFIX=RELEASES)
             worker["environment"] = [{"name": k, "value": v} for k, v in env.items()]
             task["tags"] = [v for v in task.get("tags", []) if v["key"] != "clhear:git-sha"] + [{"key": "clhear:git-sha", "value": self.inputs.sha}]
