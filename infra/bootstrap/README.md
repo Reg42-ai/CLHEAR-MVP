@@ -16,11 +16,15 @@ contract. A workforce seat must not apply this template or grant itself access.
 
 Only GitHub jobs in `Reg42-ai/CLHEAR-MVP` using environment `clhear-l1` may
 assume this role, with audience `sts.amazonaws.com` and sessions up to three
-hours. The environment must retain the founder reviewer, disabled administrator
-bypass, and the exact `main` branch rule. The OIDC environment subject does not
+hours. The environment retains disabled administrator bypass and the exact
+`main` branch rule, with no second deployment reviewer. The founder's PR merge
+authorizes routine code deployment. Main requires PRs and all CI checks with
+administrator enforcement and zero additional review approvals. The OIDC environment subject does not
 itself encode a branch or workflow filename. Workflow changes therefore remain
 privileged review items; `deploy-l1.yml` additionally checks its repository,
-branch, exact workflow and tested commit before deployment.
+branch, exact workflow, owner-merged PR and tested commit before deployment.
+The owner is currently the only listed write-capable collaborator; reconsider
+that authorization boundary before granting another identity write access.
 
 The role can publish worker/UI code, pause and update CLHEAR fleet services and
 the viewer, run L0/L1 verification tasks, and update the targets of the existing
@@ -91,8 +95,8 @@ through the authorized owner process, preserving the other grants. This
 bootstrap template deliberately does not manage that existing policy.
 
 Then follow [the deployment runbook](../../docs/L1_DEPLOYMENT.md). Merge the
-reviewed application changes, wait for CI on the resulting main commit, and
-approve the `deploy-l1` run. Keep L2 held and nightly validation pending until
+reviewed application changes; successful CI on the resulting main commit starts
+`deploy-l1` automatically, without a second approval. Keep L2 held and nightly validation pending until
 the separate acceptance evidence is available.
 
 ## Validation boundaries

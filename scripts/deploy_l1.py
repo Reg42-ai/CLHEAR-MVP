@@ -26,8 +26,10 @@ from botocore.exceptions import ClientError
 
 if __package__:
     from .deployment_recovery import RecoveryPlanError, emit_plan, load_plan, validate_plan
+    from .l1_recovery import load_active_plan_id
 else:
     from deployment_recovery import RecoveryPlanError, emit_plan, load_plan, validate_plan
+    from l1_recovery import load_active_plan_id
 
 ACCOUNT = "730649732189"
 REGION = "us-east-1"
@@ -376,20 +378,32 @@ class Deployer:
         concurrency = self.clients["lambda"].get_function_concurrency(FunctionName=FUNCTION).get("ReservedConcurrentExecutions")
         self.state = {"fleets": fleets, "function": function, "concurrency": concurrency, "reviewers": reviewers, "schedules": schedules}
         self._checked_viewer_configuration(expected_revision=config["RevisionId"])
-        if self.inputs.recovery_plan:
+        held = concurrency == 0 and all(
+            values["service"]["desiredCount"] == 0 and values["scaling"]["MinCapacity"] == 0
+            and all(values["scaling"].get("SuspendedState", {}).get(k) is True for k in SUSPENDED)
+            for values in fleets.values())
+        selected = self.inputs.recovery_plan
+        selection = "explicit" if selected else "default"
+        if not selected and held:
+            require(all(values["service"].get("runningCount") == 0 and values["service"].get("pendingCount") == 0
+                        for values in fleets.values()),
+                    "Automatic recovery requires every fleet to have zero running and pending workers")
             try:
-                plan = load_plan(self.inputs.recovery_plan)
+                selected = load_active_plan_id()
+            except RecoveryPlanError as error:
+                raise DeploymentError(str(error)) from error
+        self.report.pop("recovery", None)
+        if selected:
+            require(selected != self.inputs.deployment_id, "Recovery requires a fresh deployment attempt")
+            try:
+                plan = load_plan(selected)
                 self.state["restoration_targets"] = validate_plan(plan, self.state)
             except RecoveryPlanError as error:
                 raise DeploymentError(str(error)) from error
             require(not self._active_tasks(), "Recovery requires all previous one-off worker tasks to be stopped")
-            self.report["recovery"] = {"plan_id": plan["plan_id"], "source": plan["source"],
+            self.report["recovery"] = {"plan_id": plan["plan_id"], "selection": selection, "source": plan["source"],
                                        "root_source": plan["root_source"], "runtime_source_read": False}
         else:
-            held = concurrency == 0 and all(
-                values["service"]["desiredCount"] == 0 and values["scaling"]["MinCapacity"] == 0
-                and all(values["scaling"].get("SuspendedState", {}).get(k) is True for k in SUSPENDED)
-                for values in fleets.values())
             require(not held, "Maintenance hold requires an owner-reviewed recovery plan; do not capture zero capacity as the baseline")
         self.report.update(status="preflight_passed", image=self.inputs.image,
             ui={"key": self.inputs.ui_key, "version": self.inputs.ui_version, "sha256": self.inputs.ui_sha256},
@@ -690,9 +704,16 @@ class Deployer:
         require({k: v for k, v in current.items() if k != "ResponseMetadata"} == expected,
                 "Viewer code or configuration changed before traffic resume")
         old = self.state.get("restoration_targets", {}).get("viewer_reserved_concurrency", self.state["concurrency"])
-        # A previously paused viewer stays paused: deployment does not grant a
-        # new traffic policy. One temporary slot permits the anonymous probes.
-        self._write("lambda", "put_function_concurrency", FunctionName=FUNCTION, ReservedConcurrentExecutions=max(old or 0, 1))
+        if old is None:
+            # Restore the original unreserved policy directly. Even reserving
+            # one temporary slot can exceed the account's reservation quota.
+            self._write("lambda", "delete_function_concurrency", FunctionName=FUNCTION)
+            self._confirm_viewer_concurrency(None)
+        else:
+            # A previously paused viewer gets one probe slot, then returns to
+            # zero. Reservation failures must never fall back to unreserved.
+            self._write("lambda", "put_function_concurrency", FunctionName=FUNCTION, ReservedConcurrentExecutions=max(old, 1))
+            self._confirm_viewer_concurrency(max(old, 1))
         for path, expected in (("/api/clhear/health", 200), ("/api/clhear/sources", 401)):
             event = {"version": "2.0", "routeKey": "$default", "rawPath": path, "rawQueryString": "",
                      "headers": {"accept": "application/json", "host": "clhear.org"},
@@ -701,10 +722,15 @@ class Deployer:
             response = self._write("lambda", "invoke", FunctionName=FUNCTION, InvocationType="RequestResponse", Payload=json.dumps(event).encode())
             result = json.loads(response["Payload"].read())
             require(not response.get("FunctionError") and result.get("statusCode") == expected, "Viewer anonymous access verification failed")
-        if old is None:
-            self._write("lambda", "delete_function_concurrency", FunctionName=FUNCTION)
-        elif old == 0:
+        if old == 0:
             self._write("lambda", "put_function_concurrency", FunctionName=FUNCTION, ReservedConcurrentExecutions=0)
+            self._confirm_viewer_concurrency(0)
+
+    def _confirm_viewer_concurrency(self, expected):
+        current = self.clients["lambda"].get_function_concurrency(FunctionName=FUNCTION)
+        confirmed = ("ReservedConcurrentExecutions" not in current if expected is None else
+                     type(current.get("ReservedConcurrentExecutions")) is int and current["ReservedConcurrentExecutions"] == expected)
+        require(confirmed, "Viewer concurrency restoration readback did not match")
 
     def _restore_capacity(self):
         for fleet, old in self.state["fleets"].items():

@@ -138,11 +138,84 @@ def test_failed_recovery_emits_original_targets_for_another_successful_retry(mon
     assert_no_release_writes(cloud)
 
 
-def test_ordinary_redispatch_of_maintenance_state_fails_before_writes():
+def test_ordinary_redispatch_of_maintenance_state_fails_before_writes(monkeypatch):
     cloud = Cloud()
     maintenance(cloud)
+    monkeypatch.setattr(controller, "load_active_plan_id", lambda: None)
     with pytest.raises((DeploymentError, RecoveryPlanError)):
         cloud.deployer(input=inputs(deployment_id=RECOVERY)).deploy()
+    assert not cloud.mutations
+
+
+def test_default_recovery_is_read_only_then_restores_reviewed_targets_under_reservation_quota(monkeypatch):
+    cloud = Cloud()
+    cloud.lambda_account_concurrency_limit = cloud.lambda_unreserved_minimum
+    plan = original_plan(cloud)
+    maintenance(cloud)
+    reviewed_plan(monkeypatch, plan)
+    monkeypatch.setattr(controller, "load_active_plan_id", lambda: ORIGINAL)
+    cloud.exits["verify"] = 2
+    deployer = cloud.deployer(input=inputs(deployment_id=RECOVERY))
+    result = deployer.preflight()
+    assert result["recovery"]["selection"] == "default" and result["recovery"]["plan_id"] == ORIGINAL
+    assert deployer.inputs.recovery_plan == "" and not cloud.mutations
+    assert deployer.state["concurrency"] == 0
+    result = deployer.deploy()
+    assert result["status"] == "review_ready" and result["accepted_release_changed"] is False
+    assert cloud.concurrency is None and cloud.services["l0"]["desiredCount"] == cloud.services["l1"]["desiredCount"] == 1
+    assert all(cloud.services[fleet]["desiredCount"] == 0 for fleet in FLEETS if fleet not in {"l0", "l1"})
+    assert all(args["ReservedConcurrentExecutions"] == 0 for _, op, args in cloud.calls if op == "put_function_concurrency")
+    assert_targets(plan, deployer.recovery_plan_output)
+    assert_no_release_writes(cloud)
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_explicit_recovery_or_healthy_deployment_never_consults_invalid_default(monkeypatch, explicit):
+    cloud = Cloud()
+    if explicit:
+        plan = original_plan(cloud)
+        maintenance(cloud)
+        reviewed_plan(monkeypatch, plan)
+
+    def invalid_default():
+        raise AssertionError("Default selection must not be read for this deployment")
+
+    monkeypatch.setattr(controller, "load_active_plan_id", invalid_default)
+    deployer = cloud.deployer(input=inputs(deployment_id=RECOVERY, recovery_plan=ORIGINAL if explicit else ""))
+    result = deployer.deploy()
+    assert result["status"] == "verified"
+    if explicit:
+        assert result["recovery"]["selection"] == "explicit"
+    else:
+        assert "recovery" not in result
+
+
+@pytest.mark.parametrize("drift", ["task_binding", "viewer_code", "maximum", "detached_task", "same_attempt", "running_task", "invalid_default"])
+def test_default_recovery_rejects_drift_or_unconfirmed_hold_before_writes(monkeypatch, drift):
+    cloud = Cloud()
+    plan = original_plan(cloud)
+    maintenance(cloud)
+    reviewed_plan(monkeypatch, plan)
+    if drift == "task_binding":
+        plan["fleets"]["l1"]["task_definition_arn"] = f"arn:aws:ecs:{REGION}:{ACCOUNT}:task-definition/clhear-fleet-l1:99"
+    elif drift == "viewer_code":
+        plan["viewer"]["code_sha256_base64"] = base64.b64encode(hashlib.sha256(b"wrong original").digest()).decode()
+    elif drift == "maximum":
+        plan["fleets"]["l1"]["max_capacity"] += 1
+    elif drift == "detached_task":
+        cloud.old_tasks["l4"] = ["active-old-one-off"]
+    elif drift == "running_task":
+        cloud.services["l4"]["runningCount"] = 1
+
+    def selected_default():
+        assert drift != "running_task", "A partially held deployment cannot select the default"
+        if drift == "invalid_default":
+            raise RecoveryPlanError("Invalid active recovery selection fields")
+        return ORIGINAL
+
+    monkeypatch.setattr(controller, "load_active_plan_id", selected_default)
+    with pytest.raises(DeploymentError):
+        cloud.deployer(input=inputs(deployment_id=ORIGINAL if drift == "same_attempt" else RECOVERY)).deploy()
     assert not cloud.mutations
 
 
