@@ -93,10 +93,9 @@ class FcaHandbookAdapter(NumberedHtmlAdapter):
     def version_of(self, content: bytes) -> tuple[str, date | None]:
         text = BeautifulSoup(content, "html.parser").get_text(" ", strip=True)
         m = _RELEASE.search(text)
-        today = date.today()
         if m:
-            return f"consolidated:release-{m.group(1)}", today
-        return f"consolidated:{today.isoformat()}", today
+            return f"consolidated:release-{m.group(1)}", None
+        return super().version_of(content)
 
     def make_ref(self, match, context) -> str:
         return " ".join(match.group("ref").split())

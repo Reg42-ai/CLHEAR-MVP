@@ -27,7 +27,7 @@ from app.clhear.l1.models import (
     sources,
 )
 from app.clhear.l1 import rights as l1_rights
-from app.clhear.l1.public import clause_refs_select, clauses_public_select, nodes_public_select, nodes_refs_select
+from app.clhear.l1.public import clause_refs_select, clauses_public_select, nodes_public_select, nodes_refs_select, nodes_internal_select
 from app.clhear.models import eval_runs, events, runs
 from app.clhear.platform import audit
 
@@ -44,17 +44,57 @@ def viewer_snapshot_state() -> dict:
 
 
 @router.get("/api/clhear/l1/inventory")
-def l1_inventory(scope: str = Query("registered", pattern="^(registered|finra)$")) -> dict:
+def l1_inventory(scope: str = Query("all_publishers", pattern="^(registered|finra|all_publishers)$")) -> dict:
     from app.clhear.l1.inventory import inventory_summary
 
     return inventory_summary(get_engine(), scope=scope)
 
 
+@router.get("/api/clhear/l1/publishers")
+def l1_publishers() -> dict:
+    from app.clhear.l1.publishers import publisher_profiles
+    profiles = publisher_profiles()
+    return {"publishers": profiles, "total": len(profiles), "denominator_known": False,
+            "notice": "Configured publisher boundaries. Completion requires the recorded worker discovery and document audits."}
+
+
+@router.get("/api/clhear/l1/cycles")
+def l1_cycles(cycle_id: str | None = None, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200)) -> dict:
+    from app.clhear.l1.cycles import cycle_summary
+    return cycle_summary(get_engine(), cycle_id=cycle_id, offset=offset, limit=limit)
+
+
 @router.get("/api/clhear/l1/workflow")
-def l1_workflow(job_id: str | None = None, source_key: str | None = None) -> dict:
+def l1_workflow(job_id: str | None = None, source_key: str | None = None,
+                task_offset: int = Query(0, ge=0), task_limit: int = Query(100, ge=1, le=1000),
+                step_offset: int = Query(0, ge=0), step_limit: int = Query(200, ge=1, le=1000),
+                job_offset: int = Query(0, ge=0), job_limit: int = Query(10, ge=1, le=100)) -> dict:
     from app.clhear.l1.workflow import workflow_summary
 
-    return workflow_summary(get_engine(), job_id=job_id, source_key=source_key)
+    return workflow_summary(get_engine(), job_id=job_id, source_key=source_key,
+                            task_offset=task_offset, task_limit=task_limit, step_offset=step_offset,
+                            step_limit=step_limit, job_offset=job_offset, job_limit=job_limit)
+
+
+def _source_presentation(source):
+    """Current registry display metadata, including old read-only projections.
+
+    L0/L1 reconcile the persisted fields; readers never migrate or edit text.
+    Only source metadata is projected here, never originals or historical rows.
+    """
+    from app.clhear.l1.source_registry import S, _about, source_role
+    key = source.key
+    entry = next((entry for entry in S if entry["key"] == key), None)
+    return {"source_role": source_role(key), **({"name": entry["name"], "short_name": entry["short_name"],
+            "about": _about(entry), "canonical_url": entry["canonical_url"]} if entry else {})}
+
+
+def _acquisition_status(conn, source):
+    from app.clhear.l1 import permissions
+    if not permissions.required_for(source):
+        return "public_basis" if source.license == "open" and l1_rights.republishable(source.rights_basis or "") else "unverified"
+    decisions = [permissions.decision(conn, source.key, op) for op in ("acquire", "store", "parse")]
+    return "permitted" if all(choice["allowed"] for choice in decisions) else "blocked"
 
 
 def _text_access(conn, source, request: Request) -> dict:
@@ -77,6 +117,9 @@ def _text_access(conn, source, request: Request) -> dict:
 
 
 def _audit_text_read(conn, request, source, version, access, route, ids):
+    from app.clhear.settings import get_settings
+    if get_settings().clhear_preview_mode:
+        return  # Preview is a read-only projection; permission checks above still apply.
     if not access["allowed"] or not ids:
         return
     from app.clhear.l1 import permissions
@@ -96,9 +139,13 @@ def _audit_text_read(conn, request, source, version, access, route, ids):
 
 
 @router.get("/api/clhear/sources")
-def list_sources() -> list[dict]:
+def list_sources(publisher: str | None = None) -> list[dict]:
     """Library view: families -> members -> latest-version summary."""
     engine = get_engine()
+    from app.clhear.l1.origin import corpus_sources_predicate, production_worker
+    from app.clhear.l1.source_registry import FAMILIES
+    from app.clhear.l1.publishers import publisher_ids
+    charters = {key: charter for key, _, charter in FAMILIES}
     with engine.connect() as conn:
         families = conn.execute(sa.select(source_families).order_by(source_families.c.name)).all()
         members = conn.execute(
@@ -113,13 +160,17 @@ def list_sources() -> list[dict]:
                 sources.c.name,
                 sources.c.kind,
                 sources.c.license,
+                sources.c.rights_basis,
+                sources.c.publisher,
+                sources.c.issuer,
                 sources.c.canonical_url,
                 sources.c.adapter,
                 sources.c.short_name,
                 sources.c.about,
                 sources.c.topics,
-            ).join(sources, sources.c.id == family_members.c.source_id)
+            ).join(sources, sources.c.id == family_members.c.source_id).where(corpus_sources_predicate() if production_worker() else sa.true())
         ).all()
+        acquisition = {member.key: _acquisition_status(conn, member) for member in members}
         latest = {
             row.source_id: row
             for row in conn.execute(
@@ -142,7 +193,7 @@ def list_sources() -> list[dict]:
         today = datetime.now(timezone.utc).date().isoformat()
         failed_today: set[str] = set()
         last_status: dict[str, str] = {}
-        for row in conn.execute(sa.select(runs).where(runs.c.fleet.like("l1.%")).order_by(runs.c.id.desc()).limit(800)):
+        for row in conn.execute(sa.select(runs).where(runs.c.fleet.like("l1.%")).order_by(runs.c.id.desc())):
             inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
             outputs = row.outputs if isinstance(row.outputs, dict) else json.loads(row.outputs or "{}")
             key = inputs.get("source")
@@ -169,7 +220,10 @@ def list_sources() -> list[dict]:
         fam_members = []
         for m in sorted((m for m in members if m.family_id == family.id), key=lambda m: (m.relation != "root", m.key)):
             version = latest.get(m.source_id)
-            if last_status.get(m.key) == "rights-blocked":
+            presentation = _source_presentation(m)
+            if presentation["source_role"] != "document":
+                library_status = presentation["source_role"]
+            elif last_status.get(m.key) == "rights-blocked":
                 library_status = "rights-blocked"
             elif m.license == "restricted":
                 library_status = "locked-restricted"
@@ -178,8 +232,8 @@ def list_sources() -> list[dict]:
             elif m.key in failed_today:
                 library_status = "failed-today"
             elif m.adapter and _schedule_label(m.adapter) != "unscheduled" and m.key not in last_status:
-                # Scheduled but no run ever recorded: the schedule was not kept.
-                library_status = "schedule-missed"
+                # No recorded execution does not establish a missed scheduler occurrence.
+                library_status = "no-execution-evidence"
             else:
                 library_status = "never-fetched"
             fam_members.append(
@@ -206,16 +260,26 @@ def list_sources() -> list[dict]:
                     "library_status": library_status,
                     "last_run_status": last_status.get(m.key),
                     "failed_today": m.key in failed_today,
+                    "publisher": m.publisher or m.issuer,
+                    "publisher_ids": publisher_ids({"key": m.key}),
+                    "acquisition_status": acquisition[m.key],
+                    "import_status": ("stored" if version else "not_imported") if presentation["source_role"] == "document" else "not_a_document",
+                    "verification_status": "inspect_version_evidence" if version and presentation["source_role"] == "document" else "unverified",
+                    **presentation,
                 }
             )
         out.append(
             {
                 "key": family.key,
                 "name": family.name,
-                "scope_charter": family.scope_charter,
+                "scope_charter": {"registry": charters[family.key], "scope": "company_independent"} if family.key in charters else {k: v for k, v in (family.scope_charter or {}).items() if k != "partner"},
                 "members": fam_members,
             }
         )
+    if publisher:
+        for family in out:
+            family["members"] = [m for m in family["members"] if publisher in m["publisher_ids"] or publisher == m["publisher"]]
+        out = [family for family in out if family["members"]]
     return out
 
 
@@ -263,7 +327,7 @@ def source_document(key: str, request: Request, version_label: str | None = None
         access = _text_access(conn, source, request)
         locked = not access["allowed"]
         # Explicit internal permission permits raw rows; public reads retain the public view.
-        base = nodes_refs_select() if locked else (sa.select(doc_nodes) if access["internal"] else nodes_public_select())
+        base = nodes_refs_select() if locked else (nodes_internal_select(conn) if access["internal"] else nodes_public_select(conn))
         rows = conn.execute(
             base.where(doc_nodes.c.source_version_id == version.id).order_by(doc_nodes.c.seq)
         ).all()
@@ -351,6 +415,7 @@ def source_document(key: str, request: Request, version_label: str | None = None
                 "raw_text": getattr(row, "raw_text", None),
                 "text_hash": row.text_hash,
                 "annotation": annotations.get(row.id),
+                "source_locator": getattr(row, "source_locator", None) if not locked else None,
             }
             for row in rows
         ],
@@ -362,7 +427,7 @@ def node_inspector(node_id: int, request: Request, source_key: str | None = None
     """Intelligence payload for the hover/click inspector."""
     engine = get_engine()
     with engine.connect() as conn:
-        node = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.id == node_id)).first()
+        node = conn.execute(nodes_internal_select(conn).where(doc_nodes.c.id == node_id)).first()
         if node is None:
             raise HTTPException(status_code=404, detail="node not found")
         version = conn.execute(
@@ -379,11 +444,12 @@ def node_inspector(node_id: int, request: Request, source_key: str | None = None
         ancestors = []
         parent_id = node.parent_id
         while parent_id is not None:
-            parent = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.id == parent_id)).first()
+            parent = conn.execute(nodes_internal_select(conn).where(doc_nodes.c.id == parent_id)).first()
             if parent is None:
                 break
             ancestors.append(
-                {"id": parent.id, "node_type": parent.node_type, "ref": parent.ref, "label": parent.label, "heading": parent.heading}
+                {"id": parent.id, "node_type": parent.node_type, "ref": parent.ref,
+                 "label": parent.label if readable else None, "heading": parent.heading if readable else None}
             )
             parent_id = parent.parent_id
         ancestors.reverse()
@@ -425,14 +491,16 @@ def node_inspector(node_id: int, request: Request, source_key: str | None = None
         "id": node.id,
         "node_type": node.node_type,
         "ref": node.ref,
-        "label": node.label,
-        "heading": node.heading,
+        "label": node.label if readable else None,
+        "heading": node.heading if readable else None,
         "raw_text": node.raw_text if readable else None,
         "source_fragment": node.source_fragment if readable else None,
+        "source_locator": node.source_locator if readable else None,
+        "canonical_offset_unit": "unicode_code_points",
         "locked": not readable,
         "permission_reason": access["reason"],
         "source_version_id": version.id,
-        "clauses": [{"id": c.id, "ref": c.ref, "path": c.path, "ordering": c.ordering,
+        "clauses": [{"id": c.id, "ref": c.ref, "path": c.path if readable else None, "ordering": c.ordering,
                      "span_start": c.span_start, "span_end": c.span_end, "text_hash": c.text_hash,
                      "source_version_id": c.source_version_id} for c in encoded],
         "text_hash": node.text_hash,
@@ -645,6 +713,7 @@ def source_detail(key: str) -> dict:
         "adapter": source.adapter,
         "canonical_url": source.canonical_url,
         "about": source.about,
+        **_source_presentation(source),
         "topics": source.topics if isinstance(source.topics, list) else json.loads(source.topics or "[]"),
         "versions": [_version_dict(v) for v in versions],
         "changes": [_change_dict(c) for c in changes],

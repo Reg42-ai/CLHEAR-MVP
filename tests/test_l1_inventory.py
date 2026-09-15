@@ -9,7 +9,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.clhear.l1 import inventory as inv
-from app.clhear.l1.adapters.base import SourceMeta
+from app.clhear.l1.adapters.base import Artifact, SourceMeta
 from app.clhear.l1.adapters.finra import parse
 from app.clhear.l1.models import clauses, doc_nodes, source_versions
 from app.clhear.l1.permissions import record_permission
@@ -37,22 +37,27 @@ def small_scope(engine, monkeypatch, tmp_path):
     return engine, LocalStore(tmp_path / "originals")
 
 
-def imported(engine, store, *, body=BODY, version_label="test-edition-1", latest=True):
+def imported(engine, store, *, body=BODY, version_label="test-edition-1", latest=True, content_hash_method=None):
     meta = SourceMeta(family_key="test-finra", family_name="Unit-test FINRA", source_key=KEY,
                       name="Original test rule", kind="regulation", issuer="FINRA", jurisdiction="US",
                       license="restricted", canonical_url=URL, adapter="finra")
     tree = parse(body, KEY, URL)
+    from app.clhear.l1.originals import attach_source_locations
+    assert attach_source_locations(KEY, "finra", [Artifact("original.html", body, "text/html")], tree, URL)
     digest = hashlib.sha256(body).hexdigest()
+    from app.clhear.l1.pipeline import artifact_set_hash
+    version_hash = artifact_set_hash([Artifact("original.html", body, "text/html")]) if content_hash_method == "artifact-set-v2" else digest
     key = f"restricted/{KEY}/{version_label}/original.html"
     uri = store.put(key, body, "text/html")
     with engine.begin() as conn:
         _, source_id = ensure_source(conn, meta)
         version_id = conn.execute(source_versions.insert().values(source_id=source_id, version_label=version_label,
-                     content_hash=digest, s3_uri=uri, status="in_force" if latest else "superseded").returning(source_versions.c.id)).scalar_one()
+                     content_hash=version_hash, s3_uri=uri, status="in_force" if latest else "superseded").returning(source_versions.c.id)).scalar_one()
         rows = persist_tree(conn, version_id, tree, public_ok=False)
         conn.execute(clauses.insert(), rows)
         conn.execute(runs.insert().values(fleet="l1.finra", trigger="test", inputs={"source": KEY}, outputs={
-            "status": "added", "source_version_id": version_id, "content_hash": digest,
+            "status": "added", "source_version_id": version_id, "content_hash": version_hash,
+            **({"content_hash_method": content_hash_method} if content_hash_method else {}),
             "publisher_checked_at": datetime.now(timezone.utc).isoformat(), "parser_identity": {"sha256": "unit-test-parser"},
             "fetch_evidence": [{"url": URL, "origin": "live", "sha256": digest, "checked_at": datetime.now(timezone.utc).isoformat()}],
             "canonical_text_hash": hashlib.sha256(canonical_text(tree).encode()).hexdigest(),
@@ -81,14 +86,15 @@ def codes(source):
 
 
 def test_default_scope_separates_actual_editions_and_keeps_registry_denominator(engine):
-    from app.clhear.l1.registry_etoro import S
+    from app.clhear.l1.source_registry import S, source_role
     entries = inv._declared_entries("registered")
-    assert set(entries) >= {e["key"] for e in S} - {"finra/rulebook"}
+    declared_documents = {e["key"] for e in S if source_role(e["key"]) == "document"}
+    assert set(entries) >= declared_documents
     assert "iso/27001-2022" in entries and "iso/27001-2022-amd1-2024" in entries
     assert entries["iso/27001-2022-amd1-2024"]["relation"] == "amends"
     assert entries["aicpa/soc2-tsc"]["canonical_url"].endswith("2017-trust-services-criteria-with-revised-points-of-focus-2022")
     state = inv.inventory_summary(engine)
-    assert state["known_expected"] >= len(S) - 1
+    assert state["known_expected"] >= len(declared_documents)
     assert state["status"] == "not_run" and state["known_expected_is_lower_bound"]
 
 
@@ -142,7 +148,8 @@ def test_artifact_corruption_detected_without_rewriting_history(small_scope):
     engine, store = small_scope
     grant(engine)
     version_id, key = imported(engine, store)
-    store.put(key, b"original artifact was truncated", "text/html")
+    # Simulate out-of-band storage damage; the worker store itself is immutable.
+    (store.base_dir / key).write_bytes(b"original artifact was truncated")
     result = inv.run_inventory_audit(engine, store, job_id="corruption-audit", scope="finra")
     assert "artifact_hash_mismatch" in codes(result["sources"][0])
     with engine.connect() as conn:
@@ -338,3 +345,113 @@ def test_changed_declared_inventory_requires_new_scope_review(small_scope, monke
     current = inv.run_inventory_audit(engine, store, job_id="scope-expanded", scope="finra")
     assert current["inventory_hash"] != previous["inventory_hash"]
     assert not current["full_scope_verified"] and "scope_review_required" in codes(current)
+
+
+def test_legacy_snapshot_missing_location_column_remains_readable_but_unverified(small_scope):
+    engine, store = small_scope
+    grant(engine)
+    imported(engine, store)
+    with engine.begin() as conn:
+        conn.exec_driver_sql('ALTER TABLE doc_nodes DROP COLUMN source_locator')
+    result = inv.run_inventory_audit(engine, store, job_id='legacy-location-evidence', scope='finra')
+    assert result['sources'][0]['verified'] is False
+    assert 'source_locator_unverified' in codes(result['sources'][0])
+
+
+def test_registered_key_with_test_issuer_cannot_supply_publisher_evidence(small_scope):
+    from app.clhear.l1.models import sources
+    engine, store = small_scope
+    grant(engine)
+    imported(engine, store)
+    with engine.begin() as conn:
+        conn.execute(sources.update().where(sources.c.key == KEY).values(issuer='Test fixture'))
+    class NoReadStore:
+        def get(self, key):
+            pytest.fail('A fixture original cannot be read as publisher evidence')
+    result = inv.run_inventory_audit(engine, NoReadStore(), job_id='fixture-origin', scope='finra')
+    assert result['known_expected'] == 1 and not result['sources'][0]['verified']
+    assert 'test_origin_not_publisher_evidence' in codes(result['sources'][0])
+
+
+@pytest.mark.parametrize('method,observed', [(None, 'legacy-unframed-single-v1'), ('artifact-set-v2', 'artifact-set-v2')])
+def test_artifact_hash_methods_are_explicit_and_exact(small_scope, method, observed):
+    engine, store = small_scope
+    grant(engine)
+    imported(engine, store, content_hash_method=method)
+    result = inv.run_inventory_audit(engine, store, job_id='hash-method-audit', scope='finra')
+    source = result['sources'][0]
+    assert source['verified'], source['findings']
+    assert source['artifact_set_hash_evidence']['method'] == observed
+    assert source['artifact_set_hash_evidence']['declared_method'] == method
+    assert source['artifact_set_hash_evidence']['verified'] is True
+
+
+def test_declared_framed_method_never_falls_back_to_legacy(small_scope):
+    engine, store = small_scope
+    grant(engine)
+    imported(engine, store)  # historical raw single-file digest
+    with engine.begin() as conn:
+        row = conn.execute(sa.select(runs.c.id, runs.c.outputs)).mappings().one()
+        conn.execute(runs.update().where(runs.c.id == row['id']).values(outputs={**row['outputs'], 'content_hash_method': 'artifact-set-v2'}))
+    result = inv.run_inventory_audit(engine, store, job_id='misdeclared-hash', scope='finra')
+    assert not result['sources'][0]['verified']
+    assert 'artifact_composite_mismatch' in codes(result['sources'][0])
+
+
+def test_legacy_multipart_manifest_is_readable_but_requires_framed_reingestion(small_scope):
+    engine, store = small_scope
+    grant(engine)
+    version_id, _ = imported(engine, store)
+    second = BODY.replace(b'test records', b'additional test records')
+    artifact_key = f'restricted/{KEY}/test-edition-1/second.html'
+    uri = store.put(artifact_key, second, 'text/html')
+    combined = hashlib.sha256(BODY + second).hexdigest()
+    second_hash = hashlib.sha256(second).hexdigest()
+    with engine.begin() as conn:
+        row = conn.execute(sa.select(runs.c.id, runs.c.outputs)).mappings().one()
+        output = dict(row['outputs'])
+        output['content_hash'] = combined
+        output['artifact_manifest'] = [*output['artifact_manifest'], {
+            'name': 'second.html', 'key': artifact_key, 'uri': uri, 'sha256': second_hash,
+            'byte_count': len(second), 'content_type': 'text/html'}]
+        output['fetch_evidence'] = [*output['fetch_evidence'], {'url': URL, 'origin': 'live', 'sha256': second_hash}]
+        conn.execute(runs.update().where(runs.c.id == row['id']).values(outputs=output))
+        conn.execute(source_versions.update().where(source_versions.c.id == version_id).values(content_hash=combined))
+    result = inv.run_inventory_audit(engine, store, job_id='legacy-multipart', scope='finra')
+    source = result['sources'][0]
+    assert all(part['verified'] for part in source['artifacts'])
+    assert source['artifact_set_hash_evidence']['method'] == 'legacy-unframed-multipart-v1'
+    assert source['artifact_set_hash_evidence']['verified'] is False
+    assert 'legacy_artifact_set_unframed' in codes(source)
+    assert source['source_version_id'] == version_id
+
+
+def test_read_time_test_origin_change_invalidates_previous_passing_audit(small_scope, monkeypatch):
+    from app.clhear.l1.models import sources
+    engine, store = small_scope
+    grant(engine)
+    imported(engine, store)
+    accepted = review_and_audit(engine, store, monkeypatch)
+    assert accepted['status'] == 'verified'
+    with engine.begin() as conn:
+        conn.execute(sources.update().where(sources.c.key == KEY).values(issuer='Test fixture'))
+    summary = inv.inventory_summary(engine, 'finra')
+    assert summary['status'] == 'stale' and not summary['current_binding_valid']
+    assert not inv.source_inventory_evidence(engine, KEY)['verified']
+    assert not inv.acceptance_status(engine, 'finra')['passed']
+
+
+@pytest.mark.parametrize('change', ['scope_review_revoked', 'version_changed'])
+def test_invalidated_scope_never_retains_a_certified_total(small_scope, monkeypatch, change):
+    engine, store = small_scope
+    grant(engine)
+    imported(engine, store)
+    accepted = review_and_audit(engine, store, monkeypatch)
+    assert accepted['denominator_known'] and accepted['expected_total'] == 1
+    if change == 'scope_review_revoked':
+        inv.record_scope_review(engine, accepted['inventory_hash'], 'test-only:review-withdrawn', 'unit-test-reviewer', False)
+    else:
+        imported(engine, store, version_label='test-changed-version')
+    result = inv.inventory_summary(engine, 'finra')
+    assert not result['full_scope_verified'] and result['known_expected_is_lower_bound']
+    assert result['expected_total'] is None and result['denominator_known'] is False

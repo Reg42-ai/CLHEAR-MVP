@@ -60,25 +60,8 @@ class NistSp80053Adapter:
         if since_version == version_label:
             return None
 
-        tree: list[DocNode] = []
-        for group in catalog.get("groups", []):
-            controls = []
-            for control in group.get("controls", []):
-                node = self._control_node(control, "control")
-                node.children.extend(
-                    self._control_node(enh, "enhancement") for enh in control.get("controls", [])
-                )
-                controls.append(node)
-            tree.append(
-                DocNode(
-                    node_type="group",
-                    ref=group["id"],
-                    label=group["id"].upper(),
-                    heading=group.get("title", ""),
-                    source_fragment=json.dumps({"id": group["id"], "title": group.get("title")}, ensure_ascii=False),
-                    children=controls,
-                )
-            )
+        from app.clhear.l1.adapters.json_document import parse
+        tree = parse(content, self.meta().source_key)
         return FetchResult(
             version_label=version_label,
             artifacts=[Artifact(name="catalog.json", content=content, content_type="application/json")],
@@ -104,37 +87,9 @@ class NistSp80053Adapter:
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
-        """Fidelity oracle: group/control titles + statement prose (flat walk).
-        Declared exclusions: guidance/assessment parts (SP 800-53A companion
-        material, outside the v1 charter grain)."""
-        import json as _json
-
-        spans: list[str] = []
-
-        def prose_of(part: dict) -> None:
-            if part.get("name") == "statement" or part.get("name") is None:
-                if part.get("prose"):
-                    spans.append(part["prose"])
-                for sub in part.get("parts", []):
-                    prose_of({**sub, "name": None})
-
-        def walk_control(control: dict) -> None:
-            spans.append(control.get("id", "").upper())
-            spans.append(control.get("title", ""))
-            for part in control.get("parts", []):
-                if part.get("name") == "statement":
-                    prose_of(part)
-            for sub in control.get("controls", []):
-                walk_control(sub)
-
-        for artifact in artifacts:
-            catalog = _json.loads(artifact.content)["catalog"]
-            for group in catalog.get("groups", []):
-                spans.append(group.get("id", "").upper())
-                spans.append(group.get("title", ""))
-                for control in group.get("controls", []):
-                    walk_control(control)
-        return [s for s in spans if s.strip()]
+        from app.clhear.l1.adapters.json_document import original_records
+        return [row[-1] for artifact in artifacts
+                for row in original_records(artifact.content, self.meta().source_key) if row[-1].strip()]
 
     def _statement_nodes(self, part: dict, parent_ref: str) -> list[DocNode]:
         label = next((p["value"] for p in part.get("props", []) if p.get("name") == "label"), "")
@@ -190,51 +145,8 @@ class NistCsfAdapter:
         if since_version == version_label:
             return None
 
-        elements = payload["elements"]
-        functions = [e for e in elements if e["element_type"] == "function"]
-        categories = [e for e in elements if e["element_type"] == "category"]
-        subcategories = [e for e in elements if e["element_type"] == "subcategory"]
-
-        tree: list[DocNode] = []
-        for fn in functions:
-            fn_id = fn["element_identifier"]
-            cat_nodes = []
-            for cat in [c for c in categories if c["element_identifier"].startswith(f"{fn_id}.")]:
-                cat_id = cat["element_identifier"]
-                subs = [
-                    DocNode(
-                        node_type="provision",
-                        ref=sub["element_identifier"],
-                        label=sub["element_identifier"],
-                        heading=sub.get("title", "").strip(),
-                        raw_text=sub.get("text", "").strip(),
-                        source_fragment=json.dumps(sub, ensure_ascii=False),
-                    )
-                    for sub in subcategories
-                    if sub["element_identifier"].startswith(f"{cat_id}-")
-                ]
-                cat_nodes.append(
-                    DocNode(
-                        node_type="group",
-                        ref=cat_id,
-                        label=cat_id,
-                        heading=cat.get("title", "").strip(),
-                        raw_text=cat.get("text", "").strip(),
-                        source_fragment=json.dumps(cat, ensure_ascii=False),
-                        children=subs,
-                    )
-                )
-            tree.append(
-                DocNode(
-                    node_type="part",
-                    ref=fn_id,
-                    label=fn_id,
-                    heading=fn.get("title", "").strip(),
-                    raw_text=fn.get("text", "").strip(),
-                    source_fragment=json.dumps(fn, ensure_ascii=False),
-                    children=cat_nodes,
-                )
-            )
+        from app.clhear.l1.adapters.json_document import parse
+        tree = parse(content, self.meta().source_key)
         return FetchResult(
             version_label=version_label,
             artifacts=[Artifact(name="csf-export.json", content=content, content_type="application/json")],
@@ -243,16 +155,6 @@ class NistCsfAdapter:
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
-        """Fidelity oracle: identifier/title/text of every function, category
-        and subcategory. Declared exclusions: implementation examples, sort
-        keys, withdraw reasons, party records (CPRT tooling metadata)."""
-        spans: list[str] = []
-        for artifact in artifacts:
-            payload = json.loads(artifact.content)["response"]["elements"]
-            for element in payload["elements"]:
-                if element.get("element_type") not in ("function", "category", "subcategory"):
-                    continue
-                spans.append(element.get("element_identifier", ""))
-                spans.append(element.get("title", ""))
-                spans.append(element.get("text", ""))
-        return [s for s in spans if s.strip()]
+        from app.clhear.l1.adapters.json_document import original_records
+        return [row[-1] for artifact in artifacts
+                for row in original_records(artifact.content, self.meta().source_key) if row[-1].strip()]

@@ -11,3 +11,4 @@ clhear-public/
 tfplan
 deploy/
 .env
+.venv-corpus/

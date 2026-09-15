@@ -18,7 +18,8 @@ def _allowed_source_ids(conn=None):
         from app.clhear.db import get_engine
         with get_engine().connect() as connection:
             return _allowed_source_ids(connection)
-    rows = conn.execute(sa.select(sources)).mappings().all()
+    from app.clhear.l1.origin import corpus_sources_predicate, production_worker
+    rows = conn.execute(sa.select(sources).where(corpus_sources_predicate() if production_worker() else sa.true())).mappings().all()
     protected = [row for row in rows if permissions.required_for(row)]
     allowed = [row["id"] for row in rows if not permissions.required_for(row)]
     schema = None if conn.dialect.name == "sqlite" else permissions.L1_SCHEMA
@@ -48,20 +49,38 @@ def clauses_public_select(conn=None) -> sa.Select:
 
 
 def clause_refs_select() -> sa.Select:
-    """Refs/paths/hashes only — safe for restricted sources (no text column)."""
+    """Refs/hashes only; paths may contain verbatim publisher headings."""
     return sa.select(
         clauses.c.id,
         clauses.c.source_version_id,
         clauses.c.doc_node_id,
         clauses.c.ref,
-        clauses.c.path,
+        sa.literal(None).label("path"),
         clauses.c.ordering,
         clauses.c.text_hash,
     )
 
 
+def nodes_internal_select(conn):
+    """Old worker snapshots stay readable; missing locator evidence is null.
+
+    Only workers migrate persisted data. Readers cannot invent old locations.
+    """
+    schema = doc_nodes.schema if conn.dialect.name == "postgresql" else None
+    columns = {c["name"] for c in sa.inspect(conn).get_columns(doc_nodes.name, schema=schema)}
+    return sa.select(*(column if column.name in columns else sa.literal(None).label(column.name)
+                       for column in doc_nodes.columns))
+
+
 def nodes_public_select(conn=None) -> sa.Select:
     """Document reconstruction rows with raw_text (public_ok only)."""
+    # Published projections may predate locator storage; reads never migrate them.
+    locator = sa.literal(None).label("source_locator")
+    if conn is not None:
+        schema = doc_nodes.schema if conn.dialect.name == "postgresql" else None
+        columns = {c["name"] for c in sa.inspect(conn).get_columns(doc_nodes.name, schema=schema)}
+        if "source_locator" in columns:
+            locator = doc_nodes.c.source_locator
     return sa.select(
         doc_nodes.c.id,
         doc_nodes.c.parent_id,
@@ -75,6 +94,7 @@ def nodes_public_select(conn=None) -> sa.Select:
         doc_nodes.c.text_hash,
         doc_nodes.c.public_ok,
         doc_nodes.c.source_version_id,
+        locator,
     ).where(doc_nodes.c.public_ok.is_(True), doc_nodes.c.source_version_id.in_(_public_version_ids(conn)))
 
 
@@ -87,8 +107,8 @@ def nodes_refs_select() -> sa.Select:
         doc_nodes.c.depth,
         doc_nodes.c.node_type,
         doc_nodes.c.ref,
-        doc_nodes.c.label,
-        doc_nodes.c.heading,
+        sa.literal(None).label("label"),
+        sa.literal(None).label("heading"),
         doc_nodes.c.text_hash,
         doc_nodes.c.public_ok,
         doc_nodes.c.source_version_id,

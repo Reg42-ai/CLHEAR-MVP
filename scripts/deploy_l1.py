@@ -252,9 +252,8 @@ class Deployer:
             require(rule.get("Arn") == f"arn:aws:events:{REGION}:{ACCOUNT}:rule/{name}"
                     and rule.get("ScheduleExpression") and rule.get("State") in {"ENABLED", "DISABLED"},
                     "Adapter schedule identity or configuration is invalid")
-            if adapter == "finra":
-                require(rule["State"] == "ENABLED" and rule["ScheduleExpression"] == "cron(0 0 * * ? *)",
-                        "FINRA must already be enabled on its daily 00:00 UTC schedule")
+            require(rule["State"] == "ENABLED" and rule["ScheduleExpression"] == "cron(0 0 * * ? *)",
+                    "Every L1 adapter must be enabled on its daily 00:00 UTC schedule")
             target = self._schedule_target(name)
             require(target.get("Id") and target.get("Arn") == f"arn:aws:sqs:{REGION}:{ACCOUNT}:clhear-events"
                     and set(target) <= {"Id", "Arn", "RoleArn", "Input", "InputTransformer", "RetryPolicy", "DeadLetterConfig", "SqsParameters"},
@@ -591,6 +590,8 @@ class Deployer:
             worker["command"] = []  # services poll normally; one-offs use explicit commands
             env = {v["name"]: v["value"] for v in worker.get("environment", [])}
             env.update(CLHEAR_L1_ONLY="true", CLHEAR_SNAPSHOT_S3_URI="", CLHEAR_HTTP_MODE="live", CLHEAR_ARTIFACT_STORE="s3",
+                       CLHEAR_CODE_REVISION=self.inputs.sha, CLHEAR_WORKER_IMAGE_DIGEST=self.inputs.image.split("@", 1)[1],
+                       CLHEAR_L1_CYCLE_CONTRACT="1",
                        CLHEAR_FLEET_QUEUE_URLS=json.dumps(QUEUES),
                        CLHEAR_VIEWER_SNAPSHOT_S3_URI=f"s3://{BUCKET}/{self.inputs.viewer_key}", CLHEAR_RELEASES_S3_PREFIX=RELEASES)
             worker["environment"] = [{"name": k, "value": v} for k, v in env.items()]
@@ -629,7 +630,7 @@ class Deployer:
         require(task.get("lastStatus") == "STOPPED" and code in ({0, 2} if action == "verify" else {0}), f"{action} worker failed; deployment remains held")
         return code
 
-    def _complete_lambda_update(self, before, response, *, phase, expected_code_hash):
+    def _complete_lambda_update(self, before, response, *, phase, expected_code_hash, function_name=FUNCTION):
         started = time.monotonic()
         evidence = {"phase": phase, "response_revision": response.get("RevisionId"),
                     "response_update_status": response.get("LastUpdateStatus"), "result": "waiting"}
@@ -638,8 +639,8 @@ class Deployer:
             # The response can be InProgress. Its revision is not a completion
             # token: Lambda may assign a different revision as it finishes.
             # https://docs.aws.amazon.com/lambda/latest/dg/functions-states.html
-            self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
-            current = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
+            self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=function_name)
+            current = self.clients["lambda"].get_function_configuration(FunctionName=function_name)
             ignored = LAMBDA_UPDATE_OUTPUTS | {"CodeSha256"}
             if phase in {"code", "rollback"}:
                 ignored |= {"CodeSize", "SigningJobArn", "SigningProfileVersionArn"}
@@ -814,7 +815,132 @@ class Deployer:
         return self.report
 
 
+class VerificationDispatcher:
+    """Submit to the deployed L0 worker; never deploy code or import here."""
+
+    _guard = Deployer._guard
+    _write = Deployer._write
+    _schedule_preflight = Deployer._schedule_preflight
+    _schedule_target = Deployer._schedule_target
+    _valid_transformer = Deployer._valid_transformer
+    _schedule_payload = staticmethod(Deployer._schedule_payload)
+    _transformer = Deployer._transformer
+
+    def __init__(self, sha, verification_id, *, clients=None, environ=None):
+        from types import SimpleNamespace
+        require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "A tested controller SHA is required")
+        require(bool(re.fullmatch(r"l1-cycle-[1-9][0-9]*-[1-9][0-9]*", verification_id)), "Invalid cycle verification ID")
+        self.inputs = SimpleNamespace(sha=sha)
+        self.verification_id = verification_id
+        self.env = dict(os.environ if environ is None else environ)
+        session = None if clients is not None else boto3.Session(region_name=REGION)
+        self.clients = clients or {name: session.client(name, region_name=REGION) for name in ("sts", "ecs", "events", "ecr")}
+        self.authorized = False
+
+    def dispatch(self):
+        self._guard()
+        schedules = self._schedule_preflight()
+        require(all(not s["needs_update"] for s in schedules), "Deploy the occurrence-aware schedule targets before verification")
+        response = self.clients["ecs"].describe_services(cluster=CLUSTER, services=[f"clhear-fleet-{fleet}" for fleet in FLEETS])
+        require(not response.get("failures") and len(response.get("services", [])) == len(FLEETS), "All owning fleet services must be available")
+        service_by_name = {service["serviceName"]: service for service in response["services"]}
+        definitions = {}
+        identities = set()
+        for fleet in FLEETS:
+            service = service_by_name[f"clhear-fleet-{fleet}"]
+            require(service.get("status") == "ACTIVE", "Fleet is not active")
+            if fleet in {"l0", "l1"}:
+                require(service.get("desiredCount", 0) >= 1 and service.get("runningCount", 0) >= 1,
+                        "L0 and L1 must be running before submitting a corpus cycle")
+            definition = self.clients["ecs"].describe_task_definition(taskDefinition=service["taskDefinition"])["taskDefinition"]
+            workers = [c for c in definition.get("containerDefinitions", []) if c["name"] == "worker"]
+            require(len(workers) == 1 and _supported_worker_invocation(workers[0]), "Invalid worker entrypoint")
+            worker = workers[0]
+            env = {item["name"]: item["value"] for item in worker.get("environment", [])}
+            require(env.get("CLHEAR_L1_ONLY") == "true", "Every fleet must retain the L1-only hold")
+            require(env.get("CLHEAR_FLEET") == fleet.upper() and not env.get("DATABASE_URL"), "Fleet identity or database binding is invalid")
+            if fleet in {"l0", "l1"}:
+                image = worker.get("image", "")
+                prefix = f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/clhear-workers@"
+                require(image.startswith(prefix) and re.fullmatch(r"sha256:[0-9a-f]{64}", image[len(prefix):]), "Worker image must be an immutable CLHEAR digest")
+                revision = env.get("CLHEAR_CODE_REVISION", "")
+                require(re.fullmatch(r"[0-9a-f]{40}", revision) and env.get("CLHEAR_WORKER_IMAGE_DIGEST") == image[len(prefix):], "Worker identity evidence is missing")
+                require(env.get("CLHEAR_L1_CYCLE_CONTRACT") == "1" and env.get("CLHEAR_HTTP_MODE") == "live"
+                        and env.get("CLHEAR_ARTIFACT_STORE") == "s3" and not env.get("CLHEAR_SNAPSHOT_S3_URI")
+                        and env.get("CLHEAR_EVENTS_QUEUE_URL") == QUEUES[fleet], "Deploy the authoritative full-cycle worker contract first")
+                require(any(s.get("name") == "DATABASE_URL" for s in worker.get("secrets", [])), "Worker must use its existing database secret")
+                identities.add((revision, image[len(prefix):]))
+                task_arns, token = [], None
+                while True:
+                    listing = self.clients["ecs"].list_tasks(cluster=CLUSTER, serviceName=service["serviceName"],
+                        desiredStatus="RUNNING", **({"nextToken": token} if token else {}))
+                    task_arns.extend(listing.get("taskArns", []))
+                    token = listing.get("nextToken")
+                    if not token:
+                        break
+                require(bool(task_arns), "No running worker task can be verified")
+                for offset in range(0, len(task_arns), 100):
+                    live = self.clients["ecs"].describe_tasks(cluster=CLUSTER, tasks=task_arns[offset:offset + 100])
+                    require(not live.get("failures") and len(live.get("tasks", [])) == len(task_arns[offset:offset + 100]), "Running worker evidence is incomplete")
+                    for task in live["tasks"]:
+                        containers = [c for c in task.get("containers", []) if c.get("name") == "worker"]
+                        require(task.get("lastStatus") == "RUNNING" and task.get("taskDefinitionArn") == service["taskDefinition"]
+                                and len(containers) == 1 and containers[0].get("imageDigest") == image[len(prefix):],
+                                "A worker rollout is incomplete; running tasks must match the deployed identity")
+            definitions[fleet] = definition
+        require(len(identities) == 1, "L0 and L1 must execute the same verified worker image")
+        revision, digest = identities.pop()
+        images = self.clients["ecr"].describe_images(registryId=ACCOUNT, repositoryName="clhear-workers", imageIds=[{"imageDigest": digest}])["imageDetails"]
+        require(len(images) == 1 and images[0].get("imageDigest") == digest and any(
+            re.fullmatch(revision + r"-[1-9][0-9]*-[1-9][0-9]*", tag) for tag in images[0].get("imageTags", [])), "Worker image lacks its deployment build binding")
+        service = service_by_name["clhear-fleet-l0"]
+        l0_worker = next(c for c in definitions["l0"]["containerDefinitions"] if c["name"] == "worker")
+        command = list(WORKER_ENTRYPOINT)[len(l0_worker.get("entryPoint", [])):] + ["--request-l1-cycle", "--verification-id", self.verification_id]
+        args = {"cluster": CLUSTER, "taskDefinition": service["taskDefinition"], "count": 1, "launchType": "FARGATE",
+                "networkConfiguration": service["networkConfiguration"],
+                "startedBy": self.verification_id[:36],
+                "clientToken": self.verification_id,
+                "overrides": {"containerOverrides": [{"name": "worker", "command": command}]}}
+        if service.get("platformVersion"):
+            args["platformVersion"] = service["platformVersion"]
+        launched = self._write("ecs", "run_task", **args)
+        require(not launched.get("failures") and len(launched.get("tasks", [])) == 1, "The L0 cycle submission task did not start")
+        task_arn = launched["tasks"][0]["taskArn"]
+        self.clients["ecs"].get_waiter("tasks_stopped").wait(cluster=CLUSTER, tasks=[task_arn], WaiterConfig={"Delay": 10, "MaxAttempts": 60})
+        stopped = self.clients["ecs"].describe_tasks(cluster=CLUSTER, tasks=[task_arn])
+        require(not stopped.get("failures") and len(stopped.get("tasks", [])) == 1, "The submission task result is unavailable")
+        task = stopped["tasks"][0]
+        exits = [c.get("exitCode") for c in task.get("containers", []) if c.get("name") == "worker"]
+        require(task.get("lastStatus") == "STOPPED" and exits == [0], "The L0 worker did not confirm cycle submission")
+        return {"status": "cycle_submitted", "cycle_id": "cycle-manual-" + self.verification_id,
+                "controller_sha": self.inputs.sha, "code_revision": revision, "worker_image_digest": digest,
+                "task_arn": task_arn, "configured_schedules": len(schedules), "origin": "manual",
+                "corpus_acceptance": "pending", "nightly_schedule_validation": "pending",
+                "deployment_performed": False, "accepted_release_changed": False}
+
+
+def verification_main(argv):
+    parser = argparse.ArgumentParser(description="Submit an L1 corpus cycle through the deployed L0 worker")
+    parser.add_argument("--sha", required=True)
+    parser.add_argument("--verification-id", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        report = VerificationDispatcher(args.sha, args.verification_id).dispatch()
+    except Exception as error:
+        report = {"status": "submission_failed", **_failure_details(error)}
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    os.chmod(args.output, 0o600)
+    print(json.dumps(report, sort_keys=True))
+    return 0 if report["status"] == "cycle_submitted" else 1
+
+
 def main(argv=None):
+    import sys
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "verify":
+        return verification_main(argv[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("sha", "image", "ui-key", "ui-sha256", "ui-version", "deployment-id"):
         parser.add_argument(f"--{name}", required=True)

@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 import sqlalchemy as sa
 
 from app.clhear.db import make_engine, run_migrations
-from app.clhear.l1 import inventory, models, permissions, rights, workflow
+from app.clhear.l1 import cycles, discovery, inventory, models, origin, permissions, rights, workflow
 from app.clhear.models import eval_runs, llm_calls, runs
 
 CORPUS_TABLES = (models.source_families, models.sources, models.family_members,
@@ -30,7 +30,8 @@ CORPUS_TABLES = (models.source_families, models.sources, models.family_members,
                  models.change_events, models.search_units)
 EVIDENCE_TABLES = (permissions.source_permissions, inventory.inventory_snapshots,
                    inventory.inventory_audits, inventory.inventory_reviews, inventory.artifact_reviews,
-                   workflow.jobs, workflow.tasks, workflow.steps, runs, eval_runs, llm_calls)
+                   workflow.jobs, workflow.tasks, workflow.steps, origin.origin_reviews,
+                   cycles.cycles, cycles.children, discovery.cycles, discovery.pages, runs, eval_runs, llm_calls)
 STATE = sa.Table(
     "viewer_snapshot_state", sa.MetaData(),
     sa.Column("id", sa.Integer, primary_key=True),
@@ -57,6 +58,12 @@ _STRING_FIELDS = {
     "sourcebook", "language", "allowed_origins", "hash", "permission_id", "finding_codes",
     "verification_id", "phase", "evidence_mode", "nightly_schedule_validation",
     "before_bindings_hash", "after_bindings_hash", "successful_sources", "failed_sources",
+    "cycle_id", "child_id", "publisher_id", "profile_hash", "profile_version", "cycle_date", "role",
+    "code_revision", "worker_image_digest", "request_event_id", "event_time", "scheduled_for", "last_job_id",
+    "adapters", "adapter_keys", "publication_cutoff", "frozen_at", "inventory_hashes", "snapshot_revision",
+    "unverified_sources", "expected_source_keys", "manifest_hash", "command_event_id", "normalization_version", "parser_digest",
+    "discovery_cycle_date", "progress_hash", "final_discovery_audit_id",
+    "content_hash_method", "artifact_set_hash_method",
 }
 
 
@@ -87,6 +94,9 @@ def _metadata(value, key=""):
     if isinstance(value, str):
         return value if key in _STRING_FIELDS else None
     if isinstance(value, dict):
+        if key == "sources_by_adapter":
+            return {name: _metadata(keys, "source_keys") for name, keys in value.items()
+                    if name in models.FLEET_SCHEDULES and isinstance(keys, list)}
         return {str(k): clean for k, v in value.items() if (clean := _metadata(v, str(k))) is not None}
     if isinstance(value, list):
         return [clean for v in value if (clean := _metadata(v, key)) is not None]
@@ -114,9 +124,17 @@ def _empty_schema(target):
         STATE.create(conn, checkfirst=True)
 
 
-def _required_tables(conn):
+def _required_tables(conn, *, historical_manifest=None):
     inspector = sa.inspect(conn)
-    missing = [table.fullname for table in (*CORPUS_TABLES, *EVIDENCE_TABLES)
+    required = (*CORPUS_TABLES, *EVIDENCE_TABLES)
+    if historical_manifest is not None:
+        additions = {origin.origin_reviews, cycles.cycles, cycles.children, discovery.cycles, discovery.pages}
+        declared = historical_manifest.get("table_allowlist", [])
+        # Read older valid worker projections without fabricating new evidence.
+        # A projection declaring the new contract must contain its actual tables.
+        required = tuple(table for table in required if table not in additions or table.name in declared
+                         or historical_manifest.get("cycle_id"))
+    missing = [table.fullname for table in required
                if not inspector.has_table(table.name, schema=table.schema if conn.dialect.name == "postgresql" else None)]
     if missing:
         raise RuntimeError("Viewer snapshot requires migrated evidence tables: " + ", ".join(missing))
@@ -161,6 +179,8 @@ def _corpus_query(table, permitted_sources, public_sources):
             columns.append(sa.cast(sa.null(), column.type).label(column.name))
         elif column.name in fields:
             columns.append(sa.case((allowed, column), else_="").label(column.name))
+        elif table is models.doc_nodes and column.name == "source_locator":
+            columns.append(sa.case((allowed, column), else_=sa.literal({}, type_=column.type)).label(column.name))
         elif table is models.change_events and column.name == "clause_refs":
             columns.append(sa.case((table.c.source_id.in_(permitted_sources), column),
                 else_=sa.literal([], type_=column.type)).label(column.name))
@@ -169,6 +189,24 @@ def _corpus_query(table, permitted_sources, public_sources):
         else:
             columns.append(column)
     query = sa.select(*columns)
+    eligible_sources = sa.select(models.sources.c.id).where(origin.corpus_sources_predicate())
+    eligible_versions = sa.select(models.source_versions.c.id).where(models.source_versions.c.source_id.in_(eligible_sources))
+    eligible_clauses = sa.select(models.clauses.c.id).where(models.clauses.c.source_version_id.in_(eligible_versions))
+    if table is models.sources:
+        query = query.where(table.c.id.in_(eligible_sources))
+    elif table is models.source_families:
+        query = query.where(sa.or_(
+            table.c.id.in_(sa.select(models.sources.c.family_id).where(models.sources.c.id.in_(eligible_sources))),
+            table.c.id.in_(sa.select(models.family_members.c.family_id).where(models.family_members.c.source_id.in_(eligible_sources))),
+        ))
+    elif "source_id" in table.c:
+        query = query.where(table.c.source_id.in_(eligible_sources))
+    elif "source_version_id" in table.c:
+        query = query.where(table.c.source_version_id.in_(eligible_versions))
+    elif table is models.clause_annotations:
+        query = query.where(table.c.clause_id.in_(eligible_clauses))
+    elif table is models.citations:
+        query = query.where(table.c.from_clause_id.in_(eligible_clauses))
     if table is models.clause_annotations:
         query = query.where(allowed)  # topic arrays can contain source excerpts
     return query
@@ -190,15 +228,16 @@ def _evidence_query(table):
 def _clean_row(table, row):
     out = dict(row)
     for key, value in list(out.items()):
-        if key in {"owner_token", "error", "reasoning", "routing_reason"}:
+        if key in {"owner_token", "lease_token", "error", "reasoning", "routing_reason"}:
             out[key] = None
         elif key in {"model_manifest", "review"}:
             # Free-form model/reviewer context can contain source excerpts or
             # provider payloads. Exact parser and formal reviewed evidence live
             # in the dedicated inventory/run ledgers copied separately.
             out[key] = None
-        elif table in {runs, eval_runs, llm_calls, workflow.jobs, workflow.tasks, workflow.steps} and isinstance(value, (dict, list)):
-            out[key] = _metadata(value) or ({} if isinstance(value, dict) else [])
+        elif table in {runs, eval_runs, llm_calls, workflow.jobs, workflow.tasks, workflow.steps,
+                       cycles.cycles, cycles.children, discovery.cycles, discovery.pages} and isinstance(value, (dict, list)):
+            out[key] = _metadata(value, key) or ({} if isinstance(value, dict) else [])
     return out
 
 
@@ -234,7 +273,9 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None):
                     conn.exec_driver_sql("BEGIN")  # pin SQLite's legacy driver to a real read transaction
                 _required_tables(conn)
                 authorization_binding = _authorization_binding(conn)
-                source_rows = list(conn.execute(sa.select(models.sources)).mappings())
+                source_rows = list(conn.execute(sa.select(models.sources).where(origin.corpus_sources_predicate())).mappings())
+                excluded_test_count = conn.execute(sa.select(sa.func.count()).select_from(models.sources)
+                                                  .where(~origin.corpus_sources_predicate())).scalar_one()
                 permitted, publicly_allowed, redacted = [], [], []
                 for source in source_rows:
                     if permissions.required_for(source):
@@ -264,13 +305,20 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None):
                         counts[table.name] = count
                     if sa.inspect(out).has_table("search_units_fts"):
                         out.exec_driver_sql("INSERT INTO search_units_fts(rowid, text) SELECT id, text FROM search_units WHERE text <> ''")
+                    completed_cycle = conn.execute(sa.select(cycles.cycles).where(
+                        cycles.cycles.c.cycle_id == job_id,
+                        cycles.cycles.c.status.in_(cycles.TERMINAL_CYCLE))).mappings().first() if job_id else None
                     manifest = {"status": "available", "kind": "candidate_viewer", "viewer_snapshot": True,
                                 "revision": str(uuid.uuid4()), "generated_at": datetime.now(timezone.utc).isoformat(),
                                 "database_backend": engine.dialect.name,
                                 "source_environment": "authoritative_postgresql" if engine.dialect.name == "postgresql" else "local_sqlite_test",
-                                "worker_job_id": job_id, "accepted_release": False, "audience": "restricted-reviewers",
+                                "worker_job_id": job_id, "cycle_id": completed_cycle["cycle_id"] if completed_cycle else None,
+                                "cycle_finished_at": str(completed_cycle["finished_at"]) if completed_cycle else None,
+                                "cycle_status": completed_cycle["status"] if completed_cycle else None,
+                                "accepted_release": False, "audience": "restricted-reviewers",
                                 "authorization_binding": authorization_binding,
                                 "counts": counts, "redacted_source_keys": sorted(redacted),
+                                "excluded_test_sources": excluded_test_count,
                                 "omitted_layers": [f"L{n}" for n in range(2, 9)],
                                 "omitted_operational_data": ["accounts", "sessions", "API credentials", "model prompts", "lease tokens", "private exception details"],
                                 "table_allowlist": [t.name for t in (*CORPUS_TABLES, *EVIDENCE_TABLES)]}

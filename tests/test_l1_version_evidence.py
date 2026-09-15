@@ -84,6 +84,41 @@ def test_roundtrip_rejects_reordered_text_even_when_words_match(engine, tmp_path
     assert clause.id in scores["mismatch_ids"]
 
 
+def test_roundtrip_preserves_verified_heading_projection_locations(engine, tmp_path):
+    from dataclasses import replace
+    from app.clhear.l1.adapters.base import Artifact, FetchResult
+    from app.clhear.l1.adapters.dom_document import parse, original_records
+    from app.clhear.l1.models import doc_nodes
+
+    class HtmlFixture(SyntheticAdapter):
+        BODY = (b'<html><body><div id="art_1"><p class="oj-ti-art">Article 1</p>'
+                b'<p class="oj-sti-art">Risk duties</p><p>A firm must keep records.</p></div></body></html>')
+
+        def meta(self):
+            return replace(super().meta(), adapter="eur_lex")
+
+        def fetch(self, since_version=None):
+            return FetchResult(version_label="edition:fixture", artifacts=[Artifact("doc.html", self.BODY, "text/html")],
+                               tree=parse(self.BODY, self.source_key))
+
+        def expected_text(self, artifacts):
+            return [row[7] for row in original_records(self.BODY, self.source_key) if row[7]]
+
+    key = "synthetic/legal-html"
+    result = pipeline.ingest(engine, HtmlFixture({}, "fixture", source_key=key),
+                             pipeline.LocalStore(tmp_path / "lake"), index_embeddings=False)
+    assert result["status"] == "added" and result["original_verification"]["verified"]
+    with engine.connect() as conn:
+        article = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.ref == "art_1")).one()
+        assert article.heading == "Risk duties" and article.source_locator["presentation_fields"]
+    scores, passed = evals.e3_roundtrip(engine, key)
+    assert passed and scores["mismatch_ids"] == []
+    with engine.begin() as conn:
+        conn.execute(doc_nodes.update().where(doc_nodes.c.raw_text == "A firm must keep records.")
+                     .values(raw_text="Different source wording."))
+    assert evals.e3_roundtrip(engine, key)[1] is False
+
+
 def test_team_does_not_invent_success_or_match_unrelated_runs(engine):
     from app.clhear.team import _last_run
     with engine.begin() as conn:
@@ -117,8 +152,8 @@ def test_private_text_requires_both_reviewer_and_display_grant(engine, client, t
     response = client.get(url)
     assert response.headers["cache-control"] == "private, no-store"
     document = response.json()
-    assert document["nodes"][0]["raw_text"] == "PRIVATE TEST TEXT"
-    node = client.get(f"/api/clhear/nodes/{document['nodes'][0]['id']}").json()
+    text_node = next(n for n in document["nodes"] if n["raw_text"] == "PRIVATE TEST TEXT")
+    node = client.get(f"/api/clhear/nodes/{text_node['id']}").json()
     assert node["raw_text"] == "PRIVATE TEST TEXT" and node["public_ok"] is False
     client.cookies.clear()
     assert "PRIVATE TEST TEXT" not in client.get(url).text  # grant is insufficient

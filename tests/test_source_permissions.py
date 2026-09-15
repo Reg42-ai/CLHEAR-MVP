@@ -204,9 +204,9 @@ def test_ingestion_keeps_text_private_and_suppresses_ungranted_ai(engine, tmp_pa
     assert "/restricted/finra/test/" in result["artifacts"][0]
     with engine.connect() as conn:
         assert conn.execute(sa.select(clauses.c.text)).scalar_one() == "First duty. Second duty."
-        assert conn.execute(sa.select(doc_nodes.c.raw_text)).scalar_one() == "First duty. Second duty."
+        assert [text for text in conn.execute(sa.select(doc_nodes.c.raw_text).order_by(doc_nodes.c.seq)).scalars() if text] == ["First duty. Second duty."]
         assert not conn.execute(sa.select(clauses.c.public_ok)).scalar_one()
-        assert not conn.execute(sa.select(doc_nodes.c.public_ok)).scalar_one()
+        assert not any(conn.execute(sa.select(doc_nodes.c.public_ok)).scalars())
         assert conn.execute(sa.select(sa.func.count()).select_from(search_units)).scalar_one() == 0
 
 
@@ -259,7 +259,8 @@ def test_authorized_missing_artifact_creates_no_placeholder(engine, tmp_path, mo
     monkeypatch.setattr(restricted_file, "_list_restricted_objects", lambda _: [])
     result = pipeline.ingest(engine, restricted_file.RestrictedFileAdapter("iso/27001-2022", "ISO 27001"),
                              pipeline.LocalStore(tmp_path / "lake"))
-    assert result["status"] == "failed" and "Awaiting authorized source artifact" in result["error"]
+    assert result["status"] == "awaiting-artifact" and result["error_type"] == "FileNotFoundError"
+    assert result["freshness"] == "not_checked" and result["previous_version_preserved"] is False
     assert not (tmp_path / "lake").exists()
     with engine.connect() as conn:
         assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 0

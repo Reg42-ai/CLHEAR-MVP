@@ -3,13 +3,14 @@
 Fleet-wide and offline (recorded fixtures), per working rule 7.
 """
 import re
+import xml.etree.ElementTree as ET
 
 import pytest
 import sqlalchemy as sa
 
 from app.clhear.l1 import families, pipeline
 from app.clhear.l1.adapters import ADAPTER_KEYS, get_adapter
-from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
+from app.clhear.l1.adapters.base import Artifact, FetchResult, SourceMeta
 from app.clhear.l1.adapters.eur_lex import EurLexAdapter
 from app.clhear.l1.adapters.uk_legislation import UkLegislationAdapter
 from app.clhear.l1.models import VERSION_KINDS, source_versions, sources
@@ -55,6 +56,12 @@ def test_gdpr_kinds_and_recitals():
     result = oj.fetch()
     recitals = [n for root in result.tree for n in root.walk() if n.node_type == "recital"]
     assert len(recitals) == 173
+    assert {n.ref for n in recitals} == {f"rct_{i}" for i in range(1, 174)}
+    assert all(n.subtree_text().strip() for n in recitals)
+    from app.clhear.l1 import originals
+    meta = oj.meta()
+    assert originals.attach_source_locations(meta.source_key, meta.adapter, result.artifacts, result.tree)
+    assert originals.verify_original_projection(meta.source_key, meta.adapter, result.artifacts, result.tree)["verified"]
 
     consolidated = EurLexAdapter()
     assert consolidated.version_kind == "consolidated"
@@ -79,7 +86,10 @@ def test_provenance_block_and_about(engine, client, tmp_path):
     families.sync_citator(engine, UkLegislationAdapter())
 
     detail = client.get("/api/clhear/sources/uksi/2017/692").json()
-    assert "anti-money-laundering" in detail["about"]
+    from app.clhear.l1.source_registry import S, source_meta
+    registered = source_meta(next(entry for entry in S if entry["key"] == "uksi/2017/692"))
+    assert detail["about"] == registered.about
+    assert "Money Laundering" in detail["about"]
     assert "aml" in detail["topics"]
 
     states = detail["provenance"]["text_states"]
@@ -122,27 +132,35 @@ class _JobStub:
             jurisdiction="XX",
             license="open",
             canonical_url="https://example.invalid",
-            adapter="jobstub",
+            adapter="uk_legislation",
             about="stub",
             topics=["stub"],
             version_policy="edition",
         )
 
     def fetch(self, since_version=None):
+        from app.clhear.l1.adapters.xml_document import parse
         text = f"body of {self.source} {self.version} " + "tok " * 30
-        tree = [DocNode(node_type="provision", ref="p1", raw_text=text)]
+        root = ET.Element("Legislation")
+        provision = ET.SubElement(ET.SubElement(ET.SubElement(root, "Secondary"), "Body"), "P1", id="p1")
+        source_text = ET.SubElement(provision, "Text")
+        source_text.text = text + " missing tail " * 40 if not self.ok else text
+        content = ET.tostring(root, encoding="utf-8")
         if not self.ok:
-            # parser drops the artifact body entirely -> gate exhaustion
-            tree = [DocNode(node_type="provision", ref="p1", raw_text="wrong")]
+            # A valid XML tree built from different text must fail the original
+            # comparison even though its structure is otherwise well formed.
+            source_text.text = "wrong"
+        tree = parse(ET.tostring(root, encoding="utf-8"), self.source, self.meta().adapter)
         return FetchResult(
             version_label=self.version,
-            artifacts=[Artifact(name="doc.txt", content=(text + " missing tail " * 40).encode() if not self.ok else text.encode())],
+            artifacts=[Artifact(name="doc.xml", content=content, content_type="application/xml")],
             tree=tree,
             version_kind="edition",
         )
 
     def expected_text(self, artifacts):
-        return artifacts[0].content.decode().split("\n")
+        from app.clhear.l1.adapters.xml_document import original_records
+        return [row[7] for row in original_records(artifacts[0].content, self.source, self.meta().adapter) if row[7]]
 
 
 def test_job_graph_endpoint(engine, client, tmp_path):

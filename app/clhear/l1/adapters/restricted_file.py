@@ -121,10 +121,8 @@ class RestrictedFileAdapter:
         spans: list[str] = []
         for artifact in artifacts:
             if artifact.content[:5] == b"%PDF-":
-                from app.clhear.l1.adapters.pdf_docling import extract_pdf_pages
-
-                for page in extract_pdf_pages(artifact.content):
-                    spans.extend(p.strip() for p in page.splitlines() if p.strip())
+                from app.clhear.l1.originals import pdf_original
+                spans.append(pdf_original(artifact.content)[0])
             else:
                 text = _plain_text(artifact.content)
                 spans.extend(line.strip() for line in text.splitlines() if line.strip())

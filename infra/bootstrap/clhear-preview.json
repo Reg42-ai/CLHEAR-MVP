@@ -1,0 +1,329 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Owner-created private CLHEAR preview plus optional code-pointer metadata grants on the existing deployment role, in account 730649732189, us-east-1. No runtime, database, or accepted-release changes to stable services.",
+  "Metadata": {
+    "IntendedAccount": "730649732189",
+    "IntendedRegion": "us-east-1",
+    "AuthorityNotes": [
+      "This template is an owner-reviewed one-time bootstrap, not a workflow permission to provision infrastructure.",
+      "The API endpoint is internet reachable. CLHEAR restricted sign-in and its reviewer allowlist protect application data; this is not a VPC-private endpoint.",
+      "The initial versioned ZIP must contain the reviewed preview-mode runtime from main. Subsequent trusted-main workflow deployments overlay presentation assets only.",
+      "GitHub's exact environment subject does not encode a branch or workflow. Restrict clhear-preview deployments to main and retain trusted-main workflow branch-asset validation.",
+      "The preview role can execute preview code and read its configuration, including its separate session secret. Its runtime may read the one private worker-produced candidate snapshot, but neither role can write that snapshot or access Aurora.",
+      "The default-enabled companion managed policy grants only exact stable code-pointer read/write/list metadata access to the existing clhear-github-deploy role. The existing inline role policy is already near its aggregate size limit. Only one stack may own this named companion policy; the standalone role template leaves it disabled by default.",
+      "All resources and outputs are disabled outside the pinned account and region. A stack with no preview outputs is not a successful bootstrap."
+    ]
+  },
+  "Parameters": {
+    "DeploymentBucket": {
+      "Type": "String",
+      "Default": "clhear-deploy-730649732189",
+      "AllowedValues": ["clhear-deploy-730649732189"],
+      "Description": "Existing private, versioned CLHEAR deployment bucket. This stack does not create or change it."
+    },
+    "InitialCodeKey": {
+      "Type": "String",
+      "AllowedPattern": "^webui/(deployments|previews)/[A-Za-z0-9_/-]+/webui[.]zip$",
+      "Description": "Reviewed complete main Lambda ZIP, including preview runtime support; never a branch-only overlay or a corpus file."
+    },
+    "InitialCodeVersion": {
+      "Type": "String",
+      "AllowedPattern": "^(?!null$)[A-Za-z0-9._~+/=-]{1,1024}$",
+      "Description": "Exact existing S3 object version of the reviewed initial ZIP. Verify its hash against the main build before owner execution."
+    },
+    "CognitoUserPoolId": {
+      "Type": "String",
+      "AllowedPattern": "^us-east-1_[A-Za-z0-9]+$",
+      "Description": "Existing owner-approved CLHEAR user pool in us-east-1. Only a separate preview app client is added."
+    },
+    "CognitoRegion": {
+      "Type": "String",
+      "Default": "us-east-1",
+      "AllowedValues": ["us-east-1"]
+    },
+    "CognitoDomain": {
+      "Type": "String",
+      "AllowedPattern": "^https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$",
+      "Description": "Existing Cognito hosted-login HTTPS origin, without a trailing slash or path; must belong to the selected user pool."
+    },
+    "CognitoIdentityProviders": {
+      "Type": "CommaDelimitedList",
+      "Default": "COGNITO",
+      "Description": "Existing provider names to allow on the new preview client, for example COGNITO,Google. This stack does not create providers or modify the existing client."
+    },
+    "CognitoLoginVersion": {
+      "Type": "String",
+      "AllowedValues": ["1", "2"],
+      "Description": "Existing domain branding version: 1 for hosted UI classic, 2 for managed login. Creates the matching preview-client style; never changes the domain version or pool tier."
+    },
+    "ApprovedReviewerEmails": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 3,
+      "MaxLength": 1500,
+      "AllowedPattern": "^[^\\s,@]+@[^\\s,@]+\\.[^\\s,@]+(?:,[^\\s,@]+@[^\\s,@]+\\.[^\\s,@]+)*$",
+      "Description": "Comma-separated approved reviewer email addresses, without spaces. Users must authenticate with a verified matching email."
+    },
+    "PermissionsBoundaryArn": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^arn:aws:iam::730649732189:policy/[A-Za-z0-9+=,.@_/-]+$",
+      "Description": "Optional existing owner-approved boundary applied to both new preview roles."
+    },
+    "IncludeStableCodeMetadataPolicy": {
+      "Type": "String",
+      "Default": "true",
+      "AllowedValues": ["true", "false"],
+      "Description": "Attach exact code-pointer metadata grants to existing clhear-github-deploy. Set false only when another reviewed stack already owns clhear-viewer-code-metadata."
+    }
+  },
+  "Conditions": {
+    "SupportedDeployment": {
+      "Fn::And": [
+        {"Fn::Equals": [{"Ref": "AWS::AccountId"}, "730649732189"]},
+        {"Fn::Equals": [{"Ref": "AWS::Region"}, "us-east-1"]}
+      ]
+    },
+    "HasPermissionsBoundary": {"Fn::Not": [{"Fn::Equals": [{"Ref": "PermissionsBoundaryArn"}, ""]}]},
+    "UseClassicLogin": {"Fn::And": [{"Condition": "SupportedDeployment"}, {"Fn::Equals": [{"Ref": "CognitoLoginVersion"}, "1"]}]},
+    "UseManagedLogin": {"Fn::And": [{"Condition": "SupportedDeployment"}, {"Fn::Equals": [{"Ref": "CognitoLoginVersion"}, "2"]}]},
+    "IncludeStableMetadata": {"Fn::And": [{"Condition": "SupportedDeployment"}, {"Fn::Equals": [{"Ref": "IncludeStableCodeMetadataPolicy"}, "true"]}]}
+  },
+  "Resources": {
+    "PreviewApi": {
+      "Type": "AWS::ApiGatewayV2::Api",
+      "Condition": "SupportedDeployment",
+      "Properties": {
+        "Name": "clhear-preview-webui",
+        "ProtocolType": "HTTP",
+        "Description": "CLHEAR preview; application sign-in required for private content."
+      }
+    },
+    "PreviewCognitoClient": {
+      "Type": "AWS::Cognito::UserPoolClient",
+      "Condition": "SupportedDeployment",
+      "Properties": {
+        "ClientName": "clhear-preview-webui",
+        "UserPoolId": {"Ref": "CognitoUserPoolId"},
+        "GenerateSecret": false,
+        "AllowedOAuthFlowsUserPoolClient": true,
+        "AllowedOAuthFlows": ["code"],
+        "AllowedOAuthScopes": ["openid", "email", "profile"],
+        "SupportedIdentityProviders": {"Ref": "CognitoIdentityProviders"},
+        "CallbackURLs": [{"Fn::Sub": "${PreviewApi.ApiEndpoint}/auth/cognito/callback"}],
+        "LogoutURLs": [{"Fn::Sub": "${PreviewApi.ApiEndpoint}/"}],
+        "ExplicitAuthFlows": ["ALLOW_REFRESH_TOKEN_AUTH"],
+        "PreventUserExistenceErrors": "ENABLED",
+        "EnableTokenRevocation": true,
+        "AccessTokenValidity": 1,
+        "IdTokenValidity": 1,
+        "RefreshTokenValidity": 1,
+        "TokenValidityUnits": {"AccessToken": "hours", "IdToken": "hours", "RefreshToken": "days"}
+      }
+    },
+    "PreviewClassicLoginStyle": {
+      "Type": "AWS::Cognito::UserPoolUICustomizationAttachment",
+      "Condition": "UseClassicLogin",
+      "Properties": {
+        "UserPoolId": {"Ref": "CognitoUserPoolId"},
+        "ClientId": {"Ref": "PreviewCognitoClient"},
+        "CSS": ".background-customizable { background-color: #fff; }"
+      }
+    },
+    "PreviewManagedLoginStyle": {
+      "Type": "AWS::Cognito::ManagedLoginBranding",
+      "Condition": "UseManagedLogin",
+      "Properties": {
+        "UserPoolId": {"Ref": "CognitoUserPoolId"},
+        "ClientId": {"Ref": "PreviewCognitoClient"},
+        "UseCognitoProvidedValues": true
+      }
+    },
+    "PreviewSessionSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Condition": "SupportedDeployment",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "Description": "Independent CLHEAR preview session signing key. Never copy the stable viewer key.",
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{}",
+          "GenerateStringKey": "session_secret",
+          "PasswordLength": 64,
+          "ExcludePunctuation": true,
+          "IncludeSpace": false
+        },
+        "Tags": [{"Key": "Project", "Value": "CLHEAR"}, {"Key": "Purpose", "Value": "private-preview"}]
+      }
+    },
+    "PreviewLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Condition": "SupportedDeployment",
+      "Properties": {"LogGroupName": "/aws/lambda/clhear-preview-webui", "RetentionInDays": 14}
+    },
+    "PreviewRuntimeRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "SupportedDeployment",
+      "Properties": {
+        "RoleName": "clhear-preview-webui",
+        "PermissionsBoundary": {"Fn::If": ["HasPermissionsBoundary", {"Ref": "PermissionsBoundaryArn"}, {"Ref": "AWS::NoValue"}]},
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{"Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+        },
+        "Policies": [{
+          "PolicyName": "read-one-worker-snapshot-and-own-logs",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {"Effect": "Deny", "Action": "*", "Resource": "*", "Condition": {"StringNotEquals": {"aws:RequestedRegion": "us-east-1"}}},
+              {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::clhear-deploy-730649732189/webui/l1/candidate.db"},
+              {"Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": "arn:aws:logs:us-east-1:730649732189:log-group:/aws/lambda/clhear-preview-webui:log-stream:*"}
+            ]
+          }
+        }]
+      }
+    },
+    "PreviewFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Condition": "SupportedDeployment",
+      "DependsOn": ["PreviewLogGroup"],
+      "Properties": {
+        "FunctionName": "clhear-preview-webui",
+        "Description": "Private, read-only CLHEAR presentation preview; separate from stable main.",
+        "Runtime": "python3.12",
+        "Architectures": ["x86_64"],
+        "Handler": "app.clhear.lambda_web.handler",
+        "Role": {"Fn::GetAtt": ["PreviewRuntimeRole", "Arn"]},
+        "Code": {"S3Bucket": {"Ref": "DeploymentBucket"}, "S3Key": {"Ref": "InitialCodeKey"}, "S3ObjectVersion": {"Ref": "InitialCodeVersion"}},
+        "MemorySize": 1024,
+        "Timeout": 60,
+        "EphemeralStorage": {"Size": 2048},
+        "Environment": {"Variables": {
+          "REG42_CLHEAR_ENABLED": "true",
+          "CLHEAR_ENV": "preview",
+          "CLHEAR_PREVIEW_MODE": "true",
+          "CLHEAR_RESTRICTED_ACCESS": "true",
+          "CLHEAR_AUTH_DEBUG": "false",
+          "CLHEAR_REVIEWER_EMAILS": {"Ref": "ApprovedReviewerEmails"},
+          "CLHEAR_SESSION_SECRET": {"Fn::Sub": "{{resolve:secretsmanager:${PreviewSessionSecret}:SecretString:session_secret}}"},
+          "CLHEAR_DB_S3_URI": "s3://clhear-deploy-730649732189/webui/l1/candidate.db",
+          "CLHEAR_SNAPSHOT_S3_URI": "",
+          "CLHEAR_EVENTS_QUEUE_URL": "",
+          "CLHEAR_APP_KEYS": "",
+          "CLHEAR_MAINTAINERS": "",
+          "CLHEAR_SES_SENDER": "",
+          "CLHEAR_PUBLIC_BASE_URL": {"Fn::GetAtt": ["PreviewApi", "ApiEndpoint"]},
+          "CLHEAR_COGNITO_REGION": {"Ref": "CognitoRegion"},
+          "CLHEAR_COGNITO_USER_POOL_ID": {"Ref": "CognitoUserPoolId"},
+          "CLHEAR_COGNITO_CLIENT_ID": {"Ref": "PreviewCognitoClient"},
+          "CLHEAR_COGNITO_DOMAIN": {"Ref": "CognitoDomain"}
+        }}
+      }
+    },
+    "PreviewIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Condition": "SupportedDeployment",
+      "Properties": {
+        "ApiId": {"Ref": "PreviewApi"},
+        "IntegrationType": "AWS_PROXY",
+        "IntegrationUri": {"Fn::Sub": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${PreviewFunction.Arn}/invocations"},
+        "IntegrationMethod": "POST",
+        "PayloadFormatVersion": "2.0",
+        "TimeoutInMillis": 30000
+      }
+    },
+    "PreviewRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "Condition": "SupportedDeployment",
+      "Properties": {"ApiId": {"Ref": "PreviewApi"}, "RouteKey": "$default", "AuthorizationType": "NONE", "Target": {"Fn::Sub": "integrations/${PreviewIntegration}"}}
+    },
+    "PreviewStage": {
+      "Type": "AWS::ApiGatewayV2::Stage",
+      "Condition": "SupportedDeployment",
+      "DependsOn": ["PreviewRoute", "PreviewInvokePermission"],
+      "Properties": {
+        "ApiId": {"Ref": "PreviewApi"},
+        "StageName": "$default",
+        "AutoDeploy": true,
+        "DefaultRouteSettings": {"ThrottlingBurstLimit": 20, "ThrottlingRateLimit": 10}
+      }
+    },
+    "PreviewInvokePermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Condition": "SupportedDeployment",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {"Ref": "PreviewFunction"},
+        "Principal": "apigateway.amazonaws.com",
+        "SourceAccount": "730649732189",
+        "SourceArn": {"Fn::Sub": "arn:aws:execute-api:us-east-1:730649732189:${PreviewApi}/*/*"}
+      }
+    },
+    "StableViewerMetadataPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Condition": "IncludeStableMetadata",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "ManagedPolicyName": "clhear-viewer-code-metadata",
+        "Description": "Exact code release pointer metadata only; no corpus, runtime, or accepted release mutation.",
+        "Roles": ["clhear-github-deploy"],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/viewer-release.json", "Condition": {"StringEquals": {"aws:RequestedRegion": "us-east-1"}}},
+            {"Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/viewer-release.json", "Condition": {"StringEquals": {"aws:RequestedRegion": "us-east-1", "s3:x-amz-server-side-encryption": "AES256"}}},
+            {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::clhear-deploy-730649732189", "Condition": {"StringEquals": {"aws:RequestedRegion": "us-east-1", "s3:prefix": "deployments/l1/viewer-release.json"}}}
+          ]
+        }
+      }
+    },
+    "PreviewDeploymentRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "SupportedDeployment",
+      "Properties": {
+        "RoleName": "clhear-github-preview",
+        "MaxSessionDuration": 3600,
+        "PermissionsBoundary": {"Fn::If": ["HasPermissionsBoundary", {"Ref": "PermissionsBoundaryArn"}, {"Ref": "AWS::NoValue"}]},
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Federated": "arn:aws:iam::730649732189:oidc-provider/token.actions.githubusercontent.com"},
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {"StringEquals": {
+              "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+              "token.actions.githubusercontent.com:sub": "repo:Reg42-ai/CLHEAR-MVP:environment:clhear-preview"
+            }}
+          }]
+        },
+        "Policies": [{
+          "PolicyName": "preview-code-only",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {"Effect": "Deny", "Action": "*", "Resource": "*", "Condition": {"StringNotEquals": {"aws:RequestedRegion": "us-east-1"}}},
+              {"Effect": "Allow", "Action": ["lambda:GetFunction", "lambda:GetFunctionConfiguration", "lambda:GetFunctionConcurrency", "lambda:UpdateFunctionCode", "lambda:InvokeFunction"], "Resource": "arn:aws:lambda:us-east-1:730649732189:function:clhear-preview-webui"},
+              {"Effect": "Allow", "Action": ["s3:GetBucketVersioning", "s3:GetBucketPublicAccessBlock"], "Resource": "arn:aws:s3:::clhear-deploy-730649732189"},
+              {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::clhear-deploy-730649732189", "Condition": {"StringEquals": {"s3:prefix": "deployments/l1/viewer-release.json"}}},
+              {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/viewer-release.json"},
+              {"Effect": "Allow", "Action": ["s3:GetObject", "s3:GetObjectVersion"], "Resource": ["arn:aws:s3:::clhear-deploy-730649732189/webui/deployments/*/webui.zip", "arn:aws:s3:::clhear-deploy-730649732189/webui/previews/*.zip"]},
+              {"Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::clhear-deploy-730649732189/webui/previews/*.zip", "Condition": {"StringEquals": {"s3:x-amz-server-side-encryption": "AES256"}}}
+            ]
+          }
+        }]
+      }
+    }
+  },
+  "Outputs": {
+    "StableViewerMetadataPolicyArn": {"Condition": "IncludeStableMetadata", "Description": "Retained companion metadata policy attached to the existing stable deployment role. Enable CLHEAR_FAST_DEPLOY_ENABLED only after verifying this grant.", "Value": {"Ref": "StableViewerMetadataPolicy"}},
+    "PreviewUrl": {"Condition": "SupportedDeployment", "Description": "Set CLHEAR_PREVIEW_URL in the GitHub clhear-preview environment. Sign-in is required for application content.", "Value": {"Fn::GetAtt": ["PreviewApi", "ApiEndpoint"]}},
+    "PreviewDeploymentRoleArn": {"Condition": "SupportedDeployment", "Description": "Set CLHEAR_PREVIEW_DEPLOY_ROLE_ARN in GitHub environment clhear-preview.", "Value": {"Fn::GetAtt": ["PreviewDeploymentRole", "Arn"]}},
+    "PreviewFunctionName": {"Condition": "SupportedDeployment", "Value": {"Ref": "PreviewFunction"}},
+    "PreviewRuntimeRoleArn": {"Condition": "SupportedDeployment", "Value": {"Fn::GetAtt": ["PreviewRuntimeRole", "Arn"]}},
+    "PreviewCognitoClientId": {"Condition": "SupportedDeployment", "Value": {"Ref": "PreviewCognitoClient"}},
+    "PreviewCallbackUrl": {"Condition": "SupportedDeployment", "Value": {"Fn::Sub": "${PreviewApi.ApiEndpoint}/auth/cognito/callback"}},
+    "PreviewSessionSecretArn": {"Condition": "SupportedDeployment", "Description": "Owner-managed secret identifier only; no secret value is output. Retained if this stack is deleted.", "Value": {"Ref": "PreviewSessionSecret"}}
+  }
+}

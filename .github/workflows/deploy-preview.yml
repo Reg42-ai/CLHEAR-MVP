@@ -1,0 +1,156 @@
+name: deploy-preview
+
+on:
+  workflow_run:
+    workflows: [ci]
+    branches: ['codex/**']
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  eligibility:
+    if: github.repository == 'Reg42-ai/CLHEAR-MVP' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      eligible: ${{ steps.check.outputs.eligible }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: check
+        name: Verify same-repository branch and completed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/preview_eligibility.py --output artifacts/preview-eligibility.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preview-eligibility-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/preview-eligibility.json
+          retention-days: 14
+
+  preview:
+    needs: eligibility
+    if: needs.eligibility.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: clhear-l1-deployment
+      cancel-in-progress: false
+    environment: clhear-preview
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      CLHEAR_DEPLOY_ENVIRONMENT: clhear-preview
+      CLHEAR_PREVIEW_DEPLOY_ROLE_ARN: ${{ vars.CLHEAR_PREVIEW_DEPLOY_ROLE_ARN }}
+      CANDIDATE_SHA: ${{ needs.eligibility.outputs.sha }}
+    steps:
+      # Run deployment tooling from main. Never check out or execute branch
+      # workflows/scripts, and never download CI artifacts from a branch run.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Recheck preview eligibility after acquiring the deployment lock
+        id: locked
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/preview_eligibility.py --output artifacts/preview-locked.json
+      - uses: actions/setup-python@v5
+        if: steps.locked.outputs.eligible == 'true'
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install trusted main dependencies
+        if: steps.locked.outputs.eligible == 'true'
+        run: pip install -r requirements.lock playwright
+      - name: Apply only presentation files to the trusted test workspace
+        if: steps.locked.outputs.eligible == 'true'
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          from scripts.viewer_release import classify
+          if classify(os.environ['GITHUB_SHA'], os.environ['CANDIDATE_SHA']) != 'viewer':
+              raise SystemExit('Preview requires presentation-only changes relative to current main.')
+          subprocess.run(['git', 'restore', '--source', os.environ['CANDIDATE_SHA'], '--worktree', '--', 'app/clhear/web'], check=True)
+          PY
+      - name: Test candidate viewer with trusted authentication and permission tests
+        if: steps.locked.outputs.eligible == 'true'
+        run: >-
+          pytest tests/test_l1_demo_ui.py tests/test_review_access.py
+          tests/test_l1_evidence_api.py tests/test_lambda_snapshot_access.py
+          tests/test_lambda_packaging.py tests/test_preview.py -q
+      - name: Browser accessibility and viewer rendering
+        if: steps.locked.outputs.eligible == 'true'
+        env:
+          CLHEAR_HTTP_MODE: replay
+        run: |
+          playwright install --with-deps chromium
+          python scripts/a11y_axe.py --json artifacts/preview-axe.json
+      - name: Configure isolated preview deployment identity
+        if: steps.locked.outputs.eligible == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.CLHEAR_PREVIEW_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Select preview from the verified stable package
+        if: steps.locked.outputs.eligible == 'true'
+        run: python scripts/viewer_release.py select --target preview --sha "$CANDIDATE_SHA" --output artifacts/preview-scope.json
+      - name: Reuse verified backend and replace presentation assets
+        if: steps.locked.outputs.eligible == 'true'
+        run: python scripts/viewer_release.py package --selection artifacts/preview-scope.json --output artifacts/lambda/webui.zip
+      - name: Store immutable preview code
+        id: ui
+        if: steps.locked.outputs.eligible == 'true'
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          import boto3
+          from scripts.viewer_release import ACCOUNT, BUCKET
+          s3 = boto3.client('s3')
+          data = Path('artifacts/lambda/webui.zip').read_bytes()
+          digest = hashlib.sha256(data).hexdigest()
+          key = f"webui/previews/{os.environ['CANDIDATE_SHA']}/{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}/webui.zip"
+          response = s3.put_object(Bucket=BUCKET, Key=key, Body=data, ExpectedBucketOwner=ACCOUNT,
+              IfNoneMatch='*', ServerSideEncryption='AES256',
+              Metadata={'sha256': digest, 'git-sha': os.environ['CANDIDATE_SHA'], 'kind': 'application-code'})
+          version = response.get('VersionId')
+          if not version or version == 'null':
+              raise SystemExit('Preview artifacts require a versioned bucket')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'key={key}\nversion={version}\nsha256={digest}\n')
+          PY
+      - name: Recheck current branch and CI immediately before preview cutover
+        id: apply_guard
+        if: steps.locked.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/preview_eligibility.py --output artifacts/preview-apply.json
+      - name: Deploy isolated viewer and verify access restrictions
+        if: steps.locked.outputs.eligible == 'true' && steps.apply_guard.outputs.eligible == 'true'
+        env:
+          UI_KEY: ${{ steps.ui.outputs.key }}
+          UI_VERSION: ${{ steps.ui.outputs.version }}
+          UI_SHA256: ${{ steps.ui.outputs.sha256 }}
+        run: python scripts/apply_viewer_release.py --target preview --sha "$CANDIDATE_SHA" --selection artifacts/preview-scope.json --output artifacts/preview-result.json
+      - name: Retain code and check evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            artifacts/preview-*.json
+            artifacts/lambda/webui.json

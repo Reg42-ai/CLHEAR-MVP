@@ -33,6 +33,8 @@ def hydrate_ssm_env(
 ) -> dict[str, str]:
     """Fill empty/CHANGEME inference env vars from SSM. No-op under CLHEAR_LLM_PROVIDER=fake."""
     env = environ if environ is not None else os.environ
+    if str(env.get("CLHEAR_PREVIEW_MODE") or "").lower() in {"true", "1", "yes", "on"}:
+        return {}  # A viewer preview never needs operational inference secrets.
     if str(env.get("CLHEAR_LLM_PROVIDER") or "").lower() == "fake":
         return {}
     filled: dict[str, str] = {}

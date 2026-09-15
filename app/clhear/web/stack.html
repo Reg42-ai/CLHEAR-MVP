@@ -966,11 +966,11 @@ function LayerPage({ slug, auth }) {
           ${code === "L8" && html`
             <div class="demobanner" style=${{ borderColor: "rgba(251,113,133,0.4)", background: "rgba(251,113,133,0.06)", color: "var(--rose-400)" }}>
               <b>LOCKED</b><span>Peer data never leaves the enclave. Real aggregates publish only at k≥5.
-              A synthetic demo cohort is labeled until then — zero LLM.</span>
+              No eligible peer cohort is available until that threshold is met.</span>
             </div>
-            ${(detail.items && detail.items.cohorts || []).map((c) => html`
+            ${(detail.items && detail.items.cohorts || []).filter((c) => !c.synthetic).map((c) => html`
               <div class="card" key=${c.id}>
-                <div class="id">${c.id} ${c.synthetic ? html`<span class="chip">SYNTHETIC DEMO</span>` : html`<span class="chip">k=${c.k_threshold}</span>`}</div>
+                <div class="id">${c.id} <span class="chip">k=${c.k_threshold}</span></div>
                 <h5>${c.label}</h5>
                 <div class="sum">n=${c.n} · published=${String(c.published)} · ${JSON.stringify(c.aggregates)}</div>
               </div>`)}`}

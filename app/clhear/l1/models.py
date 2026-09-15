@@ -167,25 +167,25 @@ VERSION_KINDS = {
     "as_published": {
         "label": "as published",
         "definition": (
-            "The text exactly as first published by the official publisher — an EU act in the "
-            "Official Journal, a UK Statutory Instrument as made. Includes parts later versions "
-            "drop, such as the preamble and recitals. Never changes; amendments create new "
-            "consolidated versions instead."
+            "An original publication, such as an EU Official Journal act or UK instrument "
+            "as made. It can include preambles and recitals absent from later consolidated "
+            "texts. Import accuracy and edition identity require separate verification."
         ),
     },
     "consolidated": {
         "label": "consolidated",
         "definition": (
-            "The current working text with all amendments and corrections merged in by the "
-            "publisher, correct as of the shown date. Publishers omit the preamble/recitals "
-            "here; this is the legally current wording."
+            "A publisher's compilation incorporating amendments for a stated date. It may "
+            "omit preambles or recitals. This classification does not establish legal "
+            "effect, currentness or successful verification of the stored text."
         ),
     },
     "edition": {
         "label": "edition",
         "definition": (
             "A numbered or dated release of the entire text (U.S. Code 2023 edition, NIST "
-            "SP 800-53 rev 5.2.0). Each edition wholly supersedes the previous one."
+            "SP 800-53 rev 5.2.0). Applicability and replacement of earlier editions depend "
+            "on the publisher's recorded publication and effective-date evidence."
         ),
     },
 }
@@ -195,10 +195,10 @@ VERSION_KINDS = {
 STAGE_INFO = {
     "fetch": "Download the official artifact from the publisher (polite client: identifying user-agent, backoff, caching — never hammering official endpoints).",
     "parse": "Structural parse of the artifact into typed document nodes (parts, chapters, articles, paragraphs …) with the text kept verbatim.",
-    "gate": "The fidelity gate: measures how much of the artifact's own visible text the parse captured (must be ≥ 99.5%) and lints contract invariants. Below threshold, nothing is stored.",
+    "gate": "Verify complete ordered original text and the expected encoded structure under the recorded normalization policy, alongside coverage and contract checks. Unresolved discrepancies block verified publication.",
     "hints": "Apply parse fixes the fleet learned on earlier runs (deterministic — no AI involved). Each hint was gate-validated when first learned.",
     "llm_repair": "AI escalation for novel gaps: the model proposes how to classify missed spans; recovered text still comes only from the artifact, and the gate re-validates everything.",
-    "salvage": "Recover small residual gaps (≤ 2% of the text) as clearly flagged notes so nothing is silently lost while the parser gets fixed.",
+    "salvage": "Legacy recovery diagnostics for missed spans. Salvage cannot bypass mandatory original-text and structure verification or establish corpus acceptance.",
     "persist": "Write the new version, its document nodes and the clause projection to the corpus in one transaction.",
     "annotate": "Deterministically classify every clause (definition, requirement, enforcement, other) and inherit topic tags from the curated source metadata — the orientation layer for readers.",
     "index": "Build the hybrid search units: each clause in distilled form (short name + path + classification + text) plus substantial paragraphs with their clause heading — the corpus becomes findable by citation, exact tokens, or plain words.",
@@ -300,6 +300,7 @@ doc_nodes = sa.Table(
     sa.Column("heading", sa.Text, nullable=False, default=""),
     sa.Column("raw_text", sa.Text, nullable=False, default=""),
     sa.Column("source_fragment", sa.Text, nullable=False, default=""),
+    sa.Column("source_locator", Json, nullable=False, default=dict, server_default="{}"),
     sa.Column("text_hash", sa.Text, nullable=False),
     sa.Column("public_ok", sa.Boolean, nullable=False, default=False),
     sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
