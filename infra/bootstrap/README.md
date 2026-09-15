@@ -1,16 +1,17 @@
 # Owner enrollment of the CLHEAR deployment role
 
 `clhear-deployment-role.json` is an owner-reviewed CloudFormation template for
-account `730649732189`, region `us-east-1`. It creates one resource: the
-`clhear-github-deploy` IAM role and its inline deployment policy. It reuses the
+account `730649732189`, region `us-east-1`. By default it creates one resource: the
+`clhear-github-deploy` IAM role and its inline deployment policy. Its optional
+`clhear-viewer-code-metadata` managed policy is disabled by default. It reuses the
 existing GitHub OIDC provider. It does not deploy application code or change
 Aurora, networks, source permissions, fleet services, or existing IAM roles.
 
 CloudFormation owns this new role. CLHEAR Terraform continues to own the
 existing worker/viewer resources. Do not also declare or import this role in
 Terraform without an explicit ownership transfer. Review and founder-merge
-privileged infrastructure changes before execution, under the workforce
-contract. A workforce seat must not apply this template or grant itself access.
+privileged infrastructure changes before the owner executes the reviewed
+CloudFormation change set. Routine deployment code does not grant itself IAM access.
 
 ## Review the authority being granted
 
@@ -57,6 +58,30 @@ on 2026-09-15. Reconcile the template if these resources are recreated. Do not
 replace exact resources with broad wildcards to work around drift. If the
 platform requires a permissions boundary, supply its approved existing ARN.
 
+## One-time fast viewer and private preview setup
+
+Follow [PREVIEW.md](PREVIEW.md) for the combined setup after the single reviewed
+runtime/relay/preview PR merges and its initial full deployment succeeds. Keep
+`CLHEAR_FAST_DEPLOY_ENABLED` unset or `false` until the metadata permission is
+installed. The preview CloudFormation stack normally owns the optional named
+managed policy and attaches it to the existing `clhear-github-deploy` role. It
+grants exact code-pointer read/write and exact-prefix existence checks only;
+it does not change production runtime settings or accepted data.
+
+This template mirrors that policy so fresh installations remain reproducible.
+Set `IncludeStableCodeMetadataPolicy=true` here only if this role stack will own
+the policy and the preview stack has its copy disabled. Never enable both.
+The existing inline policy occupies 10,226 of the allowed 10,240 aggregate
+bytes, so an additional inline policy would exceed the role quota. A separate
+managed policy avoids changing or broadening existing grants. It is retained
+on stack deletion/replacement and requires explicit owner cleanup or transfer.
+
+The `clhear-preview` GitHub environment already has its main-only branch rule;
+its role variable and the stable fast-deployment opt-in are not enabled yet.
+After the one owner bootstrap, Codex can read stack outputs, set the preview
+role/URL variables, enable `CLHEAR_FAST_DEPLOY_ENABLED=true` in `clhear-l1`, and
+run main once to seed the verified code pointer. Later iterations are automatic.
+
 The repository was created before GitHub's July 2026 immutable-subject rollout
 and currently uses the default OIDC subject customization. If its subject
 format changes through opt-in, rename or transfer, review the trust policy
@@ -75,7 +100,8 @@ repositories or environment subjects as a fallback.
    unless an approved bootstrap executor has explicitly been provided; the
    deployment role being created is not a bootstrap executor.
 4. Review the named-IAM acknowledgement. Create a change set to inspect the
-   proposed resources. The only resource addition must be the deployment role;
+   proposed resources. The default resource addition is the deployment role;
+   an explicitly enabled metadata companion adds only that named managed policy.
    no existing resource should be modified or removed. Execute after founder
    review/merge and approval of this exact change set.
 5. Wait for `CREATE_COMPLETE`. Copy output `DeploymentRoleArn` into the GitHub

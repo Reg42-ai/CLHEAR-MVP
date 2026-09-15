@@ -48,13 +48,13 @@ def clauses_public_select(conn=None) -> sa.Select:
 
 
 def clause_refs_select() -> sa.Select:
-    """Refs/paths/hashes only — safe for restricted sources (no text column)."""
+    """Refs/hashes only; paths may contain verbatim publisher headings."""
     return sa.select(
         clauses.c.id,
         clauses.c.source_version_id,
         clauses.c.doc_node_id,
         clauses.c.ref,
-        clauses.c.path,
+        sa.literal(None).label("path"),
         clauses.c.ordering,
         clauses.c.text_hash,
     )
@@ -87,8 +87,8 @@ def nodes_refs_select() -> sa.Select:
         doc_nodes.c.depth,
         doc_nodes.c.node_type,
         doc_nodes.c.ref,
-        doc_nodes.c.label,
-        doc_nodes.c.heading,
+        sa.literal(None).label("label"),
+        sa.literal(None).label("heading"),
         doc_nodes.c.text_hash,
         doc_nodes.c.public_ok,
         doc_nodes.c.source_version_id,

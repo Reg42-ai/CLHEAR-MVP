@@ -426,4 +426,4 @@ def test_workflow_keeps_eligibility_unprivileged_and_rechecks_before_all_mutatio
     assert "GITHUB_SHA:" not in path.read_text() and "GITHUB_WORKFLOW_REF:" not in path.read_text()
     for job in (before, deploy):
         checkout = job["steps"][0]
-        assert checkout["with"] == {"ref": "${{ github.sha }}", "persist-credentials": False}
+        assert checkout["with"] == {"ref": "${{ github.sha }}", "persist-credentials": False, "fetch-depth": 0}

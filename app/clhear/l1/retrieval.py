@@ -244,6 +244,9 @@ def _vec_list(engine: Engine, conn: Connection, query: str, limit: int) -> tuple
     noisy on long clauses, so its leg is ``vec:hash`` and carries whatever
     weight RETRIEVER_WEIGHTS gives it (zero by default — skipped entirely).
     """
+    from app.clhear.settings import get_settings
+    if get_settings().clhear_preview_mode:
+        return "vec", []  # Read-only preview uses stored lexical indexes, never a model call.
     from app.clhear.platform import embeddings
 
     try:

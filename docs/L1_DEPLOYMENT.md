@@ -6,6 +6,69 @@ release, or enable downstream processing. Its database is the existing
 `clhear-record` Aurora cluster. The Lambda viewer receives a separate private
 candidate at `webui/l1/candidate.db`; the legacy snapshot is not overwritten.
 
+## Fast iteration
+
+Use [local private preview](PREVIEW.md) for immediate edits. After the one-time
+[hosted preview bootstrap](../infra/bootstrap/PREVIEW.md), a push to a `codex/`
+branch automatically updates the isolated preview when its changes are confined
+to presentation files under `app/clhear/web/`. Stable main still requires the
+owner's merge; preview iterations require neither a merge nor an environment
+reviewer. The preview environment itself allows **main only**: the trusted main
+workflow processes the branch as input. It never executes branch scripts,
+workflows, dependency files, or branch CI artifacts with AWS credentials.
+
+Main deployment automatically chooses one of two lanes:
+
+- **Presentation:** reuse the last verified Lambda ZIP's backend and dependency
+  bytes, replace only regular HTML/CSS/JS/image/font files, conditionally update
+  the viewer, verify completion/hash/configuration and access restrictions, and
+  roll back code on failure. Workers, schedules, concurrency, snapshot and corpus
+  acceptance are unchanged. No worker image build, migration, import or snapshot
+  reconstruction runs for this lane.
+- **Full:** API, authentication, permissions, worker, schema, packaging,
+  dependency or workflow changes use the coordinated L0/L1 process below.
+  Missing verified code-baseline evidence also selects full deployment.
+
+`deployments/l1/viewer-release.json` records the last verified viewer SHA, worker
+SHA, exact versioned ZIP/hash, and full and viewer deployment identities. It is
+a code pointer, separate from every corpus/accepted-release pointer. Only a
+successful main deployment advances it with an S3 conditional write. The first
+deployment of this change must be full to establish it. Failure to publish this
+pointer is an explicit deployment-job failure; it must never be reconstructed
+from a guessed current commit. Fast selection compares the **entire deployed
+baseline to the candidate**, and the controller independently verifies the
+actual ZIP bytes and live Lambda hash. Preview cannot change this pointer.
+
+Enable `CLHEAR_FAST_DEPLOY_ENABLED=true` in `clhear-l1` only after the bootstrap
+grants the dedicated role access to this code record. Until then the existing
+full deployment works without reading or publishing it. This opt-in is a
+one-time enrollment switch, not a per-deployment approval.
+
+CI keeps the existing three required job names. A fast test selection compares
+against a completed, successful **full main CI** anchor, not merely the preceding
+push. This prevents a canceled backend test run from being hidden by a later UI
+edit. Missing or inaccessible anchor evidence runs the full suite. Presentation
+checks retain authentication, permissions, snapshot access, packaging and real
+browser/accessibility tests. Both full images use separate persistent Docker
+cache scopes. Fast packaging reuses tested dependencies without rebuilding them.
+
+Preview and main cutovers share the non-cancelling deployment lock. Eligibility
+is rechecked after acquiring the lock and immediately before cutover. New test
+runs can cancel superseded CI; running deployments are never interrupted. An
+old branch or failed/rerun CI cannot authorize a preview. The hosted preview may
+refresh an older backend only from the latest verified stable artifact; branch
+backend changes first require the normal full main deployment.
+
+The deployment report lists viewer and worker commits separately, measured
+steps, rollback outcome and anonymous access probes. Signed-in browser tests run
+against test data; an actual authenticated hosted walkthrough is explicitly
+pending until a reviewer completes it. Code checks do not certify FINRA coverage,
+grant permissions, alter publisher freshness, or satisfy the two nightly cycles.
+
+This iteration path is entirely in CLHEAR-MVP. It has no workforce or Paperclip
+dependency. AWS enrollment remains a single owner-run infrastructure operation;
+routine code updates use the dedicated GitHub OIDC identities.
+
 ## Deployment authority and prerequisites
 
 The owner enrollment template and console procedure are in

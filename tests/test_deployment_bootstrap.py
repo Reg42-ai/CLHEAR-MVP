@@ -10,7 +10,8 @@ ACCOUNT = "730649732189"
 
 def _role():
     template = json.loads(TEMPLATE.read_text())
-    resources = list(template["Resources"].values())
+    assert set(template["Resources"]) == {"DeploymentRole", "StableViewerMetadataPolicy"}
+    resources = [r for r in template["Resources"].values() if r["Type"] == "AWS::IAM::Role"]
     assert len(resources) == 1, "Enrollment must not silently adopt runtime resources"
     assert resources[0]["Type"] == "AWS::IAM::Role"
     return resources[0]["Properties"]
@@ -84,3 +85,16 @@ def test_deployer_has_no_direct_database_mutation_or_iam_administration_api_gran
             assert _items(grant["Resource"]) == [
                 f"arn:aws:ssm:us-east-1:{ACCOUNT}:parameter/clhear/DATABASE_URL"
             ]
+
+
+def test_optional_metadata_policy_matches_preview_bootstrap_without_inline_quota_growth():
+    template = json.loads(TEMPLATE.read_text())
+    preview = json.loads((ROOT / "infra/bootstrap/clhear-preview.json").read_text())
+    policy = template["Resources"]["StableViewerMetadataPolicy"]
+    assert template["Parameters"]["IncludeStableCodeMetadataPolicy"]["Default"] == "false"
+    assert policy["Type"] == "AWS::IAM::ManagedPolicy" and policy["Condition"] == "IncludeStableMetadata"
+    assert policy["Properties"]["Roles"] == [{"Ref": "DeploymentRole"}]
+    assert policy["Properties"]["PolicyDocument"] == preview["Resources"]["StableViewerMetadataPolicy"]["Properties"]["PolicyDocument"]
+    assert policy["Properties"]["ManagedPolicyName"] == "clhear-viewer-code-metadata"
+    assert len(json.dumps(policy["Properties"]["PolicyDocument"], separators=(",", ":"))) <= 6144
+    assert not _role().get("ManagedPolicyArns"), "Only the optional policy resource attaches this grant"

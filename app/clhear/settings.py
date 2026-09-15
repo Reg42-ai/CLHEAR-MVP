@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     clhear_restricted_access: bool = False
     clhear_reviewer_emails: str = ""
     clhear_l1_only: bool = False  # enable on worker deployments while accepting L1
+    # Private UI iteration over a worker-generated snapshot, never a writer.
+    clhear_preview_mode: bool = False
+    clhear_preview_snapshot_path: str = ""  # local only; Lambda uses its synchronized snapshot
+    clhear_preview_snapshot_s3_uri: str = ""  # optional local refresh through the existing reader synchronizer
 
     # Exporter target: local checkout dir and optional remote (public `clhear` repo).
     clhear_public_repo_dir: str = "./clhear-public"

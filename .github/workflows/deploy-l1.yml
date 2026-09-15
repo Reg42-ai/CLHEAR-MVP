@@ -31,6 +31,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - name: Check founder merge and exact completed main CI
         id: check
         env:
@@ -63,6 +64,7 @@ jobs:
       CLHEAR_DEPLOY_ROLE_ARN: ${{ vars.CLHEAR_DEPLOY_ROLE_ARN }}
       CLHEAR_REVIEWER_EMAILS: ${{ vars.CLHEAR_REVIEWER_EMAILS }}
       CLHEAR_DEPLOY_ENVIRONMENT: clhear-l1
+      CLHEAR_FAST_DEPLOY_ENABLED: ${{ vars.CLHEAR_FAST_DEPLOY_ENABLED }}
       CLHEAR_RECOVERY_PLAN: ${{ inputs.recovery_plan }}
       DEPLOY_BUCKET: clhear-deploy-730649732189
     steps:
@@ -70,6 +72,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - name: Recheck eligibility after acquiring the deployment lock
         id: locked
         env:
@@ -99,12 +102,19 @@ jobs:
       - name: Verify the assumed account before publishing code
         if: steps.locked.outputs.eligible == 'true'
         run: test "$(aws sts get-caller-identity --query Account --output text)" = '730649732189'
+      - name: Select viewer or full deployment against verified live code
+        if: steps.locked.outputs.eligible == 'true'
+        id: scope
+        run: python scripts/viewer_release.py select --sha "$GITHUB_SHA" --output artifacts/deployment-scope.json
+      - name: Reuse verified backend package for presentation changes
+        if: steps.locked.outputs.eligible == 'true' && steps.scope.outputs.lane == 'viewer'
+        run: python scripts/viewer_release.py package --selection artifacts/deployment-scope.json --output artifacts/lambda/webui.zip
       - uses: docker/setup-buildx-action@v3
-        if: steps.locked.outputs.eligible == 'true'
+        if: steps.locked.outputs.eligible == 'true' && steps.scope.outputs.lane == 'full'
       - uses: aws-actions/amazon-ecr-login@v2
-        if: steps.locked.outputs.eligible == 'true'
+        if: steps.locked.outputs.eligible == 'true' && steps.scope.outputs.lane == 'full'
       - name: Build immutable worker image
-        if: steps.locked.outputs.eligible == 'true'
+        if: steps.locked.outputs.eligible == 'true' && steps.scope.outputs.lane == 'full'
         id: worker
         uses: docker/build-push-action@v6
         with:
@@ -115,14 +125,18 @@ jobs:
           labels: org.opencontainers.image.revision=${{ github.sha }}
           provenance: true
           sbom: true
+          cache-from: type=gha,scope=clhear-worker-main
+          cache-to: type=gha,mode=max,scope=clhear-worker-main
       - name: Build Lambda code with compatible native dependencies
-        if: steps.locked.outputs.eligible == 'true'
+        if: steps.locked.outputs.eligible == 'true' && steps.scope.outputs.lane == 'full'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.webui
           platforms: linux/amd64
           outputs: type=local,dest=artifacts/lambda
+          cache-from: type=gha,scope=clhear-viewer-main
+          cache-to: type=gha,mode=max,scope=clhear-viewer-main
       - name: Upload immutable UI code
         if: steps.locked.outputs.eligible == 'true'
         id: ui
@@ -158,15 +172,22 @@ jobs:
           UI_KEY: ${{ steps.ui.outputs.key }}
           UI_VERSION: ${{ steps.ui.outputs.version }}
           UI_SHA256: ${{ steps.ui.outputs.sha256 }}
-        run: >-
-          python scripts/deploy_l1.py
-          --sha "$GITHUB_SHA"
-          --image "730649732189.dkr.ecr.us-east-1.amazonaws.com/clhear-workers@$WORKER_DIGEST"
-          --ui-key "$UI_KEY" --ui-version "$UI_VERSION" --ui-sha256 "$UI_SHA256"
-          --deployment-id "l1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          --reviewer-emails "$CLHEAR_REVIEWER_EMAILS"
-          --recovery-plan "$CLHEAR_RECOVERY_PLAN"
-          --output artifacts/deployment-result.json --apply
+        run: |
+          if [ '${{ steps.scope.outputs.lane }}' = viewer ]; then
+            python scripts/apply_viewer_release.py --target live --sha "$GITHUB_SHA" --selection artifacts/deployment-scope.json --output artifacts/deployment-result.json
+          else
+            python scripts/deploy_l1.py \
+              --sha "$GITHUB_SHA" \
+              --image "730649732189.dkr.ecr.us-east-1.amazonaws.com/clhear-workers@$WORKER_DIGEST" \
+              --ui-key "$UI_KEY" --ui-version "$UI_VERSION" --ui-sha256 "$UI_SHA256" \
+              --deployment-id "l1-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+              --reviewer-emails "$CLHEAR_REVIEWER_EMAILS" \
+              --recovery-plan "$CLHEAR_RECOVERY_PLAN" \
+              --output artifacts/deployment-result.json --apply
+          fi
+      - name: Record verified viewer and worker code independently
+        if: steps.locked.outputs.eligible == 'true' && steps.apply_guard.outputs.eligible == 'true' && env.CLHEAR_FAST_DEPLOY_ENABLED == 'true'
+        run: python scripts/viewer_release.py publish --selection artifacts/deployment-scope.json --report artifacts/deployment-result.json --output artifacts/viewer-release.json
       - name: Retain code deployment evidence only
         if: always()
         uses: actions/upload-artifact@v4
@@ -180,3 +201,5 @@ jobs:
             artifacts/lambda/webui.json
             artifacts/eligibility-locked.json
             artifacts/eligibility-apply.json
+            artifacts/deployment-scope.json
+            artifacts/viewer-release.json

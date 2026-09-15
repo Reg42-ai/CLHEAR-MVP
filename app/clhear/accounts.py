@@ -37,6 +37,8 @@ MAGIC_TTL_S = 15 * 60
 
 
 def _sign(payload: dict, purpose: str) -> str:
+    if get_settings().clhear_preview_mode:
+        purpose = f"preview:{purpose}"
     secret = get_settings().clhear_session_secret.encode()
     body = base64.urlsafe_b64encode(json.dumps({**payload, "_p": purpose}).encode()).rstrip(b"=")
     mac = hmac.new(secret, body, hashlib.sha256).hexdigest()[:32]
@@ -44,6 +46,8 @@ def _sign(payload: dict, purpose: str) -> str:
 
 
 def _verify(token: str, purpose: str) -> dict | None:
+    if get_settings().clhear_preview_mode:
+        purpose = f"preview:{purpose}"
     try:
         body, mac = token.rsplit(".", 1)
         secret = get_settings().clhear_session_secret.encode()
@@ -105,6 +109,8 @@ def upsert_user(engine: Engine, email: str, display_name: str = "", provider: st
     email = email.strip().lower()
     identity = {"id": community_writes.user_id_for(email), "email": email,
                 "display_name": display_name or email.split("@")[0]}
+    if get_settings().clhear_preview_mode:
+        return identity  # Stateless verified sign-in must not enqueue an account write.
     try:
         community_writes.dispatch(
             engine,
@@ -117,9 +123,11 @@ def upsert_user(engine: Engine, email: str, display_name: str = "", provider: st
 
 
 def _set_session(response, user: dict):
+    from app.clhear.preview import local_preview
+
     response.set_cookie(
         SESSION_COOKIE, session_token(user), max_age=SESSION_TTL_S,
-        httponly=True, samesite="lax", secure=not get_settings().clhear_auth_debug,
+        httponly=True, samesite="lax", secure=not (get_settings().clhear_auth_debug or local_preview()),
     )
     return response
 
@@ -365,7 +373,7 @@ def me(request: Request) -> dict:
     return {
         "user": user,
         "providers": {
-            "email": True,
+            "email": not settings.clhear_preview_mode,
             "google": bool(settings.google_oauth_client_id),
             "apple": bool(settings.apple_oauth_client_id),
             "cognito": bool(settings.clhear_cognito_user_pool_id and settings.clhear_cognito_domain),

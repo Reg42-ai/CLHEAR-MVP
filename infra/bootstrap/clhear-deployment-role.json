@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Owner-managed deployment role for CLHEAR in account 730649732189, us-east-1. Creates no application infrastructure.",
+  "Description": "Owner-managed CLHEAR deployment role in account 730649732189, us-east-1, with optional exact code-pointer metadata policy. Creates no application infrastructure.",
   "Metadata": {
     "IntendedAccount": "730649732189",
     "IntendedRegion": "us-east-1",
@@ -10,10 +10,17 @@
       "Only existing CLHEAR resources are managed. The controller executes corpus work through CLHEAR L0/L1 workers. Candidate HEAD permission necessarily also permits reading that single S3 object.",
       "The live DATABASE_URL SecureString and its AWS-managed SSM key are pinned. Recreated autoscaling targets or changed secret keys require owner review.",
       "DescribeTaskDefinition, DescribeScalableTargets, ListRules and ECR GetAuthorizationToken require wildcard resources. Fargate ListTasks is constrained by the exact ECS cluster. Schedule target reads are limited to the adapter name prefix; target writes enumerate all 32 declared rules.",
-      "The role has no direct IAM provisioning, accepted-release S3 write, SQS message mutation, database mutation or networking API grants. Deployment code executes with existing runtime permissions, and reading DATABASE_URL exposes database credentials; those capabilities can affect application data and releases. Existing runtime roles and viewer L0 SendMessage permission remain owner-managed prerequisites."
+      "The role has no direct IAM provisioning, accepted-release S3 write, SQS message mutation, database mutation or networking API grants. Deployment code executes with existing runtime permissions, and reading DATABASE_URL exposes database credentials; those capabilities can affect application data and releases. Existing runtime roles and viewer L0 SendMessage permission remain owner-managed prerequisites.",
+      "The optional clhear-viewer-code-metadata managed policy is disabled here by default because the one-time preview stack normally owns it. Enable in exactly one stack. Its separate managed-policy quota avoids expanding the existing 10226-byte inline policy beyond IAM's 10240-byte aggregate role limit."
     ]
   },
   "Parameters": {
+    "IncludeStableCodeMetadataPolicy": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": ["true", "false"],
+      "Description": "Opt in only if this stack, rather than the preview bootstrap, will exclusively own clhear-viewer-code-metadata."
+    },
     "PermissionsBoundaryArn": {
       "Type": "String",
       "Default": "",
@@ -23,6 +30,7 @@
     }
   },
   "Conditions": {
+    "IncludeStableMetadata": {"Fn::Equals": [{"Ref": "IncludeStableCodeMetadataPolicy"}, "true"]},
     "HasPermissionsBoundary": {
       "Fn::Not": [
         {
@@ -37,6 +45,25 @@
     }
   },
   "Resources": {
+    "StableViewerMetadataPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Condition": "IncludeStableMetadata",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "ManagedPolicyName": "clhear-viewer-code-metadata",
+        "Description": "Exact code release pointer metadata only; no corpus, runtime, or accepted release mutation.",
+        "Roles": [{"Ref": "DeploymentRole"}],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/viewer-release.json", "Condition": {"StringEquals": {"aws:RequestedRegion": "us-east-1"}}},
+            {"Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/viewer-release.json", "Condition": {"StringEquals": {"aws:RequestedRegion": "us-east-1", "s3:x-amz-server-side-encryption": "AES256"}}},
+            {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::clhear-deploy-730649732189", "Condition": {"StringEquals": {"aws:RequestedRegion": "us-east-1", "s3:prefix": "deployments/l1/viewer-release.json"}}}
+          ]
+        }
+      }
+    },
     "DeploymentRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
@@ -410,6 +437,11 @@
     }
   },
   "Outputs": {
+    "StableViewerMetadataPolicyArn": {
+      "Condition": "IncludeStableMetadata",
+      "Description": "Optional retained exact code-pointer policy; enable fast deployment only after the owner has installed and verified it.",
+      "Value": {"Ref": "StableViewerMetadataPolicy"}
+    },
     "DeploymentRoleArn": {
       "Description": "Set as CLHEAR_DEPLOY_ROLE_ARN in the protected GitHub clhear-l1 environment.",
       "Value": {

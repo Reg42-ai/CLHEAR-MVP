@@ -629,7 +629,7 @@ class Deployer:
         require(task.get("lastStatus") == "STOPPED" and code in ({0, 2} if action == "verify" else {0}), f"{action} worker failed; deployment remains held")
         return code
 
-    def _complete_lambda_update(self, before, response, *, phase, expected_code_hash):
+    def _complete_lambda_update(self, before, response, *, phase, expected_code_hash, function_name=FUNCTION):
         started = time.monotonic()
         evidence = {"phase": phase, "response_revision": response.get("RevisionId"),
                     "response_update_status": response.get("LastUpdateStatus"), "result": "waiting"}
@@ -638,8 +638,8 @@ class Deployer:
             # The response can be InProgress. Its revision is not a completion
             # token: Lambda may assign a different revision as it finishes.
             # https://docs.aws.amazon.com/lambda/latest/dg/functions-states.html
-            self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=FUNCTION)
-            current = self.clients["lambda"].get_function_configuration(FunctionName=FUNCTION)
+            self.clients["lambda"].get_waiter("function_updated_v2").wait(FunctionName=function_name)
+            current = self.clients["lambda"].get_function_configuration(FunctionName=function_name)
             ignored = LAMBDA_UPDATE_OUTPUTS | {"CodeSha256"}
             if phase in {"code", "rollback"}:
                 ignored |= {"CodeSize", "SigningJobArn", "SigningProfileVersionArn"}

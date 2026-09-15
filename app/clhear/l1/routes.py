@@ -77,6 +77,9 @@ def _text_access(conn, source, request: Request) -> dict:
 
 
 def _audit_text_read(conn, request, source, version, access, route, ids):
+    from app.clhear.settings import get_settings
+    if get_settings().clhear_preview_mode:
+        return  # Preview is a read-only projection; permission checks above still apply.
     if not access["allowed"] or not ids:
         return
     from app.clhear.l1 import permissions
@@ -383,7 +386,8 @@ def node_inspector(node_id: int, request: Request, source_key: str | None = None
             if parent is None:
                 break
             ancestors.append(
-                {"id": parent.id, "node_type": parent.node_type, "ref": parent.ref, "label": parent.label, "heading": parent.heading}
+                {"id": parent.id, "node_type": parent.node_type, "ref": parent.ref,
+                 "label": parent.label if readable else None, "heading": parent.heading if readable else None}
             )
             parent_id = parent.parent_id
         ancestors.reverse()
@@ -425,14 +429,14 @@ def node_inspector(node_id: int, request: Request, source_key: str | None = None
         "id": node.id,
         "node_type": node.node_type,
         "ref": node.ref,
-        "label": node.label,
-        "heading": node.heading,
+        "label": node.label if readable else None,
+        "heading": node.heading if readable else None,
         "raw_text": node.raw_text if readable else None,
         "source_fragment": node.source_fragment if readable else None,
         "locked": not readable,
         "permission_reason": access["reason"],
         "source_version_id": version.id,
-        "clauses": [{"id": c.id, "ref": c.ref, "path": c.path, "ordering": c.ordering,
+        "clauses": [{"id": c.id, "ref": c.ref, "path": c.path if readable else None, "ordering": c.ordering,
                      "span_start": c.span_start, "span_end": c.span_end, "text_hash": c.text_hash,
                      "source_version_id": c.source_version_id} for c in encoded],
         "text_hash": node.text_hash,
