@@ -184,6 +184,31 @@ deployment metadata, not as a private corpus store. Source text, database URLs a
 environment values stay out of GitHub logs/artifacts. Detailed data evidence
 is stored by the workers and exposed through the restricted viewer.
 
+### Verify the regular workers after cutover
+
+The one-off publication snapshot is compiled before its own completion record.
+Its job can therefore still appear running until the regular L0 worker handles
+the queued follow-up refresh. Check that refresh and its new snapshot revision;
+a successful deployment job alone does not prove the normal outbox relay works.
+The viewer checks for a new snapshot at most every five minutes per warm
+container. Compare its displayed revision with the worker's publication receipt.
+
+Historical outbox events can exceed the live queues' 256 KiB message limit.
+The relay now sends large events as `clhear.outbox-reference.v1` references
+containing their existing identity, routing fields and a canonical SHA-256.
+Their complete payloads remain unchanged in the authoritative outbox. The owning
+worker retrieves that exact event and verifies its hash before the usual
+ownership, L1 hold and idempotency checks. Missing or changed events are not
+acknowledged. Retain the original outbox rows with database history and backups;
+do not rewrite or delete an oversized event to unblock delivery. This requires
+no queue quota, IAM change, external artifact upload or manual database script.
+
+L2–L8 services may still have tasks because their existing autoscalers observe
+queued work. With `CLHEAR_L1_ONLY=true`, those tasks pause before database,
+provider or queue initialization. They do not poll SQS: an intentional hold must
+not increment receive counts and move deferred work to a dead-letter queue.
+Releasing the hold requires a deployment with that setting disabled.
+
 ## Failure and recovery
 
 Preserve Aurora, all history and the accepted-release pointer on failure.
