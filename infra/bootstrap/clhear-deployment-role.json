@@ -6,7 +6,7 @@
     "IntendedRegion": "us-east-1",
     "ResourceEvidenceDate": "2026-09-15",
     "AuthorityNotes": [
-      "Trust uses the currently configured legacy default GitHub environment subject. Enforce main-only deployment and required owner approval in the clhear-l1 environment; this subject does not encode the branch or workflow filename.",
+      "Trust uses the currently configured legacy default GitHub environment subject. Enforce main-only deployment in clhear-l1 and authorize routine deployment by the owner's PR merge plus successful CI, without a second environment approval; this subject does not encode the branch or workflow filename.",
       "Only existing CLHEAR resources are managed. The controller executes corpus work through CLHEAR L0/L1 workers. Candidate HEAD permission necessarily also permits reading that single S3 object.",
       "The live DATABASE_URL SecureString and its AWS-managed SSM key are pinned. Recreated autoscaling targets or changed secret keys require owner review.",
       "DescribeTaskDefinition, DescribeScalableTargets, ListRules and ECR GetAuthorizationToken require wildcard resources. Fargate ListTasks is constrained by the exact ECS cluster. Schedule target reads are limited to the adapter name prefix; target writes enumerate all 32 declared rules.",

@@ -3,7 +3,10 @@
 This module never calls AWS. Source versions/hashes document the operator's
 review; they do not assert that the deployment role reread the S3 manifest.
 Loading a plan is not authorization: the caller must retain its main/workflow,
-CI, environment-approval and deployment-identity gates.
+CI, owner-merge, environment-branch and deployment-identity gates. The legacy
+review_requirement value is retained for immutable recovery-plan compatibility;
+the environment now binds main and the role, while the owner merge authorizes
+routine deployment without a second approval.
 """
 from __future__ import annotations
 

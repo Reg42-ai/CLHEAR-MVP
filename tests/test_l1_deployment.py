@@ -113,6 +113,9 @@ class Cloud:
                 "GOOGLE_OAUTH_CLIENT_SECRET": "private-oauth-value", "CLHEAR_SES_SENDER": "review@example.test",
                 "CLHEAR_RESTRICTED_ACCESS": "false", "CLHEAR_AUTH_DEBUG": "true", "CLHEAR_DB_S3_URI": f"s3://{BUCKET}/webui/legacy.db"}}}
         self.concurrency = None
+        self.lambda_account_concurrency_limit = 1000
+        self.lambda_other_reserved_concurrency = 0
+        self.lambda_unreserved_minimum = 100
         self.pending_lambda_update = None
         self.lambda_update_evidence = []
         self.advance_completion_revision = True
@@ -203,6 +206,11 @@ class Cloud:
             self.objects[args["Key"]] = args["Body"]
             return {"VersionId": "private-version"}
         if operation == "put_function_concurrency":
+            requested = args["ReservedConcurrentExecutions"]
+            if requested > 0 and self.lambda_account_concurrency_limit - self.lambda_other_reserved_concurrency - requested < self.lambda_unreserved_minimum:
+                raise ClientError({"Error": {"Code": "InvalidParameterValueException",
+                    "Message": "The requested reservation would reduce unreserved concurrency below its minimum."},
+                    "ResponseMetadata": {"HTTPStatusCode": 400}}, "PutFunctionConcurrency")
             if self.fail_pause_after_probe and self.probe_failed and args["ReservedConcurrentExecutions"] == 0:
                 raise RuntimeError("test-only pause failure")
             self.concurrency = args["ReservedConcurrentExecutions"]
@@ -210,6 +218,7 @@ class Cloud:
             return {}
         if operation == "delete_function_concurrency":
             self.concurrency = None
+            self.config["RevisionId"] += "-concurrency-deleted"
             return {}
         if operation == "register_scalable_target":
             fleet = args["ResourceId"].rsplit("-", 1)[-1]
@@ -267,6 +276,8 @@ class Cloud:
             self.config["Environment"] = copy.deepcopy(args["Environment"])
             return self.start_lambda_update("configuration")
         if operation == "invoke":
+            if self.concurrency == 0:
+                raise ClientError({"Error": {"Code": "TooManyRequestsException", "Message": "The function is throttled."}}, "Invoke")
             path = json.loads(args["Payload"])["rawPath"]
             if not path.endswith("health"):
                 self.probe_failed = self.anonymous_status != 401
@@ -465,6 +476,102 @@ def test_review_ready_runs_final_snapshot_without_claiming_acceptance():
     result = cloud.deployer().deploy()
     assert result["status"] == "review_ready" and result["accepted_release_changed"] is False
     assert result["steps"][-1]["action"] == "publish"
+
+
+def test_unreserved_viewer_resumes_without_requesting_a_positive_reservation():
+    cloud = Cloud()
+    cloud.lambda_account_concurrency_limit = cloud.lambda_unreserved_minimum
+    cloud.exits["verify"] = 2
+    result = cloud.deployer().deploy()
+    assert result["status"] == "review_ready" and cloud.concurrency is None
+    assert all(args["ReservedConcurrentExecutions"] == 0 for _, op, args in cloud.calls if op == "put_function_concurrency")
+    operations = [op for _, op, _ in cloud.calls]
+    assert operations.index("delete_function_concurrency") < operations.index("invoke")
+    assert len([op for op in operations if op == "invoke"]) == 2
+
+
+def test_quota_rejection_does_not_mutate_mock_lambda_configuration():
+    cloud = Cloud()
+    cloud.lambda_account_concurrency_limit = cloud.lambda_unreserved_minimum
+    before = copy.deepcopy(cloud.config)
+    with pytest.raises(ClientError) as error:
+        cloud.call("lambda", "put_function_concurrency", {"ReservedConcurrentExecutions": 1})
+    assert error.value.response["Error"]["Code"] == "InvalidParameterValueException"
+    assert cloud.concurrency is None and cloud.config == before
+
+
+@pytest.mark.parametrize("reserved", [0, 4])
+def test_reserved_policy_is_restored_exactly_and_zero_is_repaused(reserved):
+    cloud = Cloud()
+    cloud.concurrency = reserved
+    result = cloud.deployer().deploy()
+    assert result["status"] == "verified" and cloud.concurrency == reserved
+    assert not any(op == "delete_function_concurrency" for _, op, _ in cloud.calls)
+    reservations = [args["ReservedConcurrentExecutions"] for _, op, args in cloud.calls if op == "put_function_concurrency"]
+    assert reservations == ([0, 1, 0] if reserved == 0 else [0, reserved])
+    assert [args for _, op, args in cloud.calls if op == "get_function_concurrency"]
+
+
+@pytest.mark.parametrize("reserved", [0, 4])
+def test_reservation_quota_failure_never_falls_back_to_unreserved_or_resumes_fleets(monkeypatch, reserved):
+    cloud = Cloud()
+    cloud.concurrency = reserved
+    cloud.lambda_account_concurrency_limit = cloud.lambda_unreserved_minimum + reserved
+    original_call = cloud.call
+
+    def call(service, operation, args):
+        result = original_call(service, operation, args)
+        if operation == "put_function_concurrency" and args["ReservedConcurrentExecutions"] == 0:
+            # Another function can reserve the released capacity while we run
+            # the worker checks. Restoration must not change the approved cap.
+            cloud.lambda_other_reserved_concurrency = reserved
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    assert result["failure_operation"] == "PutFunctionConcurrency" and result["failure_code"] == "InvalidParameterValueException"
+    assert not any(op in {"delete_function_concurrency", "invoke"} for _, op, _ in cloud.calls)
+    assert all(service["desiredCount"] == 0 for service in cloud.services.values())
+
+
+@pytest.mark.parametrize("failure", ["delete", "unreserved_readback", "reserved_readback", "re_pause_readback", "probe"])
+def test_concurrency_restore_and_probe_failures_leave_maintenance_held(monkeypatch, failure):
+    cloud = Cloud()
+    cloud.concurrency = 4 if failure == "reserved_readback" else 0 if failure == "re_pause_readback" else None
+    original_call = cloud.call
+    restore_started, probes = False, 0
+
+    def call(service, operation, args):
+        nonlocal restore_started, probes
+        if operation == "delete_function_concurrency" and failure == "delete":
+            cloud.calls.append((service, operation, copy.deepcopy(args)))
+            raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "Denied"}}, "DeleteFunctionConcurrency")
+        result = original_call(service, operation, args)
+        if operation == "delete_function_concurrency" or (operation == "put_function_concurrency" and args["ReservedConcurrentExecutions"] > 0):
+            restore_started = True
+        if operation == "get_function_concurrency" and restore_started:
+            if failure == "unreserved_readback":
+                return {"ReservedConcurrentExecutions": 0}
+            if failure == "reserved_readback":
+                return {"ReservedConcurrentExecutions": 0}
+            if failure == "re_pause_readback" and probes == 2:
+                # One wrong re-pause read is enough to require maintenance;
+                # subsequent recovery readbacks reflect the actual hold.
+                probes += 1
+                return {"ReservedConcurrentExecutions": 1}
+        if operation == "invoke":
+            probes += 1
+            if failure == "probe":
+                raise ClientError({"Error": {"Code": "TooManyRequestsException", "Message": "Throttled"}}, "Invoke")
+        return result
+
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
+    assert all(service["desiredCount"] == 0 for service in cloud.services.values())
+    if failure in {"delete", "unreserved_readback", "reserved_readback"}:
+        assert not any(op == "invoke" for _, op, _ in cloud.calls)
 
 
 def test_own_concurrency_revision_change_is_refreshed_before_conditional_code_cutover():
