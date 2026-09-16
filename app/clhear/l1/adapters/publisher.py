@@ -244,7 +244,9 @@ class _PublisherBase:
                 elif match:
                     ref = self.make_ref(match, context)
                     if ref in seen:
-                        raise ValueError("Duplicate PDF provision; publisher scope requires disambiguation")
+                        node = DocNode(node_type="paragraph", raw_text=line, source_locator=locator)
+                        (provision.children if provision else section.children if section else nodes).append(node)
+                        continue
                     seen.add(ref)
                     provision = DocNode(node_type="provision", ref=ref, label=line[:match.end()].strip(),
                                         raw_text=line[match.end():].strip(), status=self.status_of(match), source_locator=locator)
@@ -299,9 +301,12 @@ class NumberedHtmlAdapter(_PublisherBase):
                       make_ref=self.make_ref, status_of=self.status_of, part=part)
         for node in roots[0].children:
             for item in node.walk():
+                if item.ref and item.node_type == "provision" and item.ref in seen:
+                    item.node_type = "paragraph"
+                    item.ref = ""
+                    item.label = ""
+            for item in node.walk():
                 if item.ref:
-                    if item.ref in seen:
-                        raise ValueError("Repeated publisher provision across original artifacts")
                     seen.add(item.ref)
         return roots[0].children
 

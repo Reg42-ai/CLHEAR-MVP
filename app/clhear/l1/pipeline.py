@@ -894,8 +894,16 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
                 parser=identity,
             )
     except Exception as exc:
-        recorder.finish("failed", {"source": meta.source_key, "error": str(exc)[:300]})
-        return {"source": meta.source_key, "status": "failed", "error": str(exc)[:300], "run_id": recorder.run_id}
+        # The raw driver message carries the SQL statement and its parameters;
+        # only the redacted, structured description leaves the worker.
+        from app.clhear.l1 import workflow
+        from app.clhear.platform import failures
+        failure = failures.describe(exc, source=meta.source_key, worker="l1", stage=workflow.current_stage(),
+                                    **{k: v for k, v in workflow.execution_context().items() if k in {"task_id", "attempt", "job_id"}})
+        recorder.finish("failed", {"source": meta.source_key, "error": failure["message"], "error_type": failure["error_type"],
+                                   "error_code": failure["error_code"], "sqlstate": failure["sqlstate"]})
+        return {"source": meta.source_key, "status": "failed", "error": failure["message"], "error_type": failure["error_type"],
+                "error_code": failure["error_code"], "sqlstate": failure["sqlstate"], "failure": failure, "run_id": recorder.run_id}
 
 
 def _persist(
@@ -1308,10 +1316,10 @@ def _clear_version_tree(conn: Connection, version_id: int) -> None:
         for r in conn.execute(sa.select(search_units.c.id).where(search_units.c.source_version_id == version_id))
     ]
     if unit_ids:
-        try:
+        # Never swallow a database error here: on PostgreSQL the transaction
+        # would already be aborted and the rebuild below would fail anyway.
+        if record.fts_available(conn, "search_units_fts"):
             record.drop_fts_rows(conn, "search_units_fts", unit_ids)
-        except Exception:
-            pass
         record.rebuild_projection(conn, search_units, search_units.c.source_version_id == version_id)
     clause_ids = [
         r[0] for r in conn.execute(sa.select(clauses.c.id).where(clauses.c.source_version_id == version_id))

@@ -240,26 +240,57 @@ def _row_to_envelope(row) -> Envelope:
     )
 
 
-def relay_once(engine: Engine, transport: Transport, batch_size: int = 100) -> int:
-    """Ship unrelayed outbox rows to the transport; stamp relayed_at. Returns count."""
-    shipped = 0
-    with engine.begin() as conn:
+def relay_once(engine: Engine, transport: Transport, batch_size: int = 100, *, fleet: str = "l0") -> int:
+    """Ship unrelayed outbox rows to the transport, one committed disposition per
+    event. Returns the number of rows dispatched.
+
+    Each row is stamped in its own transaction: a row the transport cannot
+    accept stops this pass but never rolls back the rows before it, so nothing
+    is sent twice. Audit-only kinds are stamped ``audit_only`` without a send;
+    kinds outside the routing table, and rows without their original
+    timestamp, are quarantined into the deferred-delivery ledger with their
+    body so they stop blocking the queue and keep their evidence.
+    """
+    from app.clhear.platform import deferred, routing
+
+    with engine.connect() as conn:
         rows = conn.execute(
             sa.select(events).where(events.c.relayed_at.is_(None)).order_by(events.c.id).limit(batch_size)
         ).all()
-        for row in rows:
-            envelope = _row_to_envelope(row)
-            # Do not invent a timestamp for a reference to a malformed legacy
-            # row: it could never resolve to the same immutable hash later.
-            if row.created_at is None:
-                raise ValueError("Outbox event is missing its original timestamp")
-            transport.send(transport_body(envelope))
-            conn.execute(
-                events.update()
-                .where(events.c.id == row.id)
-                .values(relayed_at=datetime.now(timezone.utc))
-            )
-            shipped += 1
+    shipped = 0
+    for row in rows:
+        category, _owner = routing.classify(row.kind)
+        now = datetime.now(timezone.utc)
+        if category == "audit":
+            with engine.begin() as conn:
+                conn.execute(events.update().where(events.c.id == row.id, events.c.relayed_at.is_(None))
+                             .values(relayed_at=now, relay_disposition="audit_only"))
+            continue
+        # Do not invent a timestamp for a reference to a malformed legacy row:
+        # it could never resolve to the same immutable hash later.
+        problem = None
+        if row.created_at is None:
+            problem = ("unidentifiable_schedule", "outbox event is missing its original timestamp")
+        elif category == "unknown":
+            problem = ("unknown_kind", f"no route for outbox kind {row.kind!r}")
+        if problem is not None:
+            reason, detail = problem
+            with engine.begin() as conn:
+                deferred.record(conn, channel="outbox", queue="outbox", message_id=str(row.event_id), fleet=fleet,
+                                body=_row_to_envelope(row).model_dump_json() if row.created_at is not None else
+                                json.dumps({"event_id": str(row.event_id), "kind": row.kind, "layer": row.layer,
+                                            "subject_ref": row.subject_ref, "payload": row.payload, "producer": row.producer}),
+                                reason=reason, detail=detail, status="quarantined")
+                conn.execute(events.update().where(events.c.id == row.id, events.c.relayed_at.is_(None))
+                             .values(relayed_at=now, relay_disposition="quarantined"))
+            log.warning("outbox event %s quarantined: %s", row.event_id, detail)
+            continue
+        envelope = _row_to_envelope(row)
+        transport.send(transport_body(envelope))
+        with engine.begin() as conn:
+            conn.execute(events.update().where(events.c.id == row.id, events.c.relayed_at.is_(None))
+                         .values(relayed_at=now, relay_disposition="sent"))
+        shipped += 1
     if shipped:
         log.info("relayed %d event(s)", shipped)
     return shipped

@@ -66,7 +66,7 @@ class VerificationCloud(Cloud):
                 return {"tasks": [], "failures": [{"reason": "fixture capacity unavailable"}]}
             command = args["overrides"]["containerOverrides"][0]["command"]
             effective = self.worker("l0")["entryPoint"] + command
-            expected = list(WORKER_ENTRYPOINT) + ["--request-l1-cycle", "--verification-id", "l1-cycle-123-1"]
+            expected = list(WORKER_ENTRYPOINT) + list(getattr(self, "expected_arguments", ["--request-l1-cycle"])) + ["--verification-id", getattr(self, "operation_id", "l1-cycle-123-1")]
             if effective != expected:
                 # ECS accepts the task, then Python exits when its module was lost.
                 self.submit_exit = 1
@@ -164,3 +164,60 @@ def test_submission_failure_never_deploys_or_changes_capacity(failure):
     with pytest.raises(DeploymentError):
         cloud.dispatcher().dispatch()
     assert [(service, op) for service, op, _ in cloud.mutations] == [("ecs", "run_task")]
+
+
+def test_recover_queues_runs_the_bounded_l0_recovery_pass_and_never_purges():
+    cloud = VerificationCloud()
+    cloud.expected_arguments = ["--recover-queues", "--max-messages", "2500"]
+    cloud.operation_id = "l1-queues-123-1"
+    dispatcher = VerificationDispatcher(SHA, "l1-queues-123-1", clients=cloud.clients, environ=environment(),
+                                        operation="recover-queues", max_messages=2500)
+    result = dispatcher.dispatch()
+    assert result["status"] == "recovery_pass_completed" and result["operation"] == "recover-queues"
+    assert result["recovery_id"] == "l1-queues-123-1" and result["queues_purged"] is False and result["resumable"] is True
+    assert result["deployment_performed"] is False and result["accepted_release_changed"] is False
+    assert [(service, op) for service, op, _ in cloud.mutations] == [("ecs", "run_task")]
+    run = cloud.mutations[0][2]
+    assert run["overrides"]["containerOverrides"][0]["command"][-5:] == ["--recover-queues", "--max-messages", "2500", "--verification-id", "l1-queues-123-1"]
+    with pytest.raises(DeploymentError):
+        VerificationDispatcher(SHA, "l1-cycle-123-1", clients=cloud.clients, environ=environment(), operation="recover-queues")
+    with pytest.raises(DeploymentError):
+        VerificationDispatcher(SHA, "l1-queues-123-1", clients=cloud.clients, environ=environment(), operation="recover-queues", max_messages=0)
+
+
+def test_poc_private_review_dispatch_is_l0_only_and_never_grants_public_display():
+    cloud = VerificationCloud()
+    cloud.expected_arguments = ["--poc-private-review", "activate", "--evidence-ref", "poc:test"]
+    cloud.operation_id = "l1-poc-123-1"
+    dispatcher = VerificationDispatcher(SHA, "l1-poc-123-1", clients=cloud.clients, environ=environment(),
+                                        operation="poc-private-review", poc_action="activate", evidence_ref="poc:test")
+    result = dispatcher.dispatch()
+    assert result["status"] == "poc_review_recorded" and result["operation"] == "poc-private-review"
+    assert result["display_public"] is False and result["acceptance"] == "not_claimed"
+    assert result["deployment_performed"] is False and result["accepted_release_changed"] is False
+    run = cloud.mutations[0][2]
+    assert run["overrides"]["containerOverrides"][0]["command"][-6:] == [
+        "--poc-private-review", "activate", "--evidence-ref", "poc:test", "--verification-id", "l1-poc-123-1"]
+    with pytest.raises(DeploymentError):
+        VerificationDispatcher(SHA, "l1-cycle-123-1", clients=cloud.clients, environ=environment(),
+                               operation="poc-private-review", poc_action="activate", evidence_ref="poc:test")
+    with pytest.raises(DeploymentError):
+        VerificationDispatcher(SHA, "l1-poc-123-1", clients=cloud.clients, environ=environment(),
+                               operation="poc-private-review", poc_action="activate")
+
+
+def test_approve_inventory_dispatch_requires_a_sha256():
+    cloud = VerificationCloud()
+    digest = "a" * 64
+    cloud.expected_arguments = ["--approve-inventory", digest]
+    cloud.operation_id = "l1-inventory-123-1"
+    dispatcher = VerificationDispatcher(SHA, "l1-inventory-123-1", clients=cloud.clients, environ=environment(),
+                                        operation="approve-inventory", inventory_hash=digest)
+    result = dispatcher.dispatch()
+    assert result["status"] == "inventory_review_recorded" and result["acceptance"] == "not_claimed"
+    run = cloud.mutations[0][2]
+    assert run["overrides"]["containerOverrides"][0]["command"][-4:] == [
+        "--approve-inventory", digest, "--verification-id", "l1-inventory-123-1"]
+    with pytest.raises(DeploymentError):
+        VerificationDispatcher(SHA, "l1-inventory-123-1", clients=cloud.clients, environ=environment(),
+                               operation="approve-inventory", inventory_hash="nope")

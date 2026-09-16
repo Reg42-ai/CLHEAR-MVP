@@ -152,6 +152,11 @@ class Cloud:
         if operation == "head_object":
             return {"Metadata": self.ui_metadata, "VersionId": "version", "ContentLength": 123}
         if operation == "get_object":
+            if "/deployments/" in args.get("Key", "") and args["Key"].startswith("webui/l1/"):
+                action = args["Key"].rsplit("/", 1)[-1][:-len(".json")]
+                if action not in getattr(self, "worker_results", {}):
+                    raise RuntimeError("NoSuchKey")
+                return {"Body": io.BytesIO(json.dumps(self.worker_results[action]).encode())}
             return {"Body": io.BytesIO(self.ui_code)}
         if operation == "describe_images":
             return {"imageDetails": [{"imageDigest": f"sha256:{DIGEST}", "imageTags": self.tags}]}
@@ -409,7 +414,8 @@ def test_split_worker_entrypoint_is_canonicalized_before_phase_command_overrides
         worker = cloud.definitions[cloud.services[fleet]["taskDefinition"]]["containerDefinitions"][0]
         assert worker["entryPoint"] == ["python", "-m", "app.clhear.workers"] and worker["command"] == []
     launches = [args for _, operation, args in cloud.calls if operation == "run_task"]
-    for action, args in zip(("bootstrap", "verify", "publish"), launches, strict=True):
+    phases, cycle_request = launches[:3], launches[3:]
+    for action, args in zip(("bootstrap", "verify", "publish"), phases, strict=True):
         definition = cloud.definitions[args["taskDefinition"]]
         worker = next(c for c in definition["containerDefinitions"] if c["name"] == "worker")
         override = args["overrides"]["containerOverrides"][0]["command"]
@@ -417,6 +423,10 @@ def test_split_worker_entrypoint_is_canonicalized_before_phase_command_overrides
             "python", "-m", "app.clhear.workers", "--verify-deployment", action,
             "--verification-id", inputs().deployment_id,
         ]
+    # after capacity is restored the deployment asks deployed L0 for the full cycle + unchanged repeat
+    [request] = cycle_request
+    assert request["overrides"]["containerOverrides"][0]["command"] == [
+        "--request-l1-cycle", "--unchanged-repeat", "--verification-id", "l1-cycle-" + inputs().deployment_id.removeprefix("l1-")]
     assert all(cloud.definitions[arn] == definition for arn, definition in original.items())
 
 
@@ -488,7 +498,11 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
     assert result["status"] == "verified" and result["accepted_release_changed"] is False
     operations = [op for _, op, _ in cloud.calls]
     launches = [(index, args) for index, (_, op, args) in enumerate(cloud.calls) if op == "run_task"]
-    assert [args["overrides"]["containerOverrides"][0]["command"][1] for _, args in launches] == ["bootstrap", "verify", "publish"]
+    assert [args["overrides"]["containerOverrides"][0]["command"][1] for _, args in launches][:3] == ["bootstrap", "verify", "publish"]
+    assert launches[3][1]["overrides"]["containerOverrides"][0]["command"][0] == "--request-l1-cycle"
+    assert result["full_cycle_request"]["status"] == "cycle_requested" and result["full_cycle_request"]["unchanged_repeat"] is True
+    assert result["full_cycle_request"]["publishers"] == 45 and result["full_cycle_request"]["lanes"] == 32
+    assert result["full_cycle_request"]["corpus_acceptance"] == "pending" and result["full_cycle_request"]["transport_health"] == "established"
     assert operations.index("put_function_concurrency") < operations.index("stop_task") < launches[0][0] < operations.index("update_function_code") < launches[1][0]
     assert len([op for op in operations[:launches[0][0]] if op == "register_task_definition"]) == 9
     assert all(args["networkConfiguration"] == cloud.services["l0"]["networkConfiguration"] for _, args in launches)
@@ -521,7 +535,24 @@ def test_review_ready_runs_final_snapshot_without_claiming_acceptance():
     cloud.exits["verify"] = 2
     result = cloud.deployer().deploy()
     assert result["status"] == "review_ready" and result["accepted_release_changed"] is False
-    assert result["steps"][-1]["action"] == "publish"
+    phases = [step for step in result["steps"] if step["action"] in {"bootstrap", "verify", "publish"}]
+    assert phases[-1]["action"] == "publish" and result["steps"][-1]["action"] == "full_cycle_request"
+
+
+def test_full_cycle_request_failure_is_recorded_and_never_undoes_a_verified_deployment(monkeypatch):
+    cloud = Cloud()
+    original_call = cloud.call
+
+    def call(service, operation, args):
+        if operation == "run_task" and args["overrides"]["containerOverrides"][0]["command"][0] == "--request-l1-cycle":
+            return {"tasks": [], "failures": [{"reason": "capacity"}]}
+        return original_call(service, operation, args)
+    monkeypatch.setattr(cloud, "call", call)
+    result = cloud.deployer().deploy()
+    assert result["status"] == "verified" and result["recovery_required"] is False and cloud.concurrency is None
+    assert result["full_cycle_request"]["status"] == "not_requested" and result["full_cycle_request"]["failure_type"] == "DeploymentError"
+    written = next(args for _, op, args in cloud.calls if op == "put_object" and args["Key"].endswith("/result.json"))
+    assert json.loads(written["Body"])["full_cycle_request"]["status"] == "not_requested"
 
 
 def test_unreserved_viewer_resumes_without_requesting_a_positive_reservation():
@@ -1177,3 +1208,41 @@ def test_partial_target_updates_never_claim_configured_or_resume_workers(failure
 @pytest.mark.parametrize("url", ["http://s3.amazonaws.com/code", "https://evil.example/code", "https://s3.amazonaws.com.evil.test/code", "https://user:password@s3.amazonaws.com/code"])
 def test_previous_code_download_rejects_non_aws_urls_without_network(url):
     with pytest.raises(DeploymentError): Deployer._download_code(url)
+
+
+def test_worker_phase_evidence_and_failure_summary_reach_the_deployment_artifacts_including_failed_runs():
+    cloud = Cloud()
+    cloud.exits["verify"] = 1
+    cloud.worker_results = {
+        "bootstrap": {"verification_id": inputs().deployment_id, "phase": "bootstrap", "status": "succeeded", "exit_code": 0,
+                      "steps": {"viewer_snapshot": {"revision": "rev-1", "sha256": "a" * 64, "byte_count": 10, "raw_text": "never"}}},
+        "verify": {"verification_id": inputs().deployment_id, "phase": "verify", "status": "failed", "exit_code": 1,
+                   "evidence_mode": "deployment_verification", "scope": ["finra/rule/2111"],
+                   "deployment_checks": {"imports": False, "readback": False, "unchanged_repeat": False, "passed": False},
+                   "steps": {"finra_import": {"status": "blocked", "failed_sources": ["finra/rule/2111"], "scope_complete": False,
+                                              "tasks": {"secret": "must not be copied"}}},
+                   "failure_summary": [{"source": "finra/rule/2111", "worker": "l1", "task": "t-1", "status": "retrying", "attempt": 1,
+                                        "stage": "persistence", "duration_ms": 42, "error_type": "ProgrammingError",
+                                        "error_code": "InFailedSqlTransaction", "sqlstate": "25P02", "first_cause": "UndefinedTable",
+                                        "follow_on": ["InFailedSqlTransaction"], "aborted_transaction": True,
+                                        "message": "SELECT secret FROM table"}],
+                   "evidence": {"job_id": "job-1", "worker_result": "s3://x/webui/l1/deployments/d/verify.json"}},
+    }
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance"
+    steps = {step["action"]: step for step in result["steps"]}
+    assert steps["bootstrap"]["worker_result"]["available"] and steps["bootstrap"]["worker_result"]["steps"]["viewer_snapshot"]["revision"] == "rev-1"
+    assert "raw_text" not in json.dumps(steps["bootstrap"])
+    verify = steps["verify"]["worker_result"]
+    assert verify["available"] and verify["deployment_checks"]["passed"] is False and verify["evidence"]["job_id"] == "job-1"
+    assert verify["failure_summary"][0]["sqlstate"] == "25P02" and verify["failure_summary"][0]["first_cause"] == "UndefinedTable"
+    assert "message" not in verify["failure_summary"][0] and "must not be copied" not in json.dumps(result) and "SELECT" not in json.dumps(result)
+    assert steps["verify"]["worker_result_uri"] == f"s3://{BUCKET}/webui/l1/deployments/{inputs().deployment_id}/verify.json"
+    failure = next(args for _, op, args in cloud.calls if op == "put_object" and args["Key"].endswith("/failure.json"))
+    written = json.loads(failure["Body"])
+    assert written["steps"][1]["worker_result"]["failure_summary"][0]["error_code"] == "InFailedSqlTransaction"
+    # a phase whose evidence object is missing is reported as unavailable, with its link, and does not fail the step
+    cloud = Cloud()
+    result = cloud.deployer().deploy()
+    assert result["status"] == "verified"
+    assert all(step["worker_result"] == {"available": False, "reason": "RuntimeError"} for step in result["steps"])
