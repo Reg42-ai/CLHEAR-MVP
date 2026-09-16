@@ -474,3 +474,64 @@ def test_deployment_change_fails_pending_cycle_without_reimporting_completed_sou
     summary = cycles.cycle_summary(engine, cycle_id)
     assert summary["cycles"][0]["status"] == "failed"
     assert [c["status"] for c in summary["children"]] == ["completed", "failed"]
+
+
+def test_full_cycle_with_unchanged_repeat_chains_one_follow_up_and_compares_versions(engine, monkeypatch):
+    """The post-deployment request: a full cycle, then the same scope again that must
+    change nothing. The repeat is requested once, from the first cycle's terminal
+    result, and its evaluation compares every bound source version with the first."""
+    keys = ("alpha", "beta")
+    calls, audits, audit = fake_cycle(monkeypatch, keys)
+    from app.clhear.l1 import pipeline
+    versions = {"alpha/doc": (11, "a" * 64), "beta/doc": (12, "b" * 64)}
+    def ingest(engine, adapter, store, **kwargs):
+        calls.append(adapter.key)
+        vid, digest = versions[adapter.meta().source_key]
+        return {"status": "unchanged", "source": adapter.meta().source_key, "source_version_id": vid, "content_hash": digest}
+    monkeypatch.setattr(pipeline, "ingest", ingest)
+    audit["sources"] = [{"source_key": k + "/doc", "source_version_id": versions[k + "/doc"][0], "content_hash": versions[k + "/doc"][1]} for k in keys]
+    monkeypatch.setenv("CLHEAR_VIEWER_SNAPSHOT_S3_URI", "s3://fixture/private/candidate.db")
+    monkeypatch.setenv("CLHEAR_FLEET", "l0")
+    receipt = cycles.request_cycle(engine, "l1-cycle-77-1", unchanged_repeat=True)
+    assert receipt["follow_up"] == {"kind": "unchanged_repeat", "cycle_id": "cycle-manual-l1-cycle-77-1-repeat"}
+    assert cycles.request_cycle(engine, "l1-cycle-77-1", unchanged_repeat=True)["event_id"] == receipt["event_id"]  # idempotent
+    with pytest.raises(ValueError):
+        cycles.request_cycle(engine, "l1-cycle-77-1", scope="registered")
+
+    def run_cycle():
+        request = queued(engine, "L1CycleRequested")[-1]
+        dispatch(engine, monkeypatch, request, "l0")
+        for discovery in queued(engine, "L1CycleDiscoveryRequested"):
+            dispatch(engine, monkeypatch, discovery, "l1")
+        for advance in queued(engine, "L1CycleAdvanceRequested"):
+            dispatch(engine, monkeypatch, advance, "l0")
+        for child in queued(engine, "AdapterRunRequested"):
+            dispatch(engine, monkeypatch, child, "l1")
+        for advance in queued(engine, "L1CycleAdvanceRequested"):
+            dispatch(engine, monkeypatch, advance, "l0")
+        final = queued(engine, "L1CycleEvaluationRequested")[-1]
+        return dispatch(engine, monkeypatch, final, "l1")
+
+    first = run_cycle()
+    assert first["cycle_id"] == "cycle-manual-l1-cycle-77-1" and first["status"] == "completed_for_review"
+    assert first["follow_up_requested"] == "cycle-manual-l1-cycle-77-1-repeat"
+    requests = queued(engine, "L1CycleRequested")
+    assert len(requests) == 2 and requests[-1].payload == {"cycle_id": "cycle-manual-l1-cycle-77-1-repeat", "scope": "all_publishers",
+                                                          "repeat_of": "cycle-manual-l1-cycle-77-1"}
+    repeat = run_cycle()
+    assert repeat["cycle_id"] == "cycle-manual-l1-cycle-77-1-repeat" and "follow_up_requested" not in repeat
+    assert repeat["unchanged_repeat"]["passed"] and repeat["unchanged_repeat"]["compared"] == 2
+    assert repeat["unchanged_repeat"] == {**repeat["unchanged_repeat"], "changed": [], "missing": [], "added": [], "repeat_of": first["cycle_id"]}
+    assert len(queued(engine, "L1CycleRequested")) == 2  # the repeat does not chain another repeat
+    summary = cycles.cycle_summary(engine, repeat["cycle_id"])
+    assert summary["cycles"][0]["manifest"]["repeat_of"] == first["cycle_id"]
+
+    # a repeat that sees a different version is reported, not accepted
+    monkeypatch.setenv("CLHEAR_FLEET", "l0")
+    cycles.request_cycle(engine, "l1-cycle-77-2", unchanged_repeat=True)
+    run_cycle()
+    versions["beta/doc"] = (13, "c" * 64)  # the publisher changed between the first cycle and its repeat
+    audit["sources"][1] = {"source_key": "beta/doc", "source_version_id": 13, "content_hash": "c" * 64}
+    changed = run_cycle()
+    assert not changed["unchanged_repeat"]["passed"] and changed["unchanged_repeat"]["changed"] == ["beta/doc"]
+    assert changed["unchanged_repeat"]["reason"] == "repeat_not_verified"

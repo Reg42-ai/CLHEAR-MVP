@@ -1151,6 +1151,7 @@ def cli(argv=None) -> int:
     parser.add_argument("--verify-deployment", choices=("bootstrap", "verify", "publish"))
     parser.add_argument("--verification-id")
     parser.add_argument("--request-l1-cycle", action="store_true")
+    parser.add_argument("--unchanged-repeat", action="store_true")
     parser.add_argument("--recover-queues", action="store_true")
     parser.add_argument("--max-messages", type=int, default=None)
     parser.add_argument("--max-seconds", type=int, default=None)
@@ -1174,7 +1175,7 @@ def cli(argv=None) -> int:
         from app.clhear.l1.cycles import request_cycle
         engine = get_engine()
         run_migrations(engine)
-        print(json.dumps(request_cycle(engine, args.verification_id)))
+        print(json.dumps(request_cycle(engine, args.verification_id, unchanged_repeat=args.unchanged_repeat)))
         return 0
     if args.verify_deployment:
         if args.once or args.envelope_file or not args.verification_id:

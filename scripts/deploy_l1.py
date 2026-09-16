@@ -638,14 +638,14 @@ class Deployer:
             old["new_task_definition"] = arn
             self._write("ecs", "update_service", cluster=CLUSTER, service=f"clhear-fleet-{fleet}", taskDefinition=arn, desiredCount=0)
 
-    def _worker(self, fleet, action):
+    def _worker(self, fleet, action, command=None):
         values = self.state["fleets"][fleet]
         service = values["service"]
         args = {"cluster": CLUSTER, "taskDefinition": values["new_task_definition"], "count": 1,
                 "networkConfiguration": service["networkConfiguration"],
                 "clientToken": hashlib.sha256(f"{self.inputs.deployment_id}:{action}".encode()).hexdigest(),
                 "startedBy": f"clhear-l1-{self.inputs.sha[:12]}",
-                "overrides": {"containerOverrides": [{"name": "worker", "command":
+                "overrides": {"containerOverrides": [{"name": "worker", "command": command or
                     ["--verify-deployment", action, "--verification-id", self.inputs.deployment_id]}]}}
         # Deployment checks must not be interrupted by Spot reclamation. Normal
         # service capacity-provider settings remain untouched.
@@ -669,6 +669,48 @@ class Deployer:
         self.report["steps"].append(step)
         require(task.get("lastStatus") == "STOPPED" and code in ({0, 2} if action == "verify" else {0}), f"{action} worker failed; deployment remains held")
         return code
+
+    FULL_CYCLE_PUBLISHERS, FULL_CYCLE_LANES = 45, 32
+    TRANSPORT_HEALTH_ATTEMPTS = 40  # × 15 s
+
+    def _transport_healthy(self):
+        """L0 (relay + coordination) and L1 (imports) are running on the deployed
+        definition and their queues are being consumed: the precondition for asking
+        the fleet to do real work."""
+        response = self.clients["ecs"].describe_services(cluster=CLUSTER, services=["clhear-fleet-l0", "clhear-fleet-l1"])
+        services = {svc["serviceName"]: svc for svc in response.get("services", [])}
+        for fleet in ("l0", "l1"):
+            svc = services.get(f"clhear-fleet-{fleet}")
+            if not svc or svc.get("runningCount", 0) < 1 or svc.get("taskDefinition") != self.state["fleets"][fleet]["new_task_definition"]:
+                return False
+        return True
+
+    def _request_full_cycle(self):
+        """After a verified deployment: ask deployed L0 for the full diagnostic
+        cycle over the whole publisher scope (45 publishers, 32 lanes) followed by an
+        unchanged-source repeat. Results are published for sampling; unresolved gaps
+        stay visible and block corpus acceptance. This never changes the deployment
+        outcome: a request that cannot be made is recorded, not rolled back."""
+        verification_id = "l1-cycle-" + self.inputs.deployment_id.removeprefix("l1-")
+        receipt = {"verification_id": verification_id, "cycle_id": "cycle-manual-" + verification_id,
+                   "repeat_cycle_id": "cycle-manual-" + verification_id + "-repeat",
+                   "scope": "all_publishers", "publishers": self.FULL_CYCLE_PUBLISHERS, "lanes": self.FULL_CYCLE_LANES,
+                   "unchanged_repeat": True, "corpus_acceptance": "pending", "status": "not_requested"}
+        try:
+            for _ in range(self.TRANSPORT_HEALTH_ATTEMPTS):
+                if self._transport_healthy():
+                    receipt["transport_health"] = "established"
+                    break
+                self.sleep(15)
+            else:
+                receipt.update(reason="L0/L1 workers did not reach running state on the deployed definition")
+                return receipt
+            code = self._worker("l0", "full_cycle_request",
+                                ["--request-l1-cycle", "--unchanged-repeat", "--verification-id", verification_id])
+            receipt.update(status="cycle_requested", exit_code=code)
+        except Exception as error:  # noqa: BLE001 — recorded, never a deployment failure
+            receipt.update(status="not_requested", **{k: v for k, v in _failure_details(error).items() if k != "status"})
+        return receipt
 
     # Fields of a worker phase result that may enter a deployment artifact: statuses,
     # counts, codes and identities. Never messages, text or SQL.
@@ -931,6 +973,7 @@ class Deployer:
             self.report.update(status="review_ready" if result == 2 else "verified", recovery_required=False,
                                l0_relay_minimum=1, l1_worker_minimum=1,
                                traffic_policy="previous_capacity_restored", fleet_policy="new_code_l1_only")
+            self.report["full_cycle_request"] = self._request_full_cycle()
             self._put("result.json", json.dumps(self.report, sort_keys=True).encode())
         except Exception as error:
             self.report.update(_failure_details(error))
