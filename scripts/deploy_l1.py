@@ -917,10 +917,22 @@ class VerificationDispatcher:
     _schedule_payload = staticmethod(Deployer._schedule_payload)
     _transformer = Deployer._transformer
 
-    def __init__(self, sha, verification_id, *, clients=None, environ=None):
+    OPERATIONS = {
+        # operation: (id pattern, worker arguments, receipt status, waiter attempts)
+        "verify": (r"l1-cycle-[1-9][0-9]*-[1-9][0-9]*", ("--request-l1-cycle",), "cycle_submitted", 60),
+        "recover-queues": (r"l1-queues-[1-9][0-9]*-[1-9][0-9]*", ("--recover-queues",), "recovery_pass_completed", 240),
+    }
+
+    def __init__(self, sha, verification_id, *, clients=None, environ=None, operation="verify", max_messages=None):
         from types import SimpleNamespace
         require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "A tested controller SHA is required")
-        require(bool(re.fullmatch(r"l1-cycle-[1-9][0-9]*-[1-9][0-9]*", verification_id)), "Invalid cycle verification ID")
+        require(operation in self.OPERATIONS, "Unknown L0 operation")
+        pattern, self.worker_arguments, self.receipt_status, self.waiter_attempts = self.OPERATIONS[operation]
+        require(bool(re.fullmatch(pattern, verification_id)), "Invalid cycle verification ID")
+        self.operation = operation
+        if max_messages is not None:
+            require(type(max_messages) is int and 1 <= max_messages <= 200_000, "max_messages must be within 1..200000")
+            self.worker_arguments = (*self.worker_arguments, "--max-messages", str(max_messages))
         self.inputs = SimpleNamespace(sha=sha)
         self.verification_id = verification_id
         self.env = dict(os.environ if environ is None else environ)
@@ -986,7 +998,7 @@ class VerificationDispatcher:
             re.fullmatch(revision + r"-[1-9][0-9]*-[1-9][0-9]*", tag) for tag in images[0].get("imageTags", [])), "Worker image lacks its deployment build binding")
         service = service_by_name["clhear-fleet-l0"]
         l0_worker = next(c for c in definitions["l0"]["containerDefinitions"] if c["name"] == "worker")
-        command = list(WORKER_ENTRYPOINT)[len(l0_worker.get("entryPoint", [])):] + ["--request-l1-cycle", "--verification-id", self.verification_id]
+        command = list(WORKER_ENTRYPOINT)[len(l0_worker.get("entryPoint", [])):] + [*self.worker_arguments, "--verification-id", self.verification_id]
         args = {"cluster": CLUSTER, "taskDefinition": service["taskDefinition"], "count": 1, "launchType": "FARGATE",
                 "networkConfiguration": service["networkConfiguration"],
                 "startedBy": self.verification_id[:36],
@@ -997,34 +1009,45 @@ class VerificationDispatcher:
         launched = self._write("ecs", "run_task", **args)
         require(not launched.get("failures") and len(launched.get("tasks", [])) == 1, "The L0 cycle submission task did not start")
         task_arn = launched["tasks"][0]["taskArn"]
-        self.clients["ecs"].get_waiter("tasks_stopped").wait(cluster=CLUSTER, tasks=[task_arn], WaiterConfig={"Delay": 10, "MaxAttempts": 60})
+        self.clients["ecs"].get_waiter("tasks_stopped").wait(cluster=CLUSTER, tasks=[task_arn], WaiterConfig={"Delay": 10, "MaxAttempts": self.waiter_attempts})
         stopped = self.clients["ecs"].describe_tasks(cluster=CLUSTER, tasks=[task_arn])
         require(not stopped.get("failures") and len(stopped.get("tasks", [])) == 1, "The submission task result is unavailable")
         task = stopped["tasks"][0]
         exits = [c.get("exitCode") for c in task.get("containers", []) if c.get("name") == "worker"]
-        require(task.get("lastStatus") == "STOPPED" and exits == [0], "The L0 worker did not confirm cycle submission")
-        return {"status": "cycle_submitted", "cycle_id": "cycle-manual-" + self.verification_id,
-                "controller_sha": self.inputs.sha, "code_revision": revision, "worker_image_digest": digest,
-                "task_arn": task_arn, "configured_schedules": len(schedules), "origin": "manual",
-                "corpus_acceptance": "pending", "nightly_schedule_validation": "pending",
-                "deployment_performed": False, "accepted_release_changed": False}
+        require(task.get("lastStatus") == "STOPPED" and exits == [0], "The L0 worker did not confirm the operation")
+        receipt = {"status": self.receipt_status, "operation": self.operation,
+                   "controller_sha": self.inputs.sha, "code_revision": revision, "worker_image_digest": digest,
+                   "task_arn": task_arn, "configured_schedules": len(schedules), "origin": "manual",
+                   "corpus_acceptance": "pending", "nightly_schedule_validation": "pending",
+                   "deployment_performed": False, "accepted_release_changed": False}
+        if self.operation == "verify":
+            receipt["cycle_id"] = "cycle-manual-" + self.verification_id
+        else:
+            receipt.update(recovery_id=self.verification_id, evidence="deferred-delivery ledger (l0_platform.deferred_deliveries)",
+                           queues_purged=False, resumable=True)
+        return receipt
 
 
-def verification_main(argv):
-    parser = argparse.ArgumentParser(description="Submit an L1 corpus cycle through the deployed L0 worker")
+def verification_main(argv, operation="verify"):
+    parser = argparse.ArgumentParser(description="Run one L0 operation through the deployed L0 worker")
     parser.add_argument("--sha", required=True)
-    parser.add_argument("--verification-id", required=True)
+    if operation == "verify":
+        parser.add_argument("--verification-id", required=True)
+    else:
+        parser.add_argument("--recovery-id", required=True, dest="verification_id")
+        parser.add_argument("--max-messages", type=int, default=None)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        report = VerificationDispatcher(args.sha, args.verification_id).dispatch()
+        report = VerificationDispatcher(args.sha, args.verification_id, operation=operation,
+                                        max_messages=getattr(args, "max_messages", None)).dispatch()
     except Exception as error:
-        report = {"status": "submission_failed", **_failure_details(error)}
+        report = {"status": "submission_failed", "operation": operation, **_failure_details(error)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     os.chmod(args.output, 0o600)
     print(json.dumps(report, sort_keys=True))
-    return 0 if report["status"] == "cycle_submitted" else 1
+    return 0 if report["status"] in {"cycle_submitted", "recovery_pass_completed"} else 1
 
 
 def main(argv=None):
@@ -1032,6 +1055,8 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "verify":
         return verification_main(argv[1:])
+    if argv and argv[0] == "recover-queues":
+        return verification_main(argv[1:], operation="recover-queues")
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("sha", "image", "ui-key", "ui-sha256", "ui-version", "deployment-id"):
         parser.add_argument(f"--{name}", required=True)

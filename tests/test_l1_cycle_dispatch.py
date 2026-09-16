@@ -66,7 +66,7 @@ class VerificationCloud(Cloud):
                 return {"tasks": [], "failures": [{"reason": "fixture capacity unavailable"}]}
             command = args["overrides"]["containerOverrides"][0]["command"]
             effective = self.worker("l0")["entryPoint"] + command
-            expected = list(WORKER_ENTRYPOINT) + ["--request-l1-cycle", "--verification-id", "l1-cycle-123-1"]
+            expected = list(WORKER_ENTRYPOINT) + list(getattr(self, "expected_arguments", ["--request-l1-cycle"])) + ["--verification-id", getattr(self, "operation_id", "l1-cycle-123-1")]
             if effective != expected:
                 # ECS accepts the task, then Python exits when its module was lost.
                 self.submit_exit = 1
@@ -164,3 +164,22 @@ def test_submission_failure_never_deploys_or_changes_capacity(failure):
     with pytest.raises(DeploymentError):
         cloud.dispatcher().dispatch()
     assert [(service, op) for service, op, _ in cloud.mutations] == [("ecs", "run_task")]
+
+
+def test_recover_queues_runs_the_bounded_l0_recovery_pass_and_never_purges():
+    cloud = VerificationCloud()
+    cloud.expected_arguments = ["--recover-queues", "--max-messages", "2500"]
+    cloud.operation_id = "l1-queues-123-1"
+    dispatcher = VerificationDispatcher(SHA, "l1-queues-123-1", clients=cloud.clients, environ=environment(),
+                                        operation="recover-queues", max_messages=2500)
+    result = dispatcher.dispatch()
+    assert result["status"] == "recovery_pass_completed" and result["operation"] == "recover-queues"
+    assert result["recovery_id"] == "l1-queues-123-1" and result["queues_purged"] is False and result["resumable"] is True
+    assert result["deployment_performed"] is False and result["accepted_release_changed"] is False
+    assert [(service, op) for service, op, _ in cloud.mutations] == [("ecs", "run_task")]
+    run = cloud.mutations[0][2]
+    assert run["overrides"]["containerOverrides"][0]["command"][-5:] == ["--recover-queues", "--max-messages", "2500", "--verification-id", "l1-queues-123-1"]
+    with pytest.raises(DeploymentError):
+        VerificationDispatcher(SHA, "l1-cycle-123-1", clients=cloud.clients, environ=environment(), operation="recover-queues")
+    with pytest.raises(DeploymentError):
+        VerificationDispatcher(SHA, "l1-queues-123-1", clients=cloud.clients, environ=environment(), operation="recover-queues", max_messages=0)

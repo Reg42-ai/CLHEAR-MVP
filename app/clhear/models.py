@@ -41,6 +41,8 @@ events = sa.Table(
     sa.Column("producer", sa.Text, nullable=False),
     sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     sa.Column("relayed_at", sa.DateTime(timezone=True), nullable=True),
+    # sent | audit_only | quarantined — how the relay disposed of the row (m0035)
+    sa.Column("relay_disposition", sa.Text, nullable=True),
 )
 
 # ONE proposals table for all layers (HLD §7.1).

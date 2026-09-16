@@ -746,6 +746,8 @@ HANDLERS = {
     "ViewerSnapshotRequested": handle_viewer_snapshot,
     "GraphRebuildRequested": handle_graph_rebuild,
     "DrDrillRequested": handle_dr_drill,
+    "QueueRecoveryRequested": lambda engine, gateway, envelope: __import__(
+        "app.clhear.platform.queue_recovery", fromlist=["handle_queue_recovery"]).handle_queue_recovery(engine, gateway, envelope),
     "CommunityWrite": handle_community_write,
     "clhear.l1.changed": handle_l1_changed,
     "clhear.l2.changed": handle_l2_changed,
@@ -756,6 +758,11 @@ HANDLERS = {
 
 class L1AcceptanceHold(RuntimeError):
     """Retryable event held until an operator accepts the L1 scope."""
+
+
+class MalformedDelivery(ValueError):
+    """The body is not a resolvable envelope, or a scheduled occurrence has no
+    identity; raised before any handler runs so the message can be quarantined."""
 
 
 class WrongFleet(RuntimeError):
@@ -772,21 +779,26 @@ def delivery_event_key(envelope):
     return envelope.event_id
 
 
+class UnknownKind(WrongFleet):
+    """No fleet owns this kind: it is not in the routing table."""
+
+
+class AuditOnlyKind(WrongFleet):
+    """An audit record reached a queue; nothing consumes it."""
+
+
 def _owned_handler(kind, fleet):
+    from app.clhear.platform import routing
+    category, owner = routing.classify(kind)
+    if category == "unknown":
+        raise UnknownKind(f"No route or handler for {kind}; quarantine with evidence")
+    if category == "audit":
+        raise AuditOnlyKind(f"{kind} is an audit record; no fleet consumes it")
     if fleet == "all":  # Explicit local/test worker compatibility.
         handler = HANDLERS.get(kind)
         if handler is None:
             raise WrongFleet(f"No implemented handler for {kind}")
         return handler
-    owners = {"DummyChanged": "l0", "CommunityWrite": "l0", "AdapterRunRequested": "l1",
-              "L1CycleRequested": "l0", "L1CycleAdvanceRequested": "l0",
-              "L1CycleDiscoveryRequested": "l1", "L1CycleEvaluationRequested": "l1",
-              "L1ExceptionBindingsRequested": "l0",
-              "L1InventoryAuditRequested": "l1", "L1EvidenceReviewRecorded": "l0",
-              "L1TranslationRequested": "l1",
-              "ViewerSnapshotRequested": "l0",
-              "PublishReleaseRequested": "l0", "GraphRebuildRequested": "l0", "DrDrillRequested": "l0",
-              "clhear.l1.changed": "l2", "clhear.l4.changed": "l6", "clhear.l5.changed": "l6"}
     if kind == "clhear.l2.changed":
         if fleet == "l3":
             from app.clhear.l3.decompose import on_l2_changed
@@ -797,7 +809,7 @@ def _owned_handler(kind, fleet):
         else:
             raise WrongFleet(f"{fleet} has no implemented consumer for {kind}")
         return lambda engine, gateway, envelope: on_l2_changed(engine, envelope.payload or {})
-    if owners.get(kind) != fleet:
+    if fleet not in routing.consumers_for(kind):
         raise WrongFleet(f"{fleet} does not own {kind}; retain for correct routing or handler implementation")
     if kind in {"clhear.l4.changed", "clhear.l5.changed"}:
         return lambda engine, gateway, env: {"l6": l6_on_changed(engine, env.payload or {}, layer=env.layer.upper())}
@@ -806,15 +818,19 @@ def _owned_handler(kind, fleet):
 
 def handle_envelope(engine: Engine, gateway: Gateway, body: str) -> dict | None:
     from app.clhear.l1 import cycles, workflow
-    envelope = l0_events.resolve_envelope(engine, body)
-    if get_settings().clhear_l1_only and envelope.kind in {
-        "clhear.l1.changed", "clhear.l2.changed", "clhear.l4.changed", "clhear.l5.changed",
-        "PublishReleaseRequested", "GraphRebuildRequested", "DrDrillRequested"
-    }:
+    from app.clhear.platform import routing
+    try:
+        envelope = l0_events.resolve_envelope(engine, body)
+    except ValueError as exc:  # includes pydantic ValidationError
+        raise MalformedDelivery(str(exc)) from exc
+    if get_settings().clhear_l1_only and envelope.kind in routing.DOWNSTREAM_HELD_KINDS:
         raise L1AcceptanceHold("L1 acceptance hold: retain this event for replay after verification")
     fleet = os.environ.get("CLHEAR_FLEET", "all").lower()
     handler = _owned_handler(envelope.kind, fleet)
-    event_key = delivery_event_key(envelope)
+    try:
+        event_key = delivery_event_key(envelope)
+    except ValueError as exc:
+        raise MalformedDelivery(str(exc)) from exc
     consumer = f"fleet.{fleet}:{envelope.kind}"
     # Completed deliveries can arrive after a cycle has advanced to another
     # phase. Return before the phase guard; the claim below remains the atomic
@@ -886,8 +902,10 @@ class RoutedOutboxTransport:
         self.bus = EventBridgeTransport(region, bus_name=os.environ.get("CLHEAR_EVENT_BUS_NAME", "clhear"))
 
     def send(self, body):
+        from app.clhear.platform import routing
         env = l0_events.parse_transport(body)
-        if env.kind.startswith("clhear."):
+        category, owner = routing.classify(env.kind)
+        if category == "layer_event":
             # EventBridge's HTTP 200 can contain per-entry errors; do not let
             # relay_once mark an event relayed unless the entry was accepted.
             result = self.bus._client.put_events(Entries=[{"EventBusName": self.bus._bus,
@@ -896,10 +914,49 @@ class RoutedOutboxTransport:
             if result.get("FailedEntryCount") or len(entries) != 1 or not entries[0].get("EventId") or entries[0].get("ErrorCode"):
                 raise RuntimeError(f"EventBridge did not confirm acceptance of {env.kind}")
             return
-        owner = "l1" if env.kind in {"AdapterRunRequested", "L1InventoryAuditRequested", "L1CycleDiscoveryRequested", "L1CycleEvaluationRequested", "L1TranslationRequested"} else "l0"
+        if category != "command":
+            # relay_once disposes of audit-only and unknown kinds itself; reaching
+            # here means a caller bypassed it, and there is no queue to default to.
+            raise WrongFleet(f"{env.kind} is not a routable command ({category}); retain with its evidence")
         if owner not in self.queues:
             raise WrongFleet(f"No configured queue for {owner}; retain outbox row")
         self.sqs.send_message(QueueUrl=self.queues[owner], MessageBody=body)
+
+
+def deferral_reason(exc: BaseException) -> tuple[str, str]:
+    """Map a refusal to its ledger reason; the detail is our own fixed wording."""
+    from app.clhear.platform import failures
+    text = failures.redact(str(exc))
+    if isinstance(exc, L1AcceptanceHold):
+        return "downstream_held", text
+    if isinstance(exc, AuditOnlyKind):
+        return "audit_only", text
+    if isinstance(exc, UnknownKind):
+        return "unknown_kind", text
+    if isinstance(exc, WrongFleet):
+        return "wrong_owner", text
+    if "occurrence timestamp" in str(exc):
+        return "unidentifiable_schedule", text
+    if "Referenced outbox event" in str(exc):
+        return "unresolvable_reference", text
+    return "malformed", text
+
+
+def defer_message(engine: Engine, *, fleet: str, queue_url: str, message: dict, reason: str, detail: str = "",
+                  channel: str = "sqs", status: str | None = None) -> dict:
+    """Write one SQS delivery to the deferred ledger and commit before the caller
+    deletes it. Redelivery of the same MessageId is a no-op (unique per queue)."""
+    from app.clhear.platform import deferred
+    attributes = message.get("Attributes") or {}
+    metadata = {k: attributes.get(k) for k in ("ApproximateReceiveCount", "SentTimestamp", "ApproximateFirstReceiveTimestamp")
+                if attributes.get(k) is not None}
+    metadata["md5_of_body"] = message.get("MD5OfBody")
+    if status is None:
+        status = "quarantined" if reason in {"unknown_kind", "malformed", "unidentifiable_schedule", "unresolvable_reference"} else "deferred"
+    with engine.begin() as conn:
+        return deferred.record(conn, channel=channel, queue=queue_url.rsplit("/", 1)[-1], message_id=message["MessageId"],
+                               fleet=fleet, body=message["Body"], reason=reason, detail=detail,
+                               queue_metadata=metadata, status=status)
 
 
 def _snapshot_pull(uri: str, region: str) -> None:
@@ -916,6 +973,31 @@ def _snapshot_push(uri: str, region: str) -> None:
     bucket, key = uri[len("s3://") :].split("/", 1)
     boto3.client("s3", region_name=region).upload_file(SNAPSHOT_LOCAL, bucket, key)
     log.info("snapshot published to %s", uri)
+
+
+def recover_queues_once(recovery_id: str, *, max_messages=None, max_seconds=None, queues=None) -> dict:
+    """One bounded recovery pass as a durable, idempotent L0 delivery: the same
+    ``recovery_id`` never runs twice, so a retried task cannot double-process."""
+    import re
+    from app.clhear.db import get_engine, run_migrations
+    from app.clhear.platform.events import Envelope
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", recovery_id or ""):
+        return {"status": "failed", "error_type": "ValueError", "reason": "invalid recovery id"}
+    engine = get_engine()
+    run_migrations(engine)
+    payload = {k: v for k, v in {"max_messages": max_messages, "max_seconds": max_seconds, "queues": queues or None}.items() if v}
+    envelope = Envelope(event_id=f"queue-recovery:{recovery_id}", layer="l0", kind="QueueRecoveryRequested",
+                        subject_ref="queues", payload=payload, producer="operator.recovery",
+                        ts=datetime.now(timezone.utc).isoformat())
+    try:
+        report = handle_envelope(engine, None, envelope.model_dump_json())
+    except Exception as exc:
+        from app.clhear.platform import failures
+        return {"status": "failed", "recovery_id": recovery_id, **{k: v for k, v in failures.describe(exc).items()
+                                                                  if k in {"error_type", "error_code", "sqlstate"}}}
+    if report is None:
+        return {"status": "already_recovered", "recovery_id": recovery_id, "reason": "this recovery id completed earlier; use a new id for another pass"}
+    return {"status": "recovered", "recovery_id": recovery_id, **report}
 
 
 def dispatch_once(envelope_file: str) -> dict | None:
@@ -1004,6 +1086,7 @@ def main() -> None:
                 MaxNumberOfMessages=1,
                 VisibilityTimeout=180,
                 WaitTimeSeconds=10,
+                AttributeNames=["ApproximateReceiveCount", "SentTimestamp", "ApproximateFirstReceiveTimestamp"],
             )
             messages = resp.get("Messages", [])
             for message in messages:
@@ -1022,8 +1105,19 @@ def main() -> None:
                             _snapshot_push(snapshot_uri, settings.aws_region)
                     sqs.delete_message(QueueUrl=settings.clhear_events_queue_url,
                                        ReceiptHandle=message["ReceiptHandle"])
-                except (L1AcceptanceHold, WrongFleet) as exc:
-                    log.warning("Message retained: %s", exc)
+                except (L1AcceptanceHold, WrongFleet, MalformedDelivery) as exc:
+                    # Held, misrouted, unknown or malformed: preserve the exact message
+                    # with its reason in the deferred ledger, then acknowledge it so it
+                    # stops circulating through visibility timeouts into the DLQ.
+                    reason, detail = deferral_reason(exc)
+                    try:
+                        entry = defer_message(engine, fleet=fleet, queue_url=settings.clhear_events_queue_url,
+                                              message=message, reason=reason, detail=detail)
+                        sqs.delete_message(QueueUrl=settings.clhear_events_queue_url,
+                                           ReceiptHandle=message["ReceiptHandle"])
+                        log.warning("Message deferred (%s, ledger id %s): %s", reason, entry["id"], detail)
+                    except Exception:
+                        log.exception("Could not persist the deferred message; retained for redelivery")
                 except Exception:
                     log.exception("Message failed; retained for retry/dead-letter policy")
                     if snapshot_uri:
@@ -1053,7 +1147,20 @@ def cli(argv=None) -> int:
     parser.add_argument("--verify-deployment", choices=("bootstrap", "verify", "publish"))
     parser.add_argument("--verification-id")
     parser.add_argument("--request-l1-cycle", action="store_true")
+    parser.add_argument("--recover-queues", action="store_true")
+    parser.add_argument("--max-messages", type=int, default=None)
+    parser.add_argument("--max-seconds", type=int, default=None)
+    parser.add_argument("--queues", default="")
     args = parser.parse_args(argv)
+    if args.recover_queues:
+        if not args.verification_id or args.verify_deployment or args.once or args.envelope_file or args.request_l1_cycle:
+            parser.error("--recover-queues requires --verification-id and cannot be combined with other actions")
+        if os.environ.get("CLHEAR_FLEET", "").lower() != "l0":
+            parser.error("--recover-queues must run on the L0 worker")
+        result = recover_queues_once(args.verification_id, max_messages=args.max_messages, max_seconds=args.max_seconds,
+                                     queues=[q for q in args.queues.split(",") if q])
+        print(json.dumps(result, default=str))
+        return 0 if result.get("status") == "recovered" else 1
     if args.request_l1_cycle:
         if not args.verification_id or args.verify_deployment or args.once or args.envelope_file:
             parser.error("--request-l1-cycle requires --verification-id and cannot be combined with other actions")
