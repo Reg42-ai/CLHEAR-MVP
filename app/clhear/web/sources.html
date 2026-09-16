@@ -1342,6 +1342,30 @@ function WorkflowBrowser({ jobId, sourceKey }) {
   </div>`;
 }
 
+function ProgressStrip() {
+  /* Four states kept apart — deployment, technical corpus verification, publisher
+     permissions, nightly validation — from the small record L0 publishes between
+     full snapshots (or composed live when none is published). */
+  const [data, setData] = useState(null), [error, setError] = useState(null);
+  useEffect(() => { api("/api/clhear/l1/progress").then(setData).catch(setError); }, []);
+  if (error) return html`<${ErrorNotice} error=${error} />`;
+  if (!data) return html`<div class="notice">Loading progress record…</div>`;
+  const states = data.states || {}, ready = data.ready_for_private_review || {}, deferred = data.deferred_messages || {};
+  const tone = (state) => ({passed: "open", observed: "open", candidate_verified: "open", failed: "restricted"}[state] || "guidance");
+  const row = (label, state, extra) => html`<div class="meta-grid" key=${label}><span>${label} <b><span class=${"badge " + tone(state.state)}>${evidenceLabel(state.state || "unknown")}</span></b></span>${extra}</div>`;
+  return html`<section class="family" aria-label="Progress">
+    <h3 style=${{ marginTop: 0 }}>Progress <span class="charter">· ${data.served_from === "l0_published_record" ? "L0 record" : "live database"} · ${data.generated_at}</span></h3>
+    ${row("Deployment", states.deployment || {}, html`<span class="charter">${(states.deployment || {}).label || "deployment verification"}${(states.deployment || {}).verification_id ? " · " + states.deployment.verification_id : ""}</span>`)}
+    ${row("Technical corpus verification", states.corpus_verification || {}, html`<span class="charter">${(states.corpus_verification || {}).cycle_id ? "cycle " + states.corpus_verification.cycle_id + " · verified " + (states.corpus_verification.verified ?? "—") + " · unresolved " + (states.corpus_verification.unresolved ?? "—") : "no cycle recorded"}</span>`)}
+    ${row("Publisher permissions", states.publisher_permissions || {}, html`<span class="charter">awaiting L0 binding ${data.binding_waits || 0} · permission blocked ${(states.publisher_permissions || {}).permission_blocked || 0} · denied ${(states.publisher_permissions || {}).ledger ? states.publisher_permissions.ledger.denied : 0}</span>`)}
+    ${row("Nightly validation", states.nightly_validation || {}, html`<span class="charter">${(states.nightly_validation || {}).reason || (states.nightly_validation || {}).cycle_id || ""}</span>`)}
+    <p class="charter">Deferred messages ${deferred.total || 0}${deferred.by_status ? " (" + Object.entries(deferred.by_status).map(([k, v]) => k + " " + v).join(", ") + ")" : ""} · never executed while L2–L8 are held.</p>
+    <p class=${ready.ready ? "charter" : "notice"}>${ready.ready
+      ? html`Ready for private review · <a href=${ready.viewer_url}>${ready.viewer_url}</a> · revision <span class="mono">${ready.deployed_revision}</span> · snapshot ${ready.snapshot_generated_at}`
+      : html`Not ready for private review: ${ready.reason || "pending"}`} · corpus acceptance ${ready.corpus_acceptance || "not claimed"}</p>
+  </section>`;
+}
+
 function CycleBoard() {
   const [offset, setOffset] = useState(0), [selected, setSelected] = useState(() => new URLSearchParams(location.search).get("cycle") || "");
   const [data, setData] = useState(null), [error, setError] = useState(null), [revision, refresh] = useState(0);
@@ -1357,6 +1381,7 @@ function CycleBoard() {
   return html`<section>
     <h2>Verification cycles</h2>
     <p class="charter">L0 coordinates discovery, freezes the inventory and dispatches the normal L1 workers. Only genuine EventBridge occurrences count toward nightly validation. Completed execution can still have unresolved corpus gaps.</p>
+    <${ProgressStrip} />
     <div class="recordbar"><label>Cycle ID <input aria-label="Filter cycle ID" value=${selected} onChange=${e => { setSelected(e.target.value); setOffset(0); }} /></label><button onClick=${() => refresh(revision + 1)}>Refresh recorded evidence</button></div>
     ${error && html`<${ErrorNotice} error=${error} />`}
     ${data && data.status !== "available" && html`<div class="notice">No cycle evidence has been published by the deployed workers.</div>`}

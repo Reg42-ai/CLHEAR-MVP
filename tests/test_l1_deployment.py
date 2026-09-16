@@ -152,6 +152,11 @@ class Cloud:
         if operation == "head_object":
             return {"Metadata": self.ui_metadata, "VersionId": "version", "ContentLength": 123}
         if operation == "get_object":
+            if "/deployments/" in args.get("Key", "") and args["Key"].startswith("webui/l1/"):
+                action = args["Key"].rsplit("/", 1)[-1][:-len(".json")]
+                if action not in getattr(self, "worker_results", {}):
+                    raise RuntimeError("NoSuchKey")
+                return {"Body": io.BytesIO(json.dumps(self.worker_results[action]).encode())}
             return {"Body": io.BytesIO(self.ui_code)}
         if operation == "describe_images":
             return {"imageDetails": [{"imageDigest": f"sha256:{DIGEST}", "imageTags": self.tags}]}
@@ -1177,3 +1182,41 @@ def test_partial_target_updates_never_claim_configured_or_resume_workers(failure
 @pytest.mark.parametrize("url", ["http://s3.amazonaws.com/code", "https://evil.example/code", "https://s3.amazonaws.com.evil.test/code", "https://user:password@s3.amazonaws.com/code"])
 def test_previous_code_download_rejects_non_aws_urls_without_network(url):
     with pytest.raises(DeploymentError): Deployer._download_code(url)
+
+
+def test_worker_phase_evidence_and_failure_summary_reach_the_deployment_artifacts_including_failed_runs():
+    cloud = Cloud()
+    cloud.exits["verify"] = 1
+    cloud.worker_results = {
+        "bootstrap": {"verification_id": inputs().deployment_id, "phase": "bootstrap", "status": "succeeded", "exit_code": 0,
+                      "steps": {"viewer_snapshot": {"revision": "rev-1", "sha256": "a" * 64, "byte_count": 10, "raw_text": "never"}}},
+        "verify": {"verification_id": inputs().deployment_id, "phase": "verify", "status": "failed", "exit_code": 1,
+                   "evidence_mode": "deployment_verification", "scope": ["finra/rule/2111"],
+                   "deployment_checks": {"imports": False, "readback": False, "unchanged_repeat": False, "passed": False},
+                   "steps": {"finra_import": {"status": "blocked", "failed_sources": ["finra/rule/2111"], "scope_complete": False,
+                                              "tasks": {"secret": "must not be copied"}}},
+                   "failure_summary": [{"source": "finra/rule/2111", "worker": "l1", "task": "t-1", "status": "retrying", "attempt": 1,
+                                        "stage": "persistence", "duration_ms": 42, "error_type": "ProgrammingError",
+                                        "error_code": "InFailedSqlTransaction", "sqlstate": "25P02", "first_cause": "UndefinedTable",
+                                        "follow_on": ["InFailedSqlTransaction"], "aborted_transaction": True,
+                                        "message": "SELECT secret FROM table"}],
+                   "evidence": {"job_id": "job-1", "worker_result": "s3://x/webui/l1/deployments/d/verify.json"}},
+    }
+    result = cloud.deployer().deploy()
+    assert result["status"] == "failed_maintenance"
+    steps = {step["action"]: step for step in result["steps"]}
+    assert steps["bootstrap"]["worker_result"]["available"] and steps["bootstrap"]["worker_result"]["steps"]["viewer_snapshot"]["revision"] == "rev-1"
+    assert "raw_text" not in json.dumps(steps["bootstrap"])
+    verify = steps["verify"]["worker_result"]
+    assert verify["available"] and verify["deployment_checks"]["passed"] is False and verify["evidence"]["job_id"] == "job-1"
+    assert verify["failure_summary"][0]["sqlstate"] == "25P02" and verify["failure_summary"][0]["first_cause"] == "UndefinedTable"
+    assert "message" not in verify["failure_summary"][0] and "must not be copied" not in json.dumps(result) and "SELECT" not in json.dumps(result)
+    assert steps["verify"]["worker_result_uri"] == f"s3://{BUCKET}/webui/l1/deployments/{inputs().deployment_id}/verify.json"
+    failure = next(args for _, op, args in cloud.calls if op == "put_object" and args["Key"].endswith("/failure.json"))
+    written = json.loads(failure["Body"])
+    assert written["steps"][1]["worker_result"]["failure_summary"][0]["error_code"] == "InFailedSqlTransaction"
+    # a phase whose evidence object is missing is reported as unavailable, with its link, and does not fail the step
+    cloud = Cloud()
+    result = cloud.deployer().deploy()
+    assert result["status"] == "verified"
+    assert all(step["worker_result"] == {"available": False, "reason": "RuntimeError"} for step in result["steps"])

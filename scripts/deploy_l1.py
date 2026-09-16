@@ -663,10 +663,46 @@ class Deployer:
         task = response["tasks"][0]
         workers = [c for c in task.get("containers", []) if c.get("name") == "worker"]
         code = workers[0].get("exitCode") if len(workers) == 1 else None
-        self.report["steps"].append({"fleet": fleet.upper(), "action": action, "task_arn": arn,
-                                    "exit_code": code, "duration_ms": round((time.monotonic() - started) * 1000)})
+        step = {"fleet": fleet.upper(), "action": action, "task_arn": arn,
+                "exit_code": code, "duration_ms": round((time.monotonic() - started) * 1000),
+                **self._worker_evidence(action)}
+        self.report["steps"].append(step)
         require(task.get("lastStatus") == "STOPPED" and code in ({0, 2} if action == "verify" else {0}), f"{action} worker failed; deployment remains held")
         return code
+
+    # Fields of a worker phase result that may enter a deployment artifact: statuses,
+    # counts, codes and identities. Never messages, text or SQL.
+    _EVIDENCE_FIELDS = ("verification_id", "phase", "job_id", "worker", "status", "exit_code", "error_type",
+                        "deployment_checks", "scope", "scope_label", "evidence_mode", "finra_acceptance", "l1_acceptance",
+                        "corpus_acceptance", "failure_summary", "evidence", "started_at", "finished_at", "duration_ms")
+    _STEP_FIELDS = ("status", "passed", "scope_complete", "successful_sources", "failed_sources", "missing_sources",
+                    "statuses", "verified_sources", "reason", "job_id", "audit_id", "inventory_hash", "verified", "unresolved",
+                    "revision", "sha256", "byte_count", "snapshot_uri", "bindings_unchanged", "successful_source_count",
+                    "version_count_before", "version_count_after")
+
+    def _worker_evidence(self, action):
+        """Read the phase result the worker published beside the candidate viewer.
+        Missing or unreadable evidence is reported as such; it never fails the step
+        by itself, and the private link is included either way."""
+        prefix = self.inputs.viewer_key.rsplit("/", 1)[0]
+        key = f"{prefix}/deployments/{self.inputs.deployment_id}/{action}.json"
+        evidence = {"worker_result_uri": f"s3://{BUCKET}/{key}"}
+        try:
+            body = self.clients["s3"].get_object(Bucket=BUCKET, Key=key, ExpectedBucketOwner=ACCOUNT)["Body"].read()
+            result = json.loads(body)
+        except Exception as error:  # noqa: BLE001 — AccessDenied / NoSuchKey / malformed all mean "not readable here"
+            evidence["worker_result"] = {"available": False, "reason": type(error).__name__}
+            return evidence
+        summary = {k: result.get(k) for k in self._EVIDENCE_FIELDS if k in result}
+        summary["steps"] = {name: {k: v for k, v in step.items() if k in self._STEP_FIELDS}
+                            for name, step in (result.get("steps") or {}).items() if isinstance(step, dict)}
+        summary["failure_summary"] = [
+            {k: row.get(k) for k in ("source", "worker", "task", "status", "attempt", "stage", "duration_ms",
+                                     "error_type", "error_code", "sqlstate", "first_cause", "follow_on", "aborted_transaction")}
+            for row in (result.get("failure_summary") or [])[:25]]
+        summary["available"] = True
+        evidence["worker_result"] = summary
+        return evidence
 
     def _complete_lambda_update(self, before, response, *, phase, expected_code_hash, function_name=FUNCTION):
         started = time.monotonic()

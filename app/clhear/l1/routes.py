@@ -61,8 +61,33 @@ def l1_publishers() -> dict:
 
 @router.get("/api/clhear/l1/cycles")
 def l1_cycles(cycle_id: str | None = None, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200)) -> dict:
+    from app.clhear.l1 import progress
     from app.clhear.l1.cycles import cycle_summary
-    return cycle_summary(get_engine(), cycle_id=cycle_id, offset=offset, limit=limit)
+    from app.clhear.platform import deferred
+    engine = get_engine()
+    summary = cycle_summary(engine, cycle_id=cycle_id, offset=offset, limit=limit)
+    # What the fleet is waiting on besides its own cycles: held or misrouted
+    # messages in the deferred ledger, discovery pages awaiting an L0 binding,
+    # and the last deployment verification's progress.
+    permissions_state = progress._publisher_permissions(engine)
+    summary["deferred_messages"] = deferred.counts(engine)
+    summary["binding_waits"] = permissions_state.get("binding_waits", 0)
+    summary["verification_progress"] = progress.compose(engine)["verification_progress"]
+    return summary
+
+
+@router.get("/api/clhear/l1/progress")
+def l1_progress(live: bool = Query(False)) -> dict:
+    """The four states an operator needs apart — deployment, technical corpus
+    verification, publisher permissions, nightly validation — plus the
+    ready-for-private-review record. Serves the small record L0 published
+    beside the candidate viewer when there is one; ``live=true`` (or no
+    published record) composes it from this database."""
+    from app.clhear.l1 import progress
+    published = None if live else progress.read_published()
+    if published is not None:
+        return {**published, "served_from": "l0_published_record"}
+    return {**progress.compose(get_engine()), "served_from": "live_database"}
 
 
 @router.get("/api/clhear/l1/workflow")

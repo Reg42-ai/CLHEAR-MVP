@@ -311,3 +311,37 @@ def test_recovery_cli_is_l0_only_durable_and_idempotent(engine, monkeypatch):
     again = workers.recover_queues_once("rec-1", max_messages=10)
     assert again["status"] == "already_recovered"
     assert workers.recover_queues_once("bad id!")["status"] == "failed"
+
+
+# --------------------------------------------------------------------------- progress surfaces
+
+def test_progress_record_keeps_the_four_states_apart_and_is_served_by_the_viewer(engine, client, monkeypatch):
+    from app.clhear.l1 import progress
+    monkeypatch.delenv("CLHEAR_VIEWER_SNAPSHOT_S3_URI", raising=False)
+    monkeypatch.delenv("CLHEAR_DB_S3_URI", raising=False)
+    body = client.get("/api/clhear/l1/progress").json()
+    assert body["schema"] == "clhear.l1-progress.v1" and body["served_from"] == "live_database"
+    assert set(body["states"]) == {"deployment", "corpus_verification", "publisher_permissions", "nightly_validation"}
+    assert body["states"]["deployment"]["evidence_mode"] == "deployment_verification"
+    assert body["ready_for_private_review"]["ready"] is False and body["ready_for_private_review"]["corpus_acceptance"] == "not_claimed"
+    assert body["deferred_messages"]["available"] and body["binding_waits"] == 0
+    cycles = client.get("/api/clhear/l1/cycles").json()
+    assert {"deferred_messages", "binding_waits", "verification_progress"} <= set(cycles)
+    # publication: rate-limited, only when something changed, beside the candidate viewer
+    monkeypatch.setenv("CLHEAR_VIEWER_SNAPSHOT_S3_URI", "s3://bucket/webui/l1/candidate.db")
+    puts = []
+    s3 = type("S3", (), {"put_object": lambda self, **kw: puts.append(kw)})()
+    progress._last_publish.update(at=0.0, hash=None)
+    first = progress.publish(engine, s3_client=s3)
+    assert first["uri"] == "s3://bucket/webui/l1/progress.json" and puts[0]["Key"] == "webui/l1/progress.json"
+    assert puts[0]["ServerSideEncryption"] == "AES256" and json.loads(puts[0]["Body"])["schema"] == "clhear.l1-progress.v1"
+    assert progress.publish(engine, s3_client=s3) is None and len(puts) == 1  # inside the interval
+    progress._last_publish["at"] = 0.0
+    assert progress.publish(engine, s3_client=s3) is None and len(puts) == 1  # unchanged content
+    assert progress.publish(engine, s3_client=s3, force=True) is not None and len(puts) == 2
+    # the viewer prefers the published record when one exists
+    published = json.loads(puts[-1]["Body"])
+    monkeypatch.setattr(progress, "read_published", lambda **kw: published)
+    served = client.get("/api/clhear/l1/progress").json()
+    assert served["served_from"] == "l0_published_record" and served["generated_at"] == published["generated_at"]
+    assert client.get("/api/clhear/l1/progress?live=true").json()["served_from"] == "live_database"

@@ -1078,9 +1078,13 @@ def main() -> None:
     while True:
         try:
             if should_relay:
-                from app.clhear.l1 import cycles
+                from app.clhear.l1 import cycles, progress
                 cycles.reconcile(engine)
-                relay_once(engine, transport)
+                relay_once(engine, transport, fleet=fleet)
+                try:
+                    progress.publish(engine)  # small status record between full snapshots; rate-limited
+                except Exception:
+                    log.exception("progress record not published")
             resp = sqs.receive_message(
                 QueueUrl=settings.clhear_events_queue_url,
                 MaxNumberOfMessages=1,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -284,6 +285,7 @@ def run_phase(engine, gateway, phase, verification_id, *, bootstrap=None):
     workflow.update_job(engine, job_id, result["status"], {"result": result})
     workflow.finish_delivery(engine, f"deployment.{phase}", event_key, token,
                              error="deployment_phase_failed" if result["exit_code"] == 1 else None)
+    result["evidence"] = evidence_links(verification_id, phase, job_id)
     with engine.begin() as conn:
         conn.execute(runs.insert().values(fleet=f"{fleet}.deployment_verification", trigger=phase,
                      inputs={"verification_id": verification_id, "job_id": job_id}, outputs=result,
@@ -293,7 +295,47 @@ def run_phase(engine, gateway, phase, verification_id, *, bootstrap=None):
         # the finished phase. The snapshot handler itself never requests another.
         from app.clhear.l1.viewer_snapshot import request_refresh
         request_refresh(conn, reason="deployment_phase_finished", job_id=job_id)
+    publish_phase_evidence(engine, verification_id, phase, result)
     return result
+
+
+def evidence_links(verification_id, phase, job_id):
+    """Private links an operator can follow: the worker result object, the job in
+    the viewer, and the failure ledger query. No text, no credentials."""
+    from app.clhear.l1.viewer_snapshot import configured_uri
+    uri = configured_uri()
+    base = os.environ.get("CLHEAR_PUBLIC_BASE_URL", "").rstrip("/")
+    links = {"job_id": job_id, "viewer_workflow": f"{base}/api/clhear/l1/workflow?job_id={job_id}" if base else None,
+             "viewer_page": f"{base}/l1#job/{job_id}" if base else None}
+    if uri.startswith("s3://"):
+        prefix = uri.rsplit("/", 1)[0]
+        links["worker_result"] = f"{prefix}/deployments/{verification_id}/{phase}.json"
+        links["progress"] = f"{prefix}/progress.json"
+    return links
+
+
+def publish_phase_evidence(engine, verification_id, phase, result):
+    """Write the bounded phase result beside the candidate viewer (the worker role
+    may write ``webui/*``) and refresh the progress record. Best effort: a
+    failed publication never changes the recorded result."""
+    from app.clhear.l1 import progress
+    from app.clhear.l1.viewer_snapshot import configured_uri
+    uri = configured_uri()
+    if uri.startswith("s3://"):
+        try:
+            import boto3
+            from app.clhear.settings import get_settings
+            bucket, key = uri[len("s3://"):].split("/", 1)
+            target = key.rsplit("/", 1)[0] + f"/deployments/{verification_id}/{phase}.json"
+            boto3.client("s3", region_name=get_settings().aws_region).put_object(
+                Bucket=bucket, Key=target, Body=json.dumps(result, sort_keys=True, default=str).encode("utf-8"),
+                ContentType="application/json", ServerSideEncryption="AES256")
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("deployment phase evidence not published")
+    try:
+        progress.publish(engine, force=True)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("progress record not published")
 
 
 def execute(phase, verification_id):
