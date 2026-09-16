@@ -87,13 +87,18 @@ def run_adapter_fleet(
     engine: Engine, adapter_key: str, gateway: Gateway | None = None, *,
     force_nightly: bool = False, nightly_only: bool = False,
     job_id: str | None = None, event_key: str | None = None, trigger: str = "manual",
-    cycle_context: dict | None = None,
+    cycle_context: dict | None = None, source_keys: list[str] | None = None, discover: bool | None = None,
 ) -> dict:
     """Execute the same durable L1 workflow for manual and scheduled requests.
 
     Source tasks finish independently. Redelivery skips completed imports and
     reruns final audits/evals; a failed task never produces a handled marker.
     Downstream derivation has its own fleet and is never run inline here.
+
+    ``source_keys`` fixes the scope to exactly those registered documents and
+    ``discover=False`` keeps the inventory audit from expanding the frontier:
+    deployment verification runs that way, because newly discovered documents
+    need L0 bindings that a deployment with L0 stopped cannot provide.
     """
     from app.clhear.l1 import families, inventory, pipeline, registry_etoro, workflow
     from app.clhear.l1.adapters import CITATOR_KEYS
@@ -112,22 +117,36 @@ def run_adapter_fleet(
     job = workflow.ensure_job(engine, job_id, adapter_key, trigger, event_key)
     workflow.update_job(engine, job_id, "running")
     scope = cycle_context["scope"] if cycle_context else ("finra" if adapter_key.startswith("finra") else "registered")
+    fixed_scope = sorted(set(source_keys)) if source_keys is not None else None
+    if discover is None:
+        discover = adapter_key == "finra" and fixed_scope is None
     statuses, failures = {}, []
     try:
         with workflow.bind_execution(engine, job_id):
             frozen_cycle = bool(cycle_context)
-            with workflow.stage("discovery", {"scope": scope, "operation": "frozen_cycle_inventory_reference" if frozen_cycle else "discovery_and_database_reconciliation"}) as step:
+            with workflow.stage("discovery", {"scope": scope, "fixed_scope": fixed_scope, "discover": bool(discover),
+                                              "operation": "frozen_cycle_inventory_reference" if frozen_cycle else
+                                              "fixed_scope_reconciliation" if fixed_scope is not None else
+                                              "discovery_and_database_reconciliation"}) as step:
                 before = ({"inventory_hash": cycle_context["inventory_hash"], "audit_id": None} if frozen_cycle else
-                          inventory.run_inventory_audit(engine, store, job_id=job_id, scope=scope, discover=adapter_key == "finra"))
+                          inventory.run_inventory_audit(engine, store, job_id=job_id, scope=scope, discover=bool(discover)))
                 step.details.update(audit_id=before.get("audit_id"), inventory_hash=before.get("inventory_hash"))
         plan = [(entry, adapter) for entry, adapter in fleet_plan(adapter_key)
                 if adapter.meta().source_key != "finra/rulebook"]
         seen = {adapter.meta().source_key for _, adapter in plan}
-        for entry in inventory.planned_entries(engine, scope=scope, adapter_key=adapter_key,
-                    **({"audit_id": cycle_context["audit_id"]} if cycle_context and cycle_context.get("audit_id") else {})):
-            if entry["key"] not in seen:
-                plan.append((entry, adapter_for(entry)))
-                seen.add(entry["key"])
+        if fixed_scope is None:
+            for entry in inventory.planned_entries(engine, scope=scope, adapter_key=adapter_key,
+                        **({"audit_id": cycle_context["audit_id"]} if cycle_context and cycle_context.get("audit_id") else {})):
+                if entry["key"] not in seen:
+                    plan.append((entry, adapter_for(entry)))
+                    seen.add(entry["key"])
+        else:
+            # Discovered documents are never pulled into a fixed scope; a missing
+            # registered adapter is a failure of the scope, not a silent narrowing.
+            missing = set(fixed_scope) - seen
+            failures.extend(f"Fixed-scope document adapter unavailable: {key}" for key in sorted(missing))
+            plan = [(entry, adapter) for entry, adapter in plan if adapter.meta().source_key in fixed_scope]
+            seen = {adapter.meta().source_key for _, adapter in plan}
         if cycle_context and cycle_context["source_keys"] is not None:
             requested_keys = set(cycle_context["source_keys"])
             missing = requested_keys - {adapter.meta().source_key for _, adapter in plan}
@@ -145,7 +164,7 @@ def run_adapter_fleet(
             workflow.update_job(engine, job_id, "running", {
                 "source_keys": [adapter.meta().source_key for _, adapter in plan],
                 "inventory_hash": inventory_hash, "frozen_at": workflow.utcnow().isoformat(),
-                "scope": scope,
+                "scope": scope, "fixed_scope": fixed_scope, "discover": bool(discover),
             })
         if before.get("inventory_hash") != inventory_hash:
             failures.append("Inventory changed since this job was frozen; newly discovered documents require a new job")
@@ -185,9 +204,14 @@ def run_adapter_fleet(
                         if entry is None and adapter.key in CITATOR_KEYS and status in {"added", "amended", "unchanged", "up-to-date"}:
                             families.sync_citator(engine, adapter, trigger=trigger, job_id=job_id)
                     success = status in {"added", "amended", "unchanged", "up-to-date"}
+                    if not success and status == "failed" and "failure" not in summary:
+                        from app.clhear.platform import failures as failure_details
+                        summary["failure"] = failure_details.describe(RuntimeError(summary.get("error") or status),
+                                                                      source=source_key, worker="l1", task_id=task_id,
+                                                                      stage=workflow.current_stage())
                     workflow.finish_task(engine, task_id, token,
                         status="completed" if success else "blocked" if status in {"rights-blocked", "source-blocked", "awaiting-artifact"} else "failed",
-                        summary=summary, error=None if success else summary.get("error", status))
+                        summary=summary, error=None if success else (summary.get("failure") or summary.get("error", status)))
                     token = None
                     if not success:
                         failures.append(source_key)
@@ -196,8 +220,13 @@ def run_adapter_fleet(
                 status = "failed"
                 failures.append(source_key)
                 if token:
+                    from app.clhear.platform import failures as failure_details
+                    info = workflow.task_info(engine, task_id)
+                    detail = failure_details.describe(exc, source=source_key, worker="l1", task_id=task_id,
+                                                      stage=workflow.current_stage(), attempt=info.get("attempt"))
                     try:
-                        workflow.finish_task(engine, task_id, token, status="failed", error=exc)
+                        workflow.finish_task(engine, task_id, token, status="failed", error=exc,
+                                             summary={"status": "failed", "source": source_key, "failure": detail})
                     except workflow.LeaseLost:
                         log.warning("source task lease was lost: %s", task_id)
             statuses[status] = statuses.get(status, 0) + 1
@@ -272,6 +301,7 @@ def run_adapter_fleet(
                 step.status = "ready" if ready else "blocked"
         verified = not failures and scope_acceptance.get("passed") and evals_passed
         result = {"adapter": adapter_key, "job_id": job_id, "ran": len(plan), "statuses": statuses,
+                  "fixed_scope": fixed_scope, "discover": bool(discover),
                   "failures": failures, "inventory_audit_id": after.get("audit_id"),
                   "downstream": "held", "acceptance": "candidate_verified" if verified else "awaiting_verification",
                   "evals_passed": evals_passed, "publication": "ready_for_l0" if ready else "blocked", "error": None}
@@ -319,6 +349,10 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
     except cycles.CycleRevisionChanged:
         return {"cycle_id": cycle_id, "status": "failed", "reason": "worker_revision_changed_requires_new_cycle",
                 "acceptance": "not_accepted", "downstream": "held"}
+    source_keys = payload.get("source_keys")
+    if source_keys is not None and not (isinstance(source_keys, list) and source_keys
+                                        and all(isinstance(k, str) and k for k in source_keys)):
+        raise ValueError("AdapterRunRequested.source_keys must be a non-empty list of source keys")
     try:
         return run_adapter_fleet(
             engine, payload.get("adapter", envelope.subject_ref), gateway,
@@ -326,7 +360,8 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
             nightly_only=bool(payload.get("nightly_only")),
             job_id=payload.get("job_id") or None, event_key=event_key,
             trigger="schedule" if context and context["origin"] == "scheduled" else "manual",
-            cycle_context=context,
+            cycle_context=context, source_keys=source_keys,
+            discover=None if payload.get("discover") is None else bool(payload.get("discover")),
         )
     except Exception as exc:
         if context:

@@ -220,6 +220,22 @@ def heartbeat_task(engine, task_id, token, *, now=None, lease_seconds=LEASE_SECO
             raise LeaseLost(task_id)
 
 
+def _error_text(error):
+    """The ledger's error column: redacted, never the driver's SQL or parameters."""
+    if not error:
+        return None
+    from app.clhear.platform import failures
+    described = None
+    if isinstance(error, BaseException):
+        described = failures.describe(error)
+    elif isinstance(error, dict) and error.get("error_code"):
+        described = error
+    if described is not None:
+        code = described["error_code"] + (f" [{described['sqlstate']}]" if described.get("sqlstate") else "")
+        return f"{code}: {failures.redact(described.get('message') or '')}"[:1000]
+    return failures.redact(str(error), limit=1000)
+
+
 def finish_task(engine, task_id, token, *, status="completed", summary=None, error=None, now=None):
     now = now or utcnow()
     with engine.begin() as conn:
@@ -230,7 +246,7 @@ def finish_task(engine, task_id, token, *, status="completed", summary=None, err
         changed = conn.execute(tasks.update().where(tasks.c.task_id == task_id, tasks.c.owner_token == token,
                                tasks.c.status == "running", tasks.c.lease_until > now).values(
             status=("failed" if terminal else "retrying") if status == "failed" else status,
-            owner_token=None, lease_until=None, summary=summary or {}, error=str(error)[:1000] if error else None,
+            owner_token=None, lease_until=None, summary=summary or {}, error=_error_text(error),
             finished_at=now if terminal else None,
             next_attempt_at=None if terminal else now + timedelta(seconds=min(900, 30 * (2 ** (row["attempt"] - 1)))),
         )).rowcount
@@ -277,7 +293,7 @@ def finish_delivery(engine, consumer, event_key, token, error=None):
                          deliveries.c.event_key == event_key, deliveries.c.owner_token == token,
                          deliveries.c.status == "running", deliveries.c.lease_until > now).values(
             status="failed" if error else "completed", owner_token=None, lease_until=None,
-            finished_at=now, error=str(error)[:1000] if error else None)).rowcount
+            finished_at=now, error=_error_text(error))).rowcount
     if not n:
         raise LeaseLost(event_key)
 
@@ -321,7 +337,12 @@ def bind_execution(engine, job_id, task_id=None, owner_token=None):
 
 
 def execution_context():
-    return {k: v for k, v in (_context.get() or {}).items() if k not in {"engine", "last_step_id"}}
+    return {k: v for k, v in (_context.get() or {}).items() if k not in {"engine", "last_step_id", "stage"}}
+
+
+def current_stage():
+    """The innermost open workflow stage on this execution, if any."""
+    return (_context.get() or {}).get("stage")
 
 
 def assert_ownership(conn=None):
@@ -357,6 +378,8 @@ class StageRecorder:
     def __enter__(self):
         self.started = time.monotonic()
         if self.context:
+            self._outer_stage = self.context.get("stage")
+            self.context["stage"] = self.stage
             assert_ownership()
             with self.context["engine"].begin() as conn:
                 conn.execute(steps.insert().values(step_id=self.step_id, job_id=self.context["job_id"],
@@ -368,8 +391,13 @@ class StageRecorder:
     def __exit__(self, exc_type, exc, tb):
         if self.context:
             if exc:
+                from app.clhear.platform import failures
                 self.status = "failed"
-                self.details["error"] = str(exc)[:1000]
+                described = failures.describe(exc)
+                self.details["error"] = described["message"]
+                self.details["error_code"] = described["error_code"]
+                self.details["sqlstate"] = described["sqlstate"]
+            self.context["stage"] = getattr(self, "_outer_stage", None)
             assert_ownership()
             with self.context["engine"].begin() as conn:
                 conn.execute(steps.update().where(steps.c.step_id == self.step_id, steps.c.status == "running").values(
