@@ -113,7 +113,8 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
         result = {"findings": [], "entries": [], "links": []}
         state = "checked"
         with engine.connect() as conn:
-            choices = {op: permissions.decision(conn, page["source_key"], op) for op in ("acquire", "store", "parse")}
+            choices = {op: permissions.candidate_decision(conn, page["source_key"], op, canonical_url=page["url"])
+                       for op in ("acquire", "store", "parse")}
         denied = [op for op, choice in choices.items() if not choice["allowed"]]
         if denied:
             state = "permission_blocked"
@@ -125,12 +126,15 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
                 # Revocation while the request was in flight cannot authorize a
                 # store/parse by an obsolete grant. Compare exact ledger IDs.
                 with engine.connect() as conn:
-                    current = {op: permissions.decision(conn, page["source_key"], op) for op in choices}
+                    current = {op: permissions.candidate_decision(conn, page["source_key"], op, canonical_url=page["url"])
+                               for op in choices}
                 if any(not current[op]["allowed"] or current[op]["permission_id"] != choices[op]["permission_id"] for op in choices):
                     raise PermissionError("Permission changed during acquisition")
                 uri = store.put(f"restricted/_l1_inventory/{digest}.bin", body, "application/octet-stream")
                 result["artifact"] = {"sha256": digest, "byte_count": len(body), "artifact_uri": uri,
-                                      "permissions": {op: {"allowed": v["allowed"], "permission_id": v["permission_id"]} for op, v in choices.items()},
+                                      "permissions": {op: {k: v.get(k) for k in (
+                                          "allowed", "permission_id", "authority_type", "exception_id", "binding_id", "release_eligible")}
+                                          for op, v in choices.items()},
                                       "origin": origin, "publisher_checked_at": datetime.now(timezone.utc).isoformat() if origin == "live" else None}
                 if origin != "live":
                     result["findings"].append({"code": "discovery_not_live", "detail": "Fixture evidence does not establish publisher freshness."})
@@ -176,6 +180,8 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
                 if link.get("terminal"):
                     continue
                 _insert_once(conn, pages, _page(cycle_id, link["url"], link["source_key"], link["category"], link["role"]))
+    from app.clhear.l1.finra_private_review import request_frontier_bindings
+    request_frontier_bindings(engine, cycle_id)
     return read_cycle(engine, cycle_id)
 
 
@@ -196,9 +202,9 @@ def read_cycle(engine, cycle_id):
         if row["status"] != "checked" or result.get("findings"):
             state["status"] = "incomplete"
             state["unresolved_pages"] += 1
-        if row["status"] in {"pending", "leased"}:
+        if row["status"] in {"pending", "leased", "awaiting_exception_binding"}:
             state["pending_pages"] += 1
-    pending = sum(row["status"] in {"pending", "leased"} for row in rows)
+    pending = sum(row["status"] in {"pending", "leased", "awaiting_exception_binding"} for row in rows)
     if pending:
         findings.append({"code": "discovery_limit", "detail": "Persisted catalog frontier has remaining pages; another worker batch must resume it.", "pending_pages": pending, "publisher_id": cycle["publisher_id"]})
     for entry in entries.values():

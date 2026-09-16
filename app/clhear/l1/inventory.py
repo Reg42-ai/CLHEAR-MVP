@@ -414,7 +414,8 @@ def _audit_source(conn, store, entry, now):
            "expected_edition": EXPECTED_EDITIONS.get(key), "source_version_id": None, "version_label": None,
            "content_hash": None, "ingested_at": None, "publisher_checked_at": None, "artifact_checked_at": None,
            "freshness_basis": "reviewed_immutable_artifact" if entry.get("adapter") == "restricted_file" else "publisher",
-           "permissions": {},
+           "permissions": {}, "candidate_permissions": {}, "operator_exception_used": False,
+           "release_eligible": False, "technical_verified": False,
            "artifacts": [], "findings": findings, "verified": False, "node_count": 0, "clause_count": 0}
     if permissions.required_for(entry):
         out["permissions"] = {op: permissions.decision(conn, key, op, now=now)
@@ -424,6 +425,14 @@ def _audit_source(conn, store, entry, now):
             if not choice["allowed"]:
                 code = "permission_unverified" if choice["reason"] in {"missing_permission", "not_yet_valid"} else "permission_blocked"
                 findings.append(_finding(code, "Required operation has no current approval.", operation=op, reason=choice["reason"]))
+        out["candidate_permissions"] = {op: permissions.candidate_decision(conn, key, op, now=now,
+                                                                          canonical_url=entry.get("canonical_url", ""))
+                                        for op in ("acquire", "store", "parse")}
+        overrides = [op for op, choice in out["candidate_permissions"].items()
+                     if choice.get("allowed") and choice.get("authority_type") == "operator_exception"]
+        if overrides:
+            out["operator_exception_used"] = True
+            findings.append(_finding("operator_exception_used", "Private technical inspection uses an operator exception; publisher permission remains unresolved and release is ineligible.", operations=overrides))
     source = conn.execute(sa.select(sources).where(sources.c.key == key)).mappings().first()
     from app.clhear.l1.origin import is_test_source
     if source and is_test_source(source):
@@ -505,7 +514,7 @@ def _audit_source(conn, store, entry, now):
         findings.append(_finding("parser_not_configured", "Discovered FINRA document requires a validated document adapter."))
     # Metadata is inspectable even when permission has not been granted. Do not
     # read protected original or parsed text merely to satisfy an audit.
-    if any(f["code"] in {"permission_unverified", "permission_blocked"} for f in findings):
+    if out["permissions"] and any(not out["candidate_permissions"][op]["allowed"] for op in ("store", "parse")):
         return _source_status(out)
     artifacts = []
     from app.clhear.l1.adapters.base import Artifact, DocNode
@@ -610,7 +619,11 @@ def _source_status(out):
         status = "awaiting_artifact"
     else:
         status = "gaps" if codes else "verified"
-    return {**out, "status": status, "verified": not codes}
+    technical_codes = codes - {"permission_unverified", "permission_blocked", "operator_exception_used"}
+    technical = bool((out.get("original_comparison") or {}).get("verified")) and not technical_codes
+    return {**out, "status": status, "verified": not codes,
+            "technical_verified": technical,
+            "release_eligible": not codes and not out.get("operator_exception_used", False)}
 
 
 def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=False, discovery_cycle_date=None):
@@ -723,11 +736,15 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
                "status": "verified" if full_scope_verified and verified == len(evidence) else "gaps",
                "known_expected": len(evidence), "known_expected_is_lower_bound": not full_scope_verified,
                "verified": verified, "unresolved": len(evidence) - verified, "discovery_complete": discovery["complete"],
+               "technical_verified": sum(bool(e.get("technical_verified")) for e in evidence),
+               "operator_exception_used": any(e.get("operator_exception_used") for e in evidence),
+               "release_eligible": bool(full_scope_verified and evidence and verified == len(evidence)
+                                        and not any(e.get("operator_exception_used") for e in evidence)),
                "full_scope_verified": full_scope_verified, "scope_review": review, "discovery": discovery,
                "publisher_profiles": profiles, "publisher_count": len(profiles), "source_aliases": aliases,
                "expected_total": len(evidence) if full_scope_verified else None, "denominator_known": full_scope_verified,
                "findings": findings, "sources": evidence, "counts": dict(count), "current_binding_valid": True,
-               "bindings_hash": _digest([{k: e.get(k) for k in ("source_key", "source_version_id", "content_hash", "projection_hash", "permissions", "artifact_review")} for e in evidence]),
+               "bindings_hash": _digest([{k: e.get(k) for k in ("source_key", "source_version_id", "content_hash", "projection_hash", "permissions", "candidate_permissions", "artifact_review")} for e in evidence]),
                "collection_sources": [{"source_key": key, "status": "discovery_index", "source_role": "collection", "counts_as_document": False,
                                        "detail": "Collection history is retained; constituent documents require their own imports."}
                                       for key in sorted(COLLECTION_SOURCE_KEYS) if scope != "finra" or key.startswith("finra/")],
@@ -748,6 +765,7 @@ def inventory_summary(engine, scope="registered"):
     blank = {"expected_total": None, "denominator_known": False, "publisher_profiles": profiles, "publisher_count": len(profiles), "status": "not_run", "scope": scope, "scope_version": SCOPE_VERSION, "audit_id": None, "job_id": None,
              "inventory_hash": None, "audited_at": None, "known_expected": len(_declared_entries(scope)),
              "known_expected_is_lower_bound": True, "verified": 0, "unresolved": len(_declared_entries(scope)),
+             "technical_verified": 0, "operator_exception_used": False, "release_eligible": False,
              "discovery_complete": False, "full_scope_verified": False, "current_binding_valid": False,
              "findings": [], "sources": [], "counts": {}, "discovery": {"complete": False, "categories": [], "pages": [], "findings": [], "checked_at": None}}
     if not _available(engine):
@@ -777,6 +795,13 @@ def inventory_summary(engine, scope="registered"):
                     now = permissions.decision(conn, source["source_key"], op)
                     if (before["allowed"], before["permission_id"]) != (now["allowed"], now["permission_id"]):
                         invalid.append(source["source_key"])
+                candidate_before = source.get("candidate_permissions", {}).get(op)
+                if candidate_before:
+                    candidate_now = permissions.candidate_decision(conn, source["source_key"], op,
+                                                                  canonical_url=source.get("canonical_url", ""))
+                    fields = ("allowed", "permission_id", "authority_type", "exception_id", "activation_id", "binding_id", "binding_hash")
+                    if tuple(candidate_before.get(k) for k in fields) != tuple(candidate_now.get(k) for k in fields):
+                        invalid.append(source["source_key"])
         review = _review(conn, summary["inventory_hash"])
     if not review or not review["approved"]:
         summary = {**summary, "full_scope_verified": False, "known_expected_is_lower_bound": True,
@@ -796,10 +821,13 @@ def inventory_summary(engine, scope="registered"):
         invalid.append("declared_scope_changed")
     if invalid:
         return {**summary, "status": "stale", "current_binding_valid": False, "full_scope_verified": False,
+                "release_eligible": False,
                 "known_expected_is_lower_bound": True, "expected_total": None, "denominator_known": False,
                 "findings": [*summary["findings"], _finding("audit_binding_changed", "Stored evidence must be rerun against current source versions, permissions, scope or freshness.", source_keys=sorted(set(invalid)))]}
     if not summary["full_scope_verified"] and summary["status"] == "verified":
         summary = {**summary, "status": "gaps"}
+    if not summary["full_scope_verified"]:
+        summary = {**summary, "release_eligible": False}
     return {**summary, "current_binding_valid": True}
 
 
@@ -816,10 +844,13 @@ def source_inventory_evidence(engine, source_key):
                 return {**source, "audit_id": summary["audit_id"], "job_id": summary["job_id"],
                         "audited_at": summary["audited_at"], "inventory_hash": summary["inventory_hash"],
                         "audit_verified": source["verified"], "verified": source["verified"] and summary["current_binding_valid"],
+                        "technical_verified": bool(source.get("technical_verified")) and summary["current_binding_valid"],
+                        "release_eligible": bool(source.get("release_eligible", source["verified"])) and summary["current_binding_valid"],
                         "current_binding_valid": summary["current_binding_valid"], "scope_verified": summary["full_scope_verified"]}
     return {"source_key": source_key, "status": summaries[0]["status"] if not summaries[0].get("audit_id") else "not_in_inventory",
             "reason": summaries[0].get("reason"), "source_version_id": None, "content_hash": None,
-            "audit_id": None, "verified": False, "current_binding_valid": False, "findings": [], "artifacts": [], "permissions": {}}
+            "audit_id": None, "verified": False, "technical_verified": False, "operator_exception_used": False,
+            "release_eligible": False, "current_binding_valid": False, "findings": [], "artifacts": [], "permissions": {}}
 
 
 def acceptance_status(engine, scope="registered"):
@@ -834,6 +865,8 @@ def acceptance_status(engine, scope="registered"):
     english = english_acceptance(engine, [source["source_version_id"] for source in summary["sources"]
                                          if source.get("source_version_id") is not None])
     reasons = []
+    if summary.get("operator_exception_used") or any(s.get("operator_exception_used") for s in summary["sources"]):
+        reasons.append("operator_exception_not_release_authority")
     if summary["status"] != "verified":
         reasons.append("inventory_not_verified")
     if not summary["full_scope_verified"]:
@@ -849,6 +882,8 @@ def acceptance_status(engine, scope="registered"):
     if not _recent(discovery_at, now):
         reasons.append("publisher_inventory_overdue")
     for source in summary["sources"]:
+        if any(not source.get("permissions", {}).get(op, {"allowed": True})["allowed"] for op in ("acquire", "store", "parse")):
+            reasons.append("publisher_permission_unresolved:" + source["source_key"])
         artifact_basis = source.get("freshness_basis") == "reviewed_immutable_artifact"
         checked_at = source.get("artifact_checked_at") if artifact_basis else source.get("publisher_checked_at")
         if not _recent(checked_at, now):
@@ -872,7 +907,8 @@ def acceptance_status(engine, scope="registered"):
                     reasons.append("projection_changed:" + source["source_key"])
     if not english["passed"]:
         reasons.append("english_views_unresolved")
-    return {"passed": not reasons, "reasons": reasons, "audit_id": summary.get("audit_id"),
+    return {"passed": not reasons, "release_eligible": not reasons, "operator_exception_used": bool(summary.get("operator_exception_used")),
+            "reasons": reasons, "audit_id": summary.get("audit_id"),
             "english": english,
             "inventory_hash": summary.get("inventory_hash"), "bindings_hash": summary.get("bindings_hash"),
             "scope": scope, "audited_at": summary.get("audited_at"), "evidence": summary,

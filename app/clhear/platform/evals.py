@@ -81,13 +81,17 @@ def run_suite(engine: Engine, suite: str, source_key: str | None = None, release
     fn = SUITES[suite]
     before = _source_identity(engine, source_key) if source_key and suite in SOURCE_SUITES else None
     permission_blocked = []
+    candidate_permissions, publisher_permissions = {}, {}
     if source_key and suite in SOURCE_SUITES:
         from app.clhear.l1 import permissions
         from app.clhear.l1.models import sources
         with engine.connect() as conn:
             source = conn.execute(sa.select(sources).where(sources.c.key == source_key)).mappings().first()
             if source and permissions.required_for(source):
-                permission_blocked = [op for op in ("store", "parse") if not permissions.decision(conn, source_key, op)["allowed"]]
+                publisher_permissions = {op: permissions.decision(conn, source_key, op) for op in ("acquire", "store", "parse")}
+                candidate_permissions = {op: permissions.candidate_decision(conn, source_key, op,
+                                           canonical_url=source["canonical_url"]) for op in ("acquire", "store", "parse")}
+                permission_blocked = [op for op in ("store", "parse") if not candidate_permissions[op]["allowed"]]
     if permission_blocked:
         scores, passed = {"not_evaluated": True, "reason": "permission_blocked", "operations": permission_blocked}, False
     else:
@@ -100,6 +104,21 @@ def run_suite(engine: Engine, suite: str, source_key: str | None = None, release
         if before is None or before != after:
             passed = False
             scores["binding_error"] = "No stored version" if before is None else "Source changed during evaluation; rerun required"
+        if candidate_permissions:
+            with engine.connect() as conn:
+                current = {op: permissions.candidate_decision(conn, source_key, op, canonical_url=source["canonical_url"])
+                           for op in candidate_permissions}
+            fields = ("allowed", "permission_id", "authority_type", "exception_id", "activation_id", "binding_id", "binding_hash")
+            if any(tuple(current[op].get(k) for k in fields) != tuple(choice.get(k) for k in fields)
+                   for op, choice in candidate_permissions.items()):
+                passed = False
+                scores["binding_error"] = "Candidate authorization changed during evaluation; rerun required"
+            exception_used = bool(scores.get("operator_exception_used")) or any(
+                choice.get("authority_type") == "operator_exception" and choice["allowed"] for choice in candidate_permissions.values())
+            scores.update(operator_exception_used=exception_used,
+                          release_eligible=not exception_used and all(choice["allowed"] for choice in publisher_permissions.values()),
+                          publisher_permissions=publisher_permissions, candidate_permissions=candidate_permissions,
+                          evaluation_scope="technical_candidate" if exception_used else "publisher_authorized")
     record = {
         "suite": suite,
         "source_key": source_key,
@@ -228,12 +247,18 @@ def e2_completeness(engine: Engine, source_key: str | None) -> tuple[dict, bool]
     from app.clhear.l1.inventory import source_inventory_evidence
     inventory = source_inventory_evidence(engine, source_key)
     if inventory.get("audit_id"):
+        technical = bool(inventory.get("technical_verified")) if inventory.get("operator_exception_used") else bool(inventory.get("verified"))
         return {"audit_id": inventory["audit_id"], "inventory_hash": inventory["inventory_hash"],
                 "nodes": inventory.get("node_count", 0), "clauses": inventory.get("clause_count", 0),
                 "scope_verified": inventory.get("scope_verified", False),
-                "stored_over_expected": 1 if inventory.get("verified") else 0,
+                "stored_over_expected": 1 if technical else 0,
+                "technical_verified": technical,
+                "publisher_permissions_resolved": all(inventory.get("permissions", {}).get(op, {"allowed": True})["allowed"]
+                                                      for op in ("acquire", "store", "parse")),
+                "operator_exception_used": inventory.get("operator_exception_used", False),
+                "release_eligible": inventory.get("release_eligible", inventory.get("verified", False)),
                 "findings": inventory.get("findings", []),
-                "method": "Worker reconciliation of exact artifacts, stored version, tree and clauses"}, bool(inventory.get("verified"))
+                "method": "Worker reconciliation of exact artifacts, stored version, tree and clauses; technical evidence is separate from publisher permission"}, technical
     from app.clhear.models import runs
 
     source, version, nodes, clause_rows = _latest_source(engine, source_key)
@@ -1671,10 +1696,14 @@ def latest_source_scorecard(engine: Engine, source_key: str, source_version_id: 
             "ran_at": str(row.ran_at),
         }
     open_ok = all(latest[s]["passed"] for s in SOURCE_SUITES if s in latest) if latest else False
+    exception_used = any(row["scores"].get("operator_exception_used") for row in latest.values())
+    technical_green = open_ok and len(latest) == len(SOURCE_SUITES)
     return {"source_key": source_key, "source_version_id": source_version_id,
             "suites": latest, "missing_suites": [s for s in SOURCE_SUITES if s not in latest],
-            "green": open_ok and len(latest) == len(SOURCE_SUITES),
-            "notice": "Checks apply only to this stored version. Parser consistency alone does not prove complete publisher scope."}
+            "green": technical_green, "technical_green": technical_green, "operator_exception_used": exception_used,
+            "release_eligible": technical_green and not exception_used and all(row["scores"].get("release_eligible", True) for row in latest.values()),
+            "notice": ("Private technical checks used an operator exception. Publisher permissions remain unresolved; this does not authorize an accepted release. " if exception_used else "")
+                      + "Checks apply only to this stored version. Parser consistency alone does not prove complete publisher scope."}
 
 
 GLOBAL_SUITES = ("l0_smoke", "l1_fidelity")

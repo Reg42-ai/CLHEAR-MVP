@@ -219,7 +219,8 @@ def preview_status() -> dict:
             "source_environment": value["source_environment"], "worker_job_id": value.get("worker_job_id"),
             "publisher_checks_live": False, "accepted_release": False,
             "notice": "Snapshot evidence only. Publisher checks and worker jobs do not run here. "
-                      "Permission expiry is enforced; later revocations require a newer worker snapshot."}
+                      "Permission expiry is enforced; publisher-grant revocations require a newer worker snapshot. "
+                      "Internal-use overrides also require the current worker-published access control on each read."}
 
 
 @router.get("/api/clhear/preview")

@@ -588,7 +588,7 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
     public_ok = meta.license == "open" and rights.republishable(rights_basis_for(meta).basis)
     if protected:
         with workflow.stage("permission", details={"source": meta.source_key}) as step, engine.connect() as conn:
-            permission_checks = {operation: permissions.decision(conn, meta.source_key, operation)
+            permission_checks = {operation: permissions.candidate_decision(conn, meta.source_key, operation, canonical_url=meta.canonical_url)
                                  for operation in ("acquire", "store", "parse", "infer", "embed", "derive", "display_public")}
             existing_id = conn.execute(sa.select(sources.c.id).where(sources.c.key == meta.source_key)).scalar()
             previous = _latest_version(conn, existing_id) if existing_id is not None else None
@@ -923,7 +923,7 @@ def _persist(
 ) -> dict:
     if protected:
         with engine.connect() as conn:
-            current = {operation: permissions.decision(conn, meta.source_key, operation)
+            current = {operation: permissions.candidate_decision(conn, meta.source_key, operation, canonical_url=meta.canonical_url)
                        for operation in ("store", "parse", "derive", "infer", "display_public")}
         if any(not current[operation]["allowed"] for operation in ("store", "parse")):
             raise PermissionError("Source permissions changed before persistence; previous version retained")
@@ -963,6 +963,13 @@ def _persist(
     with engine.begin() as conn:
         from app.clhear.l1 import workflow
         workflow.assert_ownership(conn)
+        if protected:
+            final_permissions = {op: permissions.candidate_decision(conn, meta.source_key, op,
+                                 canonical_url=meta.canonical_url) for op in ("store", "parse", "display_public")}
+            if any(not final_permissions[op]["allowed"] or
+                   final_permissions[op]["permission_id"] != current[op]["permission_id"] for op in ("store", "parse")):
+                raise PermissionError("Source authorization changed while archiving; previous version retained")
+            public_ok = final_permissions["display_public"]["allowed"]
         if previous is not None:
             conn.execute(source_versions.update().where(source_versions.c.id == previous.id).values(status="superseded"))
         version_id = conn.execute(

@@ -391,7 +391,8 @@ function App() {
 
 const measuredDuration = (value) => Number.isFinite(value) && value >= 0
   ? (value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(2)} s`) : "not recorded";
-const evidenceLabel = (value) => value ? String(value).replaceAll("_", " ").replaceAll("-", " ") : "unverified";
+const evidenceLabel = (value) => value === "operator_exception" ? "Internal-use override · publisher permission unverified"
+  : value ? String(value).replaceAll("_", " ").replaceAll("-", " ") : "unverified";
 const evidenceTone = (value) => ["verified", "passed", "succeeded", "completed"].includes(value) ? "open"
   : ["failed", "gaps", "blocked", "permission_blocked", "permission_unverified", "permissions_unverified", "rights-blocked"].includes(value) ? "restricted" : "guidance";
 
@@ -464,6 +465,7 @@ function InventorySummary({ report }) {
     <p><span class=${"badge " + (verified ? "open" : "guidance")}>${verified ? "Scope verified" : "Scope not verified"}</span>
       ${" "}${Number.isFinite(report.verified) ? report.verified : "—"} verified / ${Number.isFinite(report.known_expected) ? report.known_expected : "—"} declared documents
       · ${Number.isFinite(report.unresolved) ? report.unresolved : "—"} unresolved</p>
+    ${Number.isFinite(report.technical_verified) && html`<p class="charter">Recorded original-text checks: ${report.technical_verified} passed. ${report.operator_exception_used ? "Publisher permission remains unresolved for operator exceptions." : "Publisher permission and scope acceptance are checked separately."}</p>`}
     ${unavailable && html`<div class="notice">Inventory evidence unavailable. ${report.reason || "The L1 worker has not recorded an audit for this scope."}</div>`}
     ${report.audit_id != null && report.current_binding_valid === false && html`<div class="notice">The stored audit does not match the current source versions. A new worker audit is required.</div>`}
     <p class="charter">${report.discovery_complete === true ? "Publisher discovery recorded as complete." : "Publisher discovery is incomplete or unverified; the declared count is not a full-publisher denominator."}
@@ -762,6 +764,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
             <div class="refs">${detail.changes[0].clause_refs.length} clause(s): ${detail.changes[0].clause_refs.slice(0, 25).join(", ")}${detail.changes[0].clause_refs.length > 25 ? " …" : ""}</div>`}
         </div>`}
       ${doc.locked === true && html`<div class="locked">Original text is withheld for this account. ${doc.permission_reason || "Permission to view this version has not been established."} Available references and integrity records are shown below.</div>`}
+      ${doc.access && doc.access.authority_type === "operator_exception" && html`<div class="notice"><strong>Internal-use override · publisher permission unverified</strong><br />Private reviewer access only. This is not an accepted release or permission for public, model or export use.</div>`}
       ${doc.locked !== true && doc.permission_reason && html`<div class="notice">Access: ${doc.permission_reason}</div>`}
       ${!doc.nodes.length && html`<div class="empty">${doc.version ? "This version has no document nodes available. No source text is displayed." : "No version has been imported for this source."}</div>`}
       ${evidence && html`<${EvidencePanel} card=${scorecard} error=${scoreError} sourceKey=${sourceKey} version=${doc.version} sourceVersionId=${doc.source_version_id} contentHash=${doc.content_hash} />`}
@@ -1122,6 +1125,7 @@ function Inspector({ info, error, loading, pinned, clearPin, annotation, annotat
           <dt>changes touching this ref</dt>
           <dd>${info.changes.map((c) => html`<div class=${"kind-" + c.kind}>${c.kind} ${c.old_version || ""} → ${c.new_version}</div>`)}</dd>`}
       </dl>
+      ${info.access && info.access.authority_type === "operator_exception" && html`<div class="notice"><strong>Internal-use override · publisher permission unverified</strong></div>`}
       ${info.permission_reason && html`<div class="charter">${info.permission_reason}</div>`}
       <h4>Linked clauses</h4>
       ${(info.clauses || []).length ? (info.clauses || []).map((c) => html`<details class="prov" key=${c.id}>

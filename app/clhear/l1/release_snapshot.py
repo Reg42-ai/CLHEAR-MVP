@@ -54,6 +54,9 @@ def compile_snapshot(engine, destination: Path) -> dict:
                         has_version = any(b["source_key"] == source["key"] for b in bindings)
                         if has_version and not permissions.decision(connection, source["key"], "store")["allowed"]:
                             raise PermissionError(f"No permitted release storage for {source['key']}")
+                        if has_version and any(not permissions.decision(connection, source["key"], op)["allowed"]
+                                               for op in ("acquire", "parse")):
+                            raise PermissionError(f"Publisher permission is unresolved for release of {source['key']}")
                         if has_version and not any(d["allowed"] for d in decisions):
                             raise PermissionError(f"No permitted release audience for {source['key']}")
                 with target.begin() as output:

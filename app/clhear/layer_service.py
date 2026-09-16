@@ -18,6 +18,7 @@ from app.clhear.derived_models import blocks as blocks_t
 from app.clhear.derived_models import blueprints, obligations
 from app.clhear.derived_models import sample_profiles as sample_profiles_t
 from app.clhear.l1.models import change_events, clauses, source_families, source_versions, sources
+from app.clhear.l1.public import clause_refs_select, clauses_public_select
 from app.clhear.layers import LAYER_CATALOG, LAYER_ORDER, layer_public_meta, status_banner
 from app.clhear.models import events, llm_calls, proposals, runs
 
@@ -225,7 +226,7 @@ def resolve_clause(engine: Engine, source_key: str, ref: str) -> dict:
             )
             return base
         clause = conn.execute(
-            sa.select(clauses)
+            clause_refs_select()
             .where(clauses.c.source_version_id == version.id)
             .where(clauses.c.ref == ref)
             .limit(1)
@@ -234,14 +235,15 @@ def resolve_clause(engine: Engine, source_key: str, ref: str) -> dict:
             base["version_label"] = version.version_label
             base["note"] = "ref not present in the ingested version"
             return base
-        public = bool(clause.public_ok) and source.license == "open"
+        public = conn.execute(clauses_public_select(conn).where(clauses.c.id == clause.id)).first()
         return {
             **base,
             "resolved": True,
             "clause_id": clause.id,
             "doc_node_id": clause.doc_node_id,
-            "path": clause.path,
-            "text": clause.text if public else None,
+            "locked": public is None,
+            "path": public.path if public is not None else None,
+            "text": public.text if public is not None else None,
             "text_hash": clause.text_hash,
             "version_label": version.version_label,
             "as_of_date": str(version.as_of_date) if version.as_of_date else None,

@@ -344,6 +344,13 @@ def handle_l1_cycle_advance(engine, gateway, envelope):
     return cycles.advance(engine, envelope.payload["cycle_id"])
 
 
+def handle_l1_exception_bindings(engine, gateway, envelope):
+    from app.clhear.l1 import finra_private_review, operator_access
+    result = finra_private_review.bind_frontier(engine, envelope.payload["discovery_cycle_id"])
+    operator_access.publish_configured_control(engine)
+    return result
+
+
 def _cycle_store():
     from app.clhear.l1 import pipeline
     settings = get_settings()
@@ -519,6 +526,11 @@ def handle_l1_evidence_review(engine: Engine, gateway: Gateway, envelope: Envelo
     payload = dict(envelope.payload or {})
     kind = payload.pop("review_kind", None)
     from app.clhear.l1.viewer_snapshot import request_refresh
+    if kind == "operator_exception":
+        from app.clhear.l1 import operator_access
+        # Revoke the small live control first. If the database mutation or its
+        # replacement control publication fails, old snapshots remain denied.
+        invalidation = operator_access.invalidate_configured_control(mutation_id=envelope.event_id)
     # The review and its refresh request commit together. A revoked grant must
     # never become durable without the outbox work that updates the viewer.
     with engine.begin() as conn:
@@ -532,9 +544,14 @@ def handle_l1_evidence_review(engine: Engine, gateway: Gateway, envelope: Envelo
             from app.clhear.l1.translation import record_language_binding
             record = record_language_binding(conn, **payload)
             record = {key: value.isoformat() if isinstance(value, (datetime, date)) else value for key, value in record.items()}
+        elif kind == "operator_exception":
+            from app.clhear.l1 import operator_exceptions
+            record = operator_exceptions.record_exception(conn, **payload)
         else:
-            raise ValueError("review_kind must be permissions, artifact, scope or language")
+            raise ValueError("review_kind must be permissions, artifact, scope, language or operator_exception")
         request_refresh(conn, reason="source_evidence_updated")
+    if kind == "operator_exception":
+        operator_access.publish_configured_control(engine, invalidation_token=invalidation.get("invalidation_token"))
     return {"review_kind": kind, "record": record, "requires_new_audit": True}
 
 
@@ -686,6 +703,7 @@ HANDLERS = {
     "L1CycleAdvanceRequested": handle_l1_cycle_advance,
     "L1CycleDiscoveryRequested": handle_l1_cycle_discovery,
     "L1CycleEvaluationRequested": handle_l1_cycle_evaluation,
+    "L1ExceptionBindingsRequested": handle_l1_exception_bindings,
     "PublishReleaseRequested": handle_publish_release,
     "L1InventoryAuditRequested": handle_l1_inventory_audit,
     "L1EvidenceReviewRecorded": handle_l1_evidence_review,
@@ -728,6 +746,7 @@ def _owned_handler(kind, fleet):
     owners = {"DummyChanged": "l0", "CommunityWrite": "l0", "AdapterRunRequested": "l1",
               "L1CycleRequested": "l0", "L1CycleAdvanceRequested": "l0",
               "L1CycleDiscoveryRequested": "l1", "L1CycleEvaluationRequested": "l1",
+              "L1ExceptionBindingsRequested": "l0",
               "L1InventoryAuditRequested": "l1", "L1EvidenceReviewRecorded": "l0",
               "L1TranslationRequested": "l1",
               "ViewerSnapshotRequested": "l0",
