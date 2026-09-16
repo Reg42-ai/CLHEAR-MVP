@@ -163,7 +163,10 @@ def parse(content, source_key, part=1):
                 stack.append((level, child))
     for root in tree:
         legal_flow(root)
-    if not any(n.node_type in CLAUSE_TYPES for n in tree[0].walk()):
+    # OJ corrigenda carry a publisher title (`tit_1`) and correction
+    # paragraphs, not articles. Title/heading are structure, not clauses.
+    publisher_structure = CLAUSE_TYPES | STRUCTURAL | {"heading"}
+    if not any(n.node_type in publisher_structure for n in tree[0].walk()):
         raise ValueError("Legal HTML has no publisher article or heading structure")
     return tree
 

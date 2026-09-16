@@ -442,6 +442,27 @@ Evidence objects:
 (pre-purge sample) and
 `…/queue-backlog-20260916T194708Z.json` (purge receipt; `dlq_purged: false`).
 
+### Local live smoke (16 Sep 2026)
+
+`scripts/local_l1_smoke.py` against PostgreSQL 16 (`CLHEAR_HTTP_MODE=live`,
+discovery off, release evals stubbed). 29 of 32 lanes ran; the three
+enforcement lanes are empty by design. **0 lane crashes.**
+
+First pass: 58 imported, 7 blocked, 22 failed. Crashers fixed in this
+change: Cellar CELEX parentheses, ASIC RG 227/271 media URLs, reprinted
+FCA/ESMA/PDF provision identities. Recheck of those lanes: ASIC, ESMA and
+all 8 FCA handbook chapters now reach originals verification (no identity
+or 404 crash); EUR-Lex still adds 36/39. The three GDPR corrigenda are
+not English Cellar XHTML for R(01)/R(03) (German-only OJ expressions);
+R(02) is English title-and-correction HTML and now parses.
+
+Remaining first-pass failures are production-cycle triage, not crashers:
+publisher 403 (ADGM, FATF, IOSCO, Israel, NASDAQ, SG PDPA, UAE), Gibraltar
+404, MAS HTML landing page vs numbered PDF, declaration-gap
+`source-blocked`, `restricted_file` `awaiting-artifact`, and originals
+mismatches (AU Privacy, ASIC RG227, BIS CRE20, ESMA suitability, FCA
+handbook chapters, IRS QI, Malta, SDRT `uksi/1986/1711`).
+
 ### Failure details, progress and readiness
 
 Task failures are recorded as codes, never driver text: error class,

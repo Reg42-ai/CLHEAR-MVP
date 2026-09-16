@@ -81,6 +81,37 @@ _ARABIC_AND_PART = """
 """
 
 
+_CORRIGENDUM = b"""<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body>
+<div id="tit_1"><p class="oj-doc-ti">Corrigendum to Regulation (EU) 2016/679</p></div>
+<p class="oj-normal">On page 14, recital 71, fifth and sixth sentences:</p>
+<p class="oj-normal">for: Such measure should not concern a child.</p>
+</body></html>
+"""
+
+
+def test_oj_corrigendum_title_is_publisher_structure():
+    from app.clhear.l1.adapters.dom_document import verify
+
+    tree = parse_document(_CORRIGENDUM, "celex/32016R0679R(02)")
+    title = next(n for n in flatten(tree) if n.node_type == "title")
+    assert title.ref == "tit_1"
+    assert title.heading == "Corrigendum to Regulation (EU) 2016/679"
+    assert not any(n.node_type == "article" for n in flatten(tree))
+    assert verify(
+        [Artifact("corr.xhtml", _CORRIGENDUM, "application/xhtml+xml")],
+        "celex/32016R0679R(02)",
+        tree,
+    )
+
+
+def test_unstructured_html_is_still_rejected():
+    import pytest
+
+    with pytest.raises(ValueError, match="no publisher article or heading"):
+        parse_document(b"<html><body><p>no publisher spine</p></body></html>", "celex/empty")
+
+
 def test_oj_arabic_chapters_and_part_wrappers():
     tree = parse_document(_ARABIC_AND_PART.encode(), "celex/32014R0596")
     chapters = [n for n in flatten(tree) if n.node_type == "chapter"]
