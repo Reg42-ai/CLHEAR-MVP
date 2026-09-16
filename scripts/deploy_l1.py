@@ -38,6 +38,7 @@ CLUSTER = "clhear-cluster"
 FUNCTION = "clhear-webui"
 BUCKET = f"clhear-deploy-{ACCOUNT}"
 FLEETS = tuple(f"l{i}" for i in range(9))
+ALWAYS_ON_FLEETS = frozenset({"l0", "l1"})
 WORKER_ENTRYPOINT = ("python", "-m", "app.clhear.workers")
 ENVIRONMENT = "clhear-l1"
 WORKFLOW = "Reg42-ai/CLHEAR-MVP/.github/workflows/deploy-l1.yml@refs/heads/main"
@@ -433,6 +434,11 @@ class Deployer:
                                        "root_source": plan["root_source"], "runtime_source_read": False}
         else:
             require(not held, "Maintenance hold requires an owner-reviewed recovery plan; do not capture zero capacity as the baseline")
+        # Validate the availability floor before backups or runtime mutations.
+        # Historical recovery targets remain immutable evidence, but cannot
+        # restore the unsafe zero-worker policy for L0/L1.
+        for fleet in FLEETS:
+            self._capacity_target(fleet)
         self.report.update(status="preflight_passed", image=self.inputs.image,
             ui={"key": self.inputs.ui_key, "version": self.inputs.ui_version, "sha256": self.inputs.ui_sha256},
             viewer_uri=f"s3://{BUCKET}/{self.inputs.viewer_key}", fleet_count=len(fleets),
@@ -508,10 +514,13 @@ class Deployer:
 
     def _scaling(self, fleet, suspended, *, minimum=None, maximum=None):
         old = self.state["fleets"][fleet]["scaling"]
+        minimum = old["MinCapacity"] if minimum is None else minimum
+        maximum = old["MaxCapacity"] if maximum is None else maximum
+        require(type(minimum) is int and type(maximum) is int and 0 <= minimum <= maximum,
+                "Fleet capacity must remain within its existing maximum")
         self._write("application-autoscaling", "register_scalable_target", ServiceNamespace="ecs",
                     ResourceId=old["ResourceId"], ScalableDimension="ecs:service:DesiredCount",
-                    MinCapacity=old["MinCapacity"] if minimum is None else minimum,
-                    MaxCapacity=max(old["MaxCapacity"] if maximum is None else maximum, minimum or 0), SuspendedState=suspended)
+                    MinCapacity=minimum, MaxCapacity=maximum, SuspendedState=suspended)
 
     def _active_tasks(self):
         candidates = set()
@@ -762,20 +771,71 @@ class Deployer:
                      type(current.get("ReservedConcurrentExecutions")) is int and current["ReservedConcurrentExecutions"] == expected)
         require(confirmed, "Viewer concurrency restoration readback did not match")
 
+    def _capacity_target(self, fleet):
+        old = self.state["fleets"][fleet]
+        target = self.state.get("restoration_targets", {}).get("fleets", {}).get(fleet)
+        desired = target["desired_count"] if target else old["service"]["desiredCount"]
+        minimum = target["min_capacity"] if target else old["scaling"]["MinCapacity"]
+        maximum = target["max_capacity"] if target else old["scaling"]["MaxCapacity"]
+        suspended = target["suspended_state"] if target else old["scaling"].get("SuspendedState", {k: False for k in SUSPENDED})
+        require(all(type(value) is int and value >= 0 for value in (desired, minimum, maximum))
+                and maximum == old["scaling"]["MaxCapacity"], "Invalid fleet restoration capacity")
+        if fleet in ALWAYS_ON_FLEETS:
+            minimum = max(1, minimum)
+        desired = max(desired, minimum)
+        require(desired <= maximum and minimum <= maximum,
+                "Existing fleet maximum cannot support required worker availability")
+        return {"desired": desired, "minimum": minimum, "maximum": maximum, "suspended": suspended}
+
+    def _confirm_capacity(self, fleet, target, suspended):
+        old = self.state["fleets"][fleet]["scaling"]
+        rows = self.clients["application-autoscaling"].describe_scalable_targets(ServiceNamespace="ecs",
+            ResourceIds=[old["ResourceId"]], ScalableDimension="ecs:service:DesiredCount")["ScalableTargets"]
+        require(len(rows) == 1 and rows[0].get("ResourceId") == old["ResourceId"]
+                and rows[0].get("ScalableTargetARN") == old["ScalableTargetARN"]
+                and rows[0].get("MinCapacity") == target["minimum"]
+                and rows[0].get("MaxCapacity") == target["maximum"]
+                and rows[0].get("SuspendedState") == suspended,
+                "Fleet capacity restoration readback did not match")
+
     def _restore_capacity(self):
+        targets = {fleet: self._capacity_target(fleet) for fleet in FLEETS}
         for fleet, old in self.state["fleets"].items():
-            target = self.state.get("restoration_targets", {}).get("fleets", {}).get(fleet)
-            desired = target["desired_count"] if target else old["service"]["desiredCount"]
-            minimum = target["min_capacity"] if target else old["scaling"]["MinCapacity"]
-            maximum = target["max_capacity"] if target else old["scaling"]["MaxCapacity"]
-            suspended = target["suspended_state"] if target else old["scaling"].get("SuspendedState", {k: False for k in SUSPENDED})
-            if fleet == "l0":
-                desired, minimum = max(1, desired), max(1, minimum)
+            # RegisterScalableTarget may raise desired count to its new minimum
+            # even while scaling is suspended. Bind the verified code first.
             self._write("ecs", "update_service", cluster=CLUSTER, service=f"clhear-fleet-{fleet}",
-                        taskDefinition=old["new_task_definition"], desiredCount=desired)
-            self._scaling(fleet, suspended, minimum=minimum, maximum=maximum)
+                        taskDefinition=old["new_task_definition"], desiredCount=0)
+            target = targets[fleet]
+            self._scaling(fleet, SUSPENDED, minimum=target["minimum"], maximum=target["maximum"])
+            self._confirm_capacity(fleet, target, SUSPENDED)
+        for fleet, target in targets.items():
+            self._write("ecs", "update_service", cluster=CLUSTER, service=f"clhear-fleet-{fleet}",
+                        taskDefinition=self.state["fleets"][fleet]["new_task_definition"], desiredCount=target["desired"])
+            self._scaling(fleet, target["suspended"], minimum=target["minimum"], maximum=target["maximum"])
+            self._confirm_capacity(fleet, target, target["suspended"])
         self.clients["ecs"].get_waiter("services_stable").wait(cluster=CLUSTER,
             services=[f"clhear-fleet-{f}" for f in FLEETS], WaiterConfig={"Delay": 15, "MaxAttempts": 40})
+        response = self.clients["ecs"].describe_services(cluster=CLUSTER, services=[f"clhear-fleet-{f}" for f in FLEETS])
+        services = {s["serviceName"]: s for s in response.get("services", [])}
+        require(not response.get("failures") and len(response.get("services", [])) == len(FLEETS)
+                and set(services) == {f"clhear-fleet-{f}" for f in FLEETS}, "Fleet restoration health evidence is incomplete")
+        evidence = {}
+        for fleet, target in targets.items():
+            self._confirm_capacity(fleet, target, target["suspended"])
+            service = services[f"clhear-fleet-{fleet}"]
+            definition = self.state["fleets"][fleet]["new_task_definition"]
+            deployments = service.get("deployments", [])
+            require(service.get("status") == "ACTIVE" and service.get("taskDefinition") == definition
+                    and type(service.get("desiredCount")) is int
+                    and target["minimum"] <= service["desiredCount"] <= target["maximum"]
+                    and service.get("runningCount") == service["desiredCount"] and service.get("pendingCount") == 0
+                    and len(deployments) == 1 and deployments[0].get("status") == "PRIMARY"
+                    and deployments[0].get("taskDefinition") == definition and deployments[0].get("rolloutState") == "COMPLETED",
+                    "Restored fleet is not healthy on the verified worker definition")
+            evidence[fleet] = {"minimum": target["minimum"], "maximum": target["maximum"],
+                               "desired": service["desiredCount"], "running": service["runningCount"],
+                               "task_definition": definition, "capacity_readback": "verified", "service_health": "stable"}
+        self.report["fleet_restoration"] = evidence
 
     def _rollback(self):
         errors = []
@@ -833,7 +893,8 @@ class Deployer:
             self._resume_viewer()
             self._restore_capacity()
             self.report.update(status="review_ready" if result == 2 else "verified", recovery_required=False,
-                               l0_relay_minimum=1, traffic_policy="previous_capacity_restored", fleet_policy="new_code_l1_only")
+                               l0_relay_minimum=1, l1_worker_minimum=1,
+                               traffic_policy="previous_capacity_restored", fleet_policy="new_code_l1_only")
             self._put("result.json", json.dumps(self.report, sort_keys=True).encode())
         except Exception as error:
             self.report.update(_failure_details(error))

@@ -135,6 +135,12 @@ class Cloud:
             waiter = Waiter("FunctionUpdatedV2", WaiterModel(model).get_waiter("FunctionUpdatedV2"),
                             lambda **kw: self.call("lambda", "get_function", kw))
             return waiter.wait(**args)
+        if operation == "wait:services_stable":
+            for current in self.services.values():
+                current.update(runningCount=current["desiredCount"], pendingCount=0,
+                    deployments=[{"status": "PRIMARY", "rolloutState": "COMPLETED",
+                                  "taskDefinition": current["taskDefinition"]}])
+            return None
         if operation.startswith("wait:"):
             return None
         if operation == "get_caller_identity":
@@ -234,6 +240,8 @@ class Cloud:
         if operation == "update_service":
             fleet = args["service"].rsplit("-", 1)[-1]
             self.services[fleet].update({key: args[key] for key in ("desiredCount", "taskDefinition") if key in args})
+            if args.get("desiredCount") == 0:
+                self.services[fleet].update(runningCount=0, pendingCount=0)
             return {}
         if operation == "list_tasks":
             return {"taskArns": self.old_tasks[args["family"].rsplit("-", 1)[-1]][:]}
@@ -499,7 +507,8 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
         assert env["CLHEAR_L1_ONLY"] == "true" and env["CLHEAR_SNAPSHOT_S3_URI"] == "" and env["CLHEAR_ARTIFACT_STORE"] == "s3"
         assert env["LEGACY_UNKNOWN_SETTING"] == "private-env-value"
         assert cloud.scaling[fleet]["SuspendedState"] == {key: False for key in SUSPENDED}
-    assert cloud.services["l0"]["desiredCount"] == cloud.scaling["l0"]["MinCapacity"] == 1
+    for fleet in ("l0", "l1"):
+        assert cloud.services[fleet]["desiredCount"] == cloud.scaling[fleet]["MinCapacity"] == 1
     env = cloud.config["Environment"]["Variables"]
     assert env["CLHEAR_RESTRICTED_ACCESS"] == "true" and env["CLHEAR_AUTH_DEBUG"] == "false"
     assert env["CLHEAR_SESSION_SECRET"].startswith("test-only-private-session") and env["GOOGLE_OAUTH_CLIENT_SECRET"] == "private-oauth-value"

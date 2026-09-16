@@ -60,9 +60,14 @@ variable "worker_image" {
 }
 
 variable "worker_max_count" {
-  # Snapshot mode is single-writer (SQLite in S3): exactly one worker.
+  # L1 autoscaling maximum; its minimum capacity is one.
   type    = number
   default = 1
+
+  validation {
+    condition     = var.worker_max_count >= 1 && floor(var.worker_max_count) == var.worker_max_count
+    error_message = "worker_max_count must be an integer greater than or equal to 1."
+  }
 }
 
 variable "worker_assign_public_ip" {

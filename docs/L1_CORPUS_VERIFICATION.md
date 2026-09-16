@@ -89,6 +89,15 @@ only after the result commits. Its manifest records the completed cycle ID,
 completion time and revision. Publication failure leaves the previous viewer
 object and accepted release intact.
 
+After a successful deployment, L0 and L1 each retain at least one desired task
+and a minimum autoscaling capacity of one. L0 must relay database outbox work
+even when its queue is empty. A long L1 import holds an invisible SQS message;
+zero visible messages must not stop its last worker. Keeping both tasks
+available incurs idle compute cost and uses existing IAM permissions. Maximum
+capacities are unchanged, and Terraform keeps L2–L8 minimums at zero. A failed
+deployment still suspends autoscaling and holds all consumers at zero until
+an approved recovery succeeds.
+
 The cycle records worker code revision and immutable image digest. The
 verification-only dispatcher also checks the actual running task definitions
 and image digests, ensuring a partially rolled-out fleet cannot receive a new

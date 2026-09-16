@@ -199,8 +199,18 @@ There is no arbitrary deployment ref input. The workflow:
    slot. Positive reservations are restored exactly. An explicitly paused
    viewer uses the existing temporary probe slot and is paused again; failure
    never silently widens an explicit reservation to shared capacity. It then
-   restores the fleet's new held code. L0 retains minimum capacity one because database
-   outbox events cannot wake an SQS-only autoscaler.
+   restores the fleet's new held code. L0 and L1 retain minimum and desired
+   capacity of at least one. L0 relays database outbox events, which cannot wake
+   an SQS-only autoscaler. L1 must remain alive while an import is in flight:
+   its leased message is invisible, so an empty visible queue must not scale
+   the last worker to zero. Existing maximum capacities remain unchanged;
+   L2–L8 keep their existing capacity policy and processing hold.
+
+Keeping one L0 and one L1 task available incurs compute cost between jobs. It
+uses the existing services and autoscaling permissions; no additional IAM
+grant is required. Terraform initializes the same floors. Cutover and failure
+holds still suspend autoscaling and explicitly stop consumers at zero; these
+floors apply only after successful restoration, not during maintenance.
 
 The worker entrypoint for each phase is:
 
@@ -306,7 +316,7 @@ nullable viewer reservation, and its rollback object's version/hash. The
 controller checks the current held state and identities before any write.
 It backs up the observed configuration separately and applies the approved
 capacity targets only after worker verification and viewer access checks pass.
-The normal L0 minimum of one and the L1-only processing hold still apply.
+The normal L0 and L1 minimum of one and the L1-only processing hold still apply.
 
 The deployment role does not read the private source rollback JSON. Provenance
 in a committed plan is an operator audit record; founder review/merge of that
