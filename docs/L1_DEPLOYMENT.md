@@ -461,7 +461,8 @@ publisher 403 (ADGM, FATF, IOSCO, Israel, NASDAQ, SG PDPA, UAE), Gibraltar
 404, MAS HTML landing page vs numbered PDF, declaration-gap
 `source-blocked`, `restricted_file` `awaiting-artifact`, and originals
 mismatches (AU Privacy, ASIC RG227, BIS CRE20, ESMA suitability, FCA
-handbook chapters, IRS QI, Malta, SDRT `uksi/1986/1711`).
+handbook chapters, IRS QI, Malta, SDRT `uksi/1986/1711`, SEC
+`34-86031` after the reprint demotion).
 
 ### Failure details, progress and readiness
 
