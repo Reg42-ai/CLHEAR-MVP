@@ -13,6 +13,7 @@ beautifulsoup4==4.15.0
 boto3==1.43.93
 botocore==1.43.93
 certifi==2026.7.22
+charset-normalizer==3.4.6
 cffi==2.1.1
 click==8.5.0
 cryptography==50.0.1
@@ -28,6 +29,7 @@ jmespath==1.1.0
 mangum==0.22.0
 neo4j==6.3.0
 packaging==26.3
+pdfminer.six==20260107
 pgvector==0.5.0
 pluggy==1.6.0
 psycopg-binary==3.3.5

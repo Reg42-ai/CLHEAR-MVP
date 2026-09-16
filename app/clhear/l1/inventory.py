@@ -24,11 +24,12 @@ import sqlalchemy as sa
 from bs4 import BeautifulSoup
 
 from app.clhear.l1 import permissions
+from app.clhear.l1.public import nodes_internal_select
 from app.clhear.l1.models import BigId, Json, L1_SCHEMA, clauses, doc_nodes, source_versions, sources
 from app.clhear.models import runs
 
-SCOPE_VERSION = "2026-09-15.1"
-SCOPES = frozenset({"registered", "finra"})
+SCOPE_VERSION = "2026-09-16.2"
+SCOPES = frozenset({"registered", "finra", "all_publishers"})
 FINRA_CATEGORIES = (
     ("manual", "Manual and governing documents", "https://www.finra.org/rules-guidance/rulebooks"),
     ("governing", "Corporate organization and governing documents", "https://www.finra.org/rules-guidance/rulebooks/corporate-organization"),
@@ -40,6 +41,10 @@ FINRA_CATEGORIES = (
     ("guidance", "Published interpretive guidance", "https://www.finra.org/rules-guidance/guidance"),
     ("examinations", "Examination and oversight reports", "https://www.finra.org/rules-guidance/guidance/reports"),
     ("enforcement", "Disciplinary actions and enforcement publications", "https://www.finra.org/rules-guidance/oversight-enforcement/disciplinary-actions"),
+    ("faqs", "Official interpretive frequently asked questions", "https://www.finra.org/rules-guidance/guidance/faqs"),
+    ("nac", "National Adjudicatory Council decisions", "https://www.finra.org/rules-guidance/adjudication-decisions/national-adjudicatory-council-nac"),
+    ("oho", "Office of Hearing Officers decisions", "https://www.finra.org/rules-guidance/adjudication-decisions/office-hearing-officers-oho/about"),
+    ("sanctions", "Sanction guidelines", "https://www.finra.org/rules-guidance/oversight-enforcement/sanction-guidelines"),
 )
 FINRA_BOUNDARIES = {
     "include": ["Manual", "governing documents", "current rules", "published rule archives",
@@ -127,8 +132,8 @@ def _recent(value, now, *, hours=24):
 
 def _scope(scope):
     if scope not in SCOPES:
-        raise ValueError("scope must be registered or finra")
-    return scope
+        raise ValueError("scope must be all_publishers, registered or finra")
+    return "registered" if scope == "all_publishers" else scope
 
 
 def _finding(code, detail, **extra):
@@ -142,15 +147,16 @@ def _available(engine) -> bool:
 
 
 def _declared_entries(scope):
-    from app.clhear.l1.registry_etoro import S
-    entries = {e["key"]: dict(e) for e in S if e["key"] != "finra/rulebook"
+    scope = _scope(scope)
+    from app.clhear.l1.source_registry import S, source_role
+    entries = {e["key"]: dict(e) for e in S if source_role(e["key"]) == "document"
                and (scope == "registered" or e["key"].startswith("finra/"))}
     if scope == "registered":
         # Include real starter declarations outside S, without fetching them.
         from app.clhear.l1.fleet import fleet_plan
         for _, adapter in fleet_plan():
             meta = adapter.meta()
-            if meta.source_key not in entries and meta.source_key != "finra/rulebook":
+            if meta.source_key not in entries and source_role(meta.source_key) == "document":
                 entries[meta.source_key] = {
                     "key": meta.source_key, "name": meta.name, "canonical_url": meta.canonical_url,
                     "adapter": meta.adapter, "license": meta.license, "family": meta.family_key,
@@ -165,24 +171,28 @@ def _url(value):
         port = parsed.port
     except ValueError:
         return None
-    if parsed.scheme != "https" or parsed.hostname not in {"www.finra.org", "finra.org"} or port not in (None, 443):
+    if parsed.scheme != "https" or parsed.hostname not in {"www.finra.org", "finra.org", "files.finra.org"} or port not in (None, 443):
         return None
-    if parsed.username or parsed.password or ".." in unquote(parsed.path).split("/"):
+    if parsed.username or parsed.password or ".." in unquote(parsed.path).split("/") or "\\" in unquote(parsed.path) or any(ord(c) < 32 for c in value):
         return None
     # Only observed numeric pagination/year filters, never arbitrary search or
     # tracking queries that can turn traversal into unbounded duplicate pages.
     pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    if any(k not in {"page", "year"} or not v.isdigit() for k, v in pairs):
+    if len(pairs) > 2 or len({k for k, _ in pairs}) != len(pairs) or any(k not in {"page", "year"} or not v.isdigit() or len(v) > 6 for k, v in pairs):
         return None
-    return urlunparse(("https", "www.finra.org", parsed.path.rstrip("/") or "/", "", urlencode(sorted(pairs)), ""))
+    host = "files.finra.org" if parsed.hostname == "files.finra.org" else "www.finra.org"
+    return urlunparse(("https", host, parsed.path.rstrip("/") or "/", "", urlencode(sorted(pairs)), ""))
 
 
 def _in_scope_url(value, *, attachment=False):
     parsed = urlparse(value)
     return (parsed.path.startswith(("/rules-guidance/rulebooks", "/rules-guidance/rule-filings",
                                     "/rules-guidance/notices", "/rules-guidance/guidance",
+                                    "/rules-guidance/adjudication-decisions/",
+                                    "/rules-guidance/oversight-enforcement/sanction-guidelines",
                                     "/rules-guidance/oversight-enforcement/disciplinary-actions"))
-            or (attachment and parsed.path.startswith("/sites/default/files/")))
+            or (attachment and (parsed.path.startswith("/sites/default/files/")
+                                or (parsed.hostname == "files.finra.org" and parsed.path.lower().endswith(".pdf")))))
 
 
 def _source_key(url):
@@ -200,9 +210,9 @@ def _discovered_entry(url, category):
         "short_name": "FINRA " + key.rsplit("/", 1)[-1], "canonical_url": url,
         "kind": "regulation" if rule else "guidance", "issuer": "FINRA", "publisher": "FINRA",
         "jurisdiction": "US", "license": "restricted", "rights_basis": "derived_only",
-        "adapter": "finra" if rule else "unconfigured_finra_document", "relation": "supplements",
+        "adapter": "finra", "source_role": "document", "publisher_ids": ["finra"], "relation": "supplements",
         "tier": "binding" if rule else "informative", "topics": ["us", "finra"], "registry_ids": [],
-        "wave": 2, "fetch": {"url": url, "channel": "finra"}, "discovered_category": category,
+        "wave": 2, "fetch": {"url": url, "channel": "finra", "document_type": "rule" if rule else "attachment" if urlparse(url).path.lower().endswith(".pdf") else "publication"}, "discovered_category": category,
     }
 
 
@@ -226,86 +236,65 @@ def _fetch_discovery(url):
         body = bytearray()
         for chunk in response.iter_bytes():
             body.extend(chunk)
-            if len(body) > 2 * 1024 * 1024:
-                raise ValueError("Discovery page exceeds the 2 MiB limit")
+            limit = max(1, min(int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_BYTES", str(16 * 1024 * 1024))), 64 * 1024 * 1024))
+            if len(body) > limit:
+                raise ValueError("Discovery page exceeds the configured bounded byte limit")
         if not body:
             raise ValueError("Publisher returned an empty discovery page")
         return bytes(body), "live"
 
 
 def _discover(engine, store):
-    max_pages = max(1, min(int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_PAGES", "100")), 10000))
-    max_documents = max(1, min(int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_DOCUMENTS", "10000")), 50000))
-    seed_map = {_url(url): (key, label) for key, label, url in FINRA_CATEGORIES}
-    queue = deque((url, key, f"finra/catalog/{key}") for url, (key, _) in seed_map.items())
-    seen, entries, pages, findings = set(), {}, [], []
-    categories = {key: {"key": key, "name": label, "url": url, "status": "not_checked", "documents": 0}
-                  for key, label, url in FINRA_CATEGORIES}
-    while queue and len(seen) < max_pages and len(entries) < max_documents:
-        url, category, key = queue.popleft()
-        if url in seen:
+    from app.clhear.l1.discovery import run_batch
+    from app.clhear.l1.workflow import execution_context
+    context = execution_context()
+    seeds = [{"url": _url(url), "source_key": f"finra/catalog/{key}", "category": key}
+             for key, _, url in FINRA_CATEGORIES]
+    seed_paths = {urlparse(seed["url"]).path: seed for seed in seeds}
+    def classify(raw, parent):
+        target = _url(raw)
+        if not target or not _in_scope_url(target, attachment=True):
+            return None
+        parsed = urlparse(target)
+        seed = seed_paths.get(parsed.path)
+        if seed:
+            # A catalog's reviewed permission covers that same catalog's
+            # numeric page/year variants, never its constituent documents.
+            return {"url": target, "source_key": seed["source_key"], "category": seed["category"], "role": "collection"}
+        if parsed.query:
+            if urlparse(parent["url"]).path != parsed.path or parent["role"] != "collection":
+                return None
+            return {"url": target, "source_key": parent["source_key"], "category": parent["category"], "role": "collection"}
+        entry = _discovered_entry(target, parent["category"])
+        return {"url": target, "source_key": entry["key"], "category": parent["category"], "role": "document", "entry": entry}
+    from app.clhear.l1.finra_catalog import decoder
+    entries, report = run_batch(engine, store, publisher_id="finra", profile={"scope_version": SCOPE_VERSION, "boundaries": FINRA_BOUNDARIES},
+                     seeds=seeds, job_id=context["job_id"] if context else str(uuid.uuid4()),
+                     fetcher=_fetch_discovery, classify=classify, decoder=decoder(classify), decode_documents=True,
+                     max_pages=int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_PAGES", "100")))
+    report["findings"].append({"publisher_id": "finra", "code": "finra_enforcement_search_contract_required",
+        "detail": "Disciplinary Actions Online search records and tool-hosted filing status require a reviewed structured contract; monthly publications and linked decisions are enumerated separately."})
+    report["complete"] = False
+    return entries, report
+
+
+def _discover_publishers(engine, store, job_id):
+    from app.clhear.l1 import publishers
+    from app.clhear.l1.catalogs import discover_catalog
+    entries, finra = _discover(engine, store)
+    reports = [finra]
+    for profile in publishers.publisher_profiles():
+        if profile["publisher_id"] == "finra":
             continue
-        seen.add(url)
-        with engine.connect() as conn:
-            checks = {op: permissions.decision(conn, key, op) for op in ("acquire", "store", "parse")}
-        blocked = [op for op, choice in checks.items() if not choice["allowed"]]
-        if blocked:
-            findings.append(_finding("discovery_permission_blocked", "Official discovery requires explicit permission.", source_key=key, url=url, category=category, operations=blocked))
-            categories[category]["status"] = "permission_blocked"
-            continue
-        try:
-            body, origin = _fetch_discovery(url)
-            digest = _hash(body)
-            artifact_uri = store.put(f"restricted/_l1_inventory/{digest}.bin", body, "application/octet-stream")
-            page = {"url": url, "source_key": key, "category": category, "sha256": digest,
-                    "byte_count": len(body), "artifact_uri": artifact_uri, "origin": origin,
-                    "publisher_checked_at": datetime.now(timezone.utc).isoformat() if origin == "live" else None}
-            pages.append(page)
-            if origin != "live":
-                findings.append(_finding("discovery_not_live", "Fixture evidence cannot establish current publisher inventory.", source_key=key, url=url, category=category))
-            if body[:5] == b"%PDF-":
-                continue  # attachments are inventoried; this is not an importer.
-            soup = BeautifulSoup(body, "html.parser")
-            area = soup.select_one("main") or soup.body or soup
-            if area.select("form select, [data-drupal-views-infinite-scroll-content-wrapper]"):
-                findings.append(_finding("dynamic_enumeration_unverified", "Publisher filters/dynamic results require explicit complete enumeration evidence.", url=url, category=category))
-            accepted_links = 0
-            for link in area.find_all("a", href=True):
-                raw = urljoin(url, str(link["href"]))
-                target = _url(raw)
-                if not target:
-                    if "next" in (link.get("rel") or []):
-                        findings.append(_finding("unsupported_pagination", "Next-page URL is outside permitted pagination or official host boundaries.", url=url, category=category))
-                    continue
-                if not _in_scope_url(target, attachment=True):
-                    continue
-                accepted_links += 1
-                target_seed = seed_map.get(target)
-                target_category = target_seed[0] if target_seed else category
-                target_key = f"finra/catalog/{target_category}" if target_seed else _source_key(target)
-                if not target_seed and not urlparse(target).query:
-                    entry = _discovered_entry(target, target_category)
-                    entries.setdefault(entry["key"], entry)
-                if target not in seen:
-                    queue.append((target, target_category, target_key))
-                if len(entries) >= max_documents:
-                    break
-            if url in seed_map and not accepted_links:
-                findings.append(_finding("empty_discovery_index", "No in-scope documents or pagination found in this collection index.", url=url, category=category))
-            categories[category]["status"] = "checked"
-        except Exception as exc:
-            # Avoid echoing responses or vendor exception text into metadata.
-            findings.append(_finding("discovery_failed", "Publisher discovery failed; retry or adapter investigation required.", source_key=key, url=url, category=category, error_type=type(exc).__name__))
-            categories[category]["status"] = "failed"
-    pending_pages = len({url for url, _, _ in queue if url not in seen})
-    if pending_pages:
-        findings.append(_finding("discovery_limit", "Unvisited publisher pages remain; the inventory is incomplete.", pending_pages=pending_pages, max_pages=max_pages, max_documents=max_documents))
-    for item in entries.values():
-        categories[item["discovered_category"]]["documents"] += 1
-    complete = not findings and bool(entries) and not pending_pages
-    return entries, {"complete": complete, "checked_at": datetime.now(timezone.utc).isoformat(),
-                     "categories": list(categories.values()), "pages": pages, "findings": findings,
-                     "limits": {"max_pages": max_pages, "max_documents": max_documents}}
+        docs, report = discover_catalog(engine, store, profile, job_id=job_id, fetcher=_fetch_discovery)
+        entries.update(docs)
+        reports.append(report)
+    return entries, {"complete": all(r["complete"] for r in reports),
+                     "checked_at": min((r.get("checked_at") for r in reports if r.get("checked_at")), default=None),
+                     "pending_pages": sum(r.get("pending_pages", 0) for r in reports),
+                     "publishers": reports, "categories": [c for r in reports for c in r.get("categories", [])],
+                     "pages": [p for r in reports for p in r.get("pages", [])],
+                     "findings": [f for r in reports for f in r.get("findings", [])]}
 
 
 def _latest(engine, scope):
@@ -315,19 +304,27 @@ def _latest(engine, scope):
     return dict(row) if row else None
 
 
-def planned_entries(engine, scope="finra", adapter_key=None):
+def planned_entries(engine, scope="finra", adapter_key=None, *, audit_id=None):
     """Discovered supported documents for the existing fleet adapter factory."""
-    _scope(scope)
+    scope = _scope(scope)
     if not _available(engine):
         return []
-    prior = _latest(engine, scope)
+    if audit_id is None:
+        prior = _latest(engine, scope)
+    else:
+        with engine.connect() as conn:
+            prior = conn.execute(sa.select(inventory_audits).where(inventory_audits.c.id == audit_id,
+                                inventory_audits.c.scope == scope)).mappings().first()
+        if prior is None:
+            raise ValueError("Frozen discovery audit is missing or belongs to another scope")
     if not prior:
         return []
     with engine.connect() as conn:
         definition = conn.execute(sa.select(inventory_snapshots.c.definition)
                                   .where(inventory_snapshots.c.id == prior["inventory_id"])).scalar_one()
     return [entry for entry in definition["entries"] if entry.get("discovered_category")
-            and entry.get("adapter") == "finra" and (adapter_key is None or adapter_key == "finra")]
+            and entry.get("source_role", "document") == "document"
+            and (adapter_key is None or entry.get("adapter") == adapter_key)]
 
 
 def record_scope_review(engine, inventory_hash, evidence_ref, approved_by, approved):
@@ -401,7 +398,7 @@ def _store_key(store, uri):
     raise ValueError("Artifact URI is outside the configured store")
 
 
-_NODE_FIELDS = ("id", "parent_id", "seq", "depth", "node_type", "ref", "label", "heading", "raw_text", "source_fragment", "text_hash")
+_NODE_FIELDS = ("id", "parent_id", "seq", "depth", "node_type", "ref", "label", "heading", "raw_text", "source_fragment", "source_locator", "text_hash")
 _CLAUSE_FIELDS = ("id", "doc_node_id", "ref", "ordering", "text", "text_hash", "span_start", "span_end")
 
 
@@ -415,17 +412,23 @@ def _audit_source(conn, store, entry, now):
     findings = []
     out = {"source_key": key, "name": entry["name"], "canonical_url": entry.get("canonical_url", ""),
            "expected_edition": EXPECTED_EDITIONS.get(key), "source_version_id": None, "version_label": None,
-           "content_hash": None, "ingested_at": None, "publisher_checked_at": None, "permissions": {},
+           "content_hash": None, "ingested_at": None, "publisher_checked_at": None, "artifact_checked_at": None,
+           "freshness_basis": "reviewed_immutable_artifact" if entry.get("adapter") == "restricted_file" else "publisher",
+           "permissions": {},
            "artifacts": [], "findings": findings, "verified": False, "node_count": 0, "clause_count": 0}
     if permissions.required_for(entry):
         out["permissions"] = {op: permissions.decision(conn, key, op, now=now)
-                              for op in ("acquire", "store", "parse", "display_internal", "display_public", "infer", "embed")}
+                              for op in ("acquire", "store", "parse", "display_internal", "display_public", "infer", "embed", "derive", "translate")}
         for op in ("acquire", "store", "parse"):
             choice = out["permissions"][op]
             if not choice["allowed"]:
                 code = "permission_unverified" if choice["reason"] in {"missing_permission", "not_yet_valid"} else "permission_blocked"
                 findings.append(_finding(code, "Required operation has no current approval.", operation=op, reason=choice["reason"]))
     source = conn.execute(sa.select(sources).where(sources.c.key == key)).mappings().first()
+    from app.clhear.l1.origin import is_test_source
+    if source and is_test_source(source):
+        findings.append(_finding("test_origin_not_publisher_evidence", "The stored row has explicit test origin; a genuine publisher artifact is still required for this expected source."))
+        return _source_status(out)
     versions = list(conn.execute(sa.select(source_versions).where(source_versions.c.source_id == source["id"], source_versions.c.status == "in_force")
                                 .order_by(source_versions.c.id.desc())).mappings()) if source else []
     if not versions:
@@ -446,7 +449,25 @@ def _audit_source(conn, store, entry, now):
     evidence = next((row["outputs"] for row in matched if row["outputs"].get("artifact_manifest")), {})
     checked = [str(row["outputs"]["publisher_checked_at"]) for row in matched if row["outputs"].get("publisher_checked_at")]
     out["publisher_checked_at"] = max(checked, default=None)
-    if not out["publisher_checked_at"]:
+    if entry.get("adapter") == "restricted_file":
+        checks = [row["outputs"].get("authorized_artifact_check") for row in matched
+                  if row["outputs"].get("status") in {"succeeded", "unchanged", "added", "amended"}]
+        raw_manifest = evidence.get("artifact_manifest")
+        manifest_parts = ([{k: item.get(k) for k in ("name", "sha256", "byte_count", "content_type")}
+                           for item in raw_manifest if isinstance(item, dict)] if isinstance(raw_manifest, list) else [])
+        valid_checks = [check for check in checks if isinstance(check, dict)
+                        and check.get("schema") == "clhear.authorized-artifact-check.v1"
+                        and check.get("method") == "authorized_artifact_store_read"
+                        and check.get("publisher_check_performed") is False
+                        and check.get("source_key") == key and manifest_parts
+                        and isinstance(check.get("checked_at"), str)
+                        and check.get("artifacts") == manifest_parts]
+        out["artifact_checked_at"] = max((check.get("checked_at") or "" for check in valid_checks), default=None)
+        if not _recent(out["artifact_checked_at"], now, hours=26):
+            findings.append(_finding("artifact_check_overdue", "No recent authorized artifact read is bound to this exact version's complete artifact set; this is not a publisher check."))
+        if ledger and (ledger[0]["outputs"] or {}).get("status") not in {"succeeded", "unchanged", "added", "amended"}:
+            findings.append(_finding("artifact_availability_unverified", "The most recent artifact acquisition did not succeed; earlier availability evidence has not been refreshed."))
+    elif not out["publisher_checked_at"]:
         findings.append(_finding("publisher_check_unverified", "No successful live publisher check is bound to this exact version and artifact hash."))
     else:
         if not _recent(out["publisher_checked_at"], now, hours=26):
@@ -507,16 +528,37 @@ def _audit_source(conn, store, entry, now):
         except Exception as exc:
             findings.append(_finding("artifact_store_error", "Artifact retrieval failed without changing stored history.", name=item.get("name"), error_type=type(exc).__name__))
     if manifest and len(artifacts) == len(manifest):
+        from app.clhear.l1.pipeline import artifact_set_hash
         names = [a.name for a in artifacts]
-        if len(set(names)) != len(names) or _hash(b"".join(a.content for a in sorted(artifacts, key=lambda a: a.name))) != version["content_hash"]:
+        declared_method = evidence.get("content_hash_method")
+        out["artifact_set_hash_evidence"] = {"declared_method": declared_method, "method": None,
+            "content_hash": version["content_hash"], "verified_parts": len(artifacts), "verified": False}
+        hash_evidence = out["artifact_set_hash_evidence"]
+        if not all(isinstance(name, str) and name for name in names) or len(set(names)) != len(names):
+            findings.append(_finding("artifact_composite_mismatch", "Original artifact names must be nonempty and unique."))
+        elif declared_method not in {None, "artifact-set-v2", "legacy-unframed-v1"}:
+            findings.append(_finding("artifact_hash_method_unverified", "The run declares an unsupported artifact-set hash method."))
+        elif declared_method != "legacy-unframed-v1" and artifact_set_hash(artifacts) == version["content_hash"]:
+            hash_evidence.update(method="artifact-set-v2", verified=True)
+        elif declared_method == "artifact-set-v2":
+            findings.append(_finding("artifact_composite_mismatch", "The framed original artifact set differs from its declared version hash."))
+        elif _hash(b"".join(a.content for a in sorted(artifacts, key=lambda a: a.name))) == version["content_hash"]:
+            # Existing single-file versions are unambiguous after individual
+            # manifest/hash/readback checks. Multipart legacy hashes lost part
+            # boundaries and need worker re-ingestion before acceptance.
+            hash_evidence.update(method="legacy-unframed-single-v1" if len(artifacts) == 1 else "legacy-unframed-multipart-v1",
+                                 verified=len(artifacts) == 1)
+            if len(artifacts) != 1:
+                findings.append(_finding("legacy_artifact_set_unframed", "Legacy multipart originals remain readable, but worker re-ingestion must bind artifact names, types and boundaries before acceptance."))
+        else:
             findings.append(_finding("artifact_composite_mismatch", "Complete original artifact set differs from the version hash."))
-    nodes = list(conn.execute(sa.select(doc_nodes).where(doc_nodes.c.source_version_id == version["id"]).order_by(doc_nodes.c.seq)).mappings())
+    nodes = list(conn.execute(nodes_internal_select(conn).where(doc_nodes.c.source_version_id == version["id"]).order_by(doc_nodes.c.seq)).mappings())
     clause_rows = list(conn.execute(sa.select(clauses).where(clauses.c.source_version_id == version["id"]).order_by(clauses.c.ordering)).mappings())
     out["projection_hash"] = _projection_digest(nodes, clause_rows)
     if not nodes or not clause_rows:
         findings.append(_finding("empty_projection", "Expected document has no complete addressable node and clause projection."))
         return _source_status(out)
-    tree_nodes = {n["id"]: DocNode(node_type=n["node_type"], ref=n["ref"], label=n["label"], heading=n["heading"], raw_text=n["raw_text"], source_fragment=n["source_fragment"]) for n in nodes}
+    tree_nodes = {n["id"]: DocNode(node_type=n["node_type"], ref=n["ref"], label=n["label"], heading=n["heading"], raw_text=n["raw_text"], source_fragment=n["source_fragment"], source_locator=n.get("source_locator") or {}) for n in nodes}
     roots = []
     try:
         for n in nodes:
@@ -542,13 +584,17 @@ def _audit_source(conn, store, entry, now):
                     or canonical[start:end] != clause["text"] or node.subtree_text() != clause["text"]
                     or _hash(clause["text"].encode()) != clause["text_hash"]):
                 findings.append(_finding("clause_roundtrip_mismatch", "Stored clause, subtree, hash or character span disagree.", clause_id=clause["id"]))
-        if key.startswith("finra/rule/") and artifacts and len(artifacts) == len(manifest or []):
-            from app.clhear.l1.adapters.finra import validate_tree
-            violations = validate_tree(roots, artifacts, key, entry.get("canonical_url", ""))
-            if violations:
-                findings.append(_finding("publisher_text_mismatch", "Stored FINRA wording, ordering or hierarchy differs from the preserved official original.", violation_count=len(violations)))
+        if artifacts and len(artifacts) == len(manifest or []):
+            from app.clhear.l1.originals import verify_original_projection
+            original = verify_original_projection(key, entry.get("adapter", ""), artifacts, nodes,
+                                                  clauses=clause_rows, canonical_url=entry.get("canonical_url", ""))
+            out["original_comparison"] = original
+            findings.extend(original["findings"])
+            if not original["verified"] and not original["findings"]:
+                findings.append(_finding("independent_text_comparison_unverified", "The original comparison did not return verified evidence."))
         else:
-            findings.append(_finding("independent_text_comparison_unverified", "Exact publisher-original comparison is not yet independently certified for this adapter."))
+            findings.append(_finding("independent_text_comparison_unverified", "A complete preserved original artifact set is required for independent comparison."))
+
     except (KeyError, ValueError, RecursionError):
         findings.append(_finding("invalid_document_tree", "Stored tree is disconnected, cyclic, or cannot be reconstructed."))
     return _source_status(out)
@@ -567,14 +613,14 @@ def _source_status(out):
     return {**out, "status": status, "verified": not codes}
 
 
-def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=False):
+def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=False, discovery_cycle_date=None):
     """Reconcile the worker's authoritative engine; never seed or mutate corpus.
 
     A no-discovery post-import audit carries the previous discovery evidence
     forward, including its timestamp and unresolved failures. It does not make
     a cached inventory freshly checked. All audit rows are append-only.
     """
-    _scope(scope)
+    scope = _scope(scope)
     if not isinstance(job_id, str) or not job_id.strip():
         raise ValueError("The owning worker job_id is required")
     started = datetime.now(timezone.utc)
@@ -584,28 +630,60 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
     discovery = {"complete": False, "checked_at": None, "categories": [
         {"key": key, "name": label, "url": url, "status": "not_checked", "documents": 0} for key, label, url in FINRA_CATEGORIES],
         "pages": [], "findings": [_finding("discovery_not_run", "Publisher collections have not been enumerated by the worker.")]}
-    discovered = {}
+    discovered, prior_aliases = {}, []
     if prior:
         discovery = prior["summary"]["discovery"]
         with engine.connect() as conn:
             old = conn.execute(sa.select(inventory_snapshots.c.definition).where(inventory_snapshots.c.id == prior["inventory_id"])).scalar_one()
         discovered = {e["key"]: e for e in old["entries"] if e.get("discovered_category")}
+        prior_aliases = list(old.get("source_aliases", []))
     if scope == "registered":
         finra_prior = _latest(engine, "finra")
         if finra_prior and (not prior or finra_prior["finished_at"] > prior["finished_at"]):
-            discovery = finra_prior["summary"]["discovery"]
+            if not prior:
+                discovery = finra_prior["summary"]["discovery"]
             with engine.connect() as conn:
                 finra_definition = conn.execute(sa.select(inventory_snapshots.c.definition)
                                      .where(inventory_snapshots.c.id == finra_prior["inventory_id"])).scalar_one()
             discovered.update({e["key"]: e for e in finra_definition["entries"] if e.get("discovered_category")})
     if discover:
-        new_entries, discovery = _discover(engine, store)
+        from app.clhear.l1.workflow import bind_execution
+        from app.clhear.l1.discovery import bind_cycle_date
+        with bind_execution(engine, job_id), bind_cycle_date(discovery_cycle_date):
+            new_entries, discovery = _discover(engine, store) if scope == "finra" else _discover_publishers(engine, store, job_id)
         # A failed/partial crawl cannot silently remove previously expected
         # documents from the denominator. Removal requires a new scope review.
         discovered.update(new_entries)
-    for key, entry in discovered.items():
+    aliases, alias_findings = list(prior_aliases), []
+    declared_urls = {}
+    for entry in entries.values():
+        if entry.get("canonical_url"):
+            declared_urls.setdefault((entry["canonical_url"], entry.get("adapter")), []).append(entry["key"])
+    for key, entry in sorted(discovered.items()):
+        same = declared_urls.get((entry.get("canonical_url"), entry.get("adapter")), [])
+        if key not in entries and len(same) == 1:
+            # Exact URL + parser identity is an alias, not another expected
+            # original. Preserve existing document identity and all DB history.
+            alias = {"discovered_source_key": key, "source_key": same[0], "canonical_url": entry["canonical_url"]}
+            if alias not in aliases:
+                aliases.append(alias)
+            continue
+        if key not in entries and len(same) > 1:
+            alias_findings.append(_finding("ambiguous_document_alias", "Multiple declared documents share this exact original URL and parser; identity needs review.", source_keys=sorted([key, *same])))
         entries.setdefault(key, entry)
-    definition = {"scope": scope, "scope_version": SCOPE_VERSION, "boundaries": FINRA_BOUNDARIES,
+    aliases.sort(key=lambda value: (value["discovered_source_key"], value["source_key"], value["canonical_url"]))
+    if alias_findings:
+        discovery = {**discovery, "complete": False, "findings": [*discovery["findings"], *alias_findings]}
+    from app.clhear.l1.publishers import profiles_for_scope, BOUNDARIES, coverage_findings
+    profiles = profiles_for_scope(scope)
+    if scope == "registered":
+        # An older FINRA-only audit cannot certify the newly expanded global scope.
+        missing = coverage_findings(profiles)
+        known_codes = {(f.get("code"), f.get("publisher_id")) for f in discovery["findings"]}
+        discovery = {**discovery, "findings": [*discovery["findings"], *[f for f in missing if (f["code"], f["publisher_id"]) not in known_codes]],
+                     "complete": bool(discovery["complete"] and discovery.get("publishers") and not missing)}
+    definition = {"scope": scope, "scope_version": SCOPE_VERSION, "boundaries": FINRA_BOUNDARIES if scope == "finra" else BOUNDARIES,
+                  "publishers": profiles, "source_aliases": aliases,
                   "categories": [{"key": k, "name": n, "url": u} for k, n, u in FINRA_CATEGORIES],
                   "required_editions": {key: edition for key, edition in EXPECTED_EDITIONS.items() if key in entries},
                   "entries": [entries[key] for key in sorted(entries)]}
@@ -626,9 +704,11 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
     with engine.connect() as conn:
         evidence = [_audit_source(conn, store, e, started) for e in definition["entries"]]
         review = _review(conn, digest)
-        actual_keys = set(conn.execute(sa.select(sources.c.key)).scalars())
+        from app.clhear.l1.origin import corpus_sources_predicate
+        actual_keys = set(conn.execute(sa.select(sources.c.key).where(corpus_sources_predicate())).scalars())
     findings = list(discovery["findings"])
-    outside = sorted(key for key in actual_keys - entries.keys() - {"finra/rulebook"}
+    from app.clhear.l1.source_registry import COLLECTION_SOURCE_KEYS, REFERENCE_SOURCE_KEYS
+    outside = sorted(key for key in actual_keys - entries.keys() - COLLECTION_SOURCE_KEYS - REFERENCE_SOURCE_KEYS
                      if scope == "registered" or key.startswith("finra/"))
     if outside:
         findings.append(_finding("outside_declared_scope", "Existing sources are outside this declared inventory and need scope classification.", source_keys=outside))
@@ -644,10 +724,16 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
                "known_expected": len(evidence), "known_expected_is_lower_bound": not full_scope_verified,
                "verified": verified, "unresolved": len(evidence) - verified, "discovery_complete": discovery["complete"],
                "full_scope_verified": full_scope_verified, "scope_review": review, "discovery": discovery,
+               "publisher_profiles": profiles, "publisher_count": len(profiles), "source_aliases": aliases,
+               "expected_total": len(evidence) if full_scope_verified else None, "denominator_known": full_scope_verified,
                "findings": findings, "sources": evidence, "counts": dict(count), "current_binding_valid": True,
                "bindings_hash": _digest([{k: e.get(k) for k in ("source_key", "source_version_id", "content_hash", "projection_hash", "permissions", "artifact_review")} for e in evidence]),
-               "collection_sources": [{"source_key": "finra/rulebook", "status": "discovery_index", "counts_as_document": False,
-                                       "detail": "A landing-page import does not supply the FINRA rulebook's constituent documents."}]}
+               "collection_sources": [{"source_key": key, "status": "discovery_index", "source_role": "collection", "counts_as_document": False,
+                                       "detail": "Collection history is retained; constituent documents require their own imports."}
+                                      for key in sorted(COLLECTION_SOURCE_KEYS) if scope != "finra" or key.startswith("finra/")],
+               "reference_sources": [{"source_key": key, "source_role": "reference", "status": "official_document_inventory_required", "counts_as_document": False}
+                                     for key in sorted(REFERENCE_SOURCE_KEYS) if scope != "finra"]}
+
     with engine.begin() as conn:
         conn.execute(inventory_audits.insert().values(id=summary["audit_id"], inventory_id=inventory_id,
                      scope=scope, job_id=job_id, started_at=started, finished_at=finished, summary=summary))
@@ -656,8 +742,10 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
 
 def inventory_summary(engine, scope="registered"):
     """Latest immutable audit, plus read-time checks that prevent stale passes."""
-    _scope(scope)
-    blank = {"status": "not_run", "scope": scope, "scope_version": SCOPE_VERSION, "audit_id": None, "job_id": None,
+    scope = _scope(scope)
+    from app.clhear.l1.publishers import profiles_for_scope
+    profiles = profiles_for_scope(scope)
+    blank = {"expected_total": None, "denominator_known": False, "publisher_profiles": profiles, "publisher_count": len(profiles), "status": "not_run", "scope": scope, "scope_version": SCOPE_VERSION, "audit_id": None, "job_id": None,
              "inventory_hash": None, "audited_at": None, "known_expected": len(_declared_entries(scope)),
              "known_expected_is_lower_bound": True, "verified": 0, "unresolved": len(_declared_entries(scope)),
              "discovery_complete": False, "full_scope_verified": False, "current_binding_valid": False,
@@ -671,9 +759,12 @@ def inventory_summary(engine, scope="registered"):
     invalid = []
     with engine.connect() as conn:
         for source in summary["sources"]:
-            current = list(conn.execute(sa.select(source_versions.c.id, source_versions.c.content_hash)
+            current = list(conn.execute(sa.select(source_versions.c.id, source_versions.c.content_hash, sources.c.key, sources.c.issuer)
                          .join(sources, sources.c.id == source_versions.c.source_id)
                          .where(sources.c.key == source["source_key"], source_versions.c.status == "in_force")).mappings())
+            from app.clhear.l1.origin import is_test_source
+            if any(is_test_source(version) for version in current):
+                invalid.append(source["source_key"])
             expected = [(source["source_version_id"], source["content_hash"])] if source["source_version_id"] is not None else []
             if [(v["id"], v["content_hash"]) for v in current] != expected:
                 invalid.append(source["source_key"])
@@ -688,7 +779,8 @@ def inventory_summary(engine, scope="registered"):
                         invalid.append(source["source_key"])
         review = _review(conn, summary["inventory_hash"])
     if not review or not review["approved"]:
-        summary = {**summary, "full_scope_verified": False, "known_expected_is_lower_bound": True}
+        summary = {**summary, "full_scope_verified": False, "known_expected_is_lower_bound": True,
+                   "expected_total": None, "denominator_known": False}
     if not _recent(summary["audited_at"], datetime.now(timezone.utc), hours=26):
         invalid.append("audit_overdue")
     # Registry edits also invalidate an old frozen report, without a GET
@@ -698,11 +790,13 @@ def inventory_summary(engine, scope="registered"):
         frozen = conn.execute(sa.select(inventory_snapshots.c.definition).where(inventory_snapshots.c.id == row["inventory_id"])).scalar_one()
     old_entries = {e["key"]: e for e in frozen["entries"]}
     editions = {key: edition for key, edition in EXPECTED_EDITIONS.items() if key in old_entries}
-    if (frozen["scope_version"] != SCOPE_VERSION or frozen.get("required_editions") != editions
+    from app.clhear.l1.publishers import profiles_for_scope
+    if (frozen["scope_version"] != SCOPE_VERSION or frozen.get("publishers") != profiles_for_scope(scope) or frozen.get("required_editions") != editions
             or any(old_entries.get(k) != v for k, v in declared.items())):
         invalid.append("declared_scope_changed")
     if invalid:
         return {**summary, "status": "stale", "current_binding_valid": False, "full_scope_verified": False,
+                "known_expected_is_lower_bound": True, "expected_total": None, "denominator_known": False,
                 "findings": [*summary["findings"], _finding("audit_binding_changed", "Stored evidence must be rerun against current source versions, permissions, scope or freshness.", source_keys=sorted(set(invalid)))]}
     if not summary["full_scope_verified"] and summary["status"] == "verified":
         summary = {**summary, "status": "gaps"}
@@ -736,6 +830,9 @@ def acceptance_status(engine, scope="registered"):
     version ID. Protected text is only read after current parse/store grants.
     """
     summary = inventory_summary(engine, scope)
+    from app.clhear.l1.translation import english_acceptance
+    english = english_acceptance(engine, [source["source_version_id"] for source in summary["sources"]
+                                         if source.get("source_version_id") is not None])
     reasons = []
     if summary["status"] != "verified":
         reasons.append("inventory_not_verified")
@@ -752,20 +849,31 @@ def acceptance_status(engine, scope="registered"):
     if not _recent(discovery_at, now):
         reasons.append("publisher_inventory_overdue")
     for source in summary["sources"]:
-        checked_at = source.get("publisher_checked_at")
+        artifact_basis = source.get("freshness_basis") == "reviewed_immutable_artifact"
+        checked_at = source.get("artifact_checked_at") if artifact_basis else source.get("publisher_checked_at")
         if not _recent(checked_at, now):
-            reasons.append("publisher_check_overdue:" + source["source_key"])
+            reasons.append(("artifact_check_overdue:" if artifact_basis else "publisher_check_overdue:") + source["source_key"])
+        if artifact_basis:
+            review = source.get("artifact_review") or {}
+            if (not review.get("approved") or review.get("coverage") != "full"
+                    or review.get("canonical_url") != source.get("canonical_url")
+                    or not review.get("publisher_edition")
+                    or (source.get("expected_edition") and review["publisher_edition"] != source["expected_edition"])):
+                reasons.append("artifact_identity_unverified:" + source["source_key"])
     if not reasons:
         with engine.connect() as conn:
             for source in summary["sources"]:
                 if any(not permissions.decision(conn, source["source_key"], op)["allowed"] for op in ("store", "parse") if op in source["permissions"]):
                     reasons.append("permission_changed")
                     break
-                nodes = list(conn.execute(sa.select(doc_nodes).where(doc_nodes.c.source_version_id == source["source_version_id"]).order_by(doc_nodes.c.seq)).mappings())
+                nodes = list(conn.execute(nodes_internal_select(conn).where(doc_nodes.c.source_version_id == source["source_version_id"]).order_by(doc_nodes.c.seq)).mappings())
                 clause_rows = list(conn.execute(sa.select(clauses).where(clauses.c.source_version_id == source["source_version_id"]).order_by(clauses.c.ordering)).mappings())
                 if _projection_digest(nodes, clause_rows) != source.get("projection_hash"):
                     reasons.append("projection_changed:" + source["source_key"])
+    if not english["passed"]:
+        reasons.append("english_views_unresolved")
     return {"passed": not reasons, "reasons": reasons, "audit_id": summary.get("audit_id"),
+            "english": english,
             "inventory_hash": summary.get("inventory_hash"), "bindings_hash": summary.get("bindings_hash"),
             "scope": scope, "audited_at": summary.get("audited_at"), "evidence": summary,
             "method": "Reviewed exact inventory; complete artifact hashes; ordered original and clause/span checks; current permissions, versions and projection digests"}

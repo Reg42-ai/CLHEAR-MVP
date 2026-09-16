@@ -2,8 +2,17 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
   pull_request:
+
+permissions:
+  contents: read
+  actions: read
+
+# Tests may be superseded; a live deployment has its own non-cancelling lock.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   tests:
@@ -24,12 +33,27 @@ jobs:
       CLHEAR_TEST_POSTGRES_URL: postgresql+psycopg://postgres:clhear-test-only@127.0.0.1:5432/clhear_test_ci
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.lock
-      - run: pytest tests/ -v
+      - name: Classify the complete change
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/viewer_release.py ci --output artifacts/ci-scope.json
+      - name: Presentation, permissions, and snapshot regressions
+        if: steps.scope.outputs.lane == 'viewer'
+        run: >-
+          pytest tests/test_l1_demo_ui.py tests/test_review_access.py
+          tests/test_l1_evidence_api.py tests/test_lambda_snapshot_access.py
+          tests/test_lambda_packaging.py tests/test_preview.py -v
+      - name: Full application suite
+        if: steps.scope.outputs.lane != 'viewer'
+        run: pytest tests/ -v
       - name: HLD v2 requirement trace is honest
         run: python scripts/trace_check.py --summary
       - name: Rights similarity guard (7.3) — no derived output quotes restricted text beyond its basis
@@ -39,7 +63,7 @@ jobs:
 
   # WCAG 2.2 AA in a real browser (HLD v2 §5 design rules): axe-core against
   # every public page in both themes on a seeded offline corpus, plus the
-  # NYC demo journey from a fresh browser. Serious/critical findings fail.
+  # Offline integration journey from a fresh browser. Serious/critical findings fail.
   a11y-axe:
     runs-on: ubuntu-latest
     env:
@@ -54,15 +78,15 @@ jobs:
       - run: playwright install --with-deps chromium
       - name: axe-core audit, dark + light
         run: python scripts/a11y_axe.py --json a11y-axe.json
-      - name: NYC demo — describe → blueprint from a fresh browser
-        run: python scripts/nyc_demo.py --synthetic-corpus --api --e2e --artifacts nyc-demo
+      - name: Offline integration — describe → blueprint from a fresh browser
+        run: python -m tests.support.journey --synthetic-corpus --api --e2e --artifacts integration-journey
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: a11y-and-demo
+          name: a11y-and-integration
           path: |
             a11y-axe.json
-            nyc-demo/
+            integration-journey/
 
   terraform:
     runs-on: ubuntu-latest

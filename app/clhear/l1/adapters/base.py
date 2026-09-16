@@ -61,8 +61,9 @@ class DocNode:
     """One typed record of the official document tree.
 
     Containers have empty raw_text; leaf text blocks carry the verbatim
-    string (no renderer normalization). source_fragment is the exact
-    XML/HTML/JSON snippet of this node from the official artifact.
+    string (no renderer normalization). source_fragment, when present, is an
+    equivalent XML/HTML element serialization independently checked against
+    the official artifact; it is not a byte-for-byte slice of that artifact.
     """
 
     node_type: str
@@ -71,6 +72,9 @@ class DocNode:
     heading: str = ""
     raw_text: str = ""
     source_fragment: str = ""
+    # Machine-verifiable location in the immutable source artifact. Offsets
+    # name their text representation and unit; they are never PDF byte offsets.
+    source_locator: dict = field(default_factory=dict)
     children: list["DocNode"] = field(default_factory=list)
     # Publisher-declared status of a provision when the publisher has one
     # (FCA R/G/E/D, Basel "standard"/"guidance"); feeds the normative flag.
@@ -87,7 +91,7 @@ class DocNode:
         This is the clause-projection text (diff / search / L2 grain).
         """
         parts: list[str] = []
-        if self.heading:
+        if self.heading and "heading" not in self.source_locator.get("presentation_fields", []):
             parts.append(self.heading)
         if self.raw_text:
             parts.append(self.raw_text)

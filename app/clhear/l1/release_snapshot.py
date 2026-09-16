@@ -9,18 +9,23 @@ from pathlib import Path
 import sqlalchemy as sa
 
 from app.clhear.db import make_engine
-from app.clhear.l1 import models, permissions
+from app.clhear.l1 import inventory, models, permissions, translation
+from app.clhear.l1.translation_models import TABLES as ENGLISH_TABLES
+from app.clhear.l1.origin import corpus_sources_predicate, production_worker
 
 TABLE_NAMES = ("source_families", "sources", "family_members", "source_versions",
                "doc_nodes", "clauses", "clause_annotations", "citations", "rights_records")
 
 
-def current_bindings(conn) -> list[dict]:
-    return [dict(r) for r in conn.execute(sa.select(
+def current_bindings(conn, *, corpus_only=False) -> list[dict]:
+    query = (sa.select(
         models.sources.c.key.label("source_key"), models.source_versions.c.id.label("source_version_id"),
         models.source_versions.c.content_hash,
     ).join(models.source_versions, models.source_versions.c.source_id == models.sources.c.id)
-      .where(models.source_versions.c.status == "in_force").order_by(models.sources.c.key, models.source_versions.c.id)).mappings()]
+      .where(models.source_versions.c.status == "in_force"))
+    if corpus_only or production_worker():
+        query = query.where(corpus_sources_predicate())
+    return [dict(r) for r in conn.execute(query.order_by(models.sources.c.key, models.source_versions.c.id)).mappings()]
 
 
 def compile_snapshot(engine, destination: Path) -> dict:
@@ -38,9 +43,10 @@ def compile_snapshot(engine, destination: Path) -> dict:
                     connection.exec_driver_sql("SET TRANSACTION READ ONLY")
                 elif engine.dialect.name == "sqlite":
                     connection.exec_driver_sql("BEGIN")
-                bindings = current_bindings(connection)
+                bindings = current_bindings(connection, corpus_only=True)
                 version_ids = [b["source_version_id"] for b in bindings]
-                source_rows = list(connection.execute(sa.select(models.sources)).mappings())
+                source_rows = list(connection.execute(sa.select(models.sources).where(corpus_sources_predicate())).mappings())
+                source_ids = [s["id"] for s in source_rows]
                 for source in source_rows:
                     if permissions.required_for(source):
                         decisions = [permissions.decision(connection, source["key"], op)
@@ -60,7 +66,14 @@ def compile_snapshot(engine, destination: Path) -> dict:
                             if column.name.startswith("embedding") or column.name == "embedded_at" else column
                             for column in table.c
                         ])
-                        if name == "source_versions":
+                        if name == "sources":
+                            query = query.where(table.c.id.in_(source_ids))
+                        elif name == "source_families":
+                            query = query.where(sa.or_(
+                                table.c.id.in_([s["family_id"] for s in source_rows]),
+                                table.c.id.in_(sa.select(models.family_members.c.family_id).where(models.family_members.c.source_id.in_(source_ids))),
+                            ))
+                        elif name == "source_versions":
                             query = query.where(table.c.id.in_(version_ids))
                         elif "source_version_id" in table.c:
                             query = query.where(table.c.source_version_id.in_(version_ids))
@@ -70,13 +83,33 @@ def compile_snapshot(engine, destination: Path) -> dict:
                         elif "from_clause_id" in table.c:
                             clause_ids = sa.select(models.clauses.c.id).where(models.clauses.c.source_version_id.in_(version_ids))
                             query = query.where(table.c.from_clause_id.in_(clause_ids))
+                        elif "source_id" in table.c:
+                            query = query.where(table.c.source_id.in_(source_ids))
                         rows = [dict(r) for r in connection.execute(query).mappings()]
                         if rows:
                             output.execute(table.insert(), rows)
                         counts[name] = len(rows)
+                    english_queries = translation.snapshot_queries(connection, version_ids)
+                    for table in ENGLISH_TABLES:
+                        rows = [dict(row) for row in connection.execute(english_queries[table.name]).mappings()]
+                        if rows:
+                            output.execute(table.insert(), rows)
+                        counts[table.name] = len(rows)
+                    # English views need the exact original-proof and rights
+                    # evidence for readback. Reuse the private viewer scrubber.
+                    from app.clhear.l1.viewer_snapshot import _clean_row
+                    for table in (permissions.source_permissions, inventory.inventory_snapshots, inventory.inventory_audits):
+                        table.create(output, checkfirst=True)
+                        query = sa.select(table)
+                        if table is permissions.source_permissions:
+                            query = query.where(table.c.source_key.in_([s["key"] for s in source_rows]))
+                        rows = [_clean_row(table, row) for row in connection.execute(query).mappings()]
+                        if rows:
+                            output.execute(table.insert(), rows)
+                        counts[table.name] = len(rows)
         destination.chmod(0o600)
         return {"bindings": bindings, "counts": counts, "audience": "restricted-reviewers",
-                "table_allowlist": list(TABLE_NAMES)}
+                "table_allowlist": list(counts)}
     except Exception:
         target.dispose()
         destination.unlink(missing_ok=True)

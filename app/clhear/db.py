@@ -47,8 +47,15 @@ def make_engine(database_url: str) -> Engine:
 
 def get_engine() -> Engine:
     global _engine
+    if get_settings().clhear_preview_mode and _engine is not None and not _engine.get_execution_options().get("clhear_preview_readonly"):
+        dispose_engine()
     if _engine is None:
-        _engine = make_engine(get_settings().database_url)
+        if get_settings().clhear_preview_mode:
+            from app.clhear.preview import make_preview_engine
+
+            _engine = make_preview_engine(get_settings())
+        else:
+            _engine = make_engine(get_settings().database_url)
     return _engine
 
 

@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     clhear_restricted_access: bool = False
     clhear_reviewer_emails: str = ""
     clhear_l1_only: bool = False  # enable on worker deployments while accepting L1
+    # Private UI iteration over a worker-generated snapshot, never a writer.
+    clhear_preview_mode: bool = False
+    clhear_preview_snapshot_path: str = ""  # local only; Lambda uses its synchronized snapshot
+    clhear_preview_snapshot_s3_uri: str = ""  # optional local refresh through the existing reader synchronizer
 
     # Exporter target: local checkout dir and optional remote (public `clhear` repo).
     clhear_public_repo_dir: str = "./clhear-public"
@@ -76,8 +80,8 @@ class Settings(BaseSettings):
 
     # --- community accounts & contributions (Phase C) ---
     # HMAC key for session cookies + magic-link tokens. MUST be set in prod
-    # (SSM /clhear/SESSION_SECRET); the default keeps dev/tests working.
-    clhear_session_secret: str = "dev-only-not-a-secret"
+    # (SSM /clhear/SESSION_SECRET). Tests supply their own isolated secret.
+    clhear_session_secret: str = ""
     clhear_auth_debug: bool = False  # dev: return magic links in the response
     clhear_ses_sender: str = "CLHEAR <noreply@clhear.reg42.ai>"
     clhear_public_base_url: str = "https://clhear.reg42.ai"
@@ -128,7 +132,7 @@ class Settings(BaseSettings):
     clhear_snapshot_s3_uri: str = ""
 
     # Consumer API keys: "app_id:secret" or "app_id:secret:read:l1+read:l2"
-    clhear_app_keys: str = "os-dev:dev-os-key,safeluance-dev:dev-sl-key,galaxy:galaxy-os-key"
+    clhear_app_keys: str = ""
 
     # Named releases live under this prefix (s3://bucket/releases/...).
     # Empty = local artifacts dir (dev/tests).

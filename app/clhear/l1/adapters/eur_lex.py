@@ -145,21 +145,8 @@ class EurLexAdapter:
         if since_version == self.version_label:
             return None
         content = http.get(f"{CELLAR}/{self.celex_version}", headers=_HEADERS)
-        soup = _strip_excluded(BeautifulSoup(content, "html.parser"))
-        if soup.find("p", class_="oj-doc-ti") is not None:
-            tree = self._parse_oj(soup)
-        else:
-            tree = self._parse_convex(soup)
-        # Non-clause markers like "(a)" repeat across definition lists; keep the
-        # first occurrence addressable, blank the rest (refs must be unique).
-        seen_refs: set[str] = set()
-        for node in flatten(tree):
-            if not node.ref:
-                continue
-            if node.ref in seen_refs and node.node_type in {"point", "paragraph", "statement"}:
-                node.ref = ""
-            else:
-                seen_refs.add(node.ref)
+        from app.clhear.l1.adapters.dom_document import parse
+        tree = parse(content, self.meta().source_key)
         return FetchResult(
             version_label=self.version_label,
             artifacts=[Artifact(name=f"{self.celex_version}.xhtml", content=content, content_type="application/xhtml+xml")],
@@ -169,12 +156,9 @@ class EurLexAdapter:
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
-        spans: list[str] = []
-        for artifact in artifacts:
-            soup = _strip_excluded(BeautifulSoup(artifact.content, "html.parser"))
-            body = soup.body or soup
-            spans.extend(str(s) for s in body.strings if str(s).strip())
-        return spans
+        from app.clhear.l1.adapters.dom_document import original_records
+        return [row[7] for part, artifact in enumerate(artifacts, 1)
+                for row in original_records(artifact.content, self.meta().source_key, part) if row[7].strip()]
 
     # ------------------------------------------------------------------ CONVEX
     def _parse_convex(self, soup: BeautifulSoup) -> list[DocNode]:

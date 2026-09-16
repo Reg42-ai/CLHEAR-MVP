@@ -20,7 +20,10 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import replace
+import sys
+import re
+from importlib import metadata as package_metadata
+from dataclasses import asdict, is_dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -29,7 +32,7 @@ import sqlalchemy as sa
 from sqlalchemy.engine import Connection, Engine
 
 from app.clhear.platform import record
-from app.clhear.l1 import change_detect, fidelity, permissions, rights, spans
+from app.clhear.l1 import change_detect, fidelity, originals, permissions, rights, spans
 from app.clhear.l1.adapters.base import CLAUSE_TYPES, Adapter, DocNode, FetchResult, SourceMeta
 from app.clhear.l1.models import (
     change_events,
@@ -81,7 +84,12 @@ class LocalStore:
         if not path.is_relative_to(self.base_dir):
             raise ValueError("artifact key escapes the configured store")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+        try:
+            with path.open("xb") as output:
+                output.write(content)
+        except FileExistsError:
+            if path.read_bytes() != content:
+                raise ValueError("An immutable artifact key already contains different bytes")
         return path.as_uri()
 
 
@@ -95,7 +103,18 @@ class S3Store:
         self.bucket = bucket
 
     def put(self, key: str, content: bytes, content_type: str) -> str:
-        self._client.put_object(Bucket=self.bucket, Key=key, Body=content, ContentType=content_type)
+        existing = self.get(key)
+        if existing is not None:
+            if existing != content:
+                raise ValueError("An immutable artifact key already contains different bytes")
+            return f"s3://{self.bucket}/{key}"
+        try:
+            self._client.put_object(Bucket=self.bucket, Key=key, Body=content,
+                                    ContentType=content_type, IfNoneMatch="*")
+        except Exception as exc:
+            code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            if code not in {"PreconditionFailed", "412"} or self.get(key) != content:
+                raise
         return f"s3://{self.bucket}/{key}"
 
     def get(self, key: str) -> bytes | None:
@@ -112,6 +131,15 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def artifact_set_hash(artifacts) -> str:
+    """Frame each original identity; concatenation loses attachment boundaries."""
+    manifest = [{"name": a.name, "content_type": a.content_type,
+                 "sha256": sha256(a.content), "byte_count": len(a.content)}
+                for a in sorted(artifacts, key=lambda a: a.name)]
+    return sha256(json.dumps({"schema": "artifact-set-v2", "artifacts": manifest},
+                             sort_keys=True, separators=(",", ":")).encode())
+
+
 class RunRecorder:
     """Run-ledger row written at START; stage transitions appended as the run
     progresses (append-only within the row — the audit trail the Fleet view
@@ -126,6 +154,7 @@ class RunRecorder:
         inputs = {**inputs, **{k: execution[k] for k in ("job_id", "task_id", "attempt") if k in execution}}
         self._source = inputs.get("source")
         self._protected = bool(inputs.get("protected_source"))
+        self.artifact_check = None
         self._engine = engine
         self._started = time.monotonic()
         self._last_stage_at = self._started
@@ -164,6 +193,8 @@ class RunRecorder:
         if self._source:
             summary.setdefault("fetch_evidence", l1_http.fetch_evidence())
             summary.setdefault("publisher_checked_at", l1_http.publisher_checked_at())
+        if self.artifact_check:
+            summary["authorized_artifact_check"] = self.artifact_check
         if self._protected:
             summary.pop("missing_preview", None)
         outputs = {**summary, "status": status, "stages": self.stages}
@@ -301,6 +332,8 @@ def _projection_matches(conn: Connection, version_id: int, tree: list[DocNode], 
             return False
         if any(row[field] != getattr(node, field) for field in fields):
             return False
+        if (row.get("source_locator") or {}) != node.source_locator:
+            return False
         if (seq_by_id.get(row["parent_id"]), row["depth"]) != parents[id(node)]:
             return False
         if row["parent_id"] is not None and row["parent_id"] not in seq_by_id:
@@ -325,6 +358,34 @@ def _projection_matches(conn: Connection, version_id: int, tree: list[DocNode], 
         if (row["span_start"], row["span_end"]) != layout[id(node)]:
             return False
     return seen == set(expected_clauses)
+
+
+def _archive_matches(store, manifest, artifacts, source_key, content_hash, public_ok):
+    """Unchanged requires complete, readable, byte-exact archived originals."""
+    if not isinstance(manifest, list) or len(manifest) != len(artifacts):
+        return False
+    if any(not isinstance(item, dict) for item in manifest):
+        return False
+    indexed = {item.get("name"): item for item in manifest}
+    if len(indexed) != len(manifest):
+        return False
+    prefix = "public-ok" if public_ok else "restricted"
+    for artifact in artifacts:
+        item = indexed.get(artifact.name) or {}
+        digest = sha256(artifact.content)
+        base = f"{prefix}/{source_key}/sha256-{content_hash}/{digest}/{artifact.name}"
+        key = item.get("key", "")
+        if (not isinstance(key, str) or not re.fullmatch(re.escape(base) + r"(?:\.repair-[0-9a-f]{32})?", key)
+                or (item.get("sha256"), item.get("byte_count"), item.get("content_type"))
+                   != (digest, len(artifact.content), artifact.content_type)):
+            return False
+        expected_uri = (f"s3://{store.bucket}/{key}" if isinstance(store, S3Store) else
+                        (store.base_dir / key).resolve().as_uri() if isinstance(store, LocalStore) else None)
+        if expected_uri is not None and item.get("uri") != expected_uri:
+            return False
+        if store.get(key) != artifact.content:
+            return False
+    return True
 
 
 def _load_active_hints(conn: Connection, source_id: int) -> list[dict]:
@@ -411,18 +472,61 @@ def ingest(engine: Engine, adapter: Adapter, store: ArtifactStore, **kwargs) -> 
 
 
 def parser_identity(adapter: Adapter) -> dict:
-    modules = [inspect.getmodule(type(adapter)), inspect.getmodule(ingest), fidelity, spans]
-    if getattr(adapter, "key", "") == "finra":
-        from app.clhear.l1.adapters import finra
-        modules.append(finra)
-    parts = []
-    for module in modules:
-        path = getattr(module, "__file__", None)
-        if path:
-            parts.append((module.__name__, Path(path).read_bytes()))
-    return {"adapter": adapter.meta().adapter, "method": "implementation-modules-sha256",
-            "implementation_sha256": sha256(b"".join(name.encode() + b"\0" + body for name, body in sorted(parts))),
+    # Include inherited parsers, independent readers and all local L1 helpers.
+    # Only digests leave this function; header/config values are not logged.
+    root = Path(__file__).parent
+    parts = [(str(path.relative_to(root)), path.read_bytes()) for path in sorted(root.rglob("*.py"))]
+    module = inspect.getmodule(type(adapter))
+    path = getattr(module, "__file__", None)
+    if path and not Path(path).is_relative_to(root):
+        parts.append((module.__name__, Path(path).read_bytes()))
+    dependencies = {"python": sys.version.split()[0]}
+    for name in ("beautifulsoup4", "pypdf", "pdfminer.six", "docling", "crawl4ai", "soupsieve"):
+        try:
+            dependencies[name] = package_metadata.version(name)
+        except package_metadata.PackageNotFoundError:
+            dependencies[name] = "not_installed"
+
+    def serializable(value):
+        if is_dataclass(value):
+            return serializable(asdict(value))
+        if isinstance(value, re.Pattern):
+            return {"pattern": value.pattern, "flags": value.flags}
+        if isinstance(value, dict):
+            return {str(k): serializable(v) for k, v in sorted(value.items())}
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [serializable(v) for v in sorted(value, key=str)] if isinstance(value, (set, frozenset)) else [serializable(v) for v in value]
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return value.isoformat() if isinstance(value, date) else type(value).__qualname__
+
+    parameters = set(inspect.signature(type(adapter).__init__).parameters)
+    # Runtime counters/caches are not parser configuration. Constructor inputs
+    # and private configuration participate; acquired response bytes do not.
+    configured = {name: value for name, value in vars(adapter).items()
+                  if name.lstrip("_") in parameters or name in {"_meta", "_headers", "_url", "_urls"}}
+    config = {**configured, "meta": adapter.meta(),
+              "worker_parser_settings": {name: getattr(get_settings(), name) for name in (
+                  "clhear_fidelity_threshold", "clhear_ingest_max_attempts", "clhear_salvage_cap", "clhear_model_repair")},
+              **{name: getattr(adapter, name, None) for name in ("PROVISION", "HEADING", "renderer", "version_kind", "version_policy", "headers")}}
+    config_hash = sha256(json.dumps(serializable(config), sort_keys=True).encode())
+    body = b"".join(name.encode() + b"\0" + content for name, content in sorted(parts))
+    body += json.dumps(dependencies, sort_keys=True).encode() + config_hash.encode()
+    return {"adapter": adapter.meta().adapter, "method": "l1-implementation-dependencies-config-sha256-v2",
+            "implementation_sha256": sha256(body), "configuration_sha256": config_hash,
+            "dependencies": dependencies, "normalization_version": originals.NORMALIZATION_VERSION,
             "modules": [name for name, _ in sorted(parts)]}
+
+
+def _original_proof(meta: SourceMeta, result: FetchResult) -> dict:
+    try:
+        originals.attach_source_locations(meta.source_key, meta.adapter, result.artifacts, result.tree, meta.canonical_url)
+    except Exception:
+        # The verifier returns a safe, explicit reason instead of assigning
+        # invented locations to an unsupported or mismatched original.
+        pass
+    return originals.verify_original_projection(meta.source_key, meta.adapter, result.artifacts, result.tree,
+                                                canonical_url=meta.canonical_url)
 
 
 def _ingest(
@@ -453,6 +557,29 @@ def _ingest(
     if job_id:
         inputs["job_id"] = job_id
     recorder = RunRecorder(engine, f"l1.{meta.adapter}", trigger, inputs)
+    try:
+        return _ingest_recorded(engine, adapter, store, recorder, meta, settings, trigger=trigger,
+                                gateway=gateway, job_id=job_id, force=force, index_embeddings=index_embeddings)
+    except Exception as exc:
+        # Decoder/validator failures must terminate this run as well as the
+        # queue task. Diagnostics never include publisher text or credentials.
+        outputs = recorder.finish("failed", {
+            "source": meta.source_key, "error_type": type(exc).__name__,
+            "error": "Import validation or archive verification failed; no successful run was recorded",
+        })
+        return {**outputs, "run_id": recorder.run_id}
+
+
+def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigger="manual", gateway=None,
+                     job_id=None, force=False, index_embeddings=True):
+    from app.clhear.l1.origin import is_test_source, production_worker
+    if production_worker() and is_test_source(meta):
+        outputs = recorder.finish("source-blocked", {
+            "source": meta.source_key, "freshness": "not_checked",
+            "error_type": "TestSourceInProduction",
+            "error": "Explicit test corpus cannot enter a production worker import",
+        })
+        return {**outputs, "run_id": recorder.run_id}
     identity = parser_identity(adapter)
     from app.clhear.l1 import workflow
 
@@ -501,6 +628,15 @@ def _ingest(
         with workflow.stage("acquisition_parse", details={"source": meta.source_key, "parser_identity": identity}):
             result = adapter.fetch(None)
     except Exception as exc:
+        if meta.adapter == "restricted_file" and isinstance(exc, FileNotFoundError):
+            outputs = recorder.finish("awaiting-artifact", {
+                "source": meta.source_key, "freshness": "not_checked",
+                "error_type": "FileNotFoundError",
+                "error": "The reviewed local publisher artifact is not available to this worker",
+                "previous_version_preserved": previous is not None,
+                "source_version_id": previous.id if previous else None,
+            })
+            return {**outputs, "run_id": recorder.run_id}
         error = str(exc)[:500]
         log.exception("fetch crashed for %s", meta.source_key)
         if previous is not None:
@@ -518,6 +654,14 @@ def _ingest(
         outputs = recorder.finish("failed", summary)
         return {**summary, "status": "failed", "run_id": recorder.run_id, "stages": outputs["stages"]}
     observations = l1_http.fetch_evidence()
+    if meta.adapter == "restricted_file" and result is not None:
+        check = getattr(adapter, "artifact_check", None)
+        expected = [{"name": a.name, "sha256": sha256(a.content), "byte_count": len(a.content),
+                     "content_type": a.content_type} for a in result.artifacts]
+        if (isinstance(check, dict) and check.get("schema") == "clhear.authorized-artifact-check.v1"
+                and check.get("source_key") == meta.source_key and check.get("artifacts") == expected
+                and check.get("method") == "authorized_artifact_store_read" and check.get("publisher_check_performed") is False):
+            recorder.artifact_check = dict(check)
     freshness = ("stale" if l1_http.last_good_used() else
                  "live" if l1_http.publisher_checked_at() else
                  "fixture" if observations and all(o["origin"] == "fixture" for o in observations) else
@@ -548,10 +692,11 @@ def _ingest(
         outputs = recorder.finish("up-to-date" if l1_http.publisher_checked_at() else "stale", summary)
         return {**outputs, "run_id": recorder.run_id}
 
-    content_hash = sha256(b"".join(a.content for a in sorted(result.artifacts, key=lambda a: a.name)))
+    content_hash = artifact_set_hash(result.artifacts)
     validator = getattr(adapter, "validate_tree", None)
     strict_violations = validator(result.tree, result.artifacts) if validator else []
-    if previous is not None and previous.content_hash == content_hash and not force and not strict_violations:
+    original_proof = _original_proof(meta, result)
+    if previous is not None and previous.content_hash == content_hash and not force and not strict_violations and original_proof["verified"]:
         with engine.connect() as conn:
             matching = _projection_matches(conn, previous.id, result.tree, public_ok)
             prior_manifest = None
@@ -564,7 +709,8 @@ def _ingest(
                     break
             # Legacy imports without a complete archive manifest get an
             # append-only repair, not invented acquisition provenance.
-            matching = matching and prior_manifest is not None
+            matching = matching and _archive_matches(store, prior_manifest, result.artifacts,
+                                                       meta.source_key, content_hash, public_ok and not protected)
         if matching:
             summary = {
                 "source": meta.source_key,
@@ -573,12 +719,15 @@ def _ingest(
                 "source_version_id": previous.id,
                 "freshness": freshness,
                 "note": "Artifact bytes and stored projection are unchanged.",
+                "content_hash_method": "artifact-set-v2",
                 "parser_identity": identity,
                 "canonical_text_hash": sha256(spans.canonical_text(result.tree).encode()),
                 "artifact_manifest": prior_manifest,
+                "original_verification": original_proof,
             }
             outputs = recorder.finish("unchanged", summary)
-            return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"]}
+            return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"],
+                    **({"authorized_artifact_check": recorder.artifact_check} if recorder.artifact_check else {})}
         recorder.stage("projection_repair", reason="stored projection differs from validated source parse")
 
     # ---- fidelity gate + escalation loop -----------------------------------
@@ -595,8 +744,20 @@ def _ingest(
 
     for attempt in range(1, max_attempts + 1):
         if attempt > 1:
-            with workflow.stage("acquisition_parse", details={"attempt": attempt, "parser_identity": identity}):
-                refetched = adapter.fetch(None)
+            try:
+                with workflow.stage("acquisition_parse", details={"attempt": attempt, "parser_identity": identity}):
+                    refetched = adapter.fetch(None)
+            except Exception as exc:
+                status = ("awaiting-artifact" if meta.adapter == "restricted_file" and isinstance(exc, FileNotFoundError)
+                          else "stale" if previous is not None else "failed")
+                outputs = recorder.finish(status, {
+                    "source": meta.source_key, "attempt": attempt, "error_type": type(exc).__name__,
+                    "error": "Repair acquisition failed; no candidate was persisted",
+                    "previous_version_preserved": previous is not None,
+                    "source_version_id": previous.id if previous else None,
+                    "freshness": "stale" if previous is not None else "not_checked",
+                })
+                return {**outputs, "run_id": recorder.run_id}
             recorder.stage("fetch", attempt=attempt, artifacts=len(refetched.artifacts) if refetched else 0)
             if refetched is not None:
                 result = refetched
@@ -655,6 +816,14 @@ def _ingest(
                 report = fidelity.check(tree, expected)
                 recorder.stage("salvage", attempt=attempt, recovered=recovered_spans, **report.summary())
 
+        # Re-run both the publisher grammar and independent original reader
+        # after every repair. Appending the right words under the wrong parent
+        # must never turn a failed import into a certified one.
+        if validator:
+            report.violations.extend(validator(tree, result.artifacts))
+        original_proof = _original_proof(meta, result)
+        if not original_proof["verified"]:
+            report.violations.extend(f"original verification: {item['code']}" for item in original_proof["findings"])
         if report.ok(threshold):
             break
         if report.violations:
@@ -666,6 +835,8 @@ def _ingest(
     if report is None or not report.ok(threshold):
         # ---- exhaustion: nothing persisted, loudly visible ------------------
         detail = report.summary() if report else {"coverage": 0.0}
+        if protected:
+            detail.pop("missing_preview", None)
         log.error(
             "ingest NOT fully successful for %s: coverage %.4f after %d attempts — %s",
             meta.source_key,
@@ -693,7 +864,9 @@ def _ingest(
                     f"({threshold:.3%}) after {max_attempts} attempts — manual rectification needed."
                 ),
             )
-        summary = {"source": meta.source_key, "version": result.version_label, **detail}
+        summary = {"source": meta.source_key, "version": result.version_label, **detail,
+                   "original_verification": original_proof, "parser_identity": identity,
+                   "previous_version_preserved": previous is not None}
         outputs = recorder.finish("failed", summary)
         return {**summary, "status": "not-fully-successful", "run_id": recorder.run_id, "stages": outputs["stages"]}
 
@@ -701,7 +874,7 @@ def _ingest(
     try:
         # A repair retry can return different bytes; hash the artifact actually
         # persisted, never the first (failed) fetch.
-        content_hash = sha256(b"".join(a.content for a in sorted(result.artifacts, key=lambda a: a.name)))
+        content_hash = artifact_set_hash(result.artifacts)
         with engine.connect() as conn:
             existing_label = conn.execute(sa.select(source_versions.c.id).where(
                 source_versions.c.source_id == source_id,
@@ -771,7 +944,12 @@ def _persist(
         workflow.assert_ownership()
         # Content addressing prevents a stale lease from overwriting another
         # worker's original before its database fencing check rejects it.
-        key = f"{prefix}/{meta.source_key}/sha256-{content_hash}/{artifact.name}"
+        key = f"{prefix}/{meta.source_key}/sha256-{content_hash}/{sha256(artifact.content)}/{artifact.name}"
+        archived = store.get(key)
+        if archived is not None and archived != artifact.content:
+            # Preserve the corrupted object for investigation; the repaired
+            # version binds a fresh immutable object, not an overwritten one.
+            key += ".repair-" + uuid.uuid4().hex
         uri = store.put(key, artifact.content, artifact.content_type)
         artifact_uris.append(uri)
         artifact_manifest.append({"name": artifact.name, "key": key, "uri": uri,
@@ -800,10 +978,18 @@ def _persist(
         clause_rows = persist_tree(
             conn, version_id, tree, public_ok,
             derived_by=f"l1.pipeline.{meta.adapter}",
-            valid_from=result.as_of_date or result.effective_date or datetime.now(timezone.utc).date(),
+            valid_from=result.effective_date,
         )
         if clause_rows:
             conn.execute(clauses.insert(), clause_rows)
+        readback_proof = originals.verify_original_projection(
+            meta.source_key, meta.adapter, result.artifacts,
+            conn.execute(sa.select(doc_nodes).where(doc_nodes.c.source_version_id == version_id).order_by(doc_nodes.c.seq)).mappings().all(),
+            conn.execute(sa.select(clauses).where(clauses.c.source_version_id == version_id)).mappings().all(),
+            canonical_url=meta.canonical_url,
+        )
+        if not readback_proof["verified"]:
+            raise ValueError("Persisted original verification failed: " + ", ".join(f["code"] for f in readback_proof["findings"]))
         from app.clhear.l1 import annotate as l1_annotate
         from app.clhear.l1 import retrieval as l1_retrieval
 
@@ -879,6 +1065,7 @@ def _persist(
             "new_version": result.version_label,
             "clause_refs": changed_refs,
             "content_hash": content_hash,
+            "content_hash_method": "artifact-set-v2",
         }
         l0_events.emit(
             conn,
@@ -977,8 +1164,10 @@ def _persist(
         "artifacts": artifact_uris,
         "artifact_manifest": artifact_manifest,
         "parser_identity": parser,
+        "original_verification": readback_proof,
         "canonical_text_hash": sha256(spans.canonical_text(tree).encode()),
         "content_hash": content_hash,
+        "content_hash_method": "artifact-set-v2",
         "freshness": freshness,
     }
     if permission_checks:
@@ -1012,7 +1201,8 @@ def _persist(
         "ingested %s %s: %d nodes / %d clauses (%s, coverage %.4f)",
         meta.source_key, result.version_label, node_count, len(clause_rows), change_kind, report.coverage,
     )
-    return {**summary, "status": change_kind, "run_id": recorder.run_id, "stages": outputs["stages"]}
+    return {**summary, "status": change_kind, "run_id": recorder.run_id, "stages": outputs["stages"],
+            **({"authorized_artifact_check": recorder.artifact_check} if recorder.artifact_check else {})}
 
 
 def persist_tree(
@@ -1051,6 +1241,7 @@ def persist_tree(
                 heading=node.heading,
                 raw_text=node.raw_text,
                 source_fragment=node.source_fragment,
+                source_locator=node.source_locator,
                 text_hash=sha256(payload),
                 public_ok=public_ok,
             )
@@ -1097,7 +1288,7 @@ def persist_tree(
 def _path_crumb(node: DocNode) -> str:
     """Spine crumb for clauses.path: 'TITLE VI — …' when both exist."""
     label = (node.label or "").strip()
-    heading = (node.heading or "").strip()
+    heading = (node.heading or node.source_locator.get("display_heading") or "").strip()
     if label and heading and heading != label:
         return f"{label} — {heading}"
     return heading or label or node.ref

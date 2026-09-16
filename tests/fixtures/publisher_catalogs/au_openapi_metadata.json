@@ -1,0 +1,119 @@
+{
+  "source": "https://api.prod.legislation.gov.au/swagger/v1/swagger.json",
+  "retrieved_on": "2026-09-16",
+  "source_sha256": "ea8767484907c1dc9789394297b0d669466679b4d12477963fa369453088756b",
+  "purpose": "Technical API schema metadata only; no legal document body or live corpus response. Descriptions removed; property types/enums and path templates preserved.",
+  "paths": [
+    "/v1/Documents",
+    "/v1/documents(titleid='{keytitleId}',start={keystart},retrospectivestart={keyretrospectiveStart},rectificationversionnumber={keyrectificationVersionNumber},type='{keytype}',uniqueTypeNumber={keyuniqueTypeNumber},volumeNumber={keyvolumeNumber},format='{keyformat}')"
+  ],
+  "document_properties": {
+    "titleId": {
+      "type": "string",
+      "nullable": true
+    },
+    "start": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "retrospectiveStart": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "compilationNumber": {
+      "type": "string",
+      "nullable": true
+    },
+    "version": {},
+    "registerId": {
+      "type": "string",
+      "nullable": true
+    },
+    "rectificationVersionNumber": {
+      "type": "integer",
+      "format": "int32"
+    },
+    "rectified": {
+      "type": "string",
+      "format": "date-time",
+      "nullable": true
+    },
+    "type": {
+      "enum": [
+        "Primary",
+        "ES",
+        "SupportingMaterial",
+        "IncorporatedByReference",
+        "SupplementaryES"
+      ],
+      "type": "string"
+    },
+    "versionType": {
+      "enum": [
+        "Rectification",
+        "Replacement",
+        "RetrospectiveCompilation"
+      ],
+      "type": "string"
+    },
+    "uniqueTypeNumber": {
+      "type": "integer",
+      "format": "int32"
+    },
+    "volumeNumber": {
+      "type": "integer",
+      "format": "int32"
+    },
+    "format": {
+      "enum": [
+        "Word",
+        "Pdf",
+        "Epub",
+        "NameOnly"
+      ],
+      "type": "string"
+    },
+    "extension": {
+      "type": "string",
+      "nullable": true
+    },
+    "mimeType": {
+      "type": "string",
+      "nullable": true
+    },
+    "fileName": {
+      "type": "string",
+      "nullable": true
+    },
+    "bytes": {
+      "type": "string",
+      "nullable": true
+    },
+    "pageCount": {
+      "type": "integer",
+      "format": "int32",
+      "nullable": true
+    },
+    "sizeInBytes": {
+      "type": "integer",
+      "format": "int64",
+      "nullable": true
+    },
+    "rectificationReason": {
+      "type": "string",
+      "nullable": true
+    },
+    "isAuthorised": {
+      "type": "boolean"
+    },
+    "name": {
+      "type": "string",
+      "nullable": true
+    },
+    "printCopy": {},
+    "contents": {
+      "type": "string",
+      "nullable": true
+    }
+  }
+}

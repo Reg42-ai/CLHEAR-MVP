@@ -88,36 +88,29 @@ class _GappyAdapter:
 
     def fetch(self, since_version=None):
         self.fetches += 1
-        body = "\n".join(self.parsed + self.missing)
-        return FetchResult(
-            version_label=self.version,
-            artifacts=[Artifact(name="doc.txt", content=body.encode(), content_type="text/plain")],
-            tree=[
-                DocNode(node_type="provision", ref=f"p{i}", raw_text=text)
-                for i, text in enumerate(self.parsed)
-            ],
-        )
+        from html import escape
+        from app.clhear.l1.adapters.html_document import parse
+        body = ("<h1>Fixture source</h1>" + "".join("<p>" + escape(text) + "</p>" for text in self.parsed + self.missing)).encode()
+        tree = parse(body, self.meta().source_key)
+        if self.missing:
+            del tree[0].children[0].children[-len(self.missing):]
+        return FetchResult(version_label=self.version, artifacts=[Artifact("doc.html", body, "text/html")], tree=tree)
 
     def expected_text(self, artifacts):
-        return artifacts[0].content.decode().split("\n")
+        from app.clhear.l1.originals import html_blocks
+        return [row["text"] for row in html_blocks(artifacts[0].content)]
 
 
-def test_loop_converges_via_salvage(engine, tmp_path):
-    """A small residual gap (< salvage cap) is recovered as flagged notes;
-    the run persists as a WARNING with recovered_spans in the summary."""
+def test_unlocated_salvage_cannot_certify_source_hierarchy(engine, tmp_path):
     parsed = [f"provision text number {i} with plenty of tokens to weigh the corpus" for i in range(50)]
     adapter = _GappyAdapter(missing=["one tiny missed line of several tokens"], parsed=parsed, source_suffix="salvage")
     summary = pipeline.ingest(engine, adapter, pipeline.LocalStore(tmp_path / "lake"))
-    assert summary["status"] == "added"
-    assert summary["recovered_spans"] == 1
-    assert summary["coverage"] >= THRESHOLD
+    assert summary["status"] == "not-fully-successful"
+    assert not summary["original_verification"]["verified"]
+    assert any(f["code"] == "publisher_hierarchy_mismatch" for f in summary["original_verification"]["findings"])
     with engine.connect() as conn:
-        recovered = conn.execute(
-            sa.select(doc_nodes).where(doc_nodes.c.ref == fidelity.SALVAGE_REF)
-        ).one()
-        assert recovered.node_type == "note"
-        run_status = conn.execute(sa.text("select outputs from runs order by id desc limit 1")).scalar_one()
-    assert json.loads(run_status)["status"] == "warning"
+        assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 0
+        assert conn.execute(sa.select(sa.func.count()).select_from(doc_nodes)).scalar_one() == 0
 
 
 def test_loop_exhaustion_persists_nothing_and_files_rectification(engine, tmp_path, caplog):
@@ -150,70 +143,40 @@ def _repair_gateway(engine, missing_spans):
     return Gateway(engine, provider), provider
 
 
-def test_llm_tier_repairs_and_hint_memory_prevents_repeat_calls(engine, tmp_path):
-    """Tier 4: LLM hints repair a big gap (gate re-validates, text stays
-    byte-from-artifact); hints persist; a SECOND ingest converges via stored
-    hints with ZERO additional LLM calls."""
+def test_llm_hint_text_is_not_enough_without_original_structure(engine, tmp_path):
     parsed = ["intro paragraph with some tokens"]
     missing = [f"unparsed article {i} text " + "word " * 20 for i in range(10)]
     adapter = _GappyAdapter(missing=missing, parsed=parsed, source_suffix="llm")
     gateway, provider = _repair_gateway(engine, missing)
-
     summary = pipeline.ingest(engine, adapter, pipeline.LocalStore(tmp_path / "lake"), gateway=gateway)
-    assert summary["status"] == "added"
-    assert summary["llm_assisted"] is True
+    assert summary["status"] == "not-fully-successful"
     assert provider.calls == 1
+    assert not summary["original_verification"]["verified"]
     with engine.connect() as conn:
-        call = conn.execute(sa.select(llm_calls)).one()
-        assert call.fleet == "l1.repair"
-        stored = conn.execute(sa.select(parse_hints)).all()
-        assert len(stored) == len(missing)
-        assert all(h.status == "candidate" and h.origin == "llm" for h in stored)
-        ratification = conn.execute(sa.select(proposals).where(proposals.c.kind == "parse_hint")).one()
-        assert ratification.status == "proposed"
-        # LLM never authored text: every recovered node's text is artifact text
-        recovered = conn.execute(
-            sa.select(doc_nodes.c.raw_text).where(doc_nodes.c.node_type == "paragraph")
-        ).scalars().all()
-        artifact_text = "\n".join(parsed + missing)
-        assert all(fidelity.ws(t) in fidelity.ws(artifact_text) for t in recovered if t)
-
-    # Re-ingest (new version content) — stored hints apply at tier 1b, no LLM.
-    adapter2 = _GappyAdapter(missing=missing, parsed=parsed + ["a new provision"], source_suffix="llm", version="v2")
-    summary2 = pipeline.ingest(engine, adapter2, pipeline.LocalStore(tmp_path / "lake"), gateway=gateway)
-    assert summary2["status"] == "amended"
-    assert summary2.get("hints_used")
-    assert "llm_assisted" not in summary2
-    assert provider.calls == 1  # unchanged: fleet learned, does not repeat the mistake
-    with engine.connect() as conn:
-        hint = conn.execute(sa.select(parse_hints).order_by(parse_hints.c.id).limit(1)).one()
-        assert hint.times_used >= 2
-        assert hint.last_used_at is not None
+        assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 0
+        assert conn.execute(sa.select(sa.func.count()).select_from(parse_hints)).scalar_one() == 0
+        assert conn.execute(sa.select(llm_calls.c.fleet)).scalar_one() == "l1.repair"
 
 
 def test_rejected_hint_is_retired_and_not_applied(engine, tmp_path):
-    parsed = ["intro paragraph"]
-    missing = [f"gap {i} " + "tok " * 25 for i in range(8)]
-    adapter = _GappyAdapter(missing=missing, parsed=parsed, source_suffix="retire")
-    gateway, provider = _repair_gateway(engine, missing)
-    assert pipeline.ingest(engine, adapter, pipeline.LocalStore(tmp_path / "lake"), gateway=gateway)["llm_assisted"]
-
     from app.clhear.platform import proposals as l0_proposals
-
-    with engine.connect() as conn:
-        proposal_id = conn.execute(
-            sa.select(proposals.c.id).where(proposals.c.kind == "parse_hint")
-        ).scalar_one()
+    from app.clhear.l1.models import sources
+    missing = [f"gap {i} " + "tok " * 25 for i in range(8)]
+    adapter = _GappyAdapter(missing=missing, parsed=["intro paragraph"], source_suffix="retire")
+    with engine.begin() as conn:
+        _, source_id = pipeline.ensure_source(conn, adapter.meta())
+        proposal_id = l0_proposals.create_proposal(conn, layer="l1", kind="parse_hint", subject_ref=adapter.meta().source_key,
+            draft={"hints": []}, rationale="Test-only candidate requiring explicit review")
+        conn.execute(parse_hints.insert().values(source_id=source_id, hint={"match": "gap", "node_type": "paragraph"},
+                                               origin="llm", status="candidate", proposal_id=proposal_id))
     l0_proposals.reject(engine, proposal_id, "avner@reg42.ai")
     with engine.connect() as conn:
-        statuses = set(conn.execute(sa.select(parse_hints.c.status)).scalars())
-        assert statuses == {"retired"}
-
-    # Next ingest: retired hints NOT applied -> loop needs the LLM again.
-    adapter2 = _GappyAdapter(missing=missing, parsed=parsed + ["more"], source_suffix="retire", version="v2")
-    summary = pipeline.ingest(engine, adapter2, pipeline.LocalStore(tmp_path / "lake"), gateway=gateway)
-    assert provider.calls == 2
-    assert summary.get("llm_assisted") is True
+        assert set(conn.execute(sa.select(parse_hints.c.status)).scalars()) == {"retired"}
+    gateway, provider = _repair_gateway(engine, missing)
+    summary = pipeline.ingest(engine, adapter, pipeline.LocalStore(tmp_path / "lake"), gateway=gateway)
+    assert provider.calls == 1
+    assert not summary.get("hints_used")
+    assert summary["status"] == "not-fully-successful"
 
 
 def test_llm_tier_skipped_without_gateway(engine, tmp_path):

@@ -96,7 +96,7 @@ def test_clause_detail_serves_spans_and_respects_rights(engine, client, tmp_path
     assert body["text"].startswith("A firm must pay due regard")
     assert body["span"]["start"] is not None and body["span"]["end"] > body["span"]["start"]
     assert body["normative"] is True
-    assert body["why"]["derived_by"] and body["why"]["valid_from"]
+    assert body["why"]["derived_by"] and body["why"]["valid_from"] is None  # fixture has no publisher effective-date metadata
 
     derived = client.get(f"/l1/clauses/{derived_id}").json()
     assert derived["source"] == "synthetic/finra-3110"

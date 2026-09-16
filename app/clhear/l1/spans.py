@@ -27,7 +27,7 @@ def span_layout(tree: list[DocNode]) -> dict[int, tuple[int, int]]:
         cursor = start
         first = True
         parts: list[str] = []
-        if node.heading:
+        if node.heading and "heading" not in node.source_locator.get("presentation_fields", []):
             parts.append(node.heading)
         if node.raw_text:
             parts.append(node.raw_text)

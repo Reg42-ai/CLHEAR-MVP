@@ -9,6 +9,7 @@ idempotent, re-derived on change and superseded rather than deleted.
 from __future__ import annotations
 
 import json
+import xml.etree.ElementTree as ET
 from datetime import date
 
 import sqlalchemy as sa
@@ -16,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.clhear.derived_models import obligations
 from app.clhear.l1 import pipeline
-from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta, flatten
+from app.clhear.l1.adapters.base import Artifact, FetchResult, SourceMeta, flatten
 from app.clhear.l1.adapters.enforcement import FcaFinalNoticesAdapter, SecEnforcementAdapter
 from app.clhear.l1.models import CLAUSE_TYPES, FLEET_SCHEDULES, family_members, sources
 from app.clhear.l1 import fidelity, rights
@@ -45,30 +46,38 @@ NOTICES = {
 
 
 class EnforcementAdapter(SyntheticAdapter):
-    """A synthetic enforcement listing: one provision per notice, title as heading."""
+    """Original test notices encoded as CLML, with one provision per notice."""
 
     key = "synthetic_enforcement"
 
     def meta(self) -> SourceMeta:
         base = super().meta()
         return SourceMeta(**{**base.__dict__, "source_key": self.source_key, "name": "Synthetic final notices", "kind": "enforcement",
-                             "short_name": "SYN FN", "instrument": "Synthetic final notices", "adapter": "synthetic_enforcement"})
+                             "short_name": "SYN FN", "instrument": "Synthetic final notices"})
 
     def fetch(self, since_version=None):
-        body = "\n".join(f"{ref} {text}" for ref, text in self.provisions.items())
-        tree = [DocNode(node_type="section", ref="s1", label="Section 1", raw_text="", children=[
-            DocNode(node_type="provision", ref=ref, label=text.split("\n")[0], heading=text.split("\n")[0], raw_text=text.split("\n", 1)[1])
-            for ref, text in self.provisions.items()])]
+        from app.clhear.l1.adapters.xml_document import parse
+        root = ET.Element("Legislation")
+        body = ET.SubElement(ET.SubElement(root, "Secondary"), "Body")
+        section = ET.SubElement(body, "Part", id="s1")
+        ET.SubElement(section, "Title").text = "Section 1"
+        for ref, text in self.provisions.items():
+            title, notice = text.split("\n", 1)
+            provision = ET.SubElement(section, "P1", id=ref)
+            ET.SubElement(provision, "Title").text = title
+            ET.SubElement(provision, "Text").text = notice
+        content = ET.tostring(root, encoding="utf-8")
         return FetchResult(version_label=f"consolidated:{self.version}",
-                           artifacts=[Artifact(name="doc.txt", content=body.encode(), content_type="text/plain")], tree=tree)
-
-    def expected_text(self, artifacts):
-        return ["Section 1"] + [p for t in self.provisions.values() for p in t.split("\n")]
+                           artifacts=[Artifact(name="doc.xml", content=content, content_type="application/xml")],
+                           tree=parse(content, self.source_key, self.meta().adapter))
 
 
 def _ingest_notices(engine, tmp_path, notices=NOTICES, version="2026-01-01"):
     store = pipeline.LocalStore(tmp_path / "lake")
-    return pipeline.ingest(engine, EnforcementAdapter(notices, version, source_key=ENF_SOURCE), store, gateway=Gateway(engine, FakeProvider()))
+    result = pipeline.ingest(engine, EnforcementAdapter(notices, version, source_key=ENF_SOURCE), store, gateway=Gateway(engine, FakeProvider()))
+    assert result["status"] in {"added", "amended", "unchanged"}, result
+    assert result["original_verification"]["verified"]
+    return result
 
 
 def _stack(engine, tmp_path):

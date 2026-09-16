@@ -153,45 +153,8 @@ class UkLegislationAdapter:
         if doc_el is None:
             raise ValueError(f"no Secondary/Primary/EURetained element in CLML for {self.doc}")
 
-        tree: list[DocNode] = []
-        prelims = doc_el.find(f"{CLML}SecondaryPrelims")
-        if prelims is None:
-            prelims = doc_el.find(f"{CLML}PrimaryPrelims")
-        if prelims is not None:
-            tree.extend(self._prelims_nodes(prelims))
-        eu_prelims = doc_el.find(f"{CLML}EUPrelims")
-        if eu_prelims is not None:
-            tree.extend(self._eu_prelims_nodes(eu_prelims))
-        body = doc_el.find(f"{CLML}Body")
-        if body is None:
-            body = doc_el.find(f"{CLML}EUBody")
-        if body is not None:
-            tree.extend(self._children(body))
-        schedules = doc_el.find(f"{CLML}Schedules")
-        if schedules is not None:
-            schedules_title = schedules.find(f"{CLML}Title")
-            if schedules_title is not None and _txt(schedules_title).strip():
-                tree.append(DocNode(node_type="heading", ref="schedules", raw_text=_txt(schedules_title)))
-            tree.extend(self._children(schedules))
-        attachments = doc_el.find(f"{CLML}Attachments")
-        if attachments is not None:
-            tree.extend(self._children(attachments))
-        signed = doc_el.find(f"{CLML}SignedSection")
-        if signed is not None:
-            tree.append(self._node(signed, "signature", ref=signed.get("id") or "signed"))
-
-        # Consolidations occasionally repeat an id (substituted/duplicated
-        # provisions). Keep the first occurrence addressable; blank the rest —
-        # the text stays, the fidelity invariant (unique refs) holds.
-        seen_refs: set[str] = set()
-        for top in tree:
-            for node in top.walk():
-                if not node.ref:
-                    continue
-                if node.ref in seen_refs:
-                    node.ref = ""
-                else:
-                    seen_refs.add(node.ref)
+        from app.clhear.l1.adapters.xml_document import parse
+        tree = parse(content, self.meta().source_key, "uk_legislation")
 
         from datetime import date as _date
 
@@ -208,29 +171,10 @@ class UkLegislationAdapter:
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
-        """Fidelity oracle: every text piece of the legal document sections
-        (prelims, body, schedules, signature) in order. Declared exclusions:
-        Metadata, Commentaries, ExplanatoryNotes (annotation apparatus, not
-        the enacted text)."""
-        spans: list[str] = []
-        for artifact in artifacts:
-            root = ET.fromstring(artifact.content)
-            doc_el = root.find(f"{CLML}Secondary")
-            if doc_el is None:
-                doc_el = root.find(f"{CLML}Primary")
-            if doc_el is None:
-                doc_el = root.find(f"{CLML}EURetained")
-            if doc_el is None:
-                continue
-            for tag in (
-                "SecondaryPrelims", "PrimaryPrelims", "EUPrelims", "EUPreamble",
-                "Body", "EUBody", "Schedules", "Attachments", "SignedSection",
-            ):
-                section = doc_el.find(f"{CLML}{tag}")
-                if section is None:
-                    continue
-                spans.extend(piece for piece in section.itertext() if piece.strip())
-        return spans
+        from app.clhear.l1.adapters.xml_document import original_records
+        return [row[7] for part, artifact in enumerate(artifacts, 1)
+                for row in original_records(artifact.content, self.meta().source_key, "uk_legislation", part)
+                if row[7].strip()]
 
     def _prelims_nodes(self, prelims: ET.Element) -> list[DocNode]:
         """SecondaryPrelims -> title banner + dates + enacting preamble."""

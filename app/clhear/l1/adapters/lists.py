@@ -8,6 +8,7 @@ import csv
 import io
 import xml.etree.ElementTree as ET
 from datetime import date
+import hashlib
 
 from app.clhear.l1 import http
 from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
@@ -205,36 +206,18 @@ class ListsAdapter:
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
         content = http.get(self._url, timeout=120.0)
         artifact = Artifact(name=self._name, content=content, content_type=self._ctype)
-        if self._kind == "ofsi" or self._name.endswith(".csv"):
-            tree = _parse_ofsi(content, self._source_key)
-        else:
-            root = ET.fromstring(content)
-            if self._kind == "ofac":
-                tree = _parse_ofac(root, self._source_key)
-            elif self._kind == "un":
-                tree = _parse_un(root, self._source_key)
-            elif self._kind == "eu":
-                tree = _parse_eu(root, self._source_key)
-            else:
-                tree = _parse_xml_generic(root, self._source_key, self._title)
-            if tree and not tree[0].children:
-                tree = _parse_xml_generic(root, self._source_key, self._title)
-        today = date.today()
+        from app.clhear.l1.adapters.list_records import parse_records
+        tree = parse_records(content, self._name, self._source_key, self._title)
         return FetchResult(
-            version_label=f"consolidated:{today.isoformat()}",
+            version_label=f"consolidated:acquired-sha256-{hashlib.sha256(content).hexdigest()}",
             artifacts=[artifact],
             tree=tree,
             version_kind="consolidated",
-            as_of_date=today,
+            as_of_date=None,
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
-        spans: list[str] = []
-        for artifact in artifacts:
-            if artifact.name.endswith(".csv") or b"," in artifact.content[:200]:
-                text = artifact.content.decode("utf-8-sig", errors="replace")
-                spans.extend(line.strip() for line in text.splitlines() if line.strip())
-            else:
-                root = ET.fromstring(artifact.content)
-                spans.extend(piece.strip() for piece in root.itertext() if piece.strip())
-        return spans
+        from app.clhear.l1.adapters.list_records import original_records
+        return [field["value"] for artifact in artifacts
+                for record in original_records(artifact.content, artifact.name, self._source_key)
+                for field in record["fields"] if field["value"].strip()]

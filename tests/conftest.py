@@ -12,6 +12,8 @@ def engine(tmp_path, monkeypatch):
     monkeypatch.setenv("CLHEAR_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
     monkeypatch.setenv("CLHEAR_PUBLIC_REPO_DIR", str(tmp_path / "clhear-public"))
     monkeypatch.setenv("CLHEAR_MAINTAINERS", "avner@reg42.ai,maintainer@reg42.ai")
+    monkeypatch.setenv("CLHEAR_SESSION_SECRET", "test-only-session-signing-secret")
+    monkeypatch.setenv("CLHEAR_APP_KEYS", "os-dev:dev-os-key,safeluance-dev:dev-sl-key")
     get_settings.cache_clear()
     engine = make_engine(get_settings().database_url)
     run_migrations(engine)

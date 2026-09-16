@@ -257,17 +257,15 @@ def test_l7_narrate_and_eval(engine):
     assert run_suite(engine, "l7_number_echo")["passed"] is True
 
 
-def test_l8_k_anonymity_and_synthetic_label(engine):
+def test_l8_k_anonymity_without_manufactured_peers(engine):
     out = refresh_cohorts(engine)
-    assert out["synthetic"] == 1
+    assert out["synthetic"] == 0
     ok, detail = k_anonymity_ok(engine)
     assert ok
     assert run_suite(engine, "l8_k_anonymity")["passed"] is True
     from app.clhear.l8.cohorts import list_cohorts
 
-    demo = next(c for c in list_cohorts(engine) if c["synthetic"])
-    assert "Synthetic" in demo["label"]
-    assert demo["published"] is True
+    assert all(not row["synthetic"] and not row["published"] for row in list_cohorts(engine))
 
 
 def test_governance_correction_loop(engine):

@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine = get_engine()
-    if get_settings().clhear_restricted_access:
+    if get_settings().clhear_restricted_access or get_settings().clhear_preview_mode:
         # The system worker owns migrations and corpus writes. A viewer must not
         # manufacture output or mutate the corpus merely because it starts.
         yield
@@ -33,6 +33,10 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    if get_settings().clhear_preview_mode:
+        from app.clhear.preview import validate_configuration
+
+        validate_configuration(get_settings())
     app = FastAPI(title="CLHEAR", lifespan=lifespan)
     from app.clhear.review_access import RestrictedAccessMiddleware, router as review_access_router
 
@@ -41,10 +45,12 @@ def create_app() -> FastAPI:
     if get_settings().reg42_clhear_enabled:
         from app.clhear.platform import errors
 
-        errors.init(component="web")  # GlitchTip via SENTRY_DSN; inert when unset
+        if not get_settings().clhear_preview_mode:
+            errors.init(component="web")  # GlitchTip via SENTRY_DSN; inert when unset
         from app.clhear.platform.audit_middleware import AuditMiddleware
 
-        app.add_middleware(AuditMiddleware)  # HLD v2 §7.1: actor binding + every mutating request audited
+        if not get_settings().clhear_preview_mode:
+            app.add_middleware(AuditMiddleware)  # HLD v2 §7.1: actor binding + every mutating request audited
 
         from app.clhear.accounts import router as auth_router
         from app.clhear.app_api import router as app_api_router
@@ -102,6 +108,15 @@ def create_app() -> FastAPI:
         app.include_router(build_router)
         app.include_router(layers_router)  # serves "/stack" — the Stack UI
 
+    if get_settings().clhear_preview_mode:
+        from app.clhear.preview import PreviewMiddleware, router as preview_router
+
+        app.include_router(preview_router)
+        preview_routes = [*review_access_router.routes, *preview_router.routes]
+        if get_settings().reg42_clhear_enabled:
+            for included in (router, l1_router, layers_router, ai_router, auth_router):
+                preview_routes.extend(included.routes)
+        app.add_middleware(PreviewMiddleware, routes=preview_routes)
     return app
 
 

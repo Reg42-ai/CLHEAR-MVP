@@ -4,7 +4,6 @@ coverage scorecard reflects ingested state."""
 from app.clhear.l1 import pipeline, starter_corpus
 from app.clhear.l1.registry_etoro import S
 from app.clhear.l1.starter_corpus import STARTER_CORPUS, TIER_A_ADAPTERS, coverage, starter_keys, starter_plan
-from tests.test_l1_synthetic_amendment import V1, SyntheticAdapter
 
 HLD_INSTRUMENTS = {
     "MiFID II", "MiFIR", "MAR", "MLRs 2017 family", "FSMA 2000 / RAO / FPO", "FCA Handbook (selected)",
@@ -51,14 +50,21 @@ def test_tier_a_instruments_use_tier_a_adapters():
             assert adapter in TIER_A_ADAPTERS, (key, adapter)
 
 
-def test_coverage_scorecard_tracks_ingested_sources(engine, tmp_path):
+def test_coverage_scorecard_tracks_ingested_sources(engine, tmp_path, monkeypatch):
     empty = coverage(engine)
     assert empty["ingested"] == 0 and empty["share"] == 0.0
     assert {i["instrument"] for i in empty["instruments"]} >= HLD_INSTRUMENTS
 
     # Ingest a source under one of the starter keys: coverage moves.
     key = "fca/handbook/DISP"
-    pipeline.ingest(engine, SyntheticAdapter(V1, "2026-01-01", adapter="fca_handbook", source_key=key), pipeline.LocalStore(tmp_path / "lake"))
+    from app.clhear.l1 import http
+    from app.clhear.l1.adapters.official_html import OfficialHtmlAdapter
+    body = b"<main><h1>Authored scorecard fixture</h1><p>This fixture tests ingestion counts in a disposable test database.</p></main>"
+    monkeypatch.setattr(http, "get", lambda url: body)
+    adapter = OfficialHtmlAdapter(source_key=key, title="Authored scorecard fixture",
+                                  url="https://example.invalid/scorecard", adapter="fca_handbook")
+    result = pipeline.ingest(engine, adapter, pipeline.LocalStore(tmp_path / "lake"))
+    assert result["status"] == "added"
     after = coverage(engine)
     assert after["ingested"] == 1
     fca = next(i for i in after["instruments"] if i["instrument"] == "FCA Handbook (selected)")

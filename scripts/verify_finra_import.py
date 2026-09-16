@@ -180,8 +180,18 @@ def verify_roundtrip(engine, snapshot: Snapshot, artifact_root: Path) -> dict:
                   rights_basis=source["rights_basis"], artifact_uri=version["s3_uri"],
                   retrieved_at=version["retrieved_at"], as_of_date=version["as_of_date"],
                   effective_date=version["effective_date"])
-    if version["content_hash"] != snapshot.provenance["sha256"]:
+    logical_hash = pipeline.artifact_set_hash(snapshot.result.artifacts)
+    # The source hash frames artifact identities as well as bytes. Earlier
+    # single-file versions stored the raw SHA; audit them explicitly without
+    # rewriting their version IDs, original files or acquisition timestamps.
+    if version["content_hash"] == logical_hash:
+        result["content_hash_scheme"] = "artifact-set-v2"
+    elif len(snapshot.result.artifacts) == 1 and version["content_hash"] == snapshot.provenance["sha256"]:
+        result["content_hash_scheme"] = "legacy-single-artifact-sha256"
+    else:
+        result["content_hash_scheme"] = "unrecognized"
         errors.append("stored source content_hash differs from the supplied artifact")
+    result["expected_artifact_set_hash"] = logical_hash
     if version["status"] != "in_force":
         errors.append("latest stored version is not in_force")
     if snapshot.provenance["retrieved_at"]:
@@ -256,8 +266,9 @@ def verify_roundtrip(engine, snapshot: Snapshot, artifact_root: Path) -> dict:
 
     uri = urlparse(version["s3_uri"] or "")
     result["archived_bytes_checked"] = False
-    if uri.scheme == "file":
+    if uri.scheme == "file" and not uri.netloc:
         archived = Path(unquote(uri.path)).resolve()
+        artifact_root = artifact_root.resolve()
         if not archived.is_relative_to(artifact_root):
             errors.append("local archived artifact is outside the selected artifact directory")
         elif not archived.is_file():
@@ -266,6 +277,11 @@ def verify_roundtrip(engine, snapshot: Snapshot, artifact_root: Path) -> dict:
             result["archived_bytes_checked"] = True
             if digest(archived.read_bytes()) != snapshot.provenance["sha256"]:
                 errors.append("archived local artifact bytes differ from the supplied snapshot")
+        if result["content_hash_scheme"] == "artifact-set-v2":
+            expected_path = (artifact_root / "restricted" / key / f"sha256-{logical_hash}" /
+                             snapshot.provenance["sha256"] / snapshot.result.artifacts[0].name).resolve()
+            if archived != expected_path:
+                errors.append("archived artifact path differs from its framed source and byte identities")
     else:
         result["archive_note"] = "Remote or absent archived artifact was not fetched; archived bytes are unverified."
     result["canonical_characters"] = len(canonical)
@@ -284,7 +300,7 @@ def preserve_acquisition_time(engine, snapshot: Snapshot) -> None:
         updated = conn.execute(models.source_versions.update().where(
             models.source_versions.c.source_id == source_id,
             models.source_versions.c.version_label == snapshot.adapter.version_label,
-            models.source_versions.c.content_hash == snapshot.provenance["sha256"],
+            models.source_versions.c.content_hash == pipeline.artifact_set_hash(snapshot.result.artifacts),
         ).values(retrieved_at=datetime.fromisoformat(snapshot.provenance["retrieved_at"]).astimezone(timezone.utc)))
         if updated.rowcount != 1:
             raise ValueError("could not bind acquisition time to exactly one newly imported version")

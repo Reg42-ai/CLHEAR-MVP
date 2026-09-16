@@ -1,4 +1,4 @@
-"""Fleet plan: every eToro-registry row has an adapter on the same verbatim path.
+"""Fleet plan: every source-registry row has an adapter on the same verbatim path.
 
 `wave1_adapters()` only instantiated entries with a `fetch` dict. `fleet_plan()`
 yields every `S` row (plus the NIST/FATCA starters that live outside `S`) so
@@ -6,7 +6,7 @@ the midnight worker never returns `ran: 0` and never leaves a source as
 watchlist-only.
 """
 from app.clhear.l1.adapters.base import Adapter, SourceMeta
-from app.clhear.l1.registry_etoro import S, source_meta
+from app.clhear.l1.source_registry import S, source_meta
 
 # Starters ingested via get_adapter (not every one is a row in S).
 STARTERS = {
@@ -45,16 +45,41 @@ def _url(entry: dict) -> str:
     return fetch.get("url") or entry.get("canonical_url") or ""
 
 
+class DeclarationGapAdapter:
+    """A visible expected discovery dependency; never acquire substitute text."""
+    def __init__(self, entry):
+        self.key = entry["adapter"]
+        self._meta = source_meta(entry)
+        self.declaration_gap = {"code": entry["fetch"]["blocked"],
+                                "source_role": entry.get("source_role", "reference"),
+                                "reason": "This declaration requires an identified original document before ingestion."}
+
+    def meta(self):
+        return self._meta
+
+    def fetch(self, since_version=None):
+        raise ValueError(self.declaration_gap["code"])
+
+
 def adapter_for(entry: dict) -> Adapter:
     """Instantiate the adapter that owns this registry row."""
     meta = source_meta(entry)
     fetch = entry.get("fetch") or {}
     key = entry["adapter"]
+    if fetch.get("blocked"):
+        return DeclarationGapAdapter(entry)
+    if fetch.get("document_type") == "publisher_publication":
+        from app.clhear.l1.adapters.publisher import GenericPublisherDocumentAdapter
+        return GenericPublisherDocumentAdapter(source_key=entry["key"], title=entry["name"], url=_url(entry),
+                                               meta=meta, adapter=key, expected_format=fetch.get("kind", "auto"))
     if key == "eur_lex":
         from app.clhear.l1.adapters.eur_lex import EurLexAdapter
 
         celex = fetch.get("celex") or entry["key"].split("/", 1)[-1]
         version = fetch.get("celex_version", celex)
+        if fetch.get("language"):
+            from app.clhear.l1.adapters.eur_lex_languages import EurLexLanguageAdapter
+            return EurLexLanguageAdapter(language=fetch["language"], celex=celex, celex_version=version, meta=meta)
         return EurLexAdapter(celex=celex, celex_version=version, meta=meta)
     if key == "uk_legislation":
         from app.clhear.l1.adapters.uk_legislation import UkLegislationAdapter
@@ -130,6 +155,9 @@ def _publisher_for(entry: dict, meta: SourceMeta, fetch: dict):
         return FcaHandbookAdapter(
             fetch.get("sourcebook", "PRIN"), chapters=fetch.get("chapters"), **common
         )
+    if key == "finra" and fetch.get("document_type") in {"publication", "attachment"}:
+        from app.clhear.l1.adapters.finra_document import FinraDocumentAdapter
+        return FinraDocumentAdapter(**common, document_type=fetch["document_type"])
     if key in {"sec_edgar", "finra"}:
         adapter = SecEdgarAdapter(channel=fetch.get("channel", "finra" if key == "finra" else "sec"), **common)
         adapter.key = key
@@ -156,6 +184,9 @@ def _govinfo_for(entry: dict, meta: SourceMeta, fetch: dict):
     from app.clhear.l1.adapters.govinfo_us import GovInfoEcfrAdapter, GovInfoUscAdapter
     from app.clhear.l1.adapters.official_html import OfficialHtmlAdapter
 
+    if fetch.get("kind") == "pdf":
+        from app.clhear.l1.adapters.pdf_docling import PdfOfficialAdapter
+        return PdfOfficialAdapter(source_key=entry["key"], title=entry["name"], url=_url(entry), adapter="govinfo_us", meta=meta)
     if fetch.get("usc_sections"):
         return GovInfoUscAdapter(
             title=str(fetch.get("usc_title", "15")),

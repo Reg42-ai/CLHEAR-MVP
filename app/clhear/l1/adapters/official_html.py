@@ -6,6 +6,7 @@ is a dumb visible-text walk of the same page after chrome (script/style/nav/
 header/footer) is stripped — it does not share the structural grouping logic.
 """
 from datetime import date
+import hashlib
 
 from bs4 import BeautifulSoup, Tag
 
@@ -106,81 +107,19 @@ class OfficialHtmlAdapter:
         content = http.get(self._url)
         artifact = Artifact(name="page.html", content=content, content_type="text/html")
         tree = self._parse(content)
-        today = date.today()
-        version_label = f"consolidated:{today.isoformat()}"
+        version_label = f"consolidated:acquired-sha256-{hashlib.sha256(content).hexdigest()}"
         return FetchResult(
             version_label=version_label,
             artifacts=[artifact],
             tree=tree,
             version_kind="consolidated",
-            as_of_date=today,
+            as_of_date=None,
         )
 
     def expected_text(self, artifacts: list[Artifact]) -> list[str]:
-        spans: list[str] = []
-        for artifact in artifacts:
-            soup = _strip_chrome(BeautifulSoup(artifact.content, "html.parser"))
-            spans.extend(_visible_strings(soup))
-        return spans
+        from app.clhear.l1.originals import html_text
+        return [html_text(artifact.content) for artifact in artifacts]
 
     def _parse(self, content: bytes) -> list[DocNode]:
-        soup = _strip_chrome(BeautifulSoup(content, "html.parser"))
-        title_el = soup.find("title") or soup.find("h1")
-        title_text = title_el.get_text(" ", strip=True) if title_el else self._title
-        root = DocNode(node_type="title", ref=self._source_key, heading=title_text)
-        current = root
-        seq = 0
-        seen: set[int] = set()
-        body = soup.body or soup
-        for el in body.find_all(list(_HEADING | _BLOCK)):
-            if id(el) in seen:
-                continue
-            text = el.get_text(" ", strip=True)
-            if not text:
-                continue
-            # Skip nested blocks already captured by an ancestor we emit.
-            ancestor = el.parent
-            skip = False
-            while ancestor is not None and ancestor is not body:
-                if isinstance(ancestor, Tag) and ancestor.name in _BLOCK and ancestor.get_text(" ", strip=True) == text:
-                    skip = True
-                    break
-                ancestor = ancestor.parent
-            if skip:
-                continue
-            seq += 1
-            seen.add(id(el))
-            if el.name in _HEADING:
-                node = DocNode(
-                    node_type="section",
-                    ref=f"{self._source_key}/s{seq}",
-                    heading=text,
-                    source_fragment=str(el)[:2000],
-                )
-                root.children.append(node)
-                current = node
-            else:
-                node = DocNode(
-                    node_type="paragraph",
-                    raw_text=text,
-                    source_fragment=str(el)[:2000],
-                )
-                current.children.append(node)
-        leftover = []
-        haystack = " ".join(
-            piece for n in root.walk() for piece in (n.heading, n.raw_text) if piece
-        )
-        for span in _visible_strings(soup):
-            if span not in haystack:
-                leftover.append(span)
-                haystack += " " + span
-        if leftover:
-            note = DocNode(
-                node_type="note",
-                ref=f"{self._source_key}/visible",
-                heading="Visible text not captured as a heading or paragraph",
-            )
-            for span in leftover:
-                note.children.append(DocNode(node_type="paragraph", raw_text=span))
-            root.children.append(note)
-        return [root]
+        from app.clhear.l1.adapters.html_document import parse
+        return parse(content, self._source_key)

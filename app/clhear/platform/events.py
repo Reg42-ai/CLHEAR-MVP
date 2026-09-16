@@ -4,13 +4,14 @@ Writers insert into l0_platform.events in the SAME transaction as their data
 change; the relay ships unrelayed rows to SQS and stamps relayed_at. Nothing
 publishes to SQS directly. Consumers must be idempotent on event_id.
 """
+import hashlib
 import json
 import logging
 import time
 import uuid
 from collections import deque
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Literal, Protocol
 
 import sqlalchemy as sa
 from pydantic import BaseModel, Field
@@ -21,6 +22,9 @@ from app.clhear.models import events
 log = logging.getLogger("clhear.events")
 
 ENVELOPE_SCHEMA_VERSION = 1
+# The live queues retain the 256 KiB limit. Leave room for EventBridge's
+# routing fields as well; a larger cloud quota is not a correctness strategy.
+MAX_INLINE_ENVELOPE_BYTES = 240 * 1024
 
 
 class Envelope(BaseModel):
@@ -36,6 +40,58 @@ class Envelope(BaseModel):
     schema_version: int = ENVELOPE_SCHEMA_VERSION
     producer: str
     ts: str
+
+
+class OutboxReference(BaseModel):
+    """Transport-only indirection; the original event stays in the outbox."""
+
+    model_config = {"frozen": True, "extra": "forbid"}
+    transport_schema: Literal["clhear.outbox-reference.v1"] = "clhear.outbox-reference.v1"
+    event_id: uuid.UUID
+    layer: str = Field(min_length=1, max_length=256)
+    kind: str = Field(min_length=1, max_length=256)
+    envelope_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+def parse_transport(body: str) -> Envelope | OutboxReference:
+    value = json.loads(body)
+    if isinstance(value, dict) and "transport_schema" in value:
+        return OutboxReference.model_validate(value)
+    return Envelope.model_validate(value)
+
+
+def _envelope_hash(envelope: Envelope) -> str:
+    value = envelope.model_dump(mode="json")
+    # JSONB can reorder object keys, and PostgreSQL sessions can render a
+    # timestamptz in different zones. Lists and all payload strings stay exact.
+    stamp = datetime.fromisoformat(envelope.ts.replace("Z", "+00:00"))
+    value["ts"] = stamp.replace(tzinfo=stamp.tzinfo or timezone.utc).astimezone(timezone.utc).isoformat()
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def transport_body(envelope: Envelope) -> str:
+    body = envelope.model_dump_json()
+    if len(body.encode("utf-8")) <= MAX_INLINE_ENVELOPE_BYTES:
+        return body
+    return OutboxReference(event_id=envelope.event_id, layer=envelope.layer, kind=envelope.kind,
+                           envelope_sha256=_envelope_hash(envelope)).model_dump_json()
+
+
+def resolve_envelope(engine: Engine, body: str) -> Envelope:
+    """Resolve one local durable event, then let normal worker gates run."""
+    wire = parse_transport(body)
+    if isinstance(wire, Envelope):
+        return wire
+    with engine.connect() as conn:
+        row = conn.execute(sa.select(events).where(events.c.event_id == str(wire.event_id))).one_or_none()
+    if row is None or row.created_at is None:
+        raise ValueError("Referenced outbox event or its original timestamp is unavailable")
+    envelope = _row_to_envelope(row)
+    if (envelope.layer != wire.layer or envelope.kind != wire.kind
+            or _envelope_hash(envelope) != wire.envelope_sha256):
+        raise ValueError("Referenced outbox event does not match its immutable transport identity")
+    return envelope
 
 
 def emit(
@@ -193,7 +249,11 @@ def relay_once(engine: Engine, transport: Transport, batch_size: int = 100) -> i
         ).all()
         for row in rows:
             envelope = _row_to_envelope(row)
-            transport.send(envelope.model_dump_json())
+            # Do not invent a timestamp for a reference to a malformed legacy
+            # row: it could never resolve to the same immutable hash later.
+            if row.created_at is None:
+                raise ValueError("Outbox event is missing its original timestamp")
+            transport.send(transport_body(envelope))
             conn.execute(
                 events.update()
                 .where(events.c.id == row.id)

@@ -1,5 +1,6 @@
 """Clause understanding layer + stage dictionary + short names tests."""
 import json
+import xml.etree.ElementTree as ET
 
 import pytest
 import sqlalchemy as sa
@@ -8,7 +9,7 @@ from app.clhear.l1 import annotate, pipeline
 from app.clhear.l1.adapters import ADAPTER_KEYS, get_adapter
 from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
 from app.clhear.l1.adapters.uk_legislation import UkLegislationAdapter
-from app.clhear.l1.models import STAGE_INFO, clause_annotations
+from app.clhear.l1.models import STAGE_INFO, clause_annotations, clauses
 from app.clhear.models import llm_calls
 from app.clhear.platform.gateway import FakeProvider, Gateway
 
@@ -62,7 +63,7 @@ class _TinyAdapter:
             jurisdiction="XX",
             license="open",
             canonical_url="https://example.invalid",
-            adapter="tiny",
+            adapter="uk_legislation",
             short_name="Tiny",
             about="stub",
             topics=["stub-topic"],
@@ -75,15 +76,22 @@ class _TinyAdapter:
             "r2": "In this regulation, definitions: 'transaction' has the meaning of any transfer.",
             "r3": "A person must not disclose the report to the customer.",
         }
+        from app.clhear.l1.adapters.xml_document import parse
+        root = ET.Element("Legislation")
+        body = ET.SubElement(ET.SubElement(root, "Secondary"), "Body")
+        for ref, text in texts.items():
+            ET.SubElement(ET.SubElement(body, "P1", id=ref), "Text").text = text
+        content = ET.tostring(root, encoding="utf-8")
         return FetchResult(
             version_label="edition:1",
-            artifacts=[Artifact(name="doc.txt", content="\n".join(texts.values()).encode())],
-            tree=[DocNode(node_type="provision", ref=ref, raw_text=text) for ref, text in texts.items()],
+            artifacts=[Artifact(name="doc.xml", content=content, content_type="application/xml")],
+            tree=parse(content, "tiny/one", "uk_legislation"),
             version_kind="edition",
         )
 
     def expected_text(self, artifacts):
-        return artifacts[0].content.decode().split("\n")
+        from app.clhear.l1.adapters.xml_document import original_records
+        return [row[7] for row in original_records(artifacts[0].content, "tiny/one", "uk_legislation") if row[7]]
 
 
 def test_llm_explainer_job_offline(engine, client, tmp_path):
@@ -121,7 +129,8 @@ def test_llm_explainer_job_offline(engine, client, tmp_path):
     assert r1["annotation"]["origin"] == "llm"
     assert "five years" in r1["annotation"]["summary"]
     # ...and the verbatim text is untouched.
-    assert r1["raw_text"].startswith("A relevant person must keep records")
+    with engine.connect() as conn:
+        assert conn.execute(sa.select(clauses.c.text).where(clauses.c.ref == "r1")).scalar_one().startswith("A relevant person must keep records")
 
 
 def test_heuristic_classifier_units():

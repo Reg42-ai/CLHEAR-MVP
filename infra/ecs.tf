@@ -1,5 +1,6 @@
 # Per-layer fleets (HLD v2 §3): one Fargate Spot task definition + service per
-# layer, each consuming its own SQS queue, min 0 / scale on queue depth.
+# layer, each consuming its own SQS queue. L0/L1 retain one worker; other
+# layers start at zero and scale on queue depth.
 # Inference is remote (Reg42 Infer on Bedrock, I6) — no model runtime here.
 locals {
   create_cluster = var.existing_ecs_cluster_arn == ""
@@ -125,7 +126,9 @@ resource "aws_ecs_service" "fleet" {
   cluster         = local.cluster_arn
   task_definition = aws_ecs_task_definition.fleet[each.key].arn
   # L0 relays the database outbox, which cannot wake an SQS-driven autoscaler.
-  desired_count = each.key == "l0" ? 1 : 0
+  # L1 must stay alive while a long-running import is in flight: its message is
+  # invisible in SQS, so zero visible messages does not mean the worker is idle.
+  desired_count = contains(["l0", "l1"], each.key) ? 1 : 0
 
   capacity_provider_strategy {
     capacity_provider = "FARGATE_SPOT"
@@ -148,7 +151,7 @@ resource "aws_appautoscaling_target" "fleet" {
   service_namespace  = "ecs"
   resource_id        = "service/${split("/", local.cluster_arn)[1]}/${aws_ecs_service.fleet[each.key].name}"
   scalable_dimension = "ecs:service:DesiredCount"
-  min_capacity       = each.key == "l0" ? 1 : 0
+  min_capacity       = contains(["l0", "l1"], each.key) ? 1 : 0
   max_capacity       = each.value.max
 }
 

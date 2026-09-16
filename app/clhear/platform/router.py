@@ -83,6 +83,12 @@ class TaskSpec:
 
 
 TASKS: dict[str, TaskSpec] = {
+    "l1.translate": TaskSpec(
+        "l1.translate", "structured_drafting", "high", "high", 0.95, "l1.translate", "L1", task_class="l1_translate",
+        description="Separate complete English view, never a verbatim source"),
+    "l1.translation_review": TaskSpec(
+        "l1.translation_review", "judging", "high", "high", 0.95, "l1.translation_review", "L1", task_class="judge",
+        description="Independent bilingual evaluation of every aligned translation segment"),
     "dummy.triage": TaskSpec(
         "dummy.triage", "classification", "low", "low", 0.80, "dummy", "L0", task_class="judge",
         latency_tolerance="interactive", description="P0 rehearsal classification",
@@ -496,6 +502,7 @@ class Router:
         required_keys: list[str] | None = None,
         json_schema: dict | None = None,
         max_retries: int = 3,
+        data_class: str | None = None,
     ) -> LlmResult:
         task = TASKS[task_id]
         decision = self.decide(task_id)
@@ -531,6 +538,7 @@ class Router:
             routing_reason=decision.reason,
             quality_at_decision=decision.quality,
             task_class=decision.task_class,
+            data_class=data_class,
         )
 
     def call(self, *, fleet: str, model: str, prompt: str, **kwargs) -> LlmResult:
@@ -539,7 +547,7 @@ class Router:
             if spec.fleet == fleet:
                 kwargs.pop("model", None)
                 return self.run(spec.id, prompt=prompt, **{k: v for k, v in kwargs.items() if k in {
-                    "system", "max_tokens", "required_keys", "json_schema", "max_retries",
+                    "system", "max_tokens", "required_keys", "json_schema", "max_retries", "data_class",
                 }})
         return self.gateway.call(fleet=fleet, model=model, prompt=prompt, **kwargs)
 
@@ -553,12 +561,12 @@ def complete(llm: Any, task_id: str, **kwargs) -> LlmResult:
     kwargs.pop("fleet", None)
     model = kwargs.pop("model", None)
     if is_router(llm):
-        allowed = {k: kwargs[k] for k in ("prompt", "system", "max_tokens", "required_keys", "json_schema", "max_retries") if k in kwargs}
+        allowed = {k: kwargs[k] for k in ("prompt", "system", "max_tokens", "required_keys", "json_schema", "max_retries", "data_class") if k in kwargs}
         return llm.run(task_id, **allowed)
     task = TASKS.get(task_id)
     fleet = task.fleet if task else "unknown"
     model = model or default_ladder(task.task_class if task else "judge")[0]
-    return llm.call(fleet=fleet, model=model, **kwargs)
+    return llm.call(fleet=fleet, model=model, task_class=task.task_class if task else None, task_id=task_id, **kwargs)
 
 
 def last_decisions(engine: Engine, limit: int = 40) -> list[dict]:

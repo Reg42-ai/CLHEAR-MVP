@@ -96,8 +96,8 @@ def test_recovery_restores_original_capacity_after_worker_phases_and_keeps_obser
     assert [args["overrides"]["containerOverrides"][0]["command"][1] for args in launches] == ["bootstrap", "verify", "publish"]
     for fleet in FLEETS:
         expected = plan["fleets"][fleet]
-        assert cloud.services[fleet]["desiredCount"] == (max(1, expected["desired_count"]) if fleet == "l0" else expected["desired_count"])
-        assert cloud.scaling[fleet]["MinCapacity"] == (max(1, expected["min_capacity"]) if fleet == "l0" else expected["min_capacity"])
+        assert cloud.services[fleet]["desiredCount"] == (max(1, expected["desired_count"]) if fleet in {"l0", "l1"} else expected["desired_count"])
+        assert cloud.scaling[fleet]["MinCapacity"] == (max(1, expected["min_capacity"]) if fleet in {"l0", "l1"} else expected["min_capacity"])
         assert cloud.scaling[fleet]["MaxCapacity"] == expected["max_capacity"]
         assert cloud.scaling[fleet]["SuspendedState"] == expected["suspended_state"]
         observed = deployer.state["fleets"][fleet]

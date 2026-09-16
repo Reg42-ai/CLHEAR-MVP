@@ -12,6 +12,7 @@ PyYAML>=6.0
 beautifulsoup4>=4.12
 mangum>=0.17
 pypdf>=5.0
+pdfminer.six>=20260107  # independent PDF text/layout verification in L1
 PyJWT[crypto]>=2.8    # Cognito id-token verification (HLD v2 §5 identity)
 graphql-core>=3.2     # /graphql over the open layers (standard §8); schema in app/clhear/interop/graphql_api.py
 sentry-sdk>=2.0       # error tracking to self-hosted GlitchTip (HLD v2 §3 observability); inert without SENTRY_DSN

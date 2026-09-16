@@ -26,6 +26,18 @@ tasks:
       - mistral.mistral-large-3-v1:0  # origin=EU
       - anthropic.claude-sonnet-5-v1:0  # origin=US
       - anthropic.claude-opus-5-v1:0  # origin=US
+  l1_translate:
+    layer: L1
+    shape: structured_drafting
+    derivation: true
+    quality_threshold: 0.95
+    data_class_default: restricted
+    description: 'Complete aligned English view; non-authoritative, independent bilingual evaluation required'
+    ladder:
+      - openai.gpt-oss-120b-1:0  # origin=US
+      - mistral.mistral-large-3-v1:0  # origin=EU
+      - anthropic.claude-sonnet-5-v1:0  # origin=US
+      - anthropic.claude-opus-5-v1:0  # origin=US
   l2_extract:
     layer: L2
     shape: extraction

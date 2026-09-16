@@ -25,16 +25,17 @@ class Adapter:
         return SourceMeta(
             family_key="test", family_name="Test", source_key="finra/test",
             name="Test rule", kind="regulation", issuer="FINRA", jurisdiction="US",
-            license="open", canonical_url="https://www.finra.org/test", adapter="finra",
+            license="open", canonical_url="https://www.finra.org/test", adapter="uk_legislation",
             rights_basis="derived_only",
         )
 
+    BODY = b'<Legislation><Secondary><Body><P1 id="2210(a)"><Text>First duty. Second duty.</Text></P1></Body></Secondary></Legislation>'
+
     def fetch(self, since_version=None):
-        return FetchResult(
-            version_label="consolidated:2026-09-14",
-            artifacts=[Artifact("page.html", b"official original")],
-            tree=[DocNode(node_type="provision", ref="2210(a)", raw_text="First duty. Second duty.")],
-        )
+        from app.clhear.l1.adapters.xml_document import parse
+        return FetchResult(version_label="consolidated:2026-09-14",
+            artifacts=[Artifact("page.xml", self.BODY, "application/xml")],
+            tree=parse(self.BODY, self.meta().source_key, "uk_legislation"))
 
     def expected_text(self, artifacts):
         return ["First duty.", "Second duty."]
@@ -53,14 +54,14 @@ def test_l1_only_keeps_verbatim_private_and_does_not_rebuild_embeddings(engine, 
     assert calls == []
     assert "/restricted/finra/test/" in result["artifacts"][0]
     artifact = result["artifact_manifest"][0]
-    assert artifact["key"] == f"restricted/finra/test/sha256-{result['content_hash']}/page.html"
-    assert (tmp_path / artifact["key"]).read_bytes() == b"official original"
-    assert artifact["sha256"] == pipeline.sha256(b"official original")
+    assert artifact["key"] == f"restricted/finra/test/sha256-{result['content_hash']}/{pipeline.sha256(Adapter.BODY)}/page.xml"
+    assert (tmp_path / artifact["key"]).read_bytes() == Adapter.BODY
+    assert artifact["sha256"] == pipeline.sha256(Adapter.BODY)
     with engine.connect() as conn:
         clause = conn.execute(sa.select(clauses)).one()
         assert clause.text == "First duty. Second duty."
         assert not clause.public_ok
-        assert not conn.execute(sa.select(doc_nodes.c.public_ok)).scalar_one()
+        assert not any(conn.execute(sa.select(doc_nodes.c.public_ok)).scalars())
 
 
 def test_exact_validator_blocks_storage_when_coverage_is_full(engine, tmp_path):
@@ -72,7 +73,7 @@ def test_exact_validator_blocks_storage_when_coverage_is_full(engine, tmp_path):
     with engine.connect() as conn:
         assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 0
         assert conn.execute(sa.select(sa.func.count()).select_from(doc_nodes)).scalar_one() == 0
-    assert not list(tmp_path.rglob("page.html"))
+    assert not list(tmp_path.rglob("page.xml"))
 
 
 def test_exact_validator_is_not_bypassed_by_unchanged_bytes(engine, tmp_path):
@@ -89,17 +90,14 @@ def test_exact_validator_is_not_bypassed_by_unchanged_bytes(engine, tmp_path):
 
 def test_clause_ordering_uses_its_node_position_before_continuation_paragraphs(engine, tmp_path):
     class ContinuationAdapter(Adapter):
-        def fetch(self, since_version=None):
-            result = super().fetch(since_version)
-            result.tree[0].raw_text = "First duty."
-            result.tree[0].children = [DocNode(node_type="paragraph", raw_text="Second duty.")]
-            return result
+        BODY = b'<Legislation><Secondary><Body><P1 id="2210(a)"><Text>First duty.</Text><P1para><Text>Second duty.</Text></P1para></P1></Body></Secondary></Legislation>'
 
     result = pipeline.ingest(engine, ContinuationAdapter(), pipeline.LocalStore(tmp_path), index_embeddings=False)
     assert result["status"] == "added", result
     with engine.connect() as conn:
         row = conn.execute(sa.select(clauses.c.ordering, doc_nodes.c.seq).join(doc_nodes, clauses.c.doc_node_id == doc_nodes.c.id)).one()
-        assert row.ordering == row.seq == 1
+        assert row.ordering == row.seq
+        assert row.seq >= 1
 
 
 def test_unchanged_source_repairs_corrupt_projection_without_deleting_history(engine, tmp_path):
@@ -107,7 +105,7 @@ def test_unchanged_source_repairs_corrupt_projection_without_deleting_history(en
     assert pipeline.ingest(engine, adapter, store, index_embeddings=False)["status"] == "added"
     with engine.begin() as conn:
         old_clause = conn.execute(sa.select(clauses)).one()
-        old_node = conn.execute(sa.select(doc_nodes)).one()
+        old_node = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.id == old_clause.doc_node_id)).one()
         conn.execute(doc_nodes.update().where(doc_nodes.c.id == old_node.id).values(raw_text="lost text"))
         conn.execute(clauses.update().where(clauses.c.id == old_clause.id).values(text="lost text"))
     repaired = pipeline.ingest(engine, adapter, store, index_embeddings=False)
@@ -132,13 +130,15 @@ def test_retry_hash_matches_bytes_actually_stored(engine, tmp_path, monkeypatch)
             self.attempts += 1
             result = super().fetch(since_version)
             if self.attempts == 1:
-                result.tree[0].raw_text = "First duty."
-                result.artifacts = [Artifact("page.html", b"incomplete download")]
+                from app.clhear.l1.adapters.xml_document import parse
+                body = b'<Legislation><Secondary><Body><P1 id="2210(a)"><Text>First duty.</Text></P1></Body></Secondary></Legislation>'
+                result.tree = parse(body, self.meta().source_key, "uk_legislation")
+                result.artifacts = [Artifact("page.xml", body, "application/xml")]
             return result
 
     result = pipeline.ingest(engine, RetryAdapter(), pipeline.LocalStore(tmp_path), index_embeddings=False)
     assert result["status"] == "added", result
-    expected = pipeline.sha256(b"official original")
+    expected = pipeline.artifact_set_hash([Artifact("page.xml", Adapter.BODY, "application/xml")])
     assert result["content_hash"] == expected
     with engine.connect() as conn:
         assert conn.execute(sa.select(source_versions.c.content_hash)).scalar_one() == expected

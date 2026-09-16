@@ -53,6 +53,11 @@ class LlmResult:
     input_tokens: int
     output_tokens: int
     cost_usd: float
+    # Empty means unreported, never inferred from the requested model/config.
+    model_reported: bool = False
+    finish_reason: str | None = None
+    request_id: str | None = None
+    call_id: int | None = None
 
 
 class Provider(Protocol):
@@ -68,6 +73,7 @@ class Provider(Protocol):
         temperature: float = 0.0,
         json_schema: dict | None = None,
         task_class: str | None = None,
+        data_class: str | None = None,
     ) -> LlmResult: ...
 
 
@@ -156,12 +162,14 @@ class InferProvider:
         self._timeout = timeout
         self._client = client
 
-    def _headers(self, task_class: str | None) -> dict[str, str]:
+    def _headers(self, task_class: str | None, data_class: str | None = None) -> dict[str, str]:
+        if data_class is not None and data_class not in {"public", "members", "restricted"}:
+            raise ValueError("Unsupported inference data classification")
         headers = {
             "content-type": "application/json",
             "authorization": f"Bearer {self._token}",
             "X-Employee-Id": self.employee_id,
-            "X-Data-Class": self.data_class,
+            "X-Data-Class": data_class or self.data_class,
         }
         if task_class:
             headers["X-Task-Class"] = task_class
@@ -184,6 +192,7 @@ class InferProvider:
         temperature: float = 0.0,
         json_schema: dict | None = None,
         task_class: str | None = None,
+        data_class: str | None = None,
     ) -> LlmResult:
         messages = []
         if system:
@@ -204,7 +213,7 @@ class InferProvider:
             body["response_format"] = {"type": "json_object"}
         if task_class:
             body["metadata"] = {"task_class": task_class, "employee_id": self.employee_id}
-        resp = self._http().post(f"{self._base_url}/chat/completions", headers=self._headers(task_class), json=body)
+        resp = self._http().post(f"{self._base_url}/chat/completions", headers=self._headers(task_class, data_class), json=body)
         if resp.status_code >= 400:
             raise InferError(f"infer {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
@@ -224,6 +233,9 @@ class InferProvider:
         return LlmResult(
             text=text, model=used_model, provider=self.name,
             input_tokens=in_tok, output_tokens=out_tok, cost_usd=cost,
+            model_reported=bool(data.get("model")),
+            finish_reason=data["choices"][0].get("finish_reason"),
+            request_id=str(data["id"]) if data.get("id") else None,
         )
 
     def route_explain(self, task_class: str) -> dict:
@@ -274,18 +286,21 @@ class FakeProvider:
         temperature: float = 0.0,
         json_schema: dict | None = None,
         task_class: str | None = None,
+        data_class: str | None = None,
     ) -> LlmResult:
         self.calls += 1
         self.last_kwargs = {
             "model": model, "prompt": prompt, "system": system,
             "max_tokens": max_tokens, "temperature": temperature, "json_schema": json_schema,
             "task_class": task_class,
+            "data_class": data_class,
         }
         text = self.script(prompt=prompt, system=system, model=model) if self.script else self.canned_text
         return LlmResult(
             text=text, model=model, provider=self.name,
             input_tokens=max(1, len(prompt) // 4), output_tokens=max(1, len(text) // 4),
             cost_usd=0.0001,
+            model_reported=True, finish_reason="stop", request_id=f"fixture-{self.calls}",
         )
 
 
@@ -357,6 +372,7 @@ class Gateway:
         routing_reason: str | None = None,
         quality_at_decision: float | None = None,
         task_class: str | None = None,
+        data_class: str | None = None,
     ) -> LlmResult:
         """One gated LLM call: cap check -> provider (retry/backoff) -> ledger.
 
@@ -378,6 +394,8 @@ class Gateway:
         for attempt in range(max_retries):
             try:
                 extra = {"task_class": task_class} if task_class else {}
+                if data_class is not None:
+                    extra["data_class"] = data_class
                 result = actor.complete(
                     model=model, prompt=prompt, system=system, max_tokens=max_tokens,
                     temperature=temperature, json_schema=json_schema, **extra,
@@ -397,7 +415,7 @@ class Gateway:
             raise StructuredOutputError(f"gateway call failed after {max_retries} attempts: {last_error}")
 
         with self._engine.begin() as conn:
-            conn.execute(
+            call_id = conn.execute(
                 llm_calls.insert().values(
                     fleet=fleet,
                     provider=result.provider,
@@ -411,6 +429,6 @@ class Gateway:
                     rejected_alternatives=rejected_alternatives,
                     routing_reason=routing_reason,
                     quality_at_decision=quality_at_decision,
-                )
-            )
-        return result
+                ).returning(llm_calls.c.id)
+            ).scalar_one()
+        return replace(result, call_id=call_id)

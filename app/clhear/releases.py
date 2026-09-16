@@ -183,22 +183,26 @@ def _write_reserved_prefixes(release_id: str, reserved: list[str] | None = None)
 def corpus_counts(engine) -> dict[str, int]:
     import sqlalchemy as sa
 
-    from app.clhear.l1.models import change_events, clauses, source_families, sources, source_versions
+    from app.clhear.l1.models import change_events, clauses, source_families, sources, source_versions, family_members
+    from app.clhear.l1.origin import corpus_sources_predicate
 
     with engine.connect() as conn:
-        def _count(table) -> int:
+        eligible = sa.select(sources.c.id).where(corpus_sources_predicate())
+        families = sa.or_(source_families.c.id.in_(sa.select(sources.c.family_id).where(sources.c.id.in_(eligible))),
+                          source_families.c.id.in_(sa.select(family_members.c.family_id).where(family_members.c.source_id.in_(eligible))))
+        def _count(table, condition) -> int:
             try:
-                return int(conn.execute(sa.select(sa.func.count()).select_from(table)).scalar() or 0)
+                return int(conn.execute(sa.select(sa.func.count()).select_from(table).where(condition)).scalar() or 0)
             except Exception:
                 return 0
 
         return {
-            "families": _count(source_families),
-            "sources": _count(sources),
+            "families": _count(source_families, families),
+            "sources": _count(sources, sources.c.id.in_(eligible)),
             "clauses": int(conn.execute(sa.select(sa.func.count()).select_from(clauses)
                 .join(source_versions, clauses.c.source_version_id == source_versions.c.id)
-                .where(source_versions.c.status == "in_force")).scalar() or 0),
-            "change_events": _count(change_events),
+                .where(source_versions.c.status == "in_force", source_versions.c.source_id.in_(eligible))).scalar() or 0),
+            "change_events": _count(change_events, change_events.c.source_id.in_(eligible)),
         }
 
 
