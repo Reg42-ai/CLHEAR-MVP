@@ -69,15 +69,37 @@ def request_frontier_bindings(engine, cycle_id):
         rows = conn.execute(sa.select(discovery.pages).where(discovery.pages.c.cycle_id == cycle_id,
             discovery.pages.c.status.in_(["pending", "permission_blocked", "exception_scope_blocked"]))).mappings().all()
         contract = manifest()
-        waiting = [row["id"] for row in rows
-                   if not (row["status"] == "exception_scope_blocked"
-                           and row["result"].get("denied_activation_id") == active["id"]
-                           and row["result"].get("denied_manifest_hash") == contract["manifest_hash"])
-                   and not exceptions.decision(conn, row["source_key"], "acquire", canonical_url=row["url"])["allowed"]]
+        from app.clhear.l1 import permissions
+        waiting, denied = [], []
+        for row in rows:
+            if (row["status"] == "exception_scope_blocked"
+                    and row["result"].get("denied_activation_id") == active["id"]
+                    and row["result"].get("denied_manifest_hash") == contract["manifest_hash"]):
+                continue
+            if exceptions.decision(conn, row["source_key"], "acquire", canonical_url=row["url"])["allowed"]:
+                continue
+            # A genuine publisher denial stays a permission finding of its own; it is
+            # never queued for an exception binding and never mixed with "no evidence".
+            if permissions.decision(conn, row["source_key"], "acquire").get("reason") == "not_approved":
+                denied.append(row)
+                continue
+            waiting.append(row["id"])
+        for row in denied:
+            findings = [f for f in (row["result"] or {}).get("findings", []) if f.get("code") != "publisher_permission_denied"]
+            findings.append({"code": "publisher_permission_denied",
+                             "detail": "The publisher explicitly denied acquisition; the operator exception does not apply."})
+            conn.execute(discovery.pages.update().where(discovery.pages.c.id == row["id"]).values(
+                status="permission_blocked", result={**(row["result"] or {}), "findings": findings, "publisher_denied": True}))
         if waiting:
             conn.execute(discovery.pages.update().where(discovery.pages.c.id.in_(waiting)).values(status="awaiting_exception_binding"))
-            events.emit(conn, layer="l0", kind="L1ExceptionBindingsRequested", subject_ref=cycle_id,
-                        payload={"discovery_cycle_id": cycle_id}, producer="l1.discovery")
+            # One outstanding request per discovery cycle: a second batch that finds
+            # more waiting pages while the first request is unrelayed does not add another.
+            outstanding = conn.execute(sa.select(events.events.c.id).where(
+                events.events.c.kind == "L1ExceptionBindingsRequested", events.events.c.subject_ref == cycle_id,
+                events.events.c.relayed_at.is_(None))).first()
+            if outstanding is None:
+                events.emit(conn, layer="l0", kind="L1ExceptionBindingsRequested", subject_ref=cycle_id,
+                            payload={"discovery_cycle_id": cycle_id}, producer="l1.discovery")
 
 
 def bind_frontier(engine, cycle_id):
