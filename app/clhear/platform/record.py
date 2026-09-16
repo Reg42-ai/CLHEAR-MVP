@@ -123,17 +123,42 @@ def rebuild_projection(conn: Connection, table: sa.Table, where) -> int:
 
 
 # Full-text indexes are projections of search_units; they are rebuilt, never edited.
+# FTS5 is a SQLite virtual table. On every other dialect the index does not exist
+# and must never be probed: a failed statement on PostgreSQL aborts the open
+# transaction, and every later statement in it fails with InFailedSqlTransaction —
+# which is how an import that "only" indexed text lost its document rows.
 FTS_INDEXES: frozenset[str] = frozenset({"search_units_fts"})
+FTS_DIALECT = "sqlite"
 
 
-def drop_fts_rows(conn: Connection, index: str, rowids: Iterable[int]) -> None:
-    """Remove rows from an FTS5 projection ahead of re-indexing (SQLite only)."""
+def fts_supported(conn: Connection) -> bool:
+    """True only on the dialect that has FTS5 at all. Answered from the dialect
+    name, not from a probe, so it is safe inside any transaction."""
+    return conn.dialect.name == FTS_DIALECT
+
+
+def fts_available(conn: Connection, index: str = "search_units_fts") -> bool:
+    """True when the FTS projection ``index`` can be read and written on this
+    connection: SQLite, and the virtual table exists. Uses the catalogue, never
+    a trial query, so a missing index cannot poison the transaction."""
     if index not in FTS_INDEXES:
         raise DeletionForbidden(f"{index} is not a registered FTS projection")
+    if not fts_supported(conn):
+        return False
+    return sa.inspect(conn).has_table(index)
+
+
+def drop_fts_rows(conn: Connection, index: str, rowids: Iterable[int]) -> int:
+    """Remove rows from an FTS5 projection ahead of re-indexing. SQLite only:
+    on any other dialect there is no index to clean and nothing is executed."""
+    if index not in FTS_INDEXES:
+        raise DeletionForbidden(f"{index} is not a registered FTS projection")
+    if not fts_supported(conn):
+        return 0
     ids = [int(i) for i in rowids]
     if not ids:
-        return
-    conn.exec_driver_sql(f"DELETE FROM {index} WHERE rowid IN ({','.join(str(i) for i in ids)})")
+        return 0
+    return conn.exec_driver_sql(f"DELETE FROM {index} WHERE rowid IN ({','.join(str(i) for i in ids)})").rowcount or 0
 
 
 def layer_index(layer: str) -> int:

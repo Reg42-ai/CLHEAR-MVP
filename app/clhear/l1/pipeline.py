@@ -1308,10 +1308,10 @@ def _clear_version_tree(conn: Connection, version_id: int) -> None:
         for r in conn.execute(sa.select(search_units.c.id).where(search_units.c.source_version_id == version_id))
     ]
     if unit_ids:
-        try:
+        # Never swallow a database error here: on PostgreSQL the transaction
+        # would already be aborted and the rebuild below would fail anyway.
+        if record.fts_available(conn, "search_units_fts"):
             record.drop_fts_rows(conn, "search_units_fts", unit_ids)
-        except Exception:
-            pass
         record.rebuild_projection(conn, search_units, search_units.c.source_version_id == version_id)
     clause_ids = [
         r[0] for r in conn.execute(sa.select(clauses.c.id).where(clauses.c.source_version_id == version_id))

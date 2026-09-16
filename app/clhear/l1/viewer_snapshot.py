@@ -25,6 +25,7 @@ from app.clhear.l1 import cycles, discovery, inventory, models, origin, permissi
 from app.clhear.l1 import translation, operator_exceptions, operator_access
 from app.clhear.l1.translation_models import TABLES as ENGLISH_TABLES
 from app.clhear.models import eval_runs, llm_calls, runs
+from app.clhear.platform import record
 
 CORPUS_TABLES = (models.source_families, models.sources, models.family_members,
                  models.source_versions, models.doc_nodes, models.clauses,
@@ -320,7 +321,7 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None, control_p
                             out.execute(table.insert(), rows)
                             count += len(rows)
                         counts[table.name] = count
-                    if sa.inspect(out).has_table("search_units_fts"):
+                    if record.fts_available(out, "search_units_fts"):  # the SQLite candidate only
                         out.exec_driver_sql("INSERT INTO search_units_fts(rowid, text) SELECT id, text FROM search_units WHERE text <> ''")
                     completed_cycle = conn.execute(cycles.read_query(conn).where(
                         cycles.cycles.c.cycle_id == job_id,
