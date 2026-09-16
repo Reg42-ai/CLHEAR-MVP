@@ -280,12 +280,12 @@ def run_phase(engine, gateway, phase, verification_id, *, bootstrap=None):
         # only the type in this deployment result; owning tasks retain details.
         result.update(status="failed", exit_code=1, error_type=type(exc).__name__)
     result.update(finished_at=_now(), duration_ms=int((time.monotonic() - started) * 1000))
+    result["evidence"] = evidence_links(verification_id, phase, job_id)
     # Do not overwrite a reclaimed phase's evidence after losing ownership.
     workflow.heartbeat_delivery(engine, f"deployment.{phase}", event_key, token)
     workflow.update_job(engine, job_id, result["status"], {"result": result})
     workflow.finish_delivery(engine, f"deployment.{phase}", event_key, token,
                              error="deployment_phase_failed" if result["exit_code"] == 1 else None)
-    result["evidence"] = evidence_links(verification_id, phase, job_id)
     with engine.begin() as conn:
         conn.execute(runs.insert().values(fleet=f"{fleet}.deployment_verification", trigger=phase,
                      inputs={"verification_id": verification_id, "job_id": job_id}, outputs=result,
