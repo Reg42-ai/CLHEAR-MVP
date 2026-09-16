@@ -158,7 +158,7 @@
                 {
                   "Effect": "Allow",
                   "Action": "s3:GetObject",
-                  "Resource": "arn:aws:s3:::clhear-deploy-730649732189/webui/l1/candidate.db"
+                  "Resource": "arn:aws:s3:::clhear-deploy-730649732189/webui/l1/*"
                 },
                 {
                   "Effect": "Allow",

@@ -208,6 +208,10 @@ def candidate_decision(conn: Connection, source_key: str, operation: str,
     strict = decision(conn, source_key, operation, now=now)
     if strict["allowed"]:
         return {**strict, "authority_type": "publisher_permission", "release_eligible": True}
+    if strict.get("reason") == "not_approved":
+        # A publisher's explicit denial is a decision, not an absence of evidence.
+        # No operator exception may stand in for it, even for private review.
+        return {**strict, "authority_type": "publisher_permission", "release_eligible": False, "denied": True}
     from app.clhear.l1 import operator_exceptions
     if operation in operator_exceptions.OPERATIONS:
         candidate = operator_exceptions.decision(conn, source_key, operation, now=now, canonical_url=canonical_url)

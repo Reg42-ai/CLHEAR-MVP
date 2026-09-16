@@ -638,14 +638,14 @@ class Deployer:
             old["new_task_definition"] = arn
             self._write("ecs", "update_service", cluster=CLUSTER, service=f"clhear-fleet-{fleet}", taskDefinition=arn, desiredCount=0)
 
-    def _worker(self, fleet, action):
+    def _worker(self, fleet, action, command=None):
         values = self.state["fleets"][fleet]
         service = values["service"]
         args = {"cluster": CLUSTER, "taskDefinition": values["new_task_definition"], "count": 1,
                 "networkConfiguration": service["networkConfiguration"],
                 "clientToken": hashlib.sha256(f"{self.inputs.deployment_id}:{action}".encode()).hexdigest(),
                 "startedBy": f"clhear-l1-{self.inputs.sha[:12]}",
-                "overrides": {"containerOverrides": [{"name": "worker", "command":
+                "overrides": {"containerOverrides": [{"name": "worker", "command": command or
                     ["--verify-deployment", action, "--verification-id", self.inputs.deployment_id]}]}}
         # Deployment checks must not be interrupted by Spot reclamation. Normal
         # service capacity-provider settings remain untouched.
@@ -663,10 +663,88 @@ class Deployer:
         task = response["tasks"][0]
         workers = [c for c in task.get("containers", []) if c.get("name") == "worker"]
         code = workers[0].get("exitCode") if len(workers) == 1 else None
-        self.report["steps"].append({"fleet": fleet.upper(), "action": action, "task_arn": arn,
-                                    "exit_code": code, "duration_ms": round((time.monotonic() - started) * 1000)})
+        step = {"fleet": fleet.upper(), "action": action, "task_arn": arn,
+                "exit_code": code, "duration_ms": round((time.monotonic() - started) * 1000),
+                **self._worker_evidence(action)}
+        self.report["steps"].append(step)
         require(task.get("lastStatus") == "STOPPED" and code in ({0, 2} if action == "verify" else {0}), f"{action} worker failed; deployment remains held")
         return code
+
+    FULL_CYCLE_PUBLISHERS, FULL_CYCLE_LANES = 45, 32
+    TRANSPORT_HEALTH_ATTEMPTS = 40  # × 15 s
+
+    def _transport_healthy(self):
+        """L0 (relay + coordination) and L1 (imports) are running on the deployed
+        definition and their queues are being consumed: the precondition for asking
+        the fleet to do real work."""
+        response = self.clients["ecs"].describe_services(cluster=CLUSTER, services=["clhear-fleet-l0", "clhear-fleet-l1"])
+        services = {svc["serviceName"]: svc for svc in response.get("services", [])}
+        for fleet in ("l0", "l1"):
+            svc = services.get(f"clhear-fleet-{fleet}")
+            if not svc or svc.get("runningCount", 0) < 1 or svc.get("taskDefinition") != self.state["fleets"][fleet]["new_task_definition"]:
+                return False
+        return True
+
+    def _request_full_cycle(self):
+        """After a verified deployment: ask deployed L0 for the full diagnostic
+        cycle over the whole publisher scope (45 publishers, 32 lanes) followed by an
+        unchanged-source repeat. Results are published for sampling; unresolved gaps
+        stay visible and block corpus acceptance. This never changes the deployment
+        outcome: a request that cannot be made is recorded, not rolled back."""
+        verification_id = "l1-cycle-" + self.inputs.deployment_id.removeprefix("l1-")
+        receipt = {"verification_id": verification_id, "cycle_id": "cycle-manual-" + verification_id,
+                   "repeat_cycle_id": "cycle-manual-" + verification_id + "-repeat",
+                   "scope": "all_publishers", "publishers": self.FULL_CYCLE_PUBLISHERS, "lanes": self.FULL_CYCLE_LANES,
+                   "unchanged_repeat": True, "corpus_acceptance": "pending", "status": "not_requested"}
+        try:
+            for _ in range(self.TRANSPORT_HEALTH_ATTEMPTS):
+                if self._transport_healthy():
+                    receipt["transport_health"] = "established"
+                    break
+                self.sleep(15)
+            else:
+                receipt.update(reason="L0/L1 workers did not reach running state on the deployed definition")
+                return receipt
+            code = self._worker("l0", "full_cycle_request",
+                                ["--request-l1-cycle", "--unchanged-repeat", "--verification-id", verification_id])
+            receipt.update(status="cycle_requested", exit_code=code)
+        except Exception as error:  # noqa: BLE001 — recorded, never a deployment failure
+            receipt.update(status="not_requested", **{k: v for k, v in _failure_details(error).items() if k != "status"})
+        return receipt
+
+    # Fields of a worker phase result that may enter a deployment artifact: statuses,
+    # counts, codes and identities. Never messages, text or SQL.
+    _EVIDENCE_FIELDS = ("verification_id", "phase", "job_id", "worker", "status", "exit_code", "error_type",
+                        "deployment_checks", "scope", "scope_label", "evidence_mode", "finra_acceptance", "l1_acceptance",
+                        "corpus_acceptance", "failure_summary", "evidence", "started_at", "finished_at", "duration_ms")
+    _STEP_FIELDS = ("status", "passed", "scope_complete", "successful_sources", "failed_sources", "missing_sources",
+                    "statuses", "verified_sources", "reason", "job_id", "audit_id", "inventory_hash", "verified", "unresolved",
+                    "revision", "sha256", "byte_count", "snapshot_uri", "bindings_unchanged", "successful_source_count",
+                    "version_count_before", "version_count_after")
+
+    def _worker_evidence(self, action):
+        """Read the phase result the worker published beside the candidate viewer.
+        Missing or unreadable evidence is reported as such; it never fails the step
+        by itself, and the private link is included either way."""
+        prefix = self.inputs.viewer_key.rsplit("/", 1)[0]
+        key = f"{prefix}/deployments/{self.inputs.deployment_id}/{action}.json"
+        evidence = {"worker_result_uri": f"s3://{BUCKET}/{key}"}
+        try:
+            body = self.clients["s3"].get_object(Bucket=BUCKET, Key=key, ExpectedBucketOwner=ACCOUNT)["Body"].read()
+            result = json.loads(body)
+        except Exception as error:  # noqa: BLE001 — AccessDenied / NoSuchKey / malformed all mean "not readable here"
+            evidence["worker_result"] = {"available": False, "reason": type(error).__name__}
+            return evidence
+        summary = {k: result.get(k) for k in self._EVIDENCE_FIELDS if k in result}
+        summary["steps"] = {name: {k: v for k, v in step.items() if k in self._STEP_FIELDS}
+                            for name, step in (result.get("steps") or {}).items() if isinstance(step, dict)}
+        summary["failure_summary"] = [
+            {k: row.get(k) for k in ("source", "worker", "task", "status", "attempt", "stage", "duration_ms",
+                                     "error_type", "error_code", "sqlstate", "first_cause", "follow_on", "aborted_transaction")}
+            for row in (result.get("failure_summary") or [])[:25]]
+        summary["available"] = True
+        evidence["worker_result"] = summary
+        return evidence
 
     def _complete_lambda_update(self, before, response, *, phase, expected_code_hash, function_name=FUNCTION):
         started = time.monotonic()
@@ -895,6 +973,7 @@ class Deployer:
             self.report.update(status="review_ready" if result == 2 else "verified", recovery_required=False,
                                l0_relay_minimum=1, l1_worker_minimum=1,
                                traffic_policy="previous_capacity_restored", fleet_policy="new_code_l1_only")
+            self.report["full_cycle_request"] = self._request_full_cycle()
             self._put("result.json", json.dumps(self.report, sort_keys=True).encode())
         except Exception as error:
             self.report.update(_failure_details(error))
@@ -917,10 +996,22 @@ class VerificationDispatcher:
     _schedule_payload = staticmethod(Deployer._schedule_payload)
     _transformer = Deployer._transformer
 
-    def __init__(self, sha, verification_id, *, clients=None, environ=None):
+    OPERATIONS = {
+        # operation: (id pattern, worker arguments, receipt status, waiter attempts)
+        "verify": (r"l1-cycle-[1-9][0-9]*-[1-9][0-9]*", ("--request-l1-cycle",), "cycle_submitted", 60),
+        "recover-queues": (r"l1-queues-[1-9][0-9]*-[1-9][0-9]*", ("--recover-queues",), "recovery_pass_completed", 240),
+    }
+
+    def __init__(self, sha, verification_id, *, clients=None, environ=None, operation="verify", max_messages=None):
         from types import SimpleNamespace
         require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "A tested controller SHA is required")
-        require(bool(re.fullmatch(r"l1-cycle-[1-9][0-9]*-[1-9][0-9]*", verification_id)), "Invalid cycle verification ID")
+        require(operation in self.OPERATIONS, "Unknown L0 operation")
+        pattern, self.worker_arguments, self.receipt_status, self.waiter_attempts = self.OPERATIONS[operation]
+        require(bool(re.fullmatch(pattern, verification_id)), "Invalid cycle verification ID")
+        self.operation = operation
+        if max_messages is not None:
+            require(type(max_messages) is int and 1 <= max_messages <= 200_000, "max_messages must be within 1..200000")
+            self.worker_arguments = (*self.worker_arguments, "--max-messages", str(max_messages))
         self.inputs = SimpleNamespace(sha=sha)
         self.verification_id = verification_id
         self.env = dict(os.environ if environ is None else environ)
@@ -986,7 +1077,7 @@ class VerificationDispatcher:
             re.fullmatch(revision + r"-[1-9][0-9]*-[1-9][0-9]*", tag) for tag in images[0].get("imageTags", [])), "Worker image lacks its deployment build binding")
         service = service_by_name["clhear-fleet-l0"]
         l0_worker = next(c for c in definitions["l0"]["containerDefinitions"] if c["name"] == "worker")
-        command = list(WORKER_ENTRYPOINT)[len(l0_worker.get("entryPoint", [])):] + ["--request-l1-cycle", "--verification-id", self.verification_id]
+        command = list(WORKER_ENTRYPOINT)[len(l0_worker.get("entryPoint", [])):] + [*self.worker_arguments, "--verification-id", self.verification_id]
         args = {"cluster": CLUSTER, "taskDefinition": service["taskDefinition"], "count": 1, "launchType": "FARGATE",
                 "networkConfiguration": service["networkConfiguration"],
                 "startedBy": self.verification_id[:36],
@@ -997,34 +1088,45 @@ class VerificationDispatcher:
         launched = self._write("ecs", "run_task", **args)
         require(not launched.get("failures") and len(launched.get("tasks", [])) == 1, "The L0 cycle submission task did not start")
         task_arn = launched["tasks"][0]["taskArn"]
-        self.clients["ecs"].get_waiter("tasks_stopped").wait(cluster=CLUSTER, tasks=[task_arn], WaiterConfig={"Delay": 10, "MaxAttempts": 60})
+        self.clients["ecs"].get_waiter("tasks_stopped").wait(cluster=CLUSTER, tasks=[task_arn], WaiterConfig={"Delay": 10, "MaxAttempts": self.waiter_attempts})
         stopped = self.clients["ecs"].describe_tasks(cluster=CLUSTER, tasks=[task_arn])
         require(not stopped.get("failures") and len(stopped.get("tasks", [])) == 1, "The submission task result is unavailable")
         task = stopped["tasks"][0]
         exits = [c.get("exitCode") for c in task.get("containers", []) if c.get("name") == "worker"]
-        require(task.get("lastStatus") == "STOPPED" and exits == [0], "The L0 worker did not confirm cycle submission")
-        return {"status": "cycle_submitted", "cycle_id": "cycle-manual-" + self.verification_id,
-                "controller_sha": self.inputs.sha, "code_revision": revision, "worker_image_digest": digest,
-                "task_arn": task_arn, "configured_schedules": len(schedules), "origin": "manual",
-                "corpus_acceptance": "pending", "nightly_schedule_validation": "pending",
-                "deployment_performed": False, "accepted_release_changed": False}
+        require(task.get("lastStatus") == "STOPPED" and exits == [0], "The L0 worker did not confirm the operation")
+        receipt = {"status": self.receipt_status, "operation": self.operation,
+                   "controller_sha": self.inputs.sha, "code_revision": revision, "worker_image_digest": digest,
+                   "task_arn": task_arn, "configured_schedules": len(schedules), "origin": "manual",
+                   "corpus_acceptance": "pending", "nightly_schedule_validation": "pending",
+                   "deployment_performed": False, "accepted_release_changed": False}
+        if self.operation == "verify":
+            receipt["cycle_id"] = "cycle-manual-" + self.verification_id
+        else:
+            receipt.update(recovery_id=self.verification_id, evidence="deferred-delivery ledger (l0_platform.deferred_deliveries)",
+                           queues_purged=False, resumable=True)
+        return receipt
 
 
-def verification_main(argv):
-    parser = argparse.ArgumentParser(description="Submit an L1 corpus cycle through the deployed L0 worker")
+def verification_main(argv, operation="verify"):
+    parser = argparse.ArgumentParser(description="Run one L0 operation through the deployed L0 worker")
     parser.add_argument("--sha", required=True)
-    parser.add_argument("--verification-id", required=True)
+    if operation == "verify":
+        parser.add_argument("--verification-id", required=True)
+    else:
+        parser.add_argument("--recovery-id", required=True, dest="verification_id")
+        parser.add_argument("--max-messages", type=int, default=None)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        report = VerificationDispatcher(args.sha, args.verification_id).dispatch()
+        report = VerificationDispatcher(args.sha, args.verification_id, operation=operation,
+                                        max_messages=getattr(args, "max_messages", None)).dispatch()
     except Exception as error:
-        report = {"status": "submission_failed", **_failure_details(error)}
+        report = {"status": "submission_failed", "operation": operation, **_failure_details(error)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     os.chmod(args.output, 0o600)
     print(json.dumps(report, sort_keys=True))
-    return 0 if report["status"] == "cycle_submitted" else 1
+    return 0 if report["status"] in {"cycle_submitted", "recovery_pass_completed"} else 1
 
 
 def main(argv=None):
@@ -1032,6 +1134,8 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "verify":
         return verification_main(argv[1:])
+    if argv and argv[0] == "recover-queues":
+        return verification_main(argv[1:], operation="recover-queues")
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("sha", "image", "ui-key", "ui-sha256", "ui-version", "deployment-id"):
         parser.add_argument(f"--{name}", required=True)

@@ -341,28 +341,39 @@ def _emit(conn, kind, cycle_id, payload=None):
                        kind=kind, subject_ref=cycle_id, payload={"cycle_id": cycle_id, **(payload or {})}, producer="l0.l1_cycle")
 
 
-def request_cycle(engine, verification_id, *, scope="all_publishers"):
-    """L0 CLI receipt only. No discovery, imports or acceptance in the caller."""
+REPEAT_SUFFIX = "-repeat"
+
+
+def request_cycle(engine, verification_id, *, scope="all_publishers", unchanged_repeat=False):
+    """L0 CLI receipt only. No discovery, imports or acceptance in the caller.
+
+    ``unchanged_repeat`` chains a second full cycle after this one finishes: the
+    same scope again, expected to change nothing. Its evaluation compares every
+    source version with the first cycle's and reports ``unchanged_repeat``.
+    """
     if os.environ.get("CLHEAR_FLEET", "").lower() != "l0":
         raise ValueError("Only the L0 worker may request an L1 cycle")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}", verification_id or ""):
         raise ValueError("A safe, unique verification ID is required")
     cycle_id = "cycle-manual-" + verification_id
+    payload = {"cycle_id": cycle_id, "scope": scope}
+    if unchanged_repeat:
+        payload["follow_up"] = {"kind": "unchanged_repeat", "cycle_id": cycle_id + REPEAT_SUFFIX}
     with engine.begin() as conn:
         # Stable request UUID prevents repeat CLI dispatch from creating work twice.
         event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, cycle_id))
         workflow._insert_once(conn, events.events, dict(event_id=event_id, layer="l0", kind="L1CycleRequested",
-            subject_ref=cycle_id, payload={"cycle_id": cycle_id, "scope": scope}, producer="worker.cli", schema_version=1))
+            subject_ref=cycle_id, payload=payload, producer="worker.cli", schema_version=1))
         original = conn.execute(sa.select(events.events.c.payload).where(events.events.c.event_id == event_id)).scalar_one()
-        if original != {"cycle_id": cycle_id, "scope": scope}:
+        if {k: original.get(k) for k in ("cycle_id", "scope")} != {"cycle_id": cycle_id, "scope": scope}:
             raise ValueError("Verification ID is already bound to another scope")
     return {"cycle_id": cycle_id, "event_id": event_id, "status": "requested", "origin": "manual",
-            "scheduler_delivery_verified": False, **runtime_identity()}
+            "follow_up": payload.get("follow_up"), "scheduler_delivery_verified": False, **runtime_identity()}
 
 
-def _create(conn, cycle_id, event_id, origin, scope, scheduled_for=None):
+def _create(conn, cycle_id, event_id, origin, scope, scheduled_for=None, manifest=None):
     workflow._insert_once(conn, cycles, dict(cycle_id=cycle_id, request_event_id=event_id,
-        origin=origin, scope=scope, scheduled_for=scheduled_for, status="requested", manifest={}, result={},
+        origin=origin, scope=scope, scheduled_for=scheduled_for, status="requested", manifest=manifest or {}, result={},
         created_at=workflow.utcnow(), **runtime_identity()))
     row = _row(conn, cycle_id, lock=True)
     if row["origin"] != origin or row["scope"] != scope:
@@ -377,11 +388,17 @@ def start(engine, envelope):
     if scope not in {"registered", "all_publishers"}:
         raise ValueError("L1 cycles cover the complete declared publisher scope")
     cycle_id = envelope.payload.get("cycle_id") or "cycle-manual-" + digest(envelope.event_id)[:24]
-    if not re.fullmatch(r"cycle-manual-[A-Za-z0-9._-]{1,101}", cycle_id):
+    if not re.fullmatch(r"cycle-manual-[A-Za-z0-9._-]{1,110}", cycle_id):
         raise ValueError("Invalid manual cycle ID")
+    # Chain identity travels in the request and is frozen into the manifest here:
+    # a repeat knows which cycle it must match, a first cycle knows what to request next.
+    chain = {k: envelope.payload[k] for k in ("follow_up", "repeat_of") if envelope.payload.get(k)}
+    if chain.get("follow_up") and (not isinstance(chain["follow_up"], dict) or chain["follow_up"].get("kind") != "unchanged_repeat"
+                                   or not re.fullmatch(r"cycle-manual-[A-Za-z0-9._-]{1,110}", str(chain["follow_up"].get("cycle_id", "")))):
+        raise ValueError("Unsupported cycle follow-up")
     with engine.begin() as conn:
         _lock_slot(conn)
-        row = _create(conn, cycle_id, envelope.event_id, "manual", scope)
+        row = _create(conn, cycle_id, envelope.event_id, "manual", scope, manifest=chain)
         if row["request_event_id"] != envelope.event_id:
             raise ValueError("Cycle ID already belongs to another request event")
         if row["status"] == "requested":
@@ -433,7 +450,8 @@ def discovered(engine, cycle_id, audit):
         return {"cycle_id": cycle_id, "status": "discovering", "pending_pages": pending,
                 "audit_id": audit["audit_id"], "next_batch_requested": True}
     plans = plan_sources(engine, row["scope"], audit["audit_id"])
-    manifest = {"adapter_keys": sorted(plans), "sources_by_adapter": plans,
+    chain = {k: row["manifest"][k] for k in ("follow_up", "repeat_of") if row["manifest"].get(k)}
+    manifest = {**chain, "adapter_keys": sorted(plans), "sources_by_adapter": plans,
                 "expected_source_keys": sorted(s["source_key"] for s in audit["sources"]),
                 "inventory_hash": audit["inventory_hash"], "audit_id": audit["audit_id"],
                 "known_expected_is_lower_bound": audit.get("known_expected_is_lower_bound", True),
@@ -660,6 +678,9 @@ def finish_cycle(engine, cycle_id, result):
                   "duration_ms": int((workflow.utcnow() - workflow._aware(row["created_at"])).total_seconds() * 1000),
                   "scheduler_delivery_verified": row["origin"] == "scheduled" and all(c["event_time"] for c in found),
                   **{k: row[k] for k in runtime_identity()}}
+        repeat_of = row["manifest"].get("repeat_of")
+        if repeat_of:
+            result["unchanged_repeat"] = _compare_repeat(conn, repeat_of, result)
         status = "failed" if any(c["status"] == "failed" for c in found) or result.get("execution_failed") else (
             "candidate_verified" if result.get("acceptance_passed") else "completed_for_review")
         result["status"] = status
@@ -667,7 +688,35 @@ def finish_cycle(engine, cycle_id, result):
             status=status, result=result, finished_at=workflow.utcnow()))
         _terminal(conn, cycle_id)
         request_refresh(conn, reason="l1_cycle_finished", job_id=cycle_id)
+        follow_up = row["manifest"].get("follow_up")
+        if follow_up and status != "failed":
+            # The unchanged-source repeat: one request, in the same transaction as the
+            # result it follows; a failed first cycle is repaired, not repeated.
+            next_id = follow_up["cycle_id"]
+            workflow._insert_once(conn, events.events, dict(event_id=str(uuid.uuid5(uuid.NAMESPACE_URL, next_id)),
+                layer="l0", kind="L1CycleRequested", subject_ref=next_id,
+                payload={"cycle_id": next_id, "scope": row["scope"], "repeat_of": cycle_id}, producer="l0.cycle_follow_up",
+                schema_version=1))
+            result["follow_up_requested"] = next_id
+            conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id).values(result=result))
     return result
+
+
+def _compare_repeat(conn, first_cycle_id, result):
+    """Every source the first cycle bound must read back as the same version."""
+    first = conn.execute(sa.select(cycles.c.result, cycles.c.status).where(cycles.c.cycle_id == first_cycle_id)).mappings().first()
+    if first is None:
+        return {"passed": False, "repeat_of": first_cycle_id, "reason": "first cycle is missing"}
+    before = {b["source_key"]: (b.get("source_version_id"), b.get("content_hash"))
+              for b in ((first["result"] or {}).get("output_bindings") or {}).get("bindings", [])}
+    after = {b["source_key"]: (b.get("source_version_id"), b.get("content_hash"))
+             for b in (result.get("output_bindings") or {}).get("bindings", [])}
+    changed = sorted(k for k in before if k in after and before[k] != after[k])
+    missing = sorted(set(before) - set(after))
+    added = sorted(set(after) - set(before))
+    return {"passed": bool(before) and not changed and not missing, "repeat_of": first_cycle_id,
+            "compared": len(before), "changed": changed, "missing": missing, "added": added,
+            "first_status": first["status"], "reason": "verified_unchanged_repeat" if bool(before) and not changed and not missing else "repeat_not_verified"}
 
 
 def read_query(conn):

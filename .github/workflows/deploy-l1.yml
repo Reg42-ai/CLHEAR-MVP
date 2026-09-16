@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'Deploy tested code, or request a full L1 cycle using the deployed workers'
+        description: 'Deploy tested code, request a full L1 cycle, or run one bounded queue/DLQ recovery pass through the deployed L0 worker'
         type: choice
-        options: [deploy, verify-l1]
+        options: [deploy, verify-l1, recover-queues]
         required: true
         default: deploy
       recovery_plan:
@@ -18,6 +18,11 @@ on:
         type: string
         required: false
         default: ''
+      max_messages:
+        description: 'recover-queues only: upper bound of messages for this bounded, resumable pass (default 5000, max 200000)'
+        type: string
+        required: false
+        default: '5000'
 
 permissions: {}
 
@@ -53,7 +58,7 @@ jobs:
           path: artifacts/eligibility-precheck.json
   deploy:
     needs: eligibility
-    if: needs.eligibility.outputs.eligible == 'true' && inputs.operation != 'verify-l1' && github.repository == 'Reg42-ai/CLHEAR-MVP' && github.ref == 'refs/heads/main'
+    if: needs.eligibility.outputs.eligible == 'true' && inputs.operation != 'verify-l1' && inputs.operation != 'recover-queues' && github.repository == 'Reg42-ai/CLHEAR-MVP' && github.ref == 'refs/heads/main'
     concurrency:
       group: clhear-l1-deployment
       cancel-in-progress: false
@@ -260,3 +265,55 @@ jobs:
           path: |
             artifacts/l1-cycle-submission.json
             artifacts/verification-eligibility.json
+
+  recover-queues:
+    needs: eligibility
+    if: needs.eligibility.outputs.eligible == 'true' && github.event_name == 'workflow_dispatch' && inputs.operation == 'recover-queues'
+    concurrency:
+      group: clhear-l1-deployment
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: clhear-l1
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      CLHEAR_DEPLOY_ROLE_ARN: ${{ vars.CLHEAR_DEPLOY_ROLE_ARN }}
+      CLHEAR_DEPLOY_ENVIRONMENT: clhear-l1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.lock
+      - name: Recheck owner merge and CI under the shared rollout lock
+        id: locked
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/deployment_eligibility.py --stage locked --output artifacts/recovery-eligibility.json
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.locked.outputs.eligible == 'true'
+        with:
+          role-to-assume: ${{ env.CLHEAR_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Run one bounded queue and dead-letter recovery pass through deployed L0
+        if: steps.locked.outputs.eligible == 'true'
+        run: python scripts/deploy_l1.py recover-queues --sha "$GITHUB_SHA" --recovery-id "l1-queues-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --max-messages "${{ inputs.max_messages }}" --output artifacts/queue-recovery.json
+      - name: Retain the recovery receipt; dispositions are in the deferred-delivery ledger
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l1-queue-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            artifacts/queue-recovery.json
+            artifacts/recovery-eligibility.json

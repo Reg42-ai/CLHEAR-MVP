@@ -189,3 +189,46 @@ def test_revocation_during_artifact_write_cannot_commit_a_source_version(engine,
     assert "authorization changed while archiving" in result["error"]
     with engine.connect() as conn:
         assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 0
+
+
+def test_publisher_denial_is_retained_separately_and_never_overridden_by_the_exception(engine, monkeypatch, tmp_path):
+    monkeypatch.setattr(inventory, "FINRA_CATEGORIES", (("rules", "Rules", INDEX),))
+    bootstrap(engine, monkeypatch)
+    permissions.record_permission(engine, source_key="finra/rule/9999", permissions={"acquire": True, "store": True, "parse": True},
+                                  evidence_ref="test:publisher-denial", approved_by="publisher", approved=False)
+    monkeypatch.setattr(inventory, "_fetch_discovery", lambda url: (f'<main><a href="{NEW_RULE}">Rule</a></main>'.encode(), "live"))
+    monkeypatch.setenv("CLHEAR_FLEET", "l1")
+    _, report = inventory._discover(engine, LocalStore(tmp_path))
+    with engine.connect() as conn:
+        page = conn.execute(sa.select(discovery.pages).where(discovery.pages.c.source_key == "finra/rule/9999")).mappings().one()
+        requests = conn.execute(sa.select(sa.func.count()).select_from(events).where(events.c.kind == "L1ExceptionBindingsRequested")).scalar_one()
+        decision = permissions.candidate_decision(conn, "finra/rule/9999", "acquire", canonical_url=NEW_RULE)
+    assert page["status"] == "permission_blocked" and page["result"]["publisher_denied"] is True
+    assert any(f["code"] == "publisher_permission_denied" for f in page["result"]["findings"])
+    assert requests == 0  # a denial is not a binding request
+    assert not decision["allowed"] and decision["reason"] == "not_approved" and decision.get("denied") is True
+    assert decision["authority_type"] == "publisher_permission"  # the exception was not consulted
+    assert report["pending_pages"] == 0
+
+
+def test_repeated_frontier_batches_request_one_binding_and_binding_twice_is_idempotent(engine, monkeypatch, tmp_path):
+    monkeypatch.setattr(inventory, "FINRA_CATEGORIES", (("rules", "Rules", INDEX),))
+    bootstrap(engine, monkeypatch)
+    monkeypatch.setattr(inventory, "_fetch_discovery", lambda url: (f'<main><a href="{NEW_RULE}">Rule</a><a href="{INDEX}/9998">Rule</a></main>'.encode(), "live"))
+    monkeypatch.setenv("CLHEAR_FLEET", "l1")
+    _, report = inventory._discover(engine, LocalStore(tmp_path))
+    review.request_frontier_bindings(engine, report["cycle_id"])  # a second batch before L0 relayed the first request
+    review.request_frontier_bindings(engine, report["cycle_id"])
+    with engine.connect() as conn:
+        requests = conn.execute(sa.select(sa.func.count()).select_from(events).where(events.c.kind == "L1ExceptionBindingsRequested")).scalar_one()
+        waiting = conn.execute(sa.select(sa.func.count()).select_from(discovery.pages).where(discovery.pages.c.status == "awaiting_exception_binding")).scalar_one()
+    assert requests == 1 and waiting == 2
+    monkeypatch.setenv("CLHEAR_FLEET", "l0")
+    first = review.bind_frontier(engine, report["cycle_id"])
+    second = review.bind_frontier(engine, report["cycle_id"])
+    assert first["bound"] == 2 and second == {**first, "bound": 0, "blocked": 0}
+    with engine.connect() as conn:
+        bindings = conn.execute(sa.select(sa.func.count()).select_from(exceptions.source_bindings)
+                                .where(exceptions.source_bindings.c.source_key.in_(["finra/rule/9999", "finra/rule/9998"]))).scalar_one()
+        pending = conn.execute(sa.select(sa.func.count()).select_from(discovery.pages).where(discovery.pages.c.status == "pending")).scalar_one()
+    assert bindings == 2 and pending == 2  # one binding per document; both pages resumed for L1

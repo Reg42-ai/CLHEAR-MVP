@@ -52,11 +52,10 @@ def ws(text: str) -> str:
 
 # ------------------------------------------------------------------ build side
 def _fts_ok(conn: Connection) -> bool:
-    try:
-        conn.exec_driver_sql("SELECT count(*) FROM search_units_fts LIMIT 1")
-        return True
-    except Exception:
-        return False
+    """SQLite with the FTS5 projection present. PostgreSQL always answers False
+    without touching the database (record.fts_available): a trial query there
+    would abort the surrounding import transaction."""
+    return record.fts_available(conn, "search_units_fts")
 
 
 def build_units_for_version(
@@ -213,6 +212,9 @@ def _ref_list(conn: Connection, refs: list[str], limit: int) -> list[int]:
 
 
 def _fts_list(conn: Connection, query: str, limit: int) -> list[int]:
+    """The FTS leg of hybrid search. Empty on PostgreSQL, which keeps its existing
+    ref / vector / LIKE legs (the restricted-content exclusion lives in the
+    search_units projection itself, so no leg can surface withheld text)."""
     if not _fts_ok(conn):
         return []
     tokens = [t for t in re.findall(r"[A-Za-z0-9§\.\-]+", query) if t]
@@ -226,7 +228,9 @@ def _fts_list(conn: Connection, query: str, limit: int) -> list[int]:
                 "ORDER BY bm25(search_units_fts) LIMIT ?",
                 (match_expr, limit),
             ).fetchall()
-        except Exception:
+        except sa.exc.OperationalError:
+            # A malformed MATCH expression only; SQLite does not abort the
+            # transaction on a statement error, so continuing is sound here.
             return []
         if rows:
             return [r[0] for r in rows]
