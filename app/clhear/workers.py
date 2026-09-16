@@ -1153,12 +1153,45 @@ def cli(argv=None) -> int:
     parser.add_argument("--request-l1-cycle", action="store_true")
     parser.add_argument("--unchanged-repeat", action="store_true")
     parser.add_argument("--recover-queues", action="store_true")
+    parser.add_argument("--poc-private-review", choices=("activate", "revoke"))
+    parser.add_argument("--approve-inventory")
+    parser.add_argument("--evidence-ref")
     parser.add_argument("--max-messages", type=int, default=None)
     parser.add_argument("--max-seconds", type=int, default=None)
     parser.add_argument("--queues", default="")
     args = parser.parse_args(argv)
+    exclusive = [bool(args.recover_queues), bool(args.request_l1_cycle), bool(args.verify_deployment),
+                 bool(args.once), bool(args.poc_private_review), bool(args.approve_inventory)]
+    if sum(exclusive) > 1:
+        parser.error("choose one worker action")
+    if args.poc_private_review:
+        if not args.verification_id or not args.evidence_ref:
+            parser.error("--poc-private-review requires --verification-id and --evidence-ref")
+        if os.environ.get("CLHEAR_FLEET", "").lower() != "l0":
+            parser.error("--poc-private-review must run on the L0 worker")
+        from app.clhear.db import get_engine, run_migrations
+        from app.clhear.l1.poc_review import apply_private_review
+        engine = get_engine()
+        run_migrations(engine)
+        result = apply_private_review(engine, args.poc_private_review, args.evidence_ref,
+                                      verification_id=args.verification_id)
+        print(json.dumps(result, default=str))
+        return 0 if result.get("status") == "recorded" else 1
+    if args.approve_inventory:
+        if not args.verification_id:
+            parser.error("--approve-inventory requires --verification-id")
+        if os.environ.get("CLHEAR_FLEET", "").lower() != "l0":
+            parser.error("--approve-inventory must run on the L0 worker")
+        from app.clhear.db import get_engine, run_migrations
+        from app.clhear.l1.poc_review import approve_inventory
+        engine = get_engine()
+        run_migrations(engine)
+        result = approve_inventory(engine, args.approve_inventory, verification_id=args.verification_id,
+                                   evidence_ref=args.evidence_ref or "poc:private-scope-review")
+        print(json.dumps(result, default=str))
+        return 0 if result.get("status") in {"recorded", "already_recorded"} else 1
     if args.recover_queues:
-        if not args.verification_id or args.verify_deployment or args.once or args.envelope_file or args.request_l1_cycle:
+        if not args.verification_id:
             parser.error("--recover-queues requires --verification-id and cannot be combined with other actions")
         if os.environ.get("CLHEAR_FLEET", "").lower() != "l0":
             parser.error("--recover-queues must run on the L0 worker")
@@ -1167,7 +1200,7 @@ def cli(argv=None) -> int:
         print(json.dumps(result, default=str))
         return 0 if result.get("status") == "recovered" else 1
     if args.request_l1_cycle:
-        if not args.verification_id or args.verify_deployment or args.once or args.envelope_file:
+        if not args.verification_id:
             parser.error("--request-l1-cycle requires --verification-id and cannot be combined with other actions")
         if os.environ.get("CLHEAR_FLEET", "").lower() != "l0":
             parser.error("--request-l1-cycle must run on the L0 worker")
@@ -1178,7 +1211,7 @@ def cli(argv=None) -> int:
         print(json.dumps(request_cycle(engine, args.verification_id, unchanged_repeat=args.unchanged_repeat)))
         return 0
     if args.verify_deployment:
-        if args.once or args.envelope_file or not args.verification_id:
+        if not args.verification_id:
             parser.error("--verify-deployment requires --verification-id and cannot be combined with --once")
         from app.clhear.deployment_verification import execute
         result = execute(args.verify_deployment, args.verification_id)

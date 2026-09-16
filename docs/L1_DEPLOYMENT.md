@@ -386,6 +386,62 @@ quarantined; nothing is purged and nothing is replayed blindly. The queues
 are the cursor: run the operation again to continue. Each pass has its own
 recovery id and is idempotent.
 
+### Private POC authorization (reversible)
+
+A private full-corpus run needs explicit permission rows for the protected
+registry set (FINRA, ISO, AICPA, PCI, IFRS). That is an operator decision,
+not a publisher licence and not L1 acceptance. Dispatch `deploy-l1` with
+`operation=poc-private-review` after the owner-merge deployment has restored
+L0/L1. The deployed L0 worker records `L1EvidenceReviewRecorded` permission
+snapshots for every registry source `permissions.required_for` names:
+`acquire/store/parse/display_internal=true`, `display_public=false`,
+`approved_by="owner: private POC test environment"`. The same operation with
+`poc_action=revoke` writes `approved=false` replacements and requests a viewer
+refresh so protected text is redacted. Public display is never granted.
+
+After the first discovery freeze, dispatch `approve-inventory` with the frozen
+`inventory_hash` so completeness metrics get a denominator. That review is
+also reversible (`approved=false`) and is not release authority.
+
+Licensed files for `restricted_file` sources stay at
+`s3://<datalake>/restricted/<source_key>/`. Missing files remain
+`awaiting-artifact`. Before any public release: revoke the POC rows, remove or
+license the restricted artifacts, and require real publisher permissions.
+`acceptance_status` already refuses release authority for operator-exception
+and unverified-scope paths.
+
+### Queue backlog evidence and POC purge
+
+Stale fleet-queue backlog (held `clhear.l2.changed`, audit `SourceChanged`)
+can occupy L1 for hours before a cycle command is seen. For the private POC,
+`scripts/queue_backlog_evidence.py` records per-queue counts and a bounded
+sample (200 messages, classified with `platform.routing`, no delete) to
+`s3://clhear-deploy-730649732189/deployments/l1/queue-evidence/queue-backlog-<ts>.json`,
+then `PurgeQueue`s the nine `clhear-fleet-*` / `clhear-events` queues. The
+dead-letter queue is left untouched as evidence. This is a one-time POC
+clear, not the durable recovery path; later incidents use `recover-queues`.
+
+Recorded 16 Sep 2026 (UTC) before purge, samples dominated by held
+`clhear.l2.changed` plus audit `SourceChanged`:
+
+| Queue | Visible |
+| --- | ---: |
+| clhear-fleet-l0 | 819,697 |
+| clhear-events (L1) | 515,569 |
+| clhear-fleet-l2 | 112 |
+| clhear-fleet-l3 | 122,788 |
+| clhear-fleet-l4 | 127,161 |
+| clhear-fleet-l5 | 22,177 |
+| clhear-fleet-l6 | 1 |
+| clhear-fleet-l7 | 83,043 |
+| clhear-fleet-l8 | 5 |
+| clhear-events-dlq (not purged) | 1,794,900 |
+
+Evidence objects:
+`s3://clhear-deploy-730649732189/deployments/l1/queue-evidence/queue-backlog-20260916T194500Z.json`
+(pre-purge sample) and
+`…/queue-backlog-20260916T194708Z.json` (purge receipt; `dlq_purged: false`).
+
 ### Failure details, progress and readiness
 
 Task failures are recorded as codes, never driver text: error class,

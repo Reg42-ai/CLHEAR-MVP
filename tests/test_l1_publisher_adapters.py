@@ -98,3 +98,17 @@ def test_publisher_adapter_meta_carries_rights_publisher_instrument():
     assert sec.meta().rights_basis == "derived_only"
     sec2 = publisher_adapter_class("sec_edgar")(channel="sec", source_key="sec/release/1", title="SEC", url="https://www.sec.gov/x")
     assert sec2.meta().rights_basis == "public_domain"
+
+
+def test_repeated_handbook_citation_keeps_the_first_provision():
+    html = b"""<html><body>
+    <p>SYSC 4.1.1 R A firm must have robust governance arrangements.</p>
+    <p>SYSC 4.1.1 See the rule above.</p>
+    </body></html>"""
+    adapter = publisher_adapter_class("fca_handbook")(
+        "SYSC", chapters=["4"], source_key="fca/handbook/SYSC", title="SYSC",
+        url="https://www.handbook.fca.org.uk/handbook/SYSC")
+    tree = adapter.parse(html)
+    provisions = [n for n in flatten(tree) if n.node_type == "provision"]
+    assert [n.ref for n in provisions] == ["SYSC 4.1.1"]
+    assert any(n.node_type == "paragraph" and "See the rule above" in n.raw_text for n in flatten(tree))

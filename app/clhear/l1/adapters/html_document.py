@@ -80,7 +80,14 @@ def parse(content, source_key, *, provision=None, make_ref=None, status_of=None,
             context = {"section": headings[-1][1].heading if headings else "", "part": part, "seen": seen}
             ref = make_ref(match, context) if make_ref else _norm(match.group("ref"))
             if ref in seen:
-                raise ValueError("Repeated publisher provision identity; explicit scope disambiguation required")
+                # Chapter TOC and cross-references reprint the same citation.
+                # The first provision keeps the publisher identity; later hits
+                # stay as addressable text so a multi-chapter sourcebook can
+                # ingest instead of failing closed on a repeated number.
+                node = DocNode(node_type="paragraph", raw_text=text,
+                               source_fragment=row["fragment"], source_locator=locator)
+                (active or (headings[-1][1] if headings else root)).children.append(node)
+                continue
             seen.add(ref)
             node = DocNode(node_type="provision", ref=ref, label=text[:match.end()].strip(), raw_text=text[match.end():].strip(),
                            status=status_of(match) if status_of else "", source_fragment=row["fragment"], source_locator=locator)

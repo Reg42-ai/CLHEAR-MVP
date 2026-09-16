@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: 'Deploy tested code, request a full L1 cycle, or run one bounded queue/DLQ recovery pass through the deployed L0 worker'
+        description: 'Deploy tested code, request a full L1 cycle, run one bounded queue/DLQ recovery pass, or record the private POC permission/inventory review through the deployed L0 worker'
         type: choice
-        options: [deploy, verify-l1, recover-queues]
+        options: [deploy, verify-l1, recover-queues, poc-private-review, approve-inventory]
         required: true
         default: deploy
       recovery_plan:
@@ -23,6 +23,22 @@ on:
         type: string
         required: false
         default: '5000'
+      poc_action:
+        description: 'poc-private-review only: activate or revoke the private-POC permission rows'
+        type: choice
+        options: [activate, revoke]
+        required: false
+        default: activate
+      evidence_ref:
+        description: 'poc-private-review / approve-inventory: operator evidence reference'
+        type: string
+        required: false
+        default: 'poc:private-test-environment'
+      inventory_hash:
+        description: 'approve-inventory only: frozen SHA-256 inventory hash'
+        type: string
+        required: false
+        default: ''
 
 permissions: {}
 
@@ -58,7 +74,7 @@ jobs:
           path: artifacts/eligibility-precheck.json
   deploy:
     needs: eligibility
-    if: needs.eligibility.outputs.eligible == 'true' && inputs.operation != 'verify-l1' && inputs.operation != 'recover-queues' && github.repository == 'Reg42-ai/CLHEAR-MVP' && github.ref == 'refs/heads/main'
+    if: needs.eligibility.outputs.eligible == 'true' && inputs.operation != 'verify-l1' && inputs.operation != 'recover-queues' && inputs.operation != 'poc-private-review' && inputs.operation != 'approve-inventory' && github.repository == 'Reg42-ai/CLHEAR-MVP' && github.ref == 'refs/heads/main'
     concurrency:
       group: clhear-l1-deployment
       cancel-in-progress: false
@@ -317,3 +333,107 @@ jobs:
           path: |
             artifacts/queue-recovery.json
             artifacts/recovery-eligibility.json
+
+  poc-private-review:
+    needs: eligibility
+    if: needs.eligibility.outputs.eligible == 'true' && github.event_name == 'workflow_dispatch' && inputs.operation == 'poc-private-review'
+    concurrency:
+      group: clhear-l1-deployment
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: clhear-l1
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      CLHEAR_DEPLOY_ROLE_ARN: ${{ vars.CLHEAR_DEPLOY_ROLE_ARN }}
+      CLHEAR_DEPLOY_ENVIRONMENT: clhear-l1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.lock
+      - name: Recheck owner merge and CI under the shared rollout lock
+        id: locked
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/deployment_eligibility.py --stage locked --output artifacts/poc-review-eligibility.json
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.locked.outputs.eligible == 'true'
+        with:
+          role-to-assume: ${{ env.CLHEAR_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Record private-POC permission rows through deployed L0
+        if: steps.locked.outputs.eligible == 'true'
+        run: python scripts/deploy_l1.py poc-private-review --sha "$GITHUB_SHA" --verification-id "l1-poc-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --action "${{ inputs.poc_action }}" --evidence-ref "${{ inputs.evidence_ref }}" --output artifacts/poc-private-review.json
+      - name: Retain the POC review receipt; rows are in source_permissions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l1-poc-review-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            artifacts/poc-private-review.json
+            artifacts/poc-review-eligibility.json
+
+  approve-inventory:
+    needs: eligibility
+    if: needs.eligibility.outputs.eligible == 'true' && github.event_name == 'workflow_dispatch' && inputs.operation == 'approve-inventory'
+    concurrency:
+      group: clhear-l1-deployment
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: clhear-l1
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      CLHEAR_DEPLOY_ROLE_ARN: ${{ vars.CLHEAR_DEPLOY_ROLE_ARN }}
+      CLHEAR_DEPLOY_ENVIRONMENT: clhear-l1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.lock
+      - name: Recheck owner merge and CI under the shared rollout lock
+        id: locked
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/deployment_eligibility.py --stage locked --output artifacts/inventory-review-eligibility.json
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.locked.outputs.eligible == 'true'
+        with:
+          role-to-assume: ${{ env.CLHEAR_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Record the frozen inventory scope review through deployed L0
+        if: steps.locked.outputs.eligible == 'true'
+        run: python scripts/deploy_l1.py approve-inventory --sha "$GITHUB_SHA" --verification-id "l1-inventory-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --inventory-hash "${{ inputs.inventory_hash }}" --evidence-ref "${{ inputs.evidence_ref }}" --output artifacts/inventory-review.json
+      - name: Retain the inventory review receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: l1-inventory-review-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            artifacts/inventory-review.json
+            artifacts/inventory-review-eligibility.json

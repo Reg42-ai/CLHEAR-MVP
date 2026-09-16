@@ -1000,9 +1000,12 @@ class VerificationDispatcher:
         # operation: (id pattern, worker arguments, receipt status, waiter attempts)
         "verify": (r"l1-cycle-[1-9][0-9]*-[1-9][0-9]*", ("--request-l1-cycle",), "cycle_submitted", 60),
         "recover-queues": (r"l1-queues-[1-9][0-9]*-[1-9][0-9]*", ("--recover-queues",), "recovery_pass_completed", 240),
+        "poc-private-review": (r"l1-poc-[1-9][0-9]*-[1-9][0-9]*", ("--poc-private-review",), "poc_review_recorded", 60),
+        "approve-inventory": (r"l1-inventory-[1-9][0-9]*-[1-9][0-9]*", ("--approve-inventory",), "inventory_review_recorded", 60),
     }
 
-    def __init__(self, sha, verification_id, *, clients=None, environ=None, operation="verify", max_messages=None):
+    def __init__(self, sha, verification_id, *, clients=None, environ=None, operation="verify",
+                 max_messages=None, poc_action=None, evidence_ref=None, inventory_hash=None):
         from types import SimpleNamespace
         require(bool(re.fullmatch(r"[0-9a-f]{40}", sha)), "A tested controller SHA is required")
         require(operation in self.OPERATIONS, "Unknown L0 operation")
@@ -1012,6 +1015,16 @@ class VerificationDispatcher:
         if max_messages is not None:
             require(type(max_messages) is int and 1 <= max_messages <= 200_000, "max_messages must be within 1..200000")
             self.worker_arguments = (*self.worker_arguments, "--max-messages", str(max_messages))
+        if operation == "poc-private-review":
+            require(poc_action in {"activate", "revoke"}, "POC action must be activate or revoke")
+            require(isinstance(evidence_ref, str) and bool(evidence_ref.strip()), "evidence_ref is required")
+            self.worker_arguments = ("--poc-private-review", poc_action, "--evidence-ref", evidence_ref.strip())
+        if operation == "approve-inventory":
+            require(bool(re.fullmatch(r"[a-f0-9]{64}", inventory_hash or "")), "inventory_hash must be a SHA-256")
+            extra = ("--approve-inventory", inventory_hash)
+            if evidence_ref:
+                extra = extra + ("--evidence-ref", str(evidence_ref).strip())
+            self.worker_arguments = extra
         self.inputs = SimpleNamespace(sha=sha)
         self.verification_id = verification_id
         self.env = dict(os.environ if environ is None else environ)
@@ -1101,9 +1114,13 @@ class VerificationDispatcher:
                    "deployment_performed": False, "accepted_release_changed": False}
         if self.operation == "verify":
             receipt["cycle_id"] = "cycle-manual-" + self.verification_id
-        else:
+        elif self.operation == "recover-queues":
             receipt.update(recovery_id=self.verification_id, evidence="deferred-delivery ledger (l0_platform.deferred_deliveries)",
                            queues_purged=False, resumable=True)
+        elif self.operation == "poc-private-review":
+            receipt.update(review_id=self.verification_id, display_public=False, acceptance="not_claimed")
+        else:
+            receipt.update(review_id=self.verification_id, acceptance="not_claimed")
         return receipt
 
 
@@ -1112,21 +1129,35 @@ def verification_main(argv, operation="verify"):
     parser.add_argument("--sha", required=True)
     if operation == "verify":
         parser.add_argument("--verification-id", required=True)
-    else:
+    elif operation == "recover-queues":
         parser.add_argument("--recovery-id", required=True, dest="verification_id")
         parser.add_argument("--max-messages", type=int, default=None)
+    elif operation == "poc-private-review":
+        parser.add_argument("--verification-id", required=True)
+        parser.add_argument("--action", required=True, choices=("activate", "revoke"))
+        parser.add_argument("--evidence-ref", required=True)
+    else:
+        parser.add_argument("--verification-id", required=True)
+        parser.add_argument("--inventory-hash", required=True)
+        parser.add_argument("--evidence-ref", default="poc:private-scope-review")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        report = VerificationDispatcher(args.sha, args.verification_id, operation=operation,
-                                        max_messages=getattr(args, "max_messages", None)).dispatch()
+        report = VerificationDispatcher(
+            args.sha, args.verification_id, operation=operation,
+            max_messages=getattr(args, "max_messages", None),
+            poc_action=getattr(args, "action", None),
+            evidence_ref=getattr(args, "evidence_ref", None),
+            inventory_hash=getattr(args, "inventory_hash", None),
+        ).dispatch()
     except Exception as error:
         report = {"status": "submission_failed", "operation": operation, **_failure_details(error)}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     os.chmod(args.output, 0o600)
     print(json.dumps(report, sort_keys=True))
-    return 0 if report["status"] in {"cycle_submitted", "recovery_pass_completed"} else 1
+    return 0 if report["status"] in {"cycle_submitted", "recovery_pass_completed",
+                                     "poc_review_recorded", "inventory_review_recorded"} else 1
 
 
 def main(argv=None):
@@ -1136,6 +1167,10 @@ def main(argv=None):
         return verification_main(argv[1:])
     if argv and argv[0] == "recover-queues":
         return verification_main(argv[1:], operation="recover-queues")
+    if argv and argv[0] == "poc-private-review":
+        return verification_main(argv[1:], operation="poc-private-review")
+    if argv and argv[0] == "approve-inventory":
+        return verification_main(argv[1:], operation="approve-inventory")
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("sha", "image", "ui-key", "ui-sha256", "ui-version", "deployment-id"):
         parser.add_argument(f"--{name}", required=True)

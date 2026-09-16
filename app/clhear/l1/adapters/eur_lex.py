@@ -17,6 +17,7 @@ Decision 2011/833/EU) — verbatim reproduction with source acknowledgement.
 """
 import re
 from datetime import date
+from urllib.parse import quote
 
 from bs4 import BeautifulSoup, Tag
 
@@ -24,6 +25,11 @@ from app.clhear.l1 import http
 from app.clhear.l1.adapters.base import Artifact, DocNode, EffectRecord, FetchResult, SourceMeta, flatten
 
 CELLAR = "http://publications.europa.eu/resource/celex"
+
+
+def cellar_resource_url(celex: str) -> str:
+    """Cellar resource URLs require encoded parentheses (CELEX corrigenda)."""
+    return f"{CELLAR}/{quote(celex, safe='-')}"
 GDPR_CELEX = "32016R0679"
 # GDPR's only consolidation; new consolidations get new date suffixes.
 # ARCH: consolidation discovery via the Cellar work tree lands with the P2
@@ -144,7 +150,7 @@ class EurLexAdapter:
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
         if since_version == self.version_label:
             return None
-        content = http.get(f"{CELLAR}/{self.celex_version}", headers=_HEADERS)
+        content = http.get(cellar_resource_url(self.celex_version), headers=_HEADERS)
         from app.clhear.l1.adapters.dom_document import parse
         tree = parse(content, self.meta().source_key)
         return FetchResult(
@@ -559,14 +565,12 @@ class EurLexAdapter:
     # --- citator (corrigenda probe) -------------------------------------------
     def family_effects(self) -> list[EffectRecord]:
         """Corrigenda: probe CELEX 3…R(01)… identifiers against Cellar."""
-        from urllib.parse import quote
-
         records: list[EffectRecord] = []
         for i in range(1, 10):
             corrigendum = f"{self.celex}R({i:02d})"
             try:
                 http.get(
-                    f"{CELLAR}/{quote(corrigendum)}",  # Cellar requires %28/%29 parens
+                    cellar_resource_url(corrigendum),
                     headers={"Accept": "application/xml;notice=identifiers"},
                 )
             except Exception:

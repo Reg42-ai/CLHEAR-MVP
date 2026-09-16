@@ -171,3 +171,12 @@ def test_adapter_for_class_b_and_corrigenda():
     assert adapter_for(corr).key == "eur_lex"
     sdrt = next(e for e in S if e["key"] == "uksi/1986/1711")
     assert adapter_for(sdrt).key == "uk_legislation"
+
+
+def test_cellar_resource_url_encodes_corrigendum_parentheses():
+    from app.clhear.l1.adapters.eur_lex import cellar_resource_url
+    assert cellar_resource_url("32016R0679") == "http://publications.europa.eu/resource/celex/32016R0679"
+    assert cellar_resource_url("32016R0679R(01)") == (
+        "http://publications.europa.eu/resource/celex/32016R0679R%2801%29"
+    )
+    assert cellar_resource_url("02016R0679-20160504").endswith("02016R0679-20160504")
