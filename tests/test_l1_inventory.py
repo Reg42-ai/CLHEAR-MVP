@@ -75,10 +75,24 @@ def complete_discovery(monkeypatch):
 
 
 def review_and_audit(engine, store, monkeypatch):
+    # Acceptance now includes an authorized English reader, not import alone.
+    from app.clhear.l1 import permissions
+    with engine.connect() as conn:
+        existing = {op: permissions.decision(conn, KEY, op)["allowed"] for op in permissions.OPERATIONS}
+    grant(engine, permissions={**existing, "display_internal": True})
     complete_discovery(monkeypatch)
     first = inv.run_inventory_audit(engine, store, job_id="initial-discovery", scope="finra", discover=True)
     inv.record_scope_review(engine, first["inventory_hash"], "test-only:independent-complete-index", "unit-test-reviewer", True)
-    return inv.run_inventory_audit(engine, store, job_id="after-scope-review", scope="finra")
+    result = inv.run_inventory_audit(engine, store, job_id="after-scope-review", scope="finra")
+    from app.clhear.l1 import translation
+    for source in result["sources"]:
+        if source.get("source_version_id") and source["verified"]:
+            with engine.begin() as conn:
+                translation.record_language_binding(conn, source_version_id=source["source_version_id"],
+                    language="en", document_key=source["source_key"], authority="authoritative",
+                    evidence_ref="test-only:authored-English-fixture", approved_by="unit-test-reviewer")
+            translation.build_english_view(engine, None, source["source_version_id"])
+    return result
 
 
 def codes(source):
@@ -211,7 +225,8 @@ def test_discovery_requires_each_exact_permission_before_fetch(engine, tmp_path,
     monkeypatch.setattr(inv, "_fetch_discovery", lambda url: pytest.fail("unauthorized discovery network fetch"))
     entries, result = inv._discover(engine, store)
     assert entries == {} and not result["complete"]
-    assert all(f["code"] == "discovery_permission_blocked" for f in result["findings"])
+    assert len([f for f in result["findings"] if f["code"] == "discovery_permission_blocked"]) == len(inv.FINRA_CATEGORIES)
+    assert any(f["code"] == "finra_enforcement_search_contract_required" for f in result["findings"])
 
 
 def test_discovery_pagination_limits_and_attachment_gaps_are_preserved(engine, tmp_path, monkeypatch):

@@ -18,7 +18,7 @@ CONTRACTS = {
     "eu-law": {"adapter": "cellar_celex_catalog", "references": [
         "https://op.europa.eu/en/web/webtools/linked-data-and-sparql-test-linda",
         "https://leos.pages.code.europa.eu/ai4drpm/_modules/ai4drpm/utils/sparql_utils.html"],
-        "coverage": "CELEX secondary legislation and consolidated texts, including exposed identifiers for amendments/corrigenda; English import selection"},
+        "coverage": "CELEX secondary legislation and consolidated texts, exposed amendment/corrigendum identifiers, and publisher-declared language expressions"},
     "esma": {"adapter": "esma_typed_library", "references": ["https://www.esma.europa.eu/databases-library/esma-library?page=0"],
         "coverage": "Typed compliance documents in the paginated ESMA library, including linked original PDF attachments"},
     "us-law": {"adapter": "govinfo_collection_sitemaps", "references": ["https://www.govinfo.gov/sitemaps", "https://github.com/usgpo/sitemap"],
@@ -28,6 +28,8 @@ CELLAR = "https://publications.europa.eu/webapi/rdf/sparql"
 ESMA = "https://www.esma.europa.eu/databases-library/esma-library"
 ESMA_PAGE_SIZE = 20
 GOVINFO = {k: f"https://www.govinfo.gov/sitemap/{k}_sitemap_index.xml" for k in ("USCODE", "CFR", "FR")}
+EU_LANGUAGES = dict(zip("BUL CES DAN DEU ELL ENG EST FIN FRA GLE HRV HUN ITA LAV LIT MLT NLD POL POR RON SLK SLV SPA SWE".split(),
+                        "bg cs da de el en et fi fr ga hr hu it lv lt mt nl pl pt ro sk sl es sv".split()))
 
 
 def _entry(publisher, key, title, url, adapter, family, *, kind="guidance", fetch=None):
@@ -65,12 +67,14 @@ def cellar_url(after=""):
         raise ValueError("Invalid CELEX continuation")
     # Keyset pagination remains bounded and does not rely on unstable offsets.
     query = '''PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
-SELECT DISTINCT ?celex WHERE {
+SELECT ?celex (GROUP_CONCAT(DISTINCT STR(?language);separator="|") AS ?languages) WHERE {
  GRAPH ?g { ?resource cdm:resource_legal_id_celex ?value . }
  BIND(STR(?value) AS ?celex)
  FILTER(REGEX(?celex, "^[03][0-9]{4}[A-Z]"))
  FILTER(?celex > "''' + after + '''")
-} ORDER BY ?celex LIMIT 100'''
+ OPTIONAL { ?expression cdm:expression_belongs_to_work ?resource ;
+                         cdm:expression_uses_language ?language . }
+} GROUP BY ?celex ORDER BY ?celex LIMIT 100'''
     return CELLAR + "?" + urlencode({"query": query, "format": "application/sparql-results+json"})
 
 
@@ -89,16 +93,39 @@ def _cellar(profile):
         cursor = re.search(r'FILTER\(\?celex > "([^"]*)"\)', request_query)
         if cursor and ids and ids[0] <= cursor.group(1):
             raise ValueError("Cellar continuation did not advance")
-        entries = []
-        for celex in ids:
-            url = "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:" + quote(celex, safe="()")
-            entries.append(_entry(profile, "celex/" + celex, "EU legal publication " + celex, url, "eur_lex", "eu-data",
+        entries, findings = [], []
+        for celex, row in zip(ids, bindings):
+            raw_languages = row.get("languages", {}).get("value", "")
+            language_codes = set()
+            for language in raw_languages.split("|") if raw_languages else []:
+                match = re.fullmatch(r"https?://publications.europa.eu/resource/authority/language/([A-Z]{3})(?:/LNG[0-9]+)?", language)
+                if not match or match.group(1) not in EU_LANGUAGES:
+                    findings.append({"code": "cellar_language_expression_unverified", "detail": "Publisher expression language is not in the reviewed language authority contract.", "publisher_reference": celex})
+                    continue
+                language_codes.add(match.group(1))
+            if not language_codes:
+                findings.append({"code": "cellar_language_inventory_missing", "detail": "A CELEX work has no usable publisher expression metadata; the declared English dependency remains unverified.", "publisher_reference": celex})
+            # EU legal language expressions are equally authoritative. English
+            # satisfies original+English when available; metadata for every
+            # other expression is retained without 24 duplicate import tasks.
+            # If English is absent, preserve one identified original language
+            # and let the separate English-view workflow handle translation.
+            selected = {"ENG"} if "ENG" in language_codes or not language_codes else {sorted(language_codes)[0]}
+            for language in sorted(selected):
+                iso = EU_LANGUAGES[language]
+                url = "https://eur-lex.europa.eu/legal-content/" + iso.upper() + "/TXT/?uri=CELEX:" + quote(celex, safe="()")
+                entry = _entry(profile, "celex/" + celex + ("" if language == "ENG" else "/" + iso), "EU legal publication " + celex + " · " + iso, url, "eur_lex", "eu-data",
                                   kind="regulation" if celex[5] == "R" else "law",
-                                  fetch={"celex": celex, "celex_version": celex}))
+                                  fetch={"celex": celex, "celex_version": celex, "language": language})
+                entry["document_group_key"] = "celex/" + celex
+                entry["publisher_language_expressions"] = [EU_LANGUAGES[code] for code in sorted(language_codes)]
+                entry["language_candidates"] = [{"language": iso, "authority": "unknown", "method": "cellar_expression_uses_language", "evidence_ref": page.get("url", CELLAR)}] if language in language_codes else []
+                entry["catalog_evidence"] = {"url": page.get("url", CELLAR), "sha256": hashlib.sha256(body).hexdigest(), "expression_language": language if language in language_codes else None}
+                entries.append(entry)
         # Document acquisition belongs to the source task, not this metadata
         # enumeration. Missing originals remain in the audit's denominator.
         links = [_link(cellar_url(ids[-1]), catalog_key, "eu-law-library")] if len(ids) == 100 else []
-        return {"entries": entries, "links": links, "findings": [], "catalog_metadata": {"observed_identifiers": len(ids), "last_identifier": ids[-1] if ids else None}}
+        return {"entries": entries, "links": links, "findings": findings, "catalog_metadata": {"observed_identifiers": len(ids), "observed_language_documents": len(entries), "last_identifier": ids[-1] if ids else None}}
     return seeds, decode
 
 

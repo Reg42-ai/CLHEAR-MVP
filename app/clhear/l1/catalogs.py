@@ -20,6 +20,12 @@ def discover_catalog(engine, store, profile, *, job_id, fetcher):
     from app.clhear.l1.structured_catalogs import CONTRACTS, discover_structured
     if profile["publisher_id"] in CONTRACTS:
         return discover_structured(engine, store, profile, job_id=job_id, fetcher=fetcher)
+    from app.clhear.l1.legislation_catalogs import REFERENCES, discover_legislation
+    from app.clhear.l1.publisher_catalogs import LIBRARIES, discover_library
+    if profile["publisher_id"] in REFERENCES:
+        return discover_legislation(engine, store, profile, job_id=job_id, fetcher=fetcher)
+    if profile["publisher_id"] in LIBRARIES:
+        return discover_library(engine, store, profile, job_id=job_id, fetcher=fetcher)
     key = CATALOG_SOURCES.get(profile["publisher_id"])
     source = next((e for e in S if e["key"] == key), None)
     if source is None:

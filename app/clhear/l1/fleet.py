@@ -68,11 +68,18 @@ def adapter_for(entry: dict) -> Adapter:
     key = entry["adapter"]
     if fetch.get("blocked"):
         return DeclarationGapAdapter(entry)
+    if fetch.get("document_type") == "publisher_publication":
+        from app.clhear.l1.adapters.publisher import GenericPublisherDocumentAdapter
+        return GenericPublisherDocumentAdapter(source_key=entry["key"], title=entry["name"], url=_url(entry),
+                                               meta=meta, adapter=key, expected_format=fetch.get("kind", "auto"))
     if key == "eur_lex":
         from app.clhear.l1.adapters.eur_lex import EurLexAdapter
 
         celex = fetch.get("celex") or entry["key"].split("/", 1)[-1]
         version = fetch.get("celex_version", celex)
+        if fetch.get("language"):
+            from app.clhear.l1.adapters.eur_lex_languages import EurLexLanguageAdapter
+            return EurLexLanguageAdapter(language=fetch["language"], celex=celex, celex_version=version, meta=meta)
         return EurLexAdapter(celex=celex, celex_version=version, meta=meta)
     if key == "uk_legislation":
         from app.clhear.l1.adapters.uk_legislation import UkLegislationAdapter

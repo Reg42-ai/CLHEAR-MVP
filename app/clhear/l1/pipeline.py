@@ -154,6 +154,7 @@ class RunRecorder:
         inputs = {**inputs, **{k: execution[k] for k in ("job_id", "task_id", "attempt") if k in execution}}
         self._source = inputs.get("source")
         self._protected = bool(inputs.get("protected_source"))
+        self.artifact_check = None
         self._engine = engine
         self._started = time.monotonic()
         self._last_stage_at = self._started
@@ -192,6 +193,8 @@ class RunRecorder:
         if self._source:
             summary.setdefault("fetch_evidence", l1_http.fetch_evidence())
             summary.setdefault("publisher_checked_at", l1_http.publisher_checked_at())
+        if self.artifact_check:
+            summary["authorized_artifact_check"] = self.artifact_check
         if self._protected:
             summary.pop("missing_preview", None)
         outputs = {**summary, "status": status, "stages": self.stages}
@@ -503,6 +506,8 @@ def parser_identity(adapter: Adapter) -> dict:
     configured = {name: value for name, value in vars(adapter).items()
                   if name.lstrip("_") in parameters or name in {"_meta", "_headers", "_url", "_urls"}}
     config = {**configured, "meta": adapter.meta(),
+              "worker_parser_settings": {name: getattr(get_settings(), name) for name in (
+                  "clhear_fidelity_threshold", "clhear_ingest_max_attempts", "clhear_salvage_cap", "clhear_model_repair")},
               **{name: getattr(adapter, name, None) for name in ("PROVISION", "HEADING", "renderer", "version_kind", "version_policy", "headers")}}
     config_hash = sha256(json.dumps(serializable(config), sort_keys=True).encode())
     body = b"".join(name.encode() + b"\0" + content for name, content in sorted(parts))
@@ -649,6 +654,14 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
         outputs = recorder.finish("failed", summary)
         return {**summary, "status": "failed", "run_id": recorder.run_id, "stages": outputs["stages"]}
     observations = l1_http.fetch_evidence()
+    if meta.adapter == "restricted_file" and result is not None:
+        check = getattr(adapter, "artifact_check", None)
+        expected = [{"name": a.name, "sha256": sha256(a.content), "byte_count": len(a.content),
+                     "content_type": a.content_type} for a in result.artifacts]
+        if (isinstance(check, dict) and check.get("schema") == "clhear.authorized-artifact-check.v1"
+                and check.get("source_key") == meta.source_key and check.get("artifacts") == expected
+                and check.get("method") == "authorized_artifact_store_read" and check.get("publisher_check_performed") is False):
+            recorder.artifact_check = dict(check)
     freshness = ("stale" if l1_http.last_good_used() else
                  "live" if l1_http.publisher_checked_at() else
                  "fixture" if observations and all(o["origin"] == "fixture" for o in observations) else
@@ -713,7 +726,8 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
                 "original_verification": original_proof,
             }
             outputs = recorder.finish("unchanged", summary)
-            return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"]}
+            return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"],
+                    **({"authorized_artifact_check": recorder.artifact_check} if recorder.artifact_check else {})}
         recorder.stage("projection_repair", reason="stored projection differs from validated source parse")
 
     # ---- fidelity gate + escalation loop -----------------------------------
@@ -1187,7 +1201,8 @@ def _persist(
         "ingested %s %s: %d nodes / %d clauses (%s, coverage %.4f)",
         meta.source_key, result.version_label, node_count, len(clause_rows), change_kind, report.coverage,
     )
-    return {**summary, "status": change_kind, "run_id": recorder.run_id, "stages": outputs["stages"]}
+    return {**summary, "status": change_kind, "run_id": recorder.run_id, "stages": outputs["stages"],
+            **({"authorized_artifact_check": recorder.artifact_check} if recorder.artifact_check else {})}
 
 
 def persist_tree(

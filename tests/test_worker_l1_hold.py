@@ -10,7 +10,7 @@ import pytest
 import sqlalchemy as sa
 
 from app.clhear import db, workers
-from app.clhear.l1 import workflow
+from app.clhear.l1 import cycles, workflow
 from app.clhear.models import runs
 from app.clhear.platform import errors, events, router
 from app.clhear.settings import get_settings
@@ -37,6 +37,7 @@ def runtime(monkeypatch):
         (errors, "init"), (router, "build_providers"),
         (router, "record_missing_providers"), (router, "Router"),
         (events, "SqsTransport"), (events, "relay_once"),
+        (cycles, "reconcile"),
         (workers, "RoutedOutboxTransport"), (workers, "_snapshot_pull"),
         (workers, "_snapshot_push"), (workers, "handle_envelope"),
         (boto3, "client"),
@@ -98,6 +99,7 @@ def test_allowed_fleets_keep_normal_poll_handle_and_ack(runtime, monkeypatch, fl
         QueueUrl=settings.clhear_events_queue_url, ReceiptHandle="receipt",
     )
     assert spies["relay_once"].call_count == (2 if fleet == "l0" else 0)
+    assert spies["reconcile"].call_count == (2 if fleet == "l0" else 0)
     sleep.assert_not_called()
 
 

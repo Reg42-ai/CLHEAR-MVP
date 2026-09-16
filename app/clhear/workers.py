@@ -12,7 +12,8 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from contextlib import ExitStack
+from datetime import date, datetime, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
@@ -178,6 +179,8 @@ def run_adapter_fleet(
                             summary = pipeline.ingest(engine, adapter, store, trigger=trigger, gateway=gateway,
                                                       job_id=job_id, index_embeddings=False)
                         status = summary.get("status", "failed")
+                        if status in {"added", "amended", "unchanged", "up-to-date"} and summary.get("source_version_id"):
+                            _record_import_language(engine, entry, summary, store=store)
                         # Citator writes belong to the same source task and failure boundary.
                         if entry is None and adapter.key in CITATOR_KEYS and status in {"added", "amended", "unchanged", "up-to-date"}:
                             families.sync_citator(engine, adapter, trigger=trigger, job_id=job_id)
@@ -391,6 +394,7 @@ def handle_l1_cycle_evaluation(engine, gateway, envelope):
             with workflow.stage("database_reconciliation", {"cycle_id": cycle_id}) as step:
                 audit = inventory.run_inventory_audit(engine, _cycle_store(), job_id=job_id, scope=state["scope"], discover=False)
                 step.details.update(audit_id=audit["audit_id"], inventory_hash=audit["inventory_hash"])
+            english = _prepare_cycle_english(engine, gateway, cycle_id, audit)
             with workflow.stage("readback_evals", {"cycle_id": cycle_id}) as step:
                 suites = {name: evals.run_suite(engine, name, release=cycle_id,
                           source_key=cycle_id if name == "l1_schedule_kept" and state["origin"] == "scheduled" else None) for name in
@@ -415,6 +419,7 @@ def handle_l1_cycle_evaluation(engine, gateway, envelope):
                       "manifest_current": manifest_current, "identity_recorded": identity_recorded, "evals": suites, "source_evals": source_evals,
                       "acceptance_audit_current": acceptance_audit_current,
                       "output_bindings": output_bindings,
+                      "english": english,
                       "acceptance_reasons": acceptance["reasons"],
                       "nightly_schedule_validation": "observed_delivery" if state["origin"] == "scheduled" else "pending"}
         workflow.update_job(engine, job_id, "candidate_verified" if passed else "completed_for_review", result)
@@ -422,6 +427,38 @@ def handle_l1_cycle_evaluation(engine, gateway, envelope):
     except Exception as exc:
         workflow.update_job(engine, job_id, "failed", {"error_type": type(exc).__name__})
         raise
+
+
+def _prepare_cycle_english(engine, gateway, cycle_id, audit):
+    """L1 tasks follow original readback and precede the corpus acceptance gate."""
+    from app.clhear.l1 import translation, workflow
+    job_id = workflow.job_id_for(cycle_id, "cycle.english")
+    workflow.ensure_job(engine, job_id, "english_view", "cycle", cycle_id)
+    workflow.update_job(engine, job_id, "running")
+    for source in audit["sources"]:
+        version_id = source.get("source_version_id")
+        if version_id is None:
+            continue
+        task_id = workflow.ensure_task(engine, job_id, source["source_key"], "l1.english_view")
+        token = workflow.claim_task(engine, task_id)
+        if token is None:
+            continue
+        try:
+            with workflow.bind_execution(engine, job_id, task_id, token), workflow.heartbeat(
+                    lambda: workflow.heartbeat_task(engine, task_id, token)):
+                with workflow.stage("english_view", {"cycle_id": cycle_id, "source_version_id": version_id}) as step:
+                    result = translation.build_english_view(engine, gateway, version_id, job_id=job_id)
+                    step.status = "completed" if result.get("english_ready") else "blocked"
+                    step.details.update(result)
+            workflow.finish_task(engine, task_id, token,
+                                 status="completed" if result.get("english_ready") else "blocked", summary=result)
+        except Exception as error:
+            workflow.finish_task(engine, task_id, token, status="failed", error=error)
+            raise
+    result = translation.english_acceptance(engine, [s["source_version_id"] for s in audit["sources"] if s.get("source_version_id") is not None])
+    result["job_id"] = job_id
+    workflow.update_job(engine, job_id, "completed" if result["passed"] else "completed_for_review", result)
+    return result
 
 
 SNAPSHOT_LOCAL = "/tmp/clhear.db"
@@ -491,10 +528,64 @@ def handle_l1_evidence_review(engine: Engine, gateway: Gateway, envelope: Envelo
             record = inventory.record_artifact_review(conn, **payload)
         elif kind == "scope":
             record = inventory.record_scope_review(conn, **payload)
+        elif kind == "language":
+            from app.clhear.l1.translation import record_language_binding
+            record = record_language_binding(conn, **payload)
+            record = {key: value.isoformat() if isinstance(value, (datetime, date)) else value for key, value in record.items()}
         else:
-            raise ValueError("review_kind must be permissions, artifact or scope")
+            raise ValueError("review_kind must be permissions, artifact, scope or language")
         request_refresh(conn, reason="source_evidence_updated")
     return {"review_kind": kind, "record": record, "requires_new_audit": True}
+
+
+def _record_import_language(engine, entry, summary, *, store=None):
+    """Bind reviewed publisher metadata only to the exact imported bytes."""
+    from app.clhear.l1.translation import record_language_binding
+    evidence = (entry or {}).get("language_evidence") or {}
+    manifest = summary.get("artifact_manifest", [])
+    hashes = {item.get("sha256") for item in manifest}
+    if store is not None and len(manifest) == 1:
+        import hashlib
+        from app.clhear.l1 import publishers
+        from app.clhear.l1.publisher_catalogs import language_metadata
+        item = manifest[0]
+        if item.get("key") and item.get("content_type") in {"text/html", "application/xhtml+xml"}:
+            body = store.get(item["key"])
+            # Artifact metadata alone cannot certify bytes changed in storage.
+            if not body or hashlib.sha256(body).hexdigest() != item.get("sha256"):
+                return
+            record = entry or {"key": summary.get("source", "")}
+            for publisher_id in publishers.publisher_ids(record):
+                observed = language_metadata(body, publisher_id=publisher_id, document_key=record.get("key", ""),
+                                             url=record.get("canonical_url", ""))
+                if observed:
+                    evidence = observed
+                    break
+    if (evidence.get("method") not in {"publisher_contract", "publisher_metadata"}
+            or evidence.get("authority") != "authoritative"
+            or not evidence.get("artifact_sha256") or evidence["artifact_sha256"] not in hashes):
+        return
+    with engine.begin() as conn:
+        record_language_binding(conn, source_version_id=summary["source_version_id"],
+            language=evidence["language"], document_key=evidence["document_key"], authority=evidence["authority"],
+            evidence_ref=evidence["evidence_ref"], approved_by="l1.publisher_contract", approved=True)
+
+
+def handle_l1_translation(engine, gateway, envelope):
+    from app.clhear.l1 import translation, workflow
+    version_id = envelope.payload.get("source_version_id")
+    if type(version_id) is not int or version_id <= 0:
+        raise ValueError("Translation requires an exact source_version_id")
+    job_id = workflow.job_id_for(delivery_event_key(envelope), "english_view")
+    workflow.ensure_job(engine, job_id, "english_view", "manual", delivery_event_key(envelope))
+    with workflow.bind_execution(engine, job_id), workflow.stage("english_view", {"source_version_id": version_id}) as step:
+        result = translation.build_english_view(engine, gateway, version_id, job_id=job_id)
+        step.status = "completed" if result.get("english_ready") else "blocked"
+        step.details.update(result)
+    workflow.update_job(engine, job_id, "completed" if result.get("english_ready") else "completed_for_review", result)
+    from app.clhear.l1.viewer_snapshot import request_refresh
+    request_refresh(engine, reason="english_view_finished", job_id=job_id)
+    return {**result, "job_id": job_id, "accepted_release": False}
 
 
 def handle_viewer_snapshot(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
@@ -598,6 +689,7 @@ HANDLERS = {
     "PublishReleaseRequested": handle_publish_release,
     "L1InventoryAuditRequested": handle_l1_inventory_audit,
     "L1EvidenceReviewRecorded": handle_l1_evidence_review,
+    "L1TranslationRequested": handle_l1_translation,
     "ViewerSnapshotRequested": handle_viewer_snapshot,
     "GraphRebuildRequested": handle_graph_rebuild,
     "DrDrillRequested": handle_dr_drill,
@@ -637,6 +729,7 @@ def _owned_handler(kind, fleet):
               "L1CycleRequested": "l0", "L1CycleAdvanceRequested": "l0",
               "L1CycleDiscoveryRequested": "l1", "L1CycleEvaluationRequested": "l1",
               "L1InventoryAuditRequested": "l1", "L1EvidenceReviewRecorded": "l0",
+              "L1TranslationRequested": "l1",
               "ViewerSnapshotRequested": "l0",
               "PublishReleaseRequested": "l0", "GraphRebuildRequested": "l0", "DrDrillRequested": "l0",
               "clhear.l1.changed": "l2", "clhear.l4.changed": "l6", "clhear.l5.changed": "l6"}
@@ -658,7 +751,7 @@ def _owned_handler(kind, fleet):
 
 
 def handle_envelope(engine: Engine, gateway: Gateway, body: str) -> dict | None:
-    from app.clhear.l1 import workflow
+    from app.clhear.l1 import cycles, workflow
     envelope = l0_events.resolve_envelope(engine, body)
     if get_settings().clhear_l1_only and envelope.kind in {
         "clhear.l1.changed", "clhear.l2.changed", "clhear.l4.changed", "clhear.l5.changed",
@@ -669,6 +762,37 @@ def handle_envelope(engine: Engine, gateway: Gateway, body: str) -> dict | None:
     handler = _owned_handler(envelope.kind, fleet)
     event_key = delivery_event_key(envelope)
     consumer = f"fleet.{fleet}:{envelope.kind}"
+    # Completed deliveries can arrive after a cycle has advanced to another
+    # phase. Return before the phase guard; the claim below remains the atomic
+    # idempotency check if a concurrent delivery finishes after this read.
+    with engine.connect() as conn:
+        completed = conn.execute(sa.select(workflow.deliveries.c.status).where(
+            workflow.deliveries.c.consumer == consumer,
+            workflow.deliveries.c.event_key == event_key)).scalar_one_or_none()
+    if completed == "completed":
+        return None
+    with ExitStack() as guard:
+        try:
+            guard.enter_context(cycles.operation_guard(engine, envelope))
+        except cycles.CycleRevisionChanged:
+            # ACK late delivery only after L0 has committed terminal cycle
+            # evidence. A revision mismatch alone is not retirement.
+            cycle_id = envelope.payload.get("cycle_id")
+            with engine.connect() as conn:
+                terminal = conn.execute(sa.select(cycles.cycles.c.status).where(
+                    cycles.cycles.c.cycle_id == cycle_id)).scalar_one_or_none()
+            if terminal not in cycles.TERMINAL_CYCLE:
+                raise
+            def handler(engine, gateway, envelope):
+                return {"cycle_id": cycle_id, "status": "terminal_delivery_ignored",
+                        "cycle_status": terminal, "accepted_release": False, "source_work_performed": False}
+        # Waiting for the cycle fence is not an execution attempt. Hold the
+        # fence through the handler and its durable delivery/result records.
+        return _execute_delivery(engine, gateway, envelope, handler, consumer, event_key)
+
+
+def _execute_delivery(engine, gateway, envelope, handler, consumer, event_key):
+    from app.clhear.l1 import workflow
     token = workflow.claim_delivery(engine, consumer, event_key)
     if token is None:
         return None
@@ -718,7 +842,7 @@ class RoutedOutboxTransport:
             if result.get("FailedEntryCount") or len(entries) != 1 or not entries[0].get("EventId") or entries[0].get("ErrorCode"):
                 raise RuntimeError(f"EventBridge did not confirm acceptance of {env.kind}")
             return
-        owner = "l1" if env.kind in {"AdapterRunRequested", "L1InventoryAuditRequested", "L1CycleDiscoveryRequested", "L1CycleEvaluationRequested"} else "l0"
+        owner = "l1" if env.kind in {"AdapterRunRequested", "L1InventoryAuditRequested", "L1CycleDiscoveryRequested", "L1CycleEvaluationRequested", "L1TranslationRequested"} else "l0"
         if owner not in self.queues:
             raise WrongFleet(f"No configured queue for {owner}; retain outbox row")
         self.sqs.send_message(QueueUrl=self.queues[owner], MessageBody=body)
@@ -818,6 +942,8 @@ def main() -> None:
     while True:
         try:
             if should_relay:
+                from app.clhear.l1 import cycles
+                cycles.reconcile(engine)
                 relay_once(engine, transport)
             resp = sqs.receive_message(
                 QueueUrl=settings.clhear_events_queue_url,

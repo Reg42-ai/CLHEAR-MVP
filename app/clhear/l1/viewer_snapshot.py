@@ -22,6 +22,8 @@ import sqlalchemy as sa
 
 from app.clhear.db import make_engine, run_migrations
 from app.clhear.l1 import cycles, discovery, inventory, models, origin, permissions, rights, workflow
+from app.clhear.l1 import translation
+from app.clhear.l1.translation_models import TABLES as ENGLISH_TABLES
 from app.clhear.models import eval_runs, llm_calls, runs
 
 CORPUS_TABLES = (models.source_families, models.sources, models.family_members,
@@ -31,7 +33,8 @@ CORPUS_TABLES = (models.source_families, models.sources, models.family_members,
 EVIDENCE_TABLES = (permissions.source_permissions, inventory.inventory_snapshots,
                    inventory.inventory_audits, inventory.inventory_reviews, inventory.artifact_reviews,
                    workflow.jobs, workflow.tasks, workflow.steps, origin.origin_reviews,
-                   cycles.cycles, cycles.children, discovery.cycles, discovery.pages, runs, eval_runs, llm_calls)
+                   cycles.cycles, cycles.children, cycles.queue, cycles.slot,
+                   discovery.cycles, discovery.pages, runs, eval_runs, llm_calls)
 STATE = sa.Table(
     "viewer_snapshot_state", sa.MetaData(),
     sa.Column("id", sa.Integer, primary_key=True),
@@ -46,7 +49,7 @@ _STRING_FIELDS = {
     "job_id", "task_id", "step_id", "event_id", "event_key", "consumer", "subject_ref", "worker",
     "version_label", "version", "version_kind", "scope", "scope_version", "inventory_hash", "content_hash",
     "sha256", "implementation_sha256", "canonical_text_hash", "projection_hash", "bindings_hash",
-    "audience", "dataset_kind", "origin", "freshness", "publisher_checked_at", "checked_at", "audited_at",
+    "audience", "dataset_kind", "origin", "freshness", "freshness_basis", "publisher_checked_at", "artifact_checked_at", "checked_at", "audited_at",
     "started_at", "finished_at", "created_at", "retrieved_at", "expires_at", "valid_from", "recorded_at",
     "operation", "reason", "code", "name", "url", "uri", "artifact_uri", "canonical_url",
     "publisher_edition", "expected_edition", "evidence_ref", "approved_by", "reviewed_at", "coverage",
@@ -59,11 +62,12 @@ _STRING_FIELDS = {
     "verification_id", "phase", "evidence_mode", "nightly_schedule_validation",
     "before_bindings_hash", "after_bindings_hash", "successful_sources", "failed_sources",
     "cycle_id", "child_id", "publisher_id", "profile_hash", "profile_version", "cycle_date", "role",
-    "code_revision", "worker_image_digest", "request_event_id", "event_time", "scheduled_for", "last_job_id",
+    "code_revision", "worker_image_digest", "parser_configuration_digest", "request_event_id", "event_time", "scheduled_for", "last_job_id",
     "adapters", "adapter_keys", "publication_cutoff", "frozen_at", "inventory_hashes", "snapshot_revision",
     "unverified_sources", "expected_source_keys", "manifest_hash", "command_event_id", "normalization_version", "parser_digest",
     "discovery_cycle_date", "progress_hash", "final_discovery_audit_id",
     "content_hash_method", "artifact_set_hash_method",
+    "queued_at", "heartbeat_at", "lease_until", "active_cycle_id", "english_ready",
 }
 
 
@@ -126,14 +130,15 @@ def _empty_schema(target):
 
 def _required_tables(conn, *, historical_manifest=None):
     inspector = sa.inspect(conn)
-    required = (*CORPUS_TABLES, *EVIDENCE_TABLES)
+    required = (*CORPUS_TABLES, *EVIDENCE_TABLES, *ENGLISH_TABLES)
     if historical_manifest is not None:
-        additions = {origin.origin_reviews, cycles.cycles, cycles.children, discovery.cycles, discovery.pages}
+        additions = {origin.origin_reviews, cycles.cycles, cycles.children, discovery.cycles, discovery.pages,
+                     cycles.queue, cycles.slot, *ENGLISH_TABLES}
         declared = historical_manifest.get("table_allowlist", [])
         # Read older valid worker projections without fabricating new evidence.
         # A projection declaring the new contract must contain its actual tables.
         required = tuple(table for table in required if table not in additions or table.name in declared
-                         or historical_manifest.get("cycle_id"))
+                         or (historical_manifest.get("cycle_id") and table not in {cycles.queue, cycles.slot, *ENGLISH_TABLES}))
     missing = [table.fullname for table in required
                if not inspector.has_table(table.name, schema=table.schema if conn.dialect.name == "postgresql" else None)]
     if missing:
@@ -247,8 +252,8 @@ def _authorization_binding(conn):
     for source in conn.execute(sa.select(models.sources).order_by(models.sources.c.key)).mappings():
         protected = permissions.required_for(source)
         decisions = {op: {k: choice.get(k) for k in ("permission_id", "allowed", "reason", "expires_at")}
-                     for op in ("store", "display_internal", "display_public")
-                     for choice in [permissions.decision(conn, source["key"], op)]} if protected else {}
+                     for op in ("store", "parse", "display_internal", "display_public", "infer", "derive", "translate")
+                     for choice in [permissions.decision(conn, source["key"], op)]}
         binding.append({"source_key": source["key"], "protected": protected,
                         "license": source["license"], "rights_basis": source["rights_basis"], "decisions": decisions})
     return binding
@@ -293,9 +298,14 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None):
                     if may_copy and public:
                         publicly_allowed.append(source["id"])
                 counts = {}
+                eligible_versions = conn.execute(sa.select(models.source_versions.c.id).where(
+                    models.source_versions.c.source_id.in_([s["id"] for s in source_rows]))).scalars().all()
+                english_queries = translation.snapshot_queries(conn, eligible_versions)
                 with target.begin() as out:
-                    for table in (*CORPUS_TABLES, *EVIDENCE_TABLES):
-                        query = _corpus_query(table, permitted, publicly_allowed) if table in CORPUS_TABLES else _evidence_query(table)
+                    for table in (*CORPUS_TABLES, *EVIDENCE_TABLES, *ENGLISH_TABLES):
+                        query = (english_queries[table.name] if table in ENGLISH_TABLES else
+                                 cycles.read_query(conn) if table is cycles.cycles else
+                                 _corpus_query(table, permitted, publicly_allowed) if table in CORPUS_TABLES else _evidence_query(table))
                         count = 0
                         result = conn.execute(query).mappings()
                         while batch := result.fetchmany(250):
@@ -305,7 +315,7 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None):
                         counts[table.name] = count
                     if sa.inspect(out).has_table("search_units_fts"):
                         out.exec_driver_sql("INSERT INTO search_units_fts(rowid, text) SELECT id, text FROM search_units WHERE text <> ''")
-                    completed_cycle = conn.execute(sa.select(cycles.cycles).where(
+                    completed_cycle = conn.execute(cycles.read_query(conn).where(
                         cycles.cycles.c.cycle_id == job_id,
                         cycles.cycles.c.status.in_(cycles.TERMINAL_CYCLE))).mappings().first() if job_id else None
                     manifest = {"status": "available", "kind": "candidate_viewer", "viewer_snapshot": True,
@@ -321,7 +331,7 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None):
                                 "excluded_test_sources": excluded_test_count,
                                 "omitted_layers": [f"L{n}" for n in range(2, 9)],
                                 "omitted_operational_data": ["accounts", "sessions", "API credentials", "model prompts", "lease tokens", "private exception details"],
-                                "table_allowlist": [t.name for t in (*CORPUS_TABLES, *EVIDENCE_TABLES)]}
+                                "table_allowlist": [t.name for t in (*CORPUS_TABLES, *EVIDENCE_TABLES, *ENGLISH_TABLES)]}
                     out.execute(STATE.insert().values(id=1, manifest=manifest))
         with target.connect() as check:
             if check.exec_driver_sql("PRAGMA integrity_check").scalar_one() != "ok":

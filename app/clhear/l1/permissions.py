@@ -24,7 +24,7 @@ from sqlalchemy.engine import Connection, Engine
 from app.clhear.l1.models import BigId, Json, L1_SCHEMA
 
 OPERATIONS = (
-    "acquire", "store", "parse", "embed", "infer", "train", "derive",
+    "acquire", "store", "parse", "embed", "infer", "train", "derive", "translate",
     "display_internal", "display_public", "redistribute",
 )
 _SOURCE_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}\Z")

@@ -82,6 +82,8 @@ TASK_CLASS_LIST: tuple[TaskClass, ...] = (
               "Extractive parse repair hints; output must byte-match publisher text"),
     TaskClass("l1_change", "L1", "extraction", True, _DERIVATION_LADDER, 0.90,
               "Effective-date extraction and clause-level change classification"),
+    TaskClass("l1_translate", "L1", "structured_drafting", True, _DERIVATION_LADDER, 0.95,
+              "Complete aligned English view; non-authoritative, independent bilingual evaluation required", data_class_default="restricted"),
     TaskClass("l2_extract", "L2", "extraction", True, _DERIVATION_LADDER, 0.90,
               "Clause -> candidate obligations with span offsets"),
     TaskClass("l2_consolidate", "L2", "structured_drafting", True, _HARD_LADDER, 0.88,
@@ -111,7 +113,7 @@ TASK_CLASS_LIST: tuple[TaskClass, ...] = (
 TASK_CLASSES: dict[str, TaskClass] = {tc.id: tc for tc in TASK_CLASS_LIST}
 DERIVATION_CLASSES: frozenset[str] = frozenset(tc.id for tc in TASK_CLASS_LIST if tc.derivation)
 REQUIRED_TASK_CLASSES: tuple[str, ...] = (
-    "l1_parse", "l1_change", "l2_extract", "l2_consolidate", "l2_change", "l3_decompose",
+    "l1_parse", "l1_change", "l1_translate", "l2_extract", "l2_consolidate", "l2_change", "l3_decompose",
     "l3_characterize", "l4_enumerate", "l5_map", "l6_explain", "l7_score", "l8_fill", "judge",
     "embed",
 )

@@ -5,6 +5,7 @@ adapter. An uploaded file alone is not permission. A missing file raises an
 actionable error; no placeholder artifact or invented version is created.
 """
 import hashlib
+from datetime import datetime, timezone
 
 from app.clhear.l1.adapters.base import Artifact, DocNode, FetchResult, SourceMeta
 from app.clhear.settings import get_settings
@@ -62,6 +63,7 @@ class RestrictedFileAdapter:
         self._title = title
         self._url = url
         self._meta = meta
+        self.artifact_check = None
 
     def meta(self) -> SourceMeta:
         if self._meta is not None:
@@ -83,6 +85,7 @@ class RestrictedFileAdapter:
         )
 
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
+        self.artifact_check = None
         files = _list_restricted_objects(self._source_key)
         if not files:
             raise FileNotFoundError(
@@ -104,10 +107,19 @@ class RestrictedFileAdapter:
                 DocNode(
                     node_type="title",
                     ref=self._source_key,
-                    heading=self._title,
+                    # The registry's display name is metadata, not text read
+                    # from the artifact. Preserve the complete file verbatim.
+                    heading="",
                     children=[DocNode(node_type="paragraph", raw_text=text)],
                 )
             ]
+        self.artifact_check = {
+            "schema": "clhear.authorized-artifact-check.v1", "source_key": self._source_key,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "method": "authorized_artifact_store_read", "publisher_check_performed": False,
+            "artifacts": [{"name": name, "sha256": hashlib.sha256(body).hexdigest(),
+                           "byte_count": len(body), "content_type": ctype}],
+        }
         return FetchResult(
             # Identifies acquired bytes, not an invented publisher edition/date.
             version_label=f"edition:acquired-sha256-{hashlib.sha256(body).hexdigest()}",

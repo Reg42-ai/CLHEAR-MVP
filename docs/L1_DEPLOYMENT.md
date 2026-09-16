@@ -6,6 +6,15 @@ release, or enable downstream processing. Its database is the existing
 `clhear-record` Aurora cluster. The Lambda viewer receives a separate private
 candidate at `webui/l1/candidate.db`; the legacy snapshot is not overwritten.
 
+Corpus development uses this same authoritative database and worker pipeline.
+Incomplete source coverage may produce a usable private review deployment; it
+cannot produce accepted L1 or enable L2–L8. No staging corpus or later database
+promotion is required. Before full deployment and again before L0 bootstrap,
+the controller checks existing Aurora automated backup retention and a valid
+restore point within the preceding hour. This is recorded recovery coverage,
+not a restore-drill result. Code rollback preserves applied migrations, new
+source versions and audit history; corrections remain worker-owned.
+
 ## Fast iteration
 
 Use [local private preview](PREVIEW.md) for immediate edits. After the one-time

@@ -90,7 +90,7 @@ def _claim(engine, cycle_id, job_id):
 
 
 def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, classify, max_pages=100,
-              cycle_date=None, decoder=None):
+              cycle_date=None, decoder=None, decode_documents=False):
     """Resume one publisher's UTC cycle. classify(url, parent) -> target or None.
 
     A target has url/source_key/category/role and optional entry. Catalog
@@ -134,7 +134,7 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
                                       "origin": origin, "publisher_checked_at": datetime.now(timezone.utc).isoformat() if origin == "live" else None}
                 if origin != "live":
                     result["findings"].append({"code": "discovery_not_live", "detail": "Fixture evidence does not establish publisher freshness."})
-                if decoder is not None and page["role"] == "collection":
+                if decoder is not None and (page["role"] == "collection" or decode_documents):
                     decoded = decoder(body, page)
                     for field in ("entries", "links", "findings"):
                         result[field].extend(decoded.get(field, []))
@@ -150,7 +150,7 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
                             if "next" in (link.get("rel") or []):
                                 result["findings"].append({"code": "unsupported_pagination", "detail": "Next page falls outside reviewed discovery boundaries."})
                             continue
-                        result["links"].append({k: target[k] for k in ("url", "source_key", "category", "role")})
+                        result["links"].append({k: target[k] for k in ("url", "source_key", "category", "role", "terminal") if k in target})
                         if target.get("entry"):
                             result["entries"].append(target["entry"])
                     if page["role"] == "collection" and not result["links"]:
@@ -189,7 +189,7 @@ def read_cycle(engine, cycle_id):
         context = {"source_key": row["source_key"], "url": row["url"], "category": row["category"], "publisher_id": cycle["publisher_id"]}
         findings.extend({**f, **context} for f in result.get("findings", []))
         for entry in result.get("entries", []):
-            entries[entry["key"]] = entry
+            entries[entry["key"]] = {**entries.get(entry["key"], {}), **entry}
         if result.get("artifact"):
             evidence.append({**context, **result["artifact"], "catalog_metadata": result.get("catalog_metadata", {})})
         state = categories.setdefault(row["category"], {"key": row["category"], "status": "checked", "documents": 0, "pending_pages": 0, "unresolved_pages": 0})

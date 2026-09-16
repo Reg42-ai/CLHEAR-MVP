@@ -6,7 +6,7 @@ remain visible until a reviewed publisher-specific discovery adapter exists.
 """
 from copy import deepcopy
 
-PROFILE_VERSION = "2026-09-16.1"
+PROFILE_VERSION = "2026-09-16.2"
 BOUNDARIES = {
     "include": ["rules and legislation", "financially relevant standards", "official compliance guidance",
                 "rule filings and amendments", "enforcement and examination publications", "linked official attachments"],
@@ -85,6 +85,8 @@ def publisher_profiles(entries=None):
             members[key].append(entry)
     from app.clhear.l1.catalogs import CATALOG_SOURCES
     from app.clhear.l1.structured_catalogs import CONTRACTS
+    from app.clhear.l1.publisher_catalogs import LIBRARIES
+    from app.clhear.l1.legislation_catalogs import REFERENCES
     result = []
     for key, (name, kind) in _PUBLISHERS.items():
         categories = (["standards", "amendments and corrigenda", "official implementation guidance", "exposed edition archives", "attachments"]
@@ -94,10 +96,13 @@ def publisher_profiles(entries=None):
                        "boundaries": deepcopy(BOUNDARIES), "categories": categories,
                        "declared_source_keys": sorted(e["key"] for e in members[key]),
                        "known_reference_urls": sorted({e["canonical_url"] for e in members[key] if e.get("canonical_url")}),
-                       "discovery_adapter": "finra_catalog" if key == "finra" else CONTRACTS[key]["adapter"] if key in CONTRACTS else "official_pdf_link_catalog" if key in CATALOG_SOURCES else None,
-                       "catalog_status": "configured" if key == "finra" else "partial_category_support" if key in CATALOG_SOURCES or key in CONTRACTS else "catalog_adapter_required",
+                       "discovery_adapter": "finra_catalog" if key == "finra" else CONTRACTS[key]["adapter"] if key in CONTRACTS else "legislation_metadata_catalog" if key in REFERENCES else "publisher_publication_library" if key in LIBRARIES else "official_pdf_link_catalog" if key in CATALOG_SOURCES else None,
+                       "catalog_status": "configured" if key == "finra" else "partial_category_support" if key in CATALOG_SOURCES or key in CONTRACTS or key in LIBRARIES or key in REFERENCES else "catalog_adapter_required",
                        "artifact_acquisition": "reviewed_authorized_artifact" if kind == "licensed_standards" else "reviewed_official_source",
-                       "contract_references": CONTRACTS.get(key, {}).get("references", []),
+                       "contract_references": CONTRACTS.get(key, {}).get("references", REFERENCES.get(key, LIBRARIES.get(key, {}).get("references", []))),
+                       "catalog_routes": LIBRARIES.get(key, {}).get("roots", {}),
+                       "remaining_contract_gaps": LIBRARIES.get(key, {}).get("gaps", []),
+                       "language_policy": "Preserve every observed original and linked language expression; certify language/authority only from publisher metadata bound to exact artifact bytes",
                        "access_prerequisite": "Registered FCA Handbook API account and reviewed API terms; API excludes historical versions" if key == "fca" else None,
                        "expected_documents": None, "denominator_known": False})
     return result

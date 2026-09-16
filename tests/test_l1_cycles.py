@@ -34,13 +34,16 @@ def queued(engine, kind=None):
 
 
 def fake_cycle(monkeypatch, keys=("alpha", "beta"), blocked=()):
-    from app.clhear.l1 import fleet, inventory, pipeline, registry_etoro
+    from app.clhear.l1 import fleet, inventory, pipeline, registry_etoro, translation
     from app.clhear.platform import evals
     monkeypatch.setattr(cycles, "adapter_keys", lambda: list(keys))
     def plan(key):
         return [({"key": key + "/doc"}, SimpleNamespace(key=key, meta=lambda: SimpleNamespace(source_key=key + "/doc")))]
     monkeypatch.setattr(fleet, "fleet_plan", plan)
     monkeypatch.setattr(registry_etoro, "seed", Mock())
+    # These orchestration tests stub ingestion/version IDs. Real translation
+    # and language/source binding are covered by the translation worker tests.
+    monkeypatch.setattr(translation, "build_english_view", lambda *a, **k: {"english_ready": True})
     monkeypatch.setattr(inventory, "planned_entries", lambda *a, **k: [])
     audit = {"audit_id": "audit-1", "inventory_hash": "hash-1", "sources": [{"source_key": key + "/doc"} for key in keys],
              "verified": len(keys) - len(blocked), "unresolved": len(blocked), "known_expected": len(keys),
@@ -464,8 +467,9 @@ def test_deployment_change_fails_pending_cycle_without_reimporting_completed_sou
     first, second = queued(engine, "AdapterRunRequested")
     dispatch(engine, monkeypatch, first, "l1")
     monkeypatch.setenv("CLHEAR_CODE_REVISION", "b" * 40)
-    result = dispatch(engine, monkeypatch, second, "l1")
-    assert result["status"] == "failed" and result["acceptance"] == "not_accepted"
+    with pytest.raises(cycles.CycleRevisionChanged, match="original worker revision"):
+        dispatch(engine, monkeypatch, second, "l1")
+    cycles.reconcile(engine)
     assert calls == ["alpha"]
     summary = cycles.cycle_summary(engine, cycle_id)
     assert summary["cycles"][0]["status"] == "failed"

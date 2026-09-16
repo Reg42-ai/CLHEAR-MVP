@@ -4,6 +4,8 @@ This module plans and accounts for work; acquisition and encoding remain in
 the existing L1 adapter handler. A completed cycle is not a published release.
 """
 from datetime import datetime, timezone, timedelta
+from contextlib import contextmanager
+from pathlib import Path
 import hashlib
 import json
 import os
@@ -25,6 +27,7 @@ cycles = sa.Table("l1_cycles", metadata,
     sa.Column("scheduled_for", sa.DateTime(timezone=True)),
     sa.Column("code_revision", sa.Text),
     sa.Column("worker_image_digest", sa.Text),
+    sa.Column("parser_configuration_digest", sa.Text),
     sa.Column("status", sa.Text, nullable=False),
     sa.Column("manifest", Json, nullable=False, default=dict),
     sa.Column("result", Json, nullable=False, default=dict),
@@ -47,12 +50,231 @@ children = sa.Table("l1_cycle_children", metadata,
     sa.Column("finished_at", sa.DateTime(timezone=True)),
     sa.UniqueConstraint("cycle_id", "adapter_key"),
 )
+queue = sa.Table("l1_cycle_queue", metadata,
+    sa.Column("position", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("cycle_id", sa.Text, nullable=False, unique=True),
+    sa.Column("queued_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("started_at", sa.DateTime(timezone=True)),
+    sa.Column("heartbeat_at", sa.DateTime(timezone=True)),
+    sa.Column("lease_until", sa.DateTime(timezone=True)),
+    sa.Column("recovery_count", sa.Integer, nullable=False, default=0),
+    sa.Column("finished_at", sa.DateTime(timezone=True)),
+)
+slot = sa.Table("l1_cycle_slot", metadata,
+    sa.Column("name", sa.Text, primary_key=True),
+    sa.Column("cycle_id", sa.Text),
+)
+SLOT_NAME = "all_publishers"
+FENCE_KEY = 0x434C48314C31
+RECOVERY_SECONDS = 300
 TERMINAL_CHILD = {"completed", "completed_for_review", "failed"}
 TERMINAL_CYCLE = {"candidate_verified", "completed_for_review", "failed"}
 
 
 class CycleRevisionChanged(ValueError):
     """Pending work belongs to a different immutable worker deployment."""
+
+
+@contextmanager
+def _execution_fence(engine, *, exclusive=False):
+    """A dead lease cannot release a slot while a handler is still executing.
+
+    Session locks disappear with the PostgreSQL connection/process. SQLite's
+    equivalent is an OS file lock, including across worker processes. Neither
+    holds a database transaction open during publisher requests.
+    """
+    if engine.dialect.name == "postgresql":
+        suffix = "" if exclusive else "_shared"
+        with engine.connect() as conn:
+            locked = conn.execute(sa.text(f"SELECT pg_try_advisory_lock{suffix}(:key)"), {"key": FENCE_KEY}).scalar_one()
+            conn.commit()
+            if not locked:
+                raise workflow.LeaseBusy("L1 cycle handlers are still executing")
+            try:
+                yield
+            finally:
+                try:
+                    conn.execute(sa.text(f"SELECT pg_advisory_unlock{suffix}(:key)"), {"key": FENCE_KEY})
+                    conn.commit()
+                except Exception:
+                    conn.invalidate()  # never return a locked session to the pool
+                    raise
+    elif engine.dialect.name == "sqlite":
+        import fcntl
+        import tempfile
+        database = engine.url.database
+        lock_path = (str(Path(database).resolve()) + ".l1-cycle.lock" if database and database != ":memory:"
+                     else str(Path(tempfile.gettempdir()) / f"clhear-cycle-{id(engine)}.lock"))
+        with open(lock_path, "a") as handle:
+            try:
+                fcntl.flock(handle.fileno(), (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise workflow.LeaseBusy("L1 cycle handlers are still executing") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    else:
+        raise ValueError("L1 cycle serialization requires PostgreSQL or SQLite")
+
+
+def _lock_slot(conn):
+    workflow._insert_once(conn, slot, {"name": SLOT_NAME})
+    # A write acquires the SQLite writer lock too; FOR UPDATE alone does not.
+    conn.execute(slot.update().where(slot.c.name == SLOT_NAME).values(cycle_id=slot.c.cycle_id))
+    return conn.execute(sa.select(slot.c.cycle_id).where(slot.c.name == SLOT_NAME)).scalar_one()
+
+
+def _enqueue(conn, cycle_id):
+    _lock_slot(conn)
+    workflow._insert_once(conn, queue, {"cycle_id": cycle_id, "queued_at": workflow.utcnow(), "recovery_count": 0})
+    conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id).values(status="queued"))
+
+
+def _touch(conn, cycle_id, *, progress=False, now=None):
+    now = now or workflow.utcnow()
+    values = {"heartbeat_at": now, "lease_until": now + timedelta(seconds=RECOVERY_SECONDS)}
+    if progress:
+        values["recovery_count"] = 0
+    conn.execute(queue.update().where(queue.c.cycle_id == cycle_id, queue.c.finished_at.is_(None)).values(**values))
+
+
+def _terminal(conn, cycle_id):
+    conn.execute(queue.update().where(queue.c.cycle_id == cycle_id).values(finished_at=workflow.utcnow(), lease_until=None))
+    # Admission runs on L0 after the finishing handler releases its fence.
+    _emit(conn, "L1CycleAdvanceRequested", cycle_id)
+
+
+@contextmanager
+def operation_guard(engine, envelope):
+    """Worker dispatch hook: guard source writes/audits, not scheduler receipts."""
+    kinds = {"AdapterRunRequested", "L1InventoryAuditRequested", "L1CycleDiscoveryRequested",
+             "L1CycleEvaluationRequested", "TranslationRequested", "L1TranslationRequested"}
+    if envelope.kind not in kinds or (envelope.kind == "AdapterRunRequested" and envelope.producer == "eventbridge"):
+        yield
+        return
+    # Standalone audit/translation commands cannot borrow a cycle ID to bypass
+    # its frozen command plan. In-cycle translation is synchronous cycle work.
+    cycle_id = envelope.payload.get("cycle_id") if envelope.kind in {
+        "AdapterRunRequested", "L1CycleDiscoveryRequested", "L1CycleEvaluationRequested"} else None
+    with _execution_fence(engine, exclusive=not cycle_id):
+        with engine.connect() as conn:
+            active = conn.execute(sa.select(slot.c.cycle_id).where(slot.c.name == SLOT_NAME)).scalar()
+            if cycle_id:
+                row = _row(conn, cycle_id)
+                if row["status"] in TERMINAL_CYCLE:
+                    # Late duplicate handlers must return their terminal result;
+                    # they are never entitled to acquire or encode again.
+                    raise CycleRevisionChanged("Cycle has already finished; retain its terminal evidence")
+                if active != cycle_id:
+                    raise workflow.RetryDeferred("Cycle is queued behind another whole L1 cycle")
+                if any(row[key] != value for key, value in runtime_identity().items()):
+                    raise CycleRevisionChanged("Cycle requires its original worker revision; request a new cycle")
+                phase = {"L1CycleDiscoveryRequested": "discovering", "L1CycleEvaluationRequested": "evaluating"}.get(envelope.kind)
+                if phase and row["status"] != phase:
+                    raise workflow.RetryDeferred("Command belongs to an earlier or later cycle phase")
+                if phase:
+                    command = conn.execute(sa.select(events.events).where(events.events.c.event_id == envelope.event_id)).mappings().first()
+                    if (not command or command["kind"] != envelope.kind or command["subject_ref"] != cycle_id
+                            or command["payload"] != envelope.payload or envelope.producer != "l0.l1_cycle"):
+                        raise ValueError("Cycle phase command is not bound to its durable L0 request")
+            elif active:
+                raise workflow.RetryDeferred("Direct L1 work waits until the active whole cycle finishes")
+        if not cycle_id:
+            yield
+            return
+        def touch():
+            with engine.begin() as conn:
+                _touch(conn, cycle_id)
+        touch()
+        with workflow.heartbeat(touch):
+            yield
+
+
+def reconcile(engine, *, now=None, admit=True):
+    """L0 poll hook: FIFO admission and bounded recovery of the same commands.
+
+    Lease expiry never steals executing work. Missing scheduler receipts do
+    not occupy the slot. Original request/occurrence identities stay unchanged.
+    """
+    now = now or workflow.utcnow()
+    try:
+        with _execution_fence(engine, exclusive=True), engine.begin() as conn:
+            active = _lock_slot(conn)
+            # Migration preserves earlier history. Pre-serialization active
+            # cycles cannot be silently joined to a new deployed runtime.
+            legacy = conn.execute(sa.select(cycles).where(cycles.c.status.in_(
+                ["requested", "discovering", "planned", "running", "evaluating"]),
+                ~cycles.c.cycle_id.in_(sa.select(queue.c.cycle_id)))).mappings().all()
+            for prior in legacy:
+                _fail_locked(conn, dict(prior), "unserialized_cycle_requires_new_cycle")
+            if active:
+                row = _row(conn, active, lock=True)
+                identity_changed = any(row[key] != value for key, value in runtime_identity().items())
+                if row["status"] not in TERMINAL_CYCLE and identity_changed:
+                    _fail_locked(conn, row, "worker_revision_changed_requires_new_cycle")
+                    row = _row(conn, active)
+                if row["status"] in TERMINAL_CYCLE:
+                    conn.execute(slot.update().where(slot.c.name == SLOT_NAME).values(cycle_id=None))
+                    active = None
+                else:
+                    pending = conn.execute(sa.select(queue).where(queue.c.cycle_id == active)).mappings().one()
+                    if admit and (pending["lease_until"] is None or workflow._aware(pending["lease_until"]) <= now):
+                        if pending["recovery_count"] >= workflow.MAX_ATTEMPTS:
+                            _fail_locked(conn, row, "cycle_recovery_attempts_exhausted")
+                            conn.execute(slot.update().where(slot.c.name == SLOT_NAME).values(cycle_id=None))
+                            active = None
+                        else:
+                            _recover_commands(conn, row)
+                            _touch(conn, active, now=now)
+                            conn.execute(queue.update().where(queue.c.cycle_id == active).values(
+                                recovery_count=queue.c.recovery_count + 1))
+            if not active and admit:
+                pending = conn.execute(sa.select(cycles).join(queue, queue.c.cycle_id == cycles.c.cycle_id).where(
+                    queue.c.finished_at.is_(None), cycles.c.status == "queued").order_by(queue.c.position)).mappings().all()
+                for candidate in pending:
+                    if any(candidate[key] != value for key, value in runtime_identity().items()):
+                        _fail_locked(conn, dict(candidate), "worker_revision_changed_requires_new_cycle")
+                        continue
+                    active = candidate["cycle_id"]
+                    conn.execute(slot.update().where(slot.c.name == SLOT_NAME).values(cycle_id=active))
+                    conn.execute(cycles.update().where(cycles.c.cycle_id == active).values(status="discovering"))
+                    conn.execute(queue.update().where(queue.c.cycle_id == active).values(started_at=now))
+                    _touch(conn, active, progress=True, now=now)
+                    _emit(conn, "L1CycleDiscoveryRequested", active)
+                    break
+            return {"active_cycle_id": active, "status": "active" if active else "idle"}
+    except workflow.LeaseBusy:
+        return {"status": "executing"}
+
+
+def _fail_locked(conn, row, reason):
+    from app.clhear.l1.viewer_snapshot import request_refresh
+    result = {"cycle_id": row["cycle_id"], "status": "failed", "execution_failed": True,
+              "reason": reason, "accepted_release": False, "downstream": "held",
+              "original_code_revision": row["code_revision"], "original_worker_image_digest": row["worker_image_digest"],
+              **runtime_identity()}
+    conn.execute(children.update().where(children.c.cycle_id == row["cycle_id"],
+        children.c.status.not_in(TERMINAL_CHILD)).values(status="failed", result=result, finished_at=workflow.utcnow()))
+    conn.execute(cycles.update().where(cycles.c.cycle_id == row["cycle_id"]).values(
+        status="failed", result=result, finished_at=workflow.utcnow()))
+    _terminal(conn, row["cycle_id"])
+    request_refresh(conn, reason="l1_cycle_failed", job_id=row["cycle_id"])
+
+
+def _recover_commands(conn, row):
+    """Re-relay immutable event IDs so completed deliveries stay deduplicated."""
+    if row["status"] in {"planned", "running"}:
+        _emit(conn, "L1CycleAdvanceRequested", row["cycle_id"])
+    if row["status"] == "running":
+        event_ids = list(conn.execute(sa.select(children.c.command_event_id).where(
+            children.c.cycle_id == row["cycle_id"], children.c.status.not_in(TERMINAL_CHILD))).scalars())
+    else:
+        kind = {"discovering": "L1CycleDiscoveryRequested", "evaluating": "L1CycleEvaluationRequested"}.get(row["status"])
+        event_id = conn.execute(sa.select(events.events.c.event_id).where(events.events.c.subject_ref == row["cycle_id"],
+            events.events.c.kind == kind).order_by(events.events.c.id.desc()).limit(1)).scalar() if kind else None
+        event_ids = [event_id] if event_id else []
+    conn.execute(events.events.update().where(events.events.c.event_id.in_(event_ids)).values(relayed_at=None))
 
 
 def verify_runtime(engine, cycle_id):
@@ -72,6 +294,7 @@ def verify_runtime(engine, cycle_id):
                 children.c.status.not_in(TERMINAL_CHILD)).values(status="failed", result=result, finished_at=workflow.utcnow()))
             conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id).values(
                 status="failed", result=result, finished_at=workflow.utcnow()))
+            _terminal(conn, cycle_id)
             request_refresh(conn, reason="l1_cycle_worker_revision_changed", job_id=cycle_id)
         return False
 
@@ -81,10 +304,18 @@ def digest(value):
 
 
 def runtime_identity():
+    from app.clhear.l1 import http as l1_http, originals, translation
+    from app.clhear.settings import get_settings
+    settings = get_settings()
     revision = os.environ.get("CLHEAR_CODE_REVISION", "")
     image = os.environ.get("CLHEAR_WORKER_IMAGE_DIGEST", "")
+    configuration = {name: getattr(settings, name) for name in (
+        "clhear_fidelity_threshold", "clhear_ingest_max_attempts", "clhear_salvage_cap", "clhear_model_repair")}
+    configuration.update(normalization=originals.NORMALIZATION_VERSION, offset_unit=originals.OFFSET_UNIT,
+                         english_policy=translation._template_hash(), http_mode=l1_http._mode())
     return {"code_revision": revision if re.fullmatch(r"[0-9a-f]{40}", revision) else None,
-            "worker_image_digest": image if re.fullmatch(r"sha256:[0-9a-f]{64}", image) else None}
+            "worker_image_digest": image if re.fullmatch(r"sha256:[0-9a-f]{64}", image) else None,
+            "parser_configuration_digest": digest(configuration)}
 
 
 def adapter_keys():
@@ -149,15 +380,16 @@ def start(engine, envelope):
     if not re.fullmatch(r"cycle-manual-[A-Za-z0-9._-]{1,101}", cycle_id):
         raise ValueError("Invalid manual cycle ID")
     with engine.begin() as conn:
+        _lock_slot(conn)
         row = _create(conn, cycle_id, envelope.event_id, "manual", scope)
         if row["request_event_id"] != envelope.event_id:
             raise ValueError("Cycle ID already belongs to another request event")
         if row["status"] == "requested":
-            claimed = conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id,
-                                   cycles.c.status == "requested").values(status="discovering")).rowcount
-            if claimed:
-                _emit(conn, "L1CycleDiscoveryRequested", cycle_id)
-    return {"cycle_id": cycle_id, "status": "requested", "origin": "manual"}
+            _enqueue(conn, cycle_id)
+    reconcile(engine)
+    with engine.connect() as conn:
+        status = _row(conn, cycle_id)["status"]
+    return {"cycle_id": cycle_id, "status": status, "origin": "manual"}
 
 
 def plan_sources(engine, scope, audit_id=None):
@@ -196,6 +428,7 @@ def discovered(engine, cycle_id, audit):
                                 "pending_pages": pending, "duration_ms": audit.get("duration_ms"), "progress_hash": progress_hash})
                 conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id).values(
                     result={**row["result"], "discovery_batches": batches, "pending_pages": pending}))
+                _touch(conn, cycle_id, progress=True)
                 _emit(conn, "L1CycleDiscoveryRequested", cycle_id, {"batch": len(batches) + 1})
         return {"cycle_id": cycle_id, "status": "discovering", "pending_pages": pending,
                 "audit_id": audit["audit_id"], "next_batch_requested": True}
@@ -216,6 +449,7 @@ def discovered(engine, cycle_id, audit):
                                result={**row["result"], "pending_pages": 0,
                                        "final_discovery_audit_id": audit["audit_id"]})).rowcount
         if claimed:
+            _touch(conn, cycle_id, progress=True)
             _emit(conn, "L1CycleAdvanceRequested", cycle_id)
     return {"cycle_id": cycle_id, "status": "planned", "manifest_hash": manifest["manifest_hash"]}
 
@@ -225,18 +459,17 @@ def discovery_date(row):
 
 
 def advance(engine, cycle_id):
+    reconcile(engine)
     if not verify_runtime(engine, cycle_id):
         return {"cycle_id": cycle_id, "status": "failed", "reason": "worker_revision_changed_requires_new_cycle"}
     with engine.begin() as conn:
+        _lock_slot(conn)
         row = _row(conn, cycle_id, lock=True)
         if row["status"] == "collecting":
             received = set(conn.execute(sa.select(children.c.adapter_key).where(children.c.cycle_id == cycle_id,
                 children.c.event_time.is_not(None), children.c.event_id.is_not(None))).scalars())
             if received == set(row["manifest"]["adapter_keys"]):
-                claimed = conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id,
-                    cycles.c.status == "collecting").values(status="discovering")).rowcount
-                if claimed:
-                    _emit(conn, "L1CycleDiscoveryRequested", cycle_id)
+                _enqueue(conn, cycle_id)
         elif row["status"] == "planned":
             claimed = conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id,
                                    cycles.c.status == "planned").values(status="running")).rowcount
@@ -261,7 +494,10 @@ def advance(engine, cycle_id):
                 claimed = conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id,
                                        cycles.c.status == "running").values(status="evaluating")).rowcount
                 if claimed:
+                    _touch(conn, cycle_id, progress=True)
                     _emit(conn, "L1CycleEvaluationRequested", cycle_id)
+    reconcile(engine)
+    with engine.connect() as conn:
         state = _row(conn, cycle_id)
     return {"cycle_id": cycle_id, "status": state["status"]}
 
@@ -362,8 +598,12 @@ def finish_child(engine, context, result, *, retryable=False):
     status = "retrying" if retryable else "failed" if result.get("execution_failed") else (
         "completed_for_review" if result.get("failures") else "completed")
     with engine.begin() as conn:
+        cycle = _row(conn, context["cycle_id"], lock=True)
+        if cycle["status"] in TERMINAL_CYCLE:
+            return cycle["status"]
         conn.execute(children.update().where(children.c.child_id == context["child_id"]).values(
             status=status, result=result, finished_at=None if retryable else workflow.utcnow()))
+        _touch(conn, context["cycle_id"], progress=not retryable)
         _emit(conn, "L1CycleAdvanceRequested", context["cycle_id"])
     return status
 
@@ -388,7 +628,7 @@ def unhandled_child_error(engine, context, envelope, error):
 
 def failed_phase(engine, cycle_id, phase, error, attempt):
     """After bounded infrastructure failures retain failed cycle evidence."""
-    if attempt < workflow.MAX_ATTEMPTS:
+    if attempt < workflow.MAX_ATTEMPTS or isinstance(error, (workflow.LeaseBusy, workflow.RetryDeferred, CycleRevisionChanged)):
         return
     from app.clhear.l1.viewer_snapshot import request_refresh
     with engine.begin() as conn:
@@ -400,6 +640,7 @@ def failed_phase(engine, cycle_id, phase, error, attempt):
                   "accepted_release": False, "downstream": "held"}
         conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id).values(
             status="failed", result=result, finished_at=workflow.utcnow()))
+        _terminal(conn, cycle_id)
         request_refresh(conn, reason="l1_cycle_failed", job_id=cycle_id)
 
 
@@ -424,8 +665,17 @@ def finish_cycle(engine, cycle_id, result):
         result["status"] = status
         conn.execute(cycles.update().where(cycles.c.cycle_id == cycle_id).values(
             status=status, result=result, finished_at=workflow.utcnow()))
+        _terminal(conn, cycle_id)
         request_refresh(conn, reason="l1_cycle_finished", job_id=cycle_id)
     return result
+
+
+def read_query(conn):
+    """Old immutable review snapshots remain readable with missing evidence."""
+    schema = cycles.schema if conn.dialect.name == "postgresql" else None
+    present = {c["name"] for c in sa.inspect(conn).get_columns(cycles.name, schema=schema)}
+    return sa.select(*[column if column.name in present else sa.cast(sa.null(), column.type).label(column.name)
+                       for column in cycles.c])
 
 
 def cycle_summary(engine, cycle_id=None, *, offset=0, limit=100):
@@ -433,15 +683,18 @@ def cycle_summary(engine, cycle_id=None, *, offset=0, limit=100):
     with engine.connect() as conn:
         if not sa.inspect(conn).has_table(cycles.name, schema=cycles.schema if engine.dialect.name == "postgresql" else None):
             return {"status": "unavailable", "cycles": [], "children": [], "total": 0}
-        query = sa.select(cycles)
+        query = read_query(conn)
         if cycle_id:
             query = query.where(cycles.c.cycle_id == cycle_id)
         total = conn.execute(sa.select(sa.func.count()).select_from(query.subquery())).scalar_one()
         rows = [dict(r) for r in conn.execute(query.order_by(cycles.c.created_at.desc()).offset(offset).limit(limit)).mappings()]
         child_rows = [dict(r) for r in conn.execute(sa.select(children).where(children.c.cycle_id.in_([r["cycle_id"] for r in rows]))
                                                   .order_by(children.c.adapter_key)).mappings()]
+        queue_rows = ([dict(r) for r in conn.execute(sa.select(queue).where(
+            queue.c.cycle_id.in_([r["cycle_id"] for r in rows])).order_by(queue.c.position)).mappings()]
+            if sa.inspect(conn).has_table(queue.name, schema=queue.schema if engine.dialect.name == "postgresql" else None) else [])
     return {"status": "available", "cycles": rows, "children": child_rows, "total": total,
-            "offset": offset, "limit": limit, "has_more": offset + len(rows) < total}
+            "queue": queue_rows, "offset": offset, "limit": limit, "has_more": offset + len(rows) < total}
 
 
 def schedule_evidence(engine, now=None, *, cycle_id=None):

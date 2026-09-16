@@ -65,7 +65,7 @@ def test_same_catalog_pagination_preserves_catalog_permission_not_document_grant
     assert entries[inventory._source_key(PDF)]["adapter"] == "finra"
     assert entries[inventory._source_key(PDF)]["fetch"]["document_type"] == "attachment"
     assert not report["complete"]
-    assert all(f["source_key"] != inventory._source_key(NEXT) for f in report["findings"])
+    assert all(f.get("source_key") != inventory._source_key(NEXT) for f in report["findings"])
 
 
 def test_interrupted_batch_resumes_and_does_not_refetch_checked_catalog(engine, tmp_path, monkeypatch):
@@ -122,7 +122,7 @@ def test_full_publisher_scope_does_not_certify_seed_inventory(engine, tmp_path, 
     assert result["scope"] == "registered"
     assert result["expected_total"] is None and not result["denominator_known"]
     assert not result["full_scope_verified"]
-    assert {f.get("publisher_id") for f in result["findings"] if f["code"] == "publisher_catalog_unconfigured"} >= {"iso", "sec", "fca"}
+    assert {f.get("publisher_id") for f in result["findings"] if f["code"].endswith("_catalog_reconciliation_required")} >= {"iso", "sec", "fca"}
     assert inventory.inventory_summary(engine, "registered")["inventory_hash"] == result["inventory_hash"]
 
 
@@ -152,7 +152,7 @@ def test_known_official_pdf_library_enumerates_real_entries_but_siblings_remain_
     profile = next(p for p in publishers.publisher_profiles() if p["publisher_id"] == "nydfs")
     index = next(e for e in source_registry.S if e["key"] == "nydfs/part200-500")["canonical_url"]
     pdf = "https://www.dfs.ny.gov/test-only-fixtures/regulation.pdf"
-    grant(engine, "nydfs/catalog/declared-library")
+    grant(engine, "nydfs/catalog/regulations")
     calls = []
     def fetch(url):
         calls.append(url)
@@ -164,7 +164,7 @@ def test_known_official_pdf_library_enumerates_real_entries_but_siblings_remain_
     assert entry["canonical_url"] == pdf and entry["source_role"] == "document"
     assert "blocked" not in entry["fetch"]
     assert not result["complete"] and not result["denominator_known"]
-    assert {f["code"] for f in result["findings"]} >= {"discovery_permission_blocked", "publisher_categories_unconfigured"}
+    assert {f["code"] for f in result["findings"]} >= {"nydfs_catalog_reconciliation_required"}
 
 
 def test_checkpoint_read_does_not_refresh_publisher_time(engine, tmp_path, monkeypatch):

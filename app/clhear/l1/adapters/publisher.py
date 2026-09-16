@@ -321,3 +321,53 @@ class NumberedPdfAdapter(_PublisherBase):
         if not content.startswith(b"%PDF-"):
             raise ValueError("Expected publisher PDF bytes; a landing page cannot stand in for the document")
         return self._parse_pages(extract_pdf_pages(content), seen, part=part)
+
+
+class GenericPublisherDocumentAdapter:
+    """A discovered original, preserving bytes with the existing source lane.
+
+    Discovery owns catalog traversal; this adapter acquires one exact original.
+    A login, access-denied screen or link-only catalog cannot replace its text.
+    """
+    def __init__(self, source_key, title, url, *, meta, adapter, expected_format="auto"):
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in (None, 443):
+            raise ValueError("Publication requires a validated official HTTPS URL")
+        if expected_format not in {"auto", "html", "pdf"}:
+            raise ValueError("Unsupported publisher document format")
+        self._source_key, self._title, self._url, self._meta = source_key, title, url, meta
+        self.key, self.expected_format = adapter, expected_format
+
+    def meta(self):
+        return self._meta
+
+    def fetch(self, since_version=None):
+        from urllib.parse import urlparse
+        content = http.get(self._url, allowed_redirect_hosts={urlparse(self._url).hostname})
+        if content.startswith(b"%PDF-"):
+            from app.clhear.l1.adapters.pdf_docling import pages_to_tree
+            tree = pages_to_tree(extract_pdf_pages(content), self._source_key, self._title)
+            artifact = Artifact("publication.pdf", content, "application/pdf")
+        else:
+            if self.expected_format == "pdf":
+                raise ValueError("Original PDF endpoint returned a different representation")
+            soup = BeautifulSoup(content, "html.parser")
+            area = soup.find("article") or soup.find("main")
+            title = soup.find("h1")
+            if area is None or title is None:
+                raise ValueError("Publication lacks an identified article/main body and title")
+            text = area.get_text(" ", strip=True)
+            links = " ".join(a.get_text(" ", strip=True) for a in area.find_all("a"))
+            if (len(text) < 40 or len(links) >= len(text) * .8 or
+                    re.search(r"solve this CAPTCHA|access denied|service is currently unavailable|sign in to (?:view|access)|log in to (?:view|access)", text, re.I)):
+                raise ValueError("Publication is unavailable or is a document catalog")
+            from app.clhear.l1.adapters.html_document import parse
+            tree = parse(content, self._source_key)
+            artifact = Artifact("publication.html", content, "text/html")
+        return FetchResult(version_label=f"as-published:acquired-sha256-{hashlib.sha256(content).hexdigest()}",
+                           artifacts=[artifact], tree=tree, version_kind="as_published", as_of_date=None)
+
+    def expected_text(self, artifacts):
+        from app.clhear.l1.originals import html_text, pdf_original
+        return [pdf_original(a.content)[0] if a.content.startswith(b"%PDF-") else html_text(a.content) for a in artifacts]

@@ -66,6 +66,47 @@ class FixtureMissing(RuntimeError):
     pass
 
 
+class PublisherBoundaryError(ValueError):
+    """A redirect or cached response is outside the reviewed publisher hosts."""
+
+
+def _check_publisher_url(url, hosts):
+    try:
+        parsed = urlsplit(url)
+        valid = (parsed.scheme == "https" and parsed.hostname in hosts
+                 and parsed.port in {None, 443} and not parsed.username and not parsed.password)
+    except (ValueError, TypeError):
+        valid = False
+    if not valid:
+        raise PublisherBoundaryError("Acquisition URL is outside the authorized publisher host")
+
+
+def _reviewed_hosts(url, allowed_redirect_hosts):
+    hosts = None if allowed_redirect_hosts is None else frozenset(allowed_redirect_hosts)
+    if hosts is not None and (not hosts or any(not isinstance(h, str) or not h or h != h.lower()
+                                              or any(c in h for c in "/:@?#") for h in hosts)):
+        raise PublisherBoundaryError("An exact, nonempty publisher hostname allowlist is required")
+    if (urlsplit(url).hostname or "").lower() in {"www.finra.org", "finra.org"}:
+        finra = frozenset({"www.finra.org", "finra.org"})
+        hosts = finra if hosts is None else hosts & finra
+    if hosts is not None:
+        _check_publisher_url(url, hosts)
+    return hosts
+
+
+def _verified_cache_origin(record, hosts):
+    """Raw cache bytes alone never prove where a guarded request terminated."""
+    final_url, redirects = record.get("final_url"), record.get("redirect_chain")
+    if not isinstance(final_url, str) or not isinstance(redirects, list) or len(redirects) > 5:
+        return False
+    try:
+        for url in [final_url, *redirects]:
+            _check_publisher_url(url, hosts)
+    except PublisherBoundaryError:
+        return False
+    return True
+
+
 def _mode() -> str:
     return os.environ.get("CLHEAR_HTTP_MODE", "replay")
 
@@ -98,37 +139,33 @@ def _write_fixture(path: Path, url: str, status: int, content: bytes, **metadata
         temporary.unlink(missing_ok=True)
 
 
-def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts: int = 8) -> bytes:
+def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts: int = 8, *, allowed_redirect_hosts=None) -> bytes:
     _response_meta.set(None)
+    hosts = _reviewed_hosts(url, allowed_redirect_hosts)
     delay = 5.0
     last_error: Exception | None = None
     for attempt in range(attempts):
         try:
-            requested_host = (urlsplit(url).hostname or "").lower()
-            finra = requested_host in {"www.finra.org", "finra.org"}
             request_url, redirect_chain = url, []
             for hop in range(6):
                 resp = httpx.get(
                     request_url,
                     headers={"User-Agent": USER_AGENT, **(headers or {})},
                     timeout=timeout,
-                    follow_redirects=not finra,
+                    follow_redirects=hosts is None,
                 )
-                if not finra or resp.status_code not in {301, 302, 303, 307, 308}:
+                if hosts is None or resp.status_code not in {301, 302, 303, 307, 308}:
                     break
                 destination = urljoin(request_url, resp.headers.get("location", ""))
-                parsed = urlsplit(destination)
-                if parsed.scheme != "https" or parsed.hostname not in {"www.finra.org", "finra.org"} or parsed.username or parsed.password or parsed.port not in {None, 443}:
-                    raise ValueError("FINRA acquisition redirected outside the authorized publisher host")
+                _check_publisher_url(destination, hosts)
                 if destination in [*redirect_chain, request_url] or hop == 5:
-                    raise ValueError("FINRA acquisition exceeded its bounded redirect chain")
+                    raise PublisherBoundaryError("Publisher acquisition exceeded its bounded redirect chain")
                 redirect_chain.append(request_url)
                 request_url = destination
             final_url = str(resp.url)
-            final_host = (urlsplit(final_url).hostname or "").lower()
-            if finra and final_host not in {"www.finra.org", "finra.org"}:
-                raise ValueError("FINRA acquisition redirected outside the authorized publisher host")
-            provenance = {"final_url": final_url, "redirect_chain": redirect_chain if finra else [str(r.url) for r in resp.history]}
+            if hosts is not None:
+                _check_publisher_url(final_url, hosts)
+            provenance = {"final_url": final_url, "redirect_chain": redirect_chain if hosts is not None else [str(r.url) for r in resp.history]}
             if resp.status_code == 304:
                 _response_meta.set({"status": 304, "etag": resp.headers.get("etag"),
                                     "last_modified": resp.headers.get("last-modified"), **provenance})
@@ -218,17 +255,27 @@ def _datalake_get(url: str) -> bytes | None:
         return None
 
 
-def get(url: str, timeout: float = 60.0, headers: dict | None = None) -> bytes:
+def get(url: str, timeout: float = 60.0, headers: dict | None = None, *, allowed_redirect_hosts=None) -> bytes:
     """Fetch url as bytes honoring CLHEAR_HTTP_MODE (replay/record/live).
 
     Live mode always contacts the publisher. A valid 304 checks cached bytes;
     an outage can return private last-good bytes but never advances freshness.
     """
+    # A reviewed host contract also protects local caches. FINRA's transport
+    # boundary remains enforced even for legacy callers.
+    hosts = _reviewed_hosts(url, allowed_redirect_hosts)
+    guarded_cache = hosts is not None
     mode = _mode()
     path = _fixture_path(url)
     if mode not in {"replay", "record", "live"}:
         raise ValueError(f"Unknown CLHEAR_HTTP_MODE: {mode}")
     if mode in {"replay", "record"} and path.exists():
+        if guarded_cache:
+            record = json.loads(gzip.decompress(path.read_bytes()))
+            if record.get("url") != url or (record.get("final_url") and not _verified_cache_origin(record, hosts)):
+                raise PublisherBoundaryError("Recorded response is outside the authorized publisher host")
+            # Old authored fixtures have no response provenance; their origin
+            # remains fixture and can never establish live publisher freshness.
         body = _read_fixture(path)
         _observe(url, "fixture", body)
         return body
@@ -241,7 +288,8 @@ def get(url: str, timeout: float = 60.0, headers: dict | None = None) -> bytes:
         try:
             cache_meta = json.loads(gzip.decompress(cache_path.read_bytes()))
             candidate = base64.b64decode(cache_meta["content_b64"], validate=True)
-            if cache_meta["url"] == url and cache_meta["sha256"] == hashlib.sha256(candidate).hexdigest():
+            if (cache_meta["url"] == url and cache_meta["sha256"] == hashlib.sha256(candidate).hexdigest()
+                    and (not guarded_cache or _verified_cache_origin(cache_meta, hosts))):
                 cached = candidate
         except (ValueError, KeyError, OSError):
             cache_meta = {}
@@ -253,7 +301,8 @@ def get(url: str, timeout: float = 60.0, headers: dict | None = None) -> bytes:
             request_headers["If-Modified-Since"] = cache_meta["last_modified"]
     try:
         _response_meta.set(None)
-        content = _fetch_live(url, timeout, request_headers)
+        content = (_fetch_live(url, timeout, request_headers, allowed_redirect_hosts=hosts) if guarded_cache else
+                   _fetch_live(url, timeout, request_headers))
         response = _response_meta.get() or {"status": 200}
         origin = "live"
         if response.get("status") == 304:
@@ -262,11 +311,16 @@ def get(url: str, timeout: float = 60.0, headers: dict | None = None) -> bytes:
             content, origin = cached, "revalidated"
         if not content:
             raise RuntimeError("Publisher returned no source bytes")
+    except PublisherBoundaryError:
+        _observe(url, "failed", b"")
+        raise  # a disallowed redirect cannot be hidden by last-good bytes
     except Exception:
-        cached = cached or (_datalake_get(url) if mode == "live" else None)
+        # The legacy datalake cache stores raw bytes without final-URL proof.
+        cached = cached or (_datalake_get(url) if mode == "live" and not guarded_cache else None)
         if cached:
             log.warning("live fetch failed for %s; using datalake last-good", url)
-            _observe(url, "stale_cache", cached)
+            _observe(url, "stale_cache", cached, final_url=cache_meta.get("final_url"),
+                     redirect_chain=cache_meta.get("redirect_chain", []))
             return cached
         _observe(url, "failed", b"")
         raise
@@ -276,7 +330,7 @@ def get(url: str, timeout: float = 60.0, headers: dict | None = None) -> bytes:
     validators = {k: response.get(k) or (cache_meta.get(k) if origin == "revalidated" else None)
                   for k in ("etag", "last_modified")}
     _write_fixture(destination, url, 200, content,
-                   **validators)
+                   **validators, final_url=response.get("final_url"), redirect_chain=response.get("redirect_chain", []))
     if mode == "live":
         _datalake_put(url, content)
     return content

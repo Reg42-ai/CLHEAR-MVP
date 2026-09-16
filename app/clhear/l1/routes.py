@@ -422,6 +422,50 @@ def source_document(key: str, request: Request, version_label: str | None = None
     }
 
 
+@router.get("/api/clhear/sources/{key:path}/english")
+def source_english(key: str, request: Request, version_label: str | None = None,
+                   offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=500)) -> dict:
+    """Read an explicit English representation; never translate during a read."""
+    from app.clhear.l1 import translation
+    engine = get_engine()
+    with engine.connect() as conn:
+        source = conn.execute(sa.select(sources).where(sources.c.key == key)).first()
+        if source is None:
+            _declared_source_only(engine, key)
+            return {"source": key, "status": "not_imported", "english_ready": False, "segments": [], "total": 0}
+        version = _resolve_version(conn, source, version_label)
+        if version is None:
+            if version_label:
+                raise HTTPException(status_code=404, detail="source version not found")
+            return {"source": key, "status": "not_imported", "english_ready": False, "segments": [], "total": 0}
+        access = _text_access(conn, source, request)
+    summary = translation.english_summary(engine, version.id)
+    result = {**summary, "source": key, "version": version.version_label, "source_version_id": version.id,
+              "source_content_hash": version.content_hash, "locked": not access["allowed"],
+              "segments": [], "total": 0, "offset": offset, "limit": limit, "has_more": False}
+    if not access["allowed"] or not summary.get("english_ready"):
+        return result
+    try:
+        representation = translation.english_segments(engine, summary["view_id"], internal=access["internal"])
+    except (ValueError, PermissionError):
+        return {**result, "status": "unavailable", "english_ready": False,
+                "finding_codes": ["english_view_binding_or_permission_changed"]}
+    reused_id = representation.get("reuse_source_version_id")
+    if reused_id is not None:
+        with engine.connect() as conn:
+            english_version = conn.execute(sa.select(source_versions).where(source_versions.c.id == reused_id)).first()
+            english_source = conn.execute(sa.select(sources).where(sources.c.id == english_version.source_id)).first()
+            if not _text_access(conn, english_source, request)["allowed"]:
+                return {**result, "locked": True, "english_ready": False}
+        result["publisher_document"] = {"source_key": english_source.key, "version_label": english_version.version_label,
+                                        "source_version_id": reused_id, "content_hash": english_version.content_hash}
+    rows = representation.get("segments", [])
+    selected = rows[offset:offset + limit]
+    with engine.connect() as conn:
+        _audit_text_read(conn, request, source, version, access, request.url.path, [row["doc_node_id"] for row in selected])
+    return {**result, "segments": selected, "total": len(rows), "has_more": offset + len(selected) < len(rows)}
+
+
 @router.get("/api/clhear/nodes/{node_id}")
 def node_inspector(node_id: int, request: Request, source_key: str | None = None, version_label: str | None = None) -> dict:
     """Intelligence payload for the hover/click inspector."""
@@ -649,6 +693,8 @@ def source_evals(key: str, version_label: str | None = None) -> dict:
         "inventory": inventory,
         "inventory_matches_selected_version": inventory_matches,
         "publisher_checked_at": inventory.get("publisher_checked_at") if inventory_matches else None,
+        "artifact_checked_at": inventory.get("artifact_checked_at") if inventory_matches else None,
+        "freshness_basis": inventory.get("freshness_basis") if inventory_matches else None,
         "workflow": workflow_summary(engine, source_key=key),
         "l2_ready": False,
         "readiness_reason": "L1 requires a complete scope manifest and publisher comparison before downstream acceptance.",

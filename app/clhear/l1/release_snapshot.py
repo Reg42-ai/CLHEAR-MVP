@@ -9,7 +9,8 @@ from pathlib import Path
 import sqlalchemy as sa
 
 from app.clhear.db import make_engine
-from app.clhear.l1 import models, permissions
+from app.clhear.l1 import inventory, models, permissions, translation
+from app.clhear.l1.translation_models import TABLES as ENGLISH_TABLES
 from app.clhear.l1.origin import corpus_sources_predicate, production_worker
 
 TABLE_NAMES = ("source_families", "sources", "family_members", "source_versions",
@@ -88,9 +89,27 @@ def compile_snapshot(engine, destination: Path) -> dict:
                         if rows:
                             output.execute(table.insert(), rows)
                         counts[name] = len(rows)
+                    english_queries = translation.snapshot_queries(connection, version_ids)
+                    for table in ENGLISH_TABLES:
+                        rows = [dict(row) for row in connection.execute(english_queries[table.name]).mappings()]
+                        if rows:
+                            output.execute(table.insert(), rows)
+                        counts[table.name] = len(rows)
+                    # English views need the exact original-proof and rights
+                    # evidence for readback. Reuse the private viewer scrubber.
+                    from app.clhear.l1.viewer_snapshot import _clean_row
+                    for table in (permissions.source_permissions, inventory.inventory_snapshots, inventory.inventory_audits):
+                        table.create(output, checkfirst=True)
+                        query = sa.select(table)
+                        if table is permissions.source_permissions:
+                            query = query.where(table.c.source_key.in_([s["key"] for s in source_rows]))
+                        rows = [_clean_row(table, row) for row in connection.execute(query).mappings()]
+                        if rows:
+                            output.execute(table.insert(), rows)
+                        counts[table.name] = len(rows)
         destination.chmod(0o600)
         return {"bindings": bindings, "counts": counts, "audience": "restricted-reviewers",
-                "table_allowlist": list(TABLE_NAMES)}
+                "table_allowlist": list(counts)}
     except Exception:
         target.dispose()
         destination.unlink(missing_ok=True)

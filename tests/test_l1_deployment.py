@@ -8,6 +8,7 @@ import copy
 import hashlib
 import io
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -65,6 +66,7 @@ class Cloud:
         self.ui_metadata = {"git-sha": SHA}
         self.ui_code = NEW_CODE
         self.tags = [f"{SHA}-123-1"]
+        self.database_backup_overrides = {}
         self.exits, self.task_actions = {}, {}
         self.fail_action, self.fail_stop, self.fail_scaler = None, False, None
         self.fail_pause_after_probe, self.probe_failed = False, False
@@ -148,7 +150,10 @@ class Cloud:
         if operation == "describe_images":
             return {"imageDetails": [{"imageDigest": f"sha256:{DIGEST}", "imageTags": self.tags}]}
         if operation == "describe_db_clusters":
-            return {"DBClusters": [{"DBClusterIdentifier": "clhear-record", "Status": "available", "Engine": "aurora-postgresql", "Endpoint": ENDPOINT}]}
+            now = datetime.now(timezone.utc)
+            return {"DBClusters": [{"DBClusterIdentifier": "clhear-record", "Status": "available", "Engine": "aurora-postgresql", "Endpoint": ENDPOINT,
+                                   "BackupRetentionPeriod": 35, "EarliestRestorableTime": now - timedelta(days=2),
+                                   "LatestRestorableTime": now - timedelta(minutes=5), **self.database_backup_overrides}]}
         if operation == "get_parameter":
             return {"Parameter": {"Type": "SecureString", "Value": self.dsn}}
         if operation == "list_rules":
@@ -314,6 +319,38 @@ def test_preflight_only_reads_live_configuration_and_artifact_bytes():
     assert cloud.deployer().preflight()["status"] == "preflight_passed"
     assert not cloud.mutations
     assert len([c for c in cloud.calls if c[1] == "get_parameter"]) == 1
+
+
+@pytest.mark.parametrize("overrides", [
+    {"BackupRetentionPeriod": 0}, {"BackupRetentionPeriod": None},
+    {"EarliestRestorableTime": None}, {"LatestRestorableTime": None},
+    {"LatestRestorableTime": datetime(2020, 1, 1, tzinfo=timezone.utc)},
+    {"LatestRestorableTime": datetime(2099, 1, 1, tzinfo=timezone.utc)},
+    {"LatestRestorableTime": datetime(2026, 1, 1)},
+])
+def test_missing_or_stale_aurora_recovery_window_blocks_deployment_before_writes(overrides):
+    cloud = Cloud()
+    cloud.database_backup_overrides = overrides
+    with pytest.raises(DeploymentError, match="Aurora"):
+        cloud.deployer().preflight()
+    assert not cloud.mutations
+
+
+def test_aurora_recovery_evidence_is_read_back_before_migrating(monkeypatch):
+    cloud = Cloud()
+    controller = cloud.deployer()
+    register = controller._register
+
+    def expired_after_preflight():
+        register()
+        cloud.database_backup_overrides = {"LatestRestorableTime": datetime(2020, 1, 1, tzinfo=timezone.utc)}
+
+    monkeypatch.setattr(controller, "_register", expired_after_preflight)
+    result = controller.deploy()
+    assert result["status"] == "failed_maintenance"
+    assert result["database_recovery"]["restore_test_performed"] is False
+    assert "Aurora" in result["reason"]
+    assert not any(op == "run_task" for _, op, _ in cloud.calls)
 
 
 @pytest.mark.parametrize("invocation", [

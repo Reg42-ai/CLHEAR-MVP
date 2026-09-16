@@ -12,6 +12,7 @@ import argparse
 import base64
 import copy
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -148,6 +149,33 @@ class Deployer:
     def _write(self, client, operation, **kwargs):
         require(self.authorized, "AWS mutations require the guarded apply path")
         return getattr(self.clients[client], operation)(**kwargs)
+
+    def _database_recovery_evidence(self, cluster=None):
+        """Read existing PITR coverage; never create or restore a database here."""
+        if cluster is None:
+            clusters = self.clients["rds"].describe_db_clusters(DBClusterIdentifier="clhear-record")["DBClusters"]
+            require(len(clusters) == 1, "The authoritative Aurora cluster is unavailable")
+            cluster = clusters[0]
+        require(cluster.get("DBClusterIdentifier") == "clhear-record"
+                and cluster.get("Engine") == "aurora-postgresql" and cluster.get("Status") == "available",
+                "The authoritative Aurora cluster is unavailable")
+        retention = cluster.get("BackupRetentionPeriod")
+        require(isinstance(retention, int) and not isinstance(retention, bool) and retention >= 1,
+                "Aurora automated backup retention must be enabled before worker migrations")
+        earliest, latest = cluster.get("EarliestRestorableTime"), cluster.get("LatestRestorableTime")
+        require(all(isinstance(value, datetime) and value.tzinfo is not None
+                    and value.utcoffset() is not None for value in (earliest, latest)),
+                "Aurora must expose an existing point-in-time recovery window before worker migrations")
+        now = datetime.now(timezone.utc)
+        require(earliest <= latest <= now + timedelta(minutes=5)
+                and latest >= now - timedelta(hours=1),
+                "Aurora point-in-time recovery evidence is invalid or more than one hour behind")
+        evidence = {"cluster": "clhear-record", "checked_at": now.isoformat(),
+                    "retention_days": retention, "earliest_restorable_time": earliest.isoformat(),
+                    "latest_restorable_time": latest.isoformat(), "restore_test_performed": False,
+                    "rollback_scope": "code_only; migrations and corpus versions are retained"}
+        self.report["database_recovery"] = evidence
+        return evidence
 
     def _guard(self):
         role = self.env.get("CLHEAR_DEPLOY_ROLE_ARN", "")
@@ -297,6 +325,7 @@ class Deployer:
         clusters = self.clients["rds"].describe_db_clusters(DBClusterIdentifier="clhear-record")["DBClusters"]
         require(len(clusters) == 1 and clusters[0].get("Engine") == "aurora-postgresql"
                 and clusters[0].get("Status") == "available", "The authoritative Aurora cluster is unavailable")
+        self._database_recovery_evidence(clusters[0])
         endpoint = clusters[0]["Endpoint"]
         for fleet, url in QUEUES.items():
             attributes = self.clients["sqs"].get_queue_attributes(QueueUrl=url, AttributeNames=["QueueArn"])["Attributes"]
@@ -795,6 +824,7 @@ class Deployer:
             self._hold(capture_viewer_revision=True)
             self._configure_schedules()
             self._register()
+            self._database_recovery_evidence()  # recheck immediately before L0 can migrate
             self._worker("l0", "bootstrap")
             self._viewer()
             result = self._worker("l1", "verify")
