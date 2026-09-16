@@ -1,6 +1,7 @@
 """Source Explorer and read-only worker evidence APIs (HLD §7.2).
 
-Protected text requires independent authentication and publisher permissions.
+Protected text requires authentication and a current permitted review basis.
+Publisher permissions remain separate from scoped private operator exceptions.
 Inventory and workflow endpoints return recorded operational metadata only.
 """
 from datetime import datetime, timedelta, timezone
@@ -69,11 +70,25 @@ def l1_workflow(job_id: str | None = None, source_key: str | None = None,
                 task_offset: int = Query(0, ge=0), task_limit: int = Query(100, ge=1, le=1000),
                 step_offset: int = Query(0, ge=0), step_limit: int = Query(200, ge=1, le=1000),
                 job_offset: int = Query(0, ge=0), job_limit: int = Query(10, ge=1, le=100)) -> dict:
-    from app.clhear.l1.workflow import workflow_summary
-
-    return workflow_summary(get_engine(), job_id=job_id, source_key=source_key,
+    return _workflow_summary(get_engine(), job_id=job_id, source_key=source_key,
                             task_offset=task_offset, task_limit=task_limit, step_offset=step_offset,
                             step_limit=step_limit, job_offset=job_offset, job_limit=job_limit)
+
+
+def _evidence_metadata(value):
+    """The same text-free evidence projection for snapshots and direct DB UI."""
+    from app.clhear.l1.viewer_snapshot import _metadata
+    return _metadata(value) or {}
+
+
+def _workflow_summary(engine, **filters):
+    from app.clhear.l1 import workflow
+    from app.clhear.l1.viewer_snapshot import _clean_row
+    report = workflow.workflow_summary(engine, **filters)
+    # Preserve measured timings, configured stages and pagination. Sanitize only
+    # persisted free-form evidence; worker callers still receive full records.
+    return {**report, **{name: [_clean_row(table, row) for row in report[name]]
+                        for name, table in (("jobs", workflow.jobs), ("tasks", workflow.tasks), ("steps", workflow.steps))}}
 
 
 def _source_presentation(source):
@@ -93,8 +108,11 @@ def _acquisition_status(conn, source):
     from app.clhear.l1 import permissions
     if not permissions.required_for(source):
         return "public_basis" if source.license == "open" and l1_rights.republishable(source.rights_basis or "") else "unverified"
-    decisions = [permissions.decision(conn, source.key, op) for op in ("acquire", "store", "parse")]
-    return "permitted" if all(choice["allowed"] for choice in decisions) else "blocked"
+    decisions = [permissions.candidate_decision(conn, source.key, op, canonical_url=source.canonical_url)
+                 for op in ("acquire", "store", "parse")]
+    if not all(choice["allowed"] for choice in decisions):
+        return "blocked"
+    return "operator_exception" if any(choice.get("authority_type") == "operator_exception" for choice in decisions) else "permitted"
 
 
 def _text_access(conn, source, request: Request) -> dict:
@@ -111,6 +129,11 @@ def _text_access(conn, source, request: Request) -> dict:
         return {**public, "internal": False}
     user = reviewer(request)
     internal = permissions.decision(conn, source.key, "display_internal")
+    if user and not internal["allowed"]:
+        candidate = permissions.candidate_decision(conn, source.key, "display_internal", canonical_url=source.canonical_url)
+        if candidate.get("authority_type") == "operator_exception" and candidate["allowed"]:
+            from app.clhear.l1.operator_access import verify_current_access
+            internal = verify_current_access(candidate)
     request.state.private_text = bool(user and internal["allowed"])
     return {**internal, "allowed": bool(user and internal["allowed"]), "internal": True,
             "reason": internal["reason"] if user else "An approved reviewer and internal display permission are required."}
@@ -134,7 +157,9 @@ def _audit_text_read(conn, request, source, version, access, route, ids):
     audit.log(conn, "read.licensed_text", resource=source.key, resource_id=str(version.id),
               actor=audit.Actor(actor=user["email"] if user else "", kind="user" if user else "anonymous"),
               detail={"route": route, "source_version_id": version.id, "record_ids": ids[:50],
-                      "records": len(ids), "permission_id": access.get("permission_id")})
+                      "records": len(ids), "permission_id": access.get("permission_id"),
+                      **{k: access[k] for k in ("authority_type", "exception_id", "activation_id", "binding_id",
+                                               "binding_hash", "control_revision", "control_checked_at") if k in access}})
     conn.commit()
 
 
@@ -442,6 +467,7 @@ def source_english(key: str, request: Request, version_label: str | None = None,
     summary = translation.english_summary(engine, version.id)
     result = {**summary, "source": key, "version": version.version_label, "source_version_id": version.id,
               "source_content_hash": version.content_hash, "locked": not access["allowed"],
+              "access": access, "permission_reason": access["reason"],
               "segments": [], "total": 0, "offset": offset, "limit": limit, "has_more": False}
     if not access["allowed"] or not summary.get("english_ready"):
         return result
@@ -543,6 +569,7 @@ def node_inspector(node_id: int, request: Request, source_key: str | None = None
         "canonical_offset_unit": "unicode_code_points",
         "locked": not readable,
         "permission_reason": access["reason"],
+        "access": access,
         "source_version_id": version.id,
         "clauses": [{"id": c.id, "ref": c.ref, "path": c.path if readable else None, "ordering": c.ordering,
                      "span_start": c.span_start, "span_end": c.span_end, "text_hash": c.text_hash,
@@ -608,6 +635,7 @@ def source_clauses(
         "locked": not open_text,
         "source_version_id": version.id,
         "permission_reason": access["reason"],
+        "access": access,
         "rights_basis": getattr(source, "rights_basis", None),
         "total": total,
         "clauses": [
@@ -675,7 +703,8 @@ def source_evals(key: str, version_label: str | None = None) -> dict:
                 break
     card = l1_evals.latest_source_scorecard(engine, key, source_version_id=version.id if version else None)
     from app.clhear.l1.inventory import source_inventory_evidence
-    from app.clhear.l1.workflow import workflow_summary
+    card = {**card, "suites": {name: {**entry, "scores": _evidence_metadata(entry.get("scores", {}))}
+                                 for name, entry in card.get("suites", {}).items()}}
 
     inventory = source_inventory_evidence(engine, key)
     inventory_matches = bool(version and inventory.get("source_version_id") == version.id
@@ -695,7 +724,7 @@ def source_evals(key: str, version_label: str | None = None) -> dict:
         "publisher_checked_at": inventory.get("publisher_checked_at") if inventory_matches else None,
         "artifact_checked_at": inventory.get("artifact_checked_at") if inventory_matches else None,
         "freshness_basis": inventory.get("freshness_basis") if inventory_matches else None,
-        "workflow": workflow_summary(engine, source_key=key),
+        "workflow": _workflow_summary(engine, source_key=key),
         "l2_ready": False,
         "readiness_reason": "L1 requires a complete scope manifest and publisher comparison before downstream acceptance.",
     }
@@ -858,7 +887,7 @@ _STALE_RUNNING = timedelta(minutes=15)
 
 def _display_outputs(row) -> dict:
     """A missing completion record is unknown, not proof of a crash."""
-    outputs = dict(_outputs_of(row))
+    outputs = _evidence_metadata(_outputs_of(row))
     if outputs.get("status") != "running":
         return outputs
     created = row.created_at
@@ -981,7 +1010,7 @@ def activity(
                         else f"{row.kind} — {row.subject_ref}"
                     ),
                     "links": {"review": "/review"} if failure or row.kind.startswith("Proposal") else {},
-                    "details": {k: v for k, v in payload.items() if k != "clause_refs"},
+                    "details": _evidence_metadata({k: v for k, v in payload.items() if k != "clause_refs"}),
                 }
             )
         for row in conn.execute(sa.select(eval_runs).order_by(eval_runs.c.id.desc()).limit(limit)):
@@ -995,7 +1024,7 @@ def activity(
                     "summary": f"eval suite {row.suite} {'passed' if row.passed else 'FAILED'}"
                     + (f" (release {row.release})" if row.release else ""),
                     "links": {},
-                    "details": row.scores if isinstance(row.scores, dict) else json.loads(row.scores or "{}"),
+                    "details": _evidence_metadata(row.scores if isinstance(row.scores, dict) else json.loads(row.scores or "{}")),
                 }
             )
     try:
@@ -1229,7 +1258,7 @@ def run_detail(run_id: int) -> dict:
         "id": row.id,
         "fleet": row.fleet,
         "trigger": row.trigger,
-        "inputs": row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}"),
+        "inputs": _evidence_metadata(row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")),
         "status": outputs.get("status"),
         "stages": outputs.get("stages", []),
         "outputs": {k: v for k, v in outputs.items() if k != "stages"},

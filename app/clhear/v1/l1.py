@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from app.clhear.db import get_engine
 from app.clhear.l1 import families as l1_families
 from app.clhear.l1 import rights as l1_rights
+from app.clhear.l1.public import clauses_public_select
 from app.clhear.l1.models import (
     change_events,
     citations,
@@ -288,24 +289,32 @@ def source_detail(key: str) -> dict:
 def clause_detail(clause_id: int) -> dict:
     with get_engine().connect() as conn:
         row = conn.execute(
-            sa.select(clauses, source_versions.c.version_label, source_versions.c.source_id, source_versions.c.as_of_date)
+            sa.select(*(column for column in clauses.c if column.name not in {"text", "path"}),
+                      source_versions.c.version_label, source_versions.c.source_id, source_versions.c.as_of_date)
             .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
             .where(clauses.c.id == clause_id)
         ).mappings().first()
         if row is None:
             raise HTTPException(status_code=404, detail="unknown clause")
         src = conn.execute(sa.select(sources).where(sources.c.id == row["source_id"])).mappings().one()
-        republish = l1_rights.republishable(src["rights_basis"]) and bool(row["public_ok"])
+        public = conn.execute(clauses_public_select(conn).where(clauses.c.id == clause_id)).mappings().first()
+        republish = public is not None
         if republish:
             audit.log_licensed_read(conn, source_key=src["key"], rights_basis=src["rights_basis"], clause_ids=[clause_id], route="/l1/clauses/{id}")
             conn.commit()
         cites = [
-            {"raw": c["raw_text"], "disposition": c["disposition"], "reason": c["reason"], "resolved_source_id": c["resolved_source_id"]}
-            for c in conn.execute(sa.select(citations).where(citations.c.from_clause_id == clause_id)).mappings()
+            {"raw": c["raw_text"] if republish else None, "disposition": c["disposition"],
+             "reason": c["reason"] if republish else None, "resolved_source_id": c["resolved_source_id"]}
+            for c in conn.execute(sa.select(
+                citations.c.disposition, citations.c.resolved_source_id,
+                (citations.c.raw_text if republish else sa.literal(None)).label("raw_text"),
+                (citations.c.reason if republish else sa.literal(None)).label("reason"),
+            ).where(citations.c.from_clause_id == clause_id)).mappings()
         ]
         notes = [
             {"origin": a["origin"], "category": a["category"], "summary": a["summary"], "topics": a["topics"], "model": a["model"]}
-            for a in conn.execute(sa.select(clause_annotations).where(clause_annotations.c.clause_id == clause_id)).mappings()
+            for a in conn.execute(sa.select(clause_annotations).where(
+                clause_annotations.c.clause_id == clause_id, sa.literal(republish))).mappings()
         ]
         return {
             "id": row["id"],
@@ -314,13 +323,13 @@ def clause_detail(clause_id: int) -> dict:
             "version": row["version_label"],
             "as_of_date": _iso(row["as_of_date"]),
             "ref": row["ref"],
-            "path": row["path"],
+            "path": public["path"] if republish else None,
             "span": {"start": row["span_start"], "end": row["span_end"]},
             "normative": bool(row["normative"]),
-            "text": row["text"] if republish else None,
+            "text": public["text"] if republish else None,
             "text_hash": row["text_hash"],
             "rights_basis": src["rights_basis"],
-            "text_withheld_reason": None if republish else f"rights basis {src['rights_basis']} — derived facts only",
+            "text_withheld_reason": None if republish else f"Rights basis {src['rights_basis']}; current public-text permission is required; references and hashes only",
             "citations": cites,
             "annotations": notes,
             "why": {

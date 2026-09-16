@@ -22,7 +22,7 @@ import sqlalchemy as sa
 
 from app.clhear.db import make_engine, run_migrations
 from app.clhear.l1 import cycles, discovery, inventory, models, origin, permissions, rights, workflow
-from app.clhear.l1 import translation
+from app.clhear.l1 import translation, operator_exceptions, operator_access
 from app.clhear.l1.translation_models import TABLES as ENGLISH_TABLES
 from app.clhear.models import eval_runs, llm_calls, runs
 
@@ -34,7 +34,7 @@ EVIDENCE_TABLES = (permissions.source_permissions, inventory.inventory_snapshots
                    inventory.inventory_audits, inventory.inventory_reviews, inventory.artifact_reviews,
                    workflow.jobs, workflow.tasks, workflow.steps, origin.origin_reviews,
                    cycles.cycles, cycles.children, cycles.queue, cycles.slot,
-                   discovery.cycles, discovery.pages, runs, eval_runs, llm_calls)
+                   discovery.cycles, discovery.pages, runs, eval_runs, llm_calls, *operator_exceptions.TABLES)
 STATE = sa.Table(
     "viewer_snapshot_state", sa.MetaData(),
     sa.Column("id", sa.Integer, primary_key=True),
@@ -50,7 +50,7 @@ _STRING_FIELDS = {
     "version_label", "version", "version_kind", "scope", "scope_version", "inventory_hash", "content_hash",
     "sha256", "implementation_sha256", "canonical_text_hash", "projection_hash", "bindings_hash",
     "audience", "dataset_kind", "origin", "freshness", "freshness_basis", "publisher_checked_at", "artifact_checked_at", "checked_at", "audited_at",
-    "started_at", "finished_at", "created_at", "retrieved_at", "expires_at", "valid_from", "recorded_at",
+    "started_at", "finished_at", "created_at", "retrieved_at", "expires_at", "valid_from", "recorded_at", "ts", "measurement",
     "operation", "reason", "code", "name", "url", "uri", "artifact_uri", "canonical_url",
     "publisher_edition", "expected_edition", "evidence_ref", "approved_by", "reviewed_at", "coverage",
     "method", "model", "provider", "prompt_hash", "error_type", "readiness", "acceptance", "publication",
@@ -68,6 +68,8 @@ _STRING_FIELDS = {
     "discovery_cycle_date", "progress_hash", "final_discovery_audit_id",
     "content_hash_method", "artifact_set_hash_method",
     "queued_at", "heartbeat_at", "lease_until", "active_cycle_id", "english_ready",
+    "authority_type", "exception_id", "binding_hash", "expiry_policy", "display_label",
+    "control_revision", "control_ledger_digest", "control_checked_at", "evaluation_scope",
 }
 
 
@@ -133,12 +135,12 @@ def _required_tables(conn, *, historical_manifest=None):
     required = (*CORPUS_TABLES, *EVIDENCE_TABLES, *ENGLISH_TABLES)
     if historical_manifest is not None:
         additions = {origin.origin_reviews, cycles.cycles, cycles.children, discovery.cycles, discovery.pages,
-                     cycles.queue, cycles.slot, *ENGLISH_TABLES}
+                     cycles.queue, cycles.slot, *ENGLISH_TABLES, *operator_exceptions.TABLES}
         declared = historical_manifest.get("table_allowlist", [])
         # Read older valid worker projections without fabricating new evidence.
         # A projection declaring the new contract must contain its actual tables.
         required = tuple(table for table in required if table not in additions or table.name in declared
-                         or (historical_manifest.get("cycle_id") and table not in {cycles.queue, cycles.slot, *ENGLISH_TABLES}))
+                         or (historical_manifest.get("cycle_id") and table not in {cycles.queue, cycles.slot, *ENGLISH_TABLES, *operator_exceptions.TABLES}))
     missing = [table.fullname for table in required
                if not inspector.has_table(table.name, schema=table.schema if conn.dialect.name == "postgresql" else None)]
     if missing:
@@ -251,15 +253,17 @@ def _authorization_binding(conn):
     binding = []
     for source in conn.execute(sa.select(models.sources).order_by(models.sources.c.key)).mappings():
         protected = permissions.required_for(source)
-        decisions = {op: {k: choice.get(k) for k in ("permission_id", "allowed", "reason", "expires_at")}
+        decisions = {op: {k: choice.get(k) for k in ("permission_id", "allowed", "reason", "expires_at", "authority_type", "exception_id", "activation_id", "binding_id", "binding_hash", "release_eligible")}
                      for op in ("store", "parse", "display_internal", "display_public", "infer", "derive", "translate")
-                     for choice in [permissions.decision(conn, source["key"], op)]}
+                     for choice in [(permissions.candidate_decision(conn, source["key"], op, canonical_url=source["canonical_url"])
+                                     if op in {"store", "parse", "display_internal"}
+                                     else permissions.decision(conn, source["key"], op))]}
         binding.append({"source_key": source["key"], "protected": protected,
                         "license": source["license"], "rights_basis": source["rights_basis"], "decisions": decisions})
     return binding
 
 
-def compile_viewer_snapshot(engine, destination: Path, *, job_id=None):
+def compile_viewer_snapshot(engine, destination: Path, *, job_id=None, control_provenance=None):
     """Compile one consistent, private candidate; fail before any publication."""
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -278,15 +282,18 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None):
                     conn.exec_driver_sql("BEGIN")  # pin SQLite's legacy driver to a real read transaction
                 _required_tables(conn)
                 authorization_binding = _authorization_binding(conn)
+                exception_state = operator_exceptions.control_state(conn)
+                if (control_provenance and control_provenance["ledger_digest"] != exception_state["digest"]):
+                    raise PermissionError("Operator control changed while compiling the viewer; rerun required")
                 source_rows = list(conn.execute(sa.select(models.sources).where(origin.corpus_sources_predicate())).mappings())
                 excluded_test_count = conn.execute(sa.select(sa.func.count()).select_from(models.sources)
                                                   .where(~origin.corpus_sources_predicate())).scalar_one()
                 permitted, publicly_allowed, redacted = [], [], []
                 for source in source_rows:
                     if permissions.required_for(source):
-                        internal = permissions.decision(conn, source["key"], "display_internal")["allowed"]
+                        internal = permissions.candidate_decision(conn, source["key"], "display_internal", canonical_url=source["canonical_url"])["allowed"]
                         public = permissions.decision(conn, source["key"], "display_public")["allowed"]
-                        store = permissions.decision(conn, source["key"], "store")["allowed"]
+                        store = permissions.candidate_decision(conn, source["key"], "store", canonical_url=source["canonical_url"])["allowed"]
                         may_copy = store and (internal or public)
                     else:
                         public = source["license"] == "open" and rights.republishable(source["rights_basis"])
@@ -327,10 +334,14 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None):
                                 "cycle_status": completed_cycle["status"] if completed_cycle else None,
                                 "accepted_release": False, "audience": "restricted-reviewers",
                                 "authorization_binding": authorization_binding,
+                                "operator_control": {"ledger_digest": exception_state["digest"],
+                                    "published": bool(control_provenance),
+                                    **({k: control_provenance[k] for k in ("revision", "published_at", "uri", "sha256")}
+                                       if control_provenance else {})},
                                 "counts": counts, "redacted_source_keys": sorted(redacted),
                                 "excluded_test_sources": excluded_test_count,
                                 "omitted_layers": [f"L{n}" for n in range(2, 9)],
-                                "omitted_operational_data": ["accounts", "sessions", "API credentials", "model prompts", "lease tokens", "private exception details"],
+                                "omitted_operational_data": ["accounts", "sessions", "API credentials", "model prompts", "lease tokens", "private runtime error details"],
                                 "table_allowlist": [t.name for t in (*CORPUS_TABLES, *EVIDENCE_TABLES, *ENGLISH_TABLES)]}
                     out.execute(STATE.insert().values(id=1, manifest=manifest))
         with target.connect() as check:
@@ -370,9 +381,13 @@ def publish_viewer_snapshot(engine, uri, region, *, job_id=None, s3_client=None)
         if exc.response.get("Error", {}).get("Code") not in {"404", "NoSuchKey", "NotFound"}:
             raise
         condition = {"IfNoneMatch": "*"}
+    with engine.connect() as conn:
+        exception_state = operator_exceptions.control_state(conn)
+    control = (operator_access.publish_control(engine, uri, region, s3_client=s3_client)
+               if exception_state.get("exceptions") else None)
     with tempfile.TemporaryDirectory(prefix="clhear-viewer-") as directory:
         path = Path(directory) / "candidate.db"
-        manifest = compile_viewer_snapshot(engine, path, job_id=job_id)
+        manifest = compile_viewer_snapshot(engine, path, job_id=job_id, control_provenance=control)
         hasher = hashlib.sha256()
         with path.open("rb") as content:
             for chunk in iter(lambda: content.read(1024 * 1024), b""):

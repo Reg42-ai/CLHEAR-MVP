@@ -197,4 +197,23 @@ def decision(conn: Connection, source_key: str, operation: str, now: datetime | 
     return {**out, "allowed": True, "reason": "explicit_permission"}
 
 
-__all__ = ["OPERATIONS", "decision", "record_permission", "required_for", "source_permissions"]
+def candidate_decision(conn: Connection, source_key: str, operation: str,
+                       now: datetime | str | None = None, *, canonical_url: str | None = None) -> dict:
+    """Private candidate use only. Strict publisher permissions remain separate.
+
+    This helper must never authorize a release, public export or model use via
+    an operator exception. A namespaced permission_id is a comparison token,
+    not a source_permissions row or a claim of publisher authorization.
+    """
+    strict = decision(conn, source_key, operation, now=now)
+    if strict["allowed"]:
+        return {**strict, "authority_type": "publisher_permission", "release_eligible": True}
+    from app.clhear.l1 import operator_exceptions
+    if operation in operator_exceptions.OPERATIONS:
+        candidate = operator_exceptions.decision(conn, source_key, operation, now=now, canonical_url=canonical_url)
+        if candidate["allowed"]:
+            return {**candidate, "publisher_permission": strict}
+    return {**strict, "authority_type": "publisher_permission", "release_eligible": False}
+
+
+__all__ = ["OPERATIONS", "decision", "candidate_decision", "record_permission", "required_for", "source_permissions"]

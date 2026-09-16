@@ -46,6 +46,7 @@ from app.clhear.derived_models import (
     requires,
 )
 from app.clhear.l1.models import clauses, source_versions, sources
+from app.clhear.l1.public import clauses_public_select
 from app.clhear.models import graph_projections
 from app.clhear.platform import events
 
@@ -134,8 +135,11 @@ def _project_l1(conn: Connection, snap: GraphSnapshot) -> None:
     version_ids = {vid for vid, _ in current.values()}
     if not version_ids:
         return
-    for r in conn.execute(sa.select(clauses.c.id, clauses.c.source_version_id, clauses.c.ref, clauses.c.path,
-                                    clauses.c.public_ok, clauses.c.normative, source_versions.c.source_id)
+    public_clauses = clauses_public_select(conn).with_only_columns(clauses.c.id).subquery()
+    publicly_readable = clauses.c.id.in_(sa.select(public_clauses.c.id))
+    for r in conn.execute(sa.select(clauses.c.id, clauses.c.source_version_id, clauses.c.ref,
+                                    sa.case((publicly_readable, clauses.c.path), else_=None).label("path"),
+                                    publicly_readable.label("public_ok"), clauses.c.normative, source_versions.c.source_id)
                           .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
                           .where(clauses.c.source_version_id.in_(version_ids))).mappings():
         cid = f"CLS-{r['id']}"
@@ -234,6 +238,50 @@ def _project_l6(conn: Connection, snap: GraphSnapshot) -> None:
             snap.edge(r["block_id"], oid, "SATISFIES", "L6", blueprint=r["blueprint_id"], item=r["id"])
 
 
+def _public_result(engine, result):
+    """Redact cached clause text at the response boundary, in one batched query.
+
+    Operator exceptions never authorize graph text. Replacing a snapshot or
+    revoking a public grant must not leave verbatim paths in a warm graph cache.
+    Unknown/missing clause identities remain references only.
+    """
+    ids = set()
+    def collect(value):
+        if isinstance(value, dict):
+            if value.get("kind") == "clause":
+                raw = str(value.get("id", ""))
+                if raw.startswith("CLS-") and raw[4:].isdigit():
+                    ids.add(int(raw[4:]))
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+    collect(result)
+    paths = {}
+    if engine is not None and ids:
+        with engine.connect() as conn:
+            paths = dict(conn.execute(clauses_public_select(conn).where(clauses.c.id.in_(ids))
+                         .with_only_columns(clauses.c.id, clauses.c.path)).all())
+    def clean(value):
+        if isinstance(value, dict):
+            out = {key: clean(child) for key, child in value.items()}
+            if value.get("kind") == "clause":
+                raw = str(value.get("id", ""))
+                clause_id = int(raw[4:]) if raw.startswith("CLS-") and raw[4:].isdigit() else None
+                out["path"] = paths.get(clause_id)
+                out["public_ok"] = clause_id in paths
+                # Graph clauses have no body field. Do not propagate old or
+                # externally projected text-bearing fields from a cached node.
+                for field in ("text", "raw_text", "heading", "source_fragment", "source_locator"):
+                    out.pop(field, None)
+            return out
+        if isinstance(value, list):
+            return [clean(child) for child in value]
+        return value
+    return clean(result)
+
+
 # --------------------------------------------------------------------------- local backend
 
 
@@ -244,6 +292,7 @@ class LocalGraph:
     name = "local"
 
     def __init__(self) -> None:
+        self.reader_engine = None
         self.snapshot = GraphSnapshot()
         self._out: dict[str, list[dict]] = defaultdict(list)
         self._in: dict[str, list[dict]] = defaultdict(list)
@@ -291,7 +340,7 @@ class LocalGraph:
             c = self.node(e["to"])
             src = next((self.node(p["to"]) for p in self.out(e["to"], "PART_OF")), None)
             clause_rows.append({"clause": c, "strength": e.get("strength"), "span": e.get("span"), "source": src})
-        return {"obligation": ob, "clauses": clause_rows, "count": len(clause_rows)}
+        return _public_result(self.reader_engine, {"obligation": ob, "clauses": clause_rows, "count": len(clause_rows)})
 
     def derived_from(self, clause_id: str) -> dict | None:
         cid = clause_id if clause_id.startswith("CLS-") else f"CLS-{clause_id}"
@@ -308,7 +357,7 @@ class LocalGraph:
                 "triggers": [self.node(t["from"]) for t in self.inc(e["from"], "TRIGGERED_BY")],
                 "satisfied_in": sorted({s["blueprint"] for s in self.inc(e["from"], "SATISFIES")}),
             })
-        return {"clause": clause, "source": src, "obligations": rows, "count": len(rows)}
+        return _public_result(self.reader_engine, {"clause": clause, "source": src, "obligations": rows, "count": len(rows)})
 
     def neighbourhood(self, node_id: str) -> dict | None:
         nid = self.resolve(node_id)
@@ -316,7 +365,7 @@ class LocalGraph:
             return None
         edges = self.out(nid) + self.inc(nid)
         ids = {nid, *(e["from"] for e in edges), *(e["to"] for e in edges)}
-        return {"focus": nid, "nodes": [self.node(i) for i in ids], "edges": edges}
+        return _public_result(self.reader_engine, {"focus": nid, "nodes": [self.node(i) for i in ids], "edges": edges})
 
 
 # --------------------------------------------------------------------------- neo4j backend
@@ -417,7 +466,7 @@ class Neo4jGraph:
         ob = _props(rec["o"])
         rows = [{"clause": _props(r["clause"]), "strength": r["strength"], "span": r["span"], "source": _props(r["source"])}
                 for r in rec["clauses"] if r["clause"] is not None]
-        return {"obligation": ob, "clauses": rows, "count": len(rows)}
+        return _public_result(getattr(self, "reader_engine", None), {"obligation": ob, "clauses": rows, "count": len(rows)})
 
     def derived_from(self, clause_id: str) -> dict | None:
         cid = clause_id if clause_id.startswith("CLS-") else f"CLS-{clause_id}"
@@ -429,7 +478,7 @@ class Neo4jGraph:
                  "requires": [_props(b) for b in r["requires"]], "triggers": [_props(a) for a in r["triggers"]],
                  "satisfied_in": sorted(x for x in r["satisfied_in"] if x)}
                 for r in rec["obligations"] if r["obligation"] is not None]
-        return {"clause": _props(rec["c"]), "source": _props(rec["s"]), "obligations": rows, "count": len(rows)}
+        return _public_result(getattr(self, "reader_engine", None), {"clause": _props(rec["c"]), "source": _props(rec["s"]), "obligations": rows, "count": len(rows)})
 
 
 def _scalar(v):
@@ -471,11 +520,14 @@ def get_graph(engine: Engine, *, ensure: bool = True):
 
     settings = get_settings()
     if settings.clhear_neo4j_uri:
-        return Neo4jGraph(settings.clhear_neo4j_uri, settings.clhear_neo4j_user, settings.clhear_neo4j_password)
+        graph = Neo4jGraph(settings.clhear_neo4j_uri, settings.clhear_neo4j_user, settings.clhear_neo4j_password)
+        graph.reader_engine = engine
+        return graph
     key = str(engine.url)
     graph = _LOCAL.get(key)
     if graph is None:
         graph = _LOCAL[key] = LocalGraph()
+    graph.reader_engine = engine
     if ensure and not graph.ready:
         rebuild(engine, graph=graph, trigger="lazy")
     return graph
@@ -495,6 +547,7 @@ def rebuild(engine: Engine, graph=None, *, release: str = "", trigger: str = "ni
     `graph_projections` so the status page can show when the graph was last
     rebuilt and from what."""
     graph = graph or get_graph(engine, ensure=False)
+    graph.reader_engine = engine
     started = time.perf_counter()
     started_at = datetime.now(timezone.utc)
     status, error, summary = "succeeded", "", {}

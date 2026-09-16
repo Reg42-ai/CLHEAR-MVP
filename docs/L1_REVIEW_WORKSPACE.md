@@ -142,16 +142,19 @@ performs discovery, reconciliation, ingestion and evaluations through the L1
 fleet. Exact per-source permissions also apply to discovery categories such as
 `finra/catalog/rules`; approving one rule never approves the entire website.
 
-L0 accepts `L1EvidenceReviewRecorded` for three explicit review kinds:
+L0 accepts `L1EvidenceReviewRecorded` for these explicit review kinds:
 
 - `permissions`: an operation permission snapshot with evidence, approver and
   validity dates; no omitted operation is granted.
 - `artifact`: exact source key/content hash, publisher edition/canonical URL,
   `full`, `preview` or `excerpt` coverage, evidence and reviewer approval.
 - `scope`: approval or revocation of one exact inventory hash with evidence.
+- `language`: an edition-specific language binding with its review evidence.
+- `operator_exception`: the separate owner-authorized FINRA private-review
+  activation or revocation described in [the exception contract](L1_PRIVATE_OPERATOR_EXCEPTION.md).
 
 These commands record an existing review; they do not establish publisher
-authorization themselves. No approved decisions are supplied with this change.
+authorization themselves. An operator exception is not a publisher grant.
 Artifact reviews do not grant permissions. Any review change requires a new
 audit. Preserve real source documents and their notices; do not use simulated
 standards to populate these ledgers.
@@ -171,7 +174,11 @@ return 503 when a due check fails, preserving the cached file without serving
 its old grants. Grant expirations are checked on each text read. Revocations
 still require the L0 refresh job and this bounded cache window; they are not an
 instantaneous push feed. Response headers expose the last successful snapshot
-check and cache window. A missing configured snapshot cannot become an empty
+check and cache window. The FINRA operator exception additionally requires a
+current, text-free L0 control read on every private text request. L0 invalidates
+that control before recording a revocation, so stale snapshots cannot retain
+exception-based access during the snapshot refresh window.
+A missing configured snapshot cannot become an empty
 fallback database.
 
 `PublishReleaseRequested` on L0 supports `prepare` and `promote`. Preparation

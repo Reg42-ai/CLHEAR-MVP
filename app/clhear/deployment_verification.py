@@ -148,6 +148,11 @@ def run_phase(engine, gateway, phase, verification_id, *, bootstrap=None):
                                 raise RuntimeError("An active verification cycle must finish before deployment verification")
                         with workflow.stage("registry_bootstrap", {"worker": "l0", "operation": "registered_source_metadata"}):
                             registry_etoro.seed(engine)
+                        with workflow.stage("operator_exception", {"worker": "l0", "publisher_permission_verified": False}) as stage:
+                            from app.clhear.l1.finra_private_review import bootstrap as exception_bootstrap
+                            exception_result = exception_bootstrap(engine)
+                            stage.details.update(exception_result)
+                            result["steps"]["operator_exception"] = exception_result
                     with workflow.stage("viewer_snapshot", {"worker": "l0", "accepted": False}) as stage:
                         snapshot = _dispatch(engine, gateway, verification_id, f"{phase}.snapshot", "ViewerSnapshotRequested",
                                              {"job_id": job_id}, "l0", "viewer/current")
