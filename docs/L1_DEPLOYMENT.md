@@ -326,9 +326,93 @@ capacity-only contents and source binding into `infra/recovery/<plan-id>.json`
 before using it. Repeated failures retain the approved original targets instead
 of replacing them with the temporary maintenance zeros.
 
-For the current incident, the active selection is `l1-34967901665-1`. Its audited
-plan restores L0/L1 desired capacity one, L2–L8 zero, and removes the temporary
-viewer concurrency reservation before access checks. L0 bootstrap already applied migrations 24–26;
+For the current incident, the active selection is `l1-35106288646-1`, the plan
+emitted by the deployment of 16 Sep 2026 that completed L0 bootstrap and then
+failed L1 verification (5 failed imports, 214 rights-blocked documents, no
+successful source). It restores L0/L1 desired capacity one and keeps the
+viewer's shared, unreserved capacity. Recovery applies it only after
+`validate_plan` confirms the exact maintenance state: viewer concurrency 0,
+every fleet at zero desired/running/pending, every scaler suspended, original
+task-definition and code identities unchanged (`tests/test_active_recovery.py`).
+The earlier selection `l1-34967901665-1` is retained for history and restored
+L0/L1 desired capacity one, L2–L8 zero.
+
+### Root cause of the 16 Sep failure and what changed
+
+Every FINRA import on Aurora failed with `InFailedSqlTransaction`: the L1
+persistence step probed the SQLite-only FTS5 index (`search_units_fts`) inside
+its PostgreSQL transaction, PostgreSQL aborted the transaction, and the next
+statement on `search_units` failed, so no document rows committed. FTS is now
+gated on the dialect (`record.fts_supported` / `record.fts_available`); no FTS
+detection, index write or cleanup issues a statement on PostgreSQL, and no
+database error is caught and followed by further work on an aborted
+transaction. `tests/test_l1_postgresql.py` runs the real worker handler,
+persistence and readback against the CI PostgreSQL service (import, unchanged
+repeat, amendment, restricted-source exclusion, mid-transaction failure).
+
+Deployment verification now has a fixed scope — FINRA rules 2111, 2210, 3110,
+3310 and 4511 — dispatched through the ordinary L1 `AdapterRunRequested`
+handler with `source_keys` and `discover: false`, so a deployment with L0
+stopped never expands discovery into documents that need L0 bindings. The
+verify phase requires all five imports, a version-bound readback of each
+(version identity, archived-original hashes, encoded projection against the
+stored doc_nodes/clauses) and a per-source unchanged repeat; a missing or
+failed check exits 1 and keeps maintenance. Its result is labelled
+`deployment_verification` and states `finra_acceptance: not_claimed`,
+`l1_acceptance: not_claimed`.
+
+### Routing, deferred deliveries and queue recovery
+
+`app/clhear/platform/routing.py` is the one ownership table: commands go to
+their owning fleet's queue, `clhear.*` layer events to the bus, audit-only
+outbox rows (`SourceChanged`, `FamilyMembersAdded`, `IngestFidelityFailed`, …)
+are stamped `audit_only` and never dispatched, and unknown kinds are
+quarantined. The relay commits one disposition per event
+(`events.relay_disposition`), so a refused row never re-sends the rows before
+it. A worker that receives a held downstream event, a command it does not
+own, an unknown kind or a malformed body writes the exact message — identity,
+timestamp, payload hash, queue metadata, reason — to the deferred-delivery
+ledger (`l0_platform.deferred_deliveries` / `deferred_bodies`, migration
+m0035) and only then acknowledges it. Deferred downstream work is never
+executed while L2–L8 are held.
+
+The queues and the dead-letter queue are recovered with the `recover-queues`
+operation of `deploy-l1` (manual dispatch, `max_messages` bound, default 5000).
+It runs one bounded pass on the deployed L0 worker: valid commands are sent
+home to their owners (whose delivery ledger makes a second delivery a no-op),
+held layer events and audit records are recorded as deferred, unknown,
+malformed, unresolvable-reference and unidentifiable scheduled messages are
+quarantined; nothing is purged and nothing is replayed blindly. The queues
+are the cursor: run the operation again to continue. Each pass has its own
+recovery id and is idempotent.
+
+### Failure details, progress and readiness
+
+Task failures are recorded as codes, never driver text: error class,
+SQLSTATE, stage, attempt and duration, with the first cause kept apart from
+follow-on `InFailedSqlTransaction` errors (`app/clhear/platform/failures.py`).
+Deployment results carry a bounded codes-only failure summary and private
+evidence links; workers publish each phase result beside the candidate viewer
+(`webui/l1/deployments/<id>/<phase>.json`) and the controller copies the
+bounded summary into `result.json` / `failure.json`, including failed runs.
+If the deployment role cannot read that object it reports the link and
+`available: false` rather than failing.
+
+L0 publishes a small progress record (`webui/l1/progress.json`) between full
+snapshots. `/api/clhear/l1/progress` (and the Verification cycles panel) shows
+four states separately — deployment, technical corpus verification, publisher
+permissions, nightly validation — plus deferred-message counts, binding waits,
+verification progress and "ready for private review" with the viewer link,
+deployed revision and snapshot timestamp. Corpus acceptance is never implied.
+
+After a verified deployment restores capacity and L0/L1 are running on the
+deployed definition, the controller asks L0 for the full diagnostic cycle
+(45 publishers, 32 lanes, `--request-l1-cycle --unchanged-repeat`). The
+unchanged-source repeat is requested once, from the first cycle's terminal
+result, and its evaluation compares every bound source version with the first
+(`unchanged_repeat` in the cycle result). Unresolved gaps stay visible and
+block corpus acceptance; a request that cannot be made is recorded in
+`full_cycle_request` and never undoes the deployment. L0 bootstrap already applied migrations 24–26;
 recovery reruns that work through the same idempotent L0 worker handler.
 The subsequent failed attempt `l1-34973791949-1` preserved those same original
 targets. Its L0 bootstrap completed, then the old completion-revision check

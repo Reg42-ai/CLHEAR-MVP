@@ -137,3 +137,15 @@ check structure and policy findings. Policy simulations check selected allowed
 and denied requests. These checks do not prove that an OIDC exchange or an
 end-to-end deployment has succeeded. Record those outcomes separately after
 the owner grant and actual workflow execution.
+
+## Template update: worker phase evidence (optional, read-only)
+
+The deployment controller now reads each worker phase result the fleets publish
+beside the candidate viewer (`webui/l1/deployments/<deployment-id>/{bootstrap,verify,publish}.json`)
+so `result.json` / `failure.json` and the workflow artifacts carry a bounded,
+codes-only failure summary. The template adds `s3:GetObject` on exactly those
+three keys. Until the `clhear-deployment-access` stack is updated with this
+template (CloudFormation → stack → **Update** → replace current template →
+change set → execute after founder review), the controller reports the
+private link with `worker_result.available: false` and deployments proceed
+unchanged. No write permission is added.
