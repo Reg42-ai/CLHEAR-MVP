@@ -332,16 +332,18 @@ capacity-only contents and source binding into `infra/recovery/<plan-id>.json`
 before using it. Repeated failures retain the approved original targets instead
 of replacing them with the temporary maintenance zeros.
 
-For the current incident, the active selection is `l1-35106288646-1`, the plan
-emitted by the deployment of 16 Sep 2026 that completed L0 bootstrap and then
-failed L1 verification (5 failed imports, 214 rights-blocked documents, no
-successful source). It restores L0/L1 desired capacity one and keeps the
-viewer's shared, unreserved capacity. Recovery applies it only after
-`validate_plan` confirms the exact maintenance state: viewer concurrency 0,
-every fleet at zero desired/running/pending, every scaler suspended, original
-task-definition and code identities unchanged (`tests/test_active_recovery.py`).
-The earlier selection `l1-34967901665-1` is retained for history and restored
-L0/L1 desired capacity one, L2–L8 zero.
+For the current incident, the active selection is `l1-35341410131-1`, the plan
+emitted by the completeness apply of 18 Sep 2026 that registered new task
+definitions and then OOM-killed L0 bootstrap (exit 137). Rollback restored the
+pre-apply `:14` task definitions, paused the viewer, and left every fleet at
+zero. The earlier selections `l1-35106288646-1` (`:12`) and `l1-34967901665-1`
+are retained for history; they must not be the automatic pointer while live
+bindings are `:14`. The plan restores L0/L1 desired capacity one, the observed
+L2 and L7 desired counts from that apply, and the viewer's shared, unreserved
+capacity. Recovery applies it only after `validate_plan` confirms the exact
+maintenance state: viewer concurrency 0, every fleet at zero
+desired/running/pending, every scaler suspended, original task-definition and
+code identities unchanged (`tests/test_active_recovery.py`).
 
 ### Root cause of the 16 Sep failure and what changed
 
