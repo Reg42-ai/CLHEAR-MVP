@@ -185,7 +185,7 @@ def test_recover_queues_runs_the_bounded_l0_recovery_pass_and_never_purges():
         VerificationDispatcher(SHA, "l1-queues-123-1", clients=cloud.clients, environ=environment(), operation="recover-queues", max_messages=0)
 
 
-def test_poc_private_review_dispatch_is_l0_only_and_never_grants_public_display():
+def test_poc_private_review_dispatch_is_l0_only_and_grants_public_display():
     cloud = VerificationCloud()
     cloud.expected_arguments = ["--poc-private-review", "activate", "--evidence-ref", "poc:test"]
     cloud.operation_id = "l1-poc-123-1"
@@ -193,7 +193,7 @@ def test_poc_private_review_dispatch_is_l0_only_and_never_grants_public_display(
                                         operation="poc-private-review", poc_action="activate", evidence_ref="poc:test")
     result = dispatcher.dispatch()
     assert result["status"] == "poc_review_recorded" and result["operation"] == "poc-private-review"
-    assert result["display_public"] is False and result["acceptance"] == "not_claimed"
+    assert result["display_public"] is True and result["acceptance"] == "not_claimed"
     assert result["deployment_performed"] is False and result["accepted_release_changed"] is False
     run = cloud.mutations[0][2]
     assert run["overrides"]["containerOverrides"][0]["command"][-6:] == [

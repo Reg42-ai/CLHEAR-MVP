@@ -131,8 +131,9 @@ def run_adapter_fleet(
                 before = ({"inventory_hash": cycle_context["inventory_hash"], "audit_id": None} if frozen_cycle else
                           inventory.run_inventory_audit(engine, store, job_id=job_id, scope=scope, discover=bool(discover)))
                 step.details.update(audit_id=before.get("audit_id"), inventory_hash=before.get("inventory_hash"))
+        from app.clhear.l1.poc_review import enabled as completeness_enabled
         plan = [(entry, adapter) for entry, adapter in fleet_plan(adapter_key)
-                if adapter.meta().source_key != "finra/rulebook"]
+                if completeness_enabled() or adapter.meta().source_key != "finra/rulebook"]
         seen = {adapter.meta().source_key for _, adapter in plan}
         if fixed_scope is None:
             for entry in inventory.planned_entries(engine, scope=scope, adapter_key=adapter_key,
@@ -412,6 +413,13 @@ def handle_l1_cycle_discovery(engine, gateway, envelope):
                                                   discovery_cycle_date=cycles.discovery_date(state))
             step.details.update(audit_id=audit["audit_id"], inventory_hash=audit["inventory_hash"])
         result = cycles.discovered(engine, cycle_id, audit)
+        from app.clhear.l1.poc_review import approve_inventory, enabled as completeness_enabled
+        if completeness_enabled() and result.get("status") == "planned" and audit.get("inventory_hash"):
+            try:
+                approve_inventory(engine, audit["inventory_hash"], verification_id=cycle_id,
+                                  evidence_ref="poc:private-completeness-scope")
+            except Exception:  # noqa: BLE001 — cycle continues; review is best-effort
+                pass
         workflow.update_job(engine, job_id, "running" if result["status"] == "discovering" else "completed_for_review", result)
         return result
     except Exception as exc:

@@ -84,39 +84,66 @@ class RestrictedFileAdapter:
             version_policy="edition",
         )
 
+    def _tree_from_bytes(self, body: bytes, ctype: str) -> list[DocNode]:
+        if body[:5] == b"%PDF-":
+            from app.clhear.l1.adapters.pdf_docling import pages_to_tree, extract_pdf_pages
+            return pages_to_tree(extract_pdf_pages(body), self._source_key, self._title)
+        if b"<html" in body[:4000].lower() or b"<!doctype" in body[:200].lower() or ctype == "text/html":
+            from app.clhear.l1.adapters.html_document import parse
+            try:
+                return parse(body, self._source_key)
+            except ValueError:
+                pass
+            from app.clhear.l1.originals import html_text
+            text = html_text(body)
+            if not text.strip():
+                raise ValueError("HTML original contains no document text")
+            return [DocNode(node_type="title", ref=self._source_key, heading="",
+                            children=[DocNode(node_type="paragraph", raw_text=text)])]
+        text = _plain_text(body)
+        return [DocNode(
+            node_type="title",
+            ref=self._source_key,
+            heading="",
+            children=[DocNode(node_type="paragraph", raw_text=text)],
+        )]
+
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
         self.artifact_check = None
         files = _list_restricted_objects(self._source_key)
+        from_url = False
         if not files:
-            raise FileNotFoundError(
-                f"Awaiting authorized source artifact for {self._source_key}; provide the actual licensed file "
-                "after recording explicit acquire/store/parse permissions. No placeholder version was ingested."
-            )
+            from app.clhear.l1.poc_review import enabled
+            if enabled() and self._url:
+                from app.clhear.l1 import http
+                body = http.get(self._url)
+                if not body:
+                    raise FileNotFoundError(
+                        f"Awaiting authorized source artifact for {self._source_key}; provide the actual licensed file "
+                        "after recording explicit acquire/store/parse permissions. No placeholder version was ingested."
+                    )
+                name = self._url.rstrip("/").rsplit("/", 1)[-1] or "acquired"
+                ctype = "application/pdf" if body[:5] == b"%PDF-" else (
+                    "text/html" if b"<html" in body[:4000].lower() or b"<!doctype" in body[:200].lower()
+                    else "application/octet-stream")
+                files = [(name, body, ctype)]
+                from_url = True
+            else:
+                raise FileNotFoundError(
+                    f"Awaiting authorized source artifact for {self._source_key}; provide the actual licensed file "
+                    "after recording explicit acquire/store/parse permissions. No placeholder version was ingested."
+                )
         if len(files) != 1:
             raise ValueError(f"Ambiguous artifacts for {self._source_key}: select exactly one authorized source file")
         name, body, ctype = files[0]
         if not body:
             raise ValueError(f"Authorized source artifact for {self._source_key} is empty")
-        if body[:5] == b"%PDF-":
-            from app.clhear.l1.adapters.pdf_docling import pages_to_tree, extract_pdf_pages
-
-            tree = pages_to_tree(extract_pdf_pages(body), self._source_key, self._title)
-        else:
-            text = _plain_text(body)
-            tree = [
-                DocNode(
-                    node_type="title",
-                    ref=self._source_key,
-                    # The registry's display name is metadata, not text read
-                    # from the artifact. Preserve the complete file verbatim.
-                    heading="",
-                    children=[DocNode(node_type="paragraph", raw_text=text)],
-                )
-            ]
+        tree = self._tree_from_bytes(body, ctype)
         self.artifact_check = {
             "schema": "clhear.authorized-artifact-check.v1", "source_key": self._source_key,
             "checked_at": datetime.now(timezone.utc).isoformat(),
-            "method": "authorized_artifact_store_read", "publisher_check_performed": False,
+            "method": "publisher_url_read" if from_url else "authorized_artifact_store_read",
+            "publisher_check_performed": from_url,
             "artifacts": [{"name": name, "sha256": hashlib.sha256(body).hexdigest(),
                            "byte_count": len(body), "content_type": ctype}],
         }
@@ -135,6 +162,11 @@ class RestrictedFileAdapter:
             if artifact.content[:5] == b"%PDF-":
                 from app.clhear.l1.originals import pdf_original
                 spans.append(pdf_original(artifact.content)[0])
+            elif artifact.content_type == "text/html" or b"<html" in artifact.content[:4000].lower():
+                from app.clhear.l1.originals import html_text
+                text = html_text(artifact.content)
+                if text.strip():
+                    spans.append(text)
             else:
                 text = _plain_text(artifact.content)
                 spans.extend(line.strip() for line in text.splitlines() if line.strip())

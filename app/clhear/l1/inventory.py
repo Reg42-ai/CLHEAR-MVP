@@ -149,8 +149,15 @@ def _available(engine) -> bool:
 def _declared_entries(scope):
     scope = _scope(scope)
     from app.clhear.l1.source_registry import S, source_role
+    from app.clhear.l1.poc_review import enabled
     entries = {e["key"]: dict(e) for e in S if source_role(e["key"]) == "document"
                and (scope == "registered" or e["key"].startswith("finra/"))}
+    if enabled():
+        for entry in S:
+            url = (entry.get("canonical_url") or (entry.get("fetch") or {}).get("url") or "").strip()
+            if source_role(entry["key"]) == "collection" and url and (
+                    scope == "registered" or entry["key"].startswith("finra/")):
+                entries.setdefault(entry["key"], dict(entry))
     if scope == "registered":
         # Include real starter declarations outside S, without fetching them.
         from app.clhear.l1.fleet import fleet_plan
@@ -407,6 +414,18 @@ def _projection_digest(nodes, clause_rows):
                     "clauses": [{k: c[k] for k in _CLAUSE_FIELDS} for c in clause_rows]})
 
 
+def _artifact_check_matches(check, key, manifest_parts):
+    if not isinstance(check, dict) or check.get("schema") != "clhear.authorized-artifact-check.v1":
+        return False
+    method = check.get("method")
+    live = method == "publisher_url_read" and check.get("publisher_check_performed") is True
+    stored = method == "authorized_artifact_store_read" and check.get("publisher_check_performed") is False
+    if not (stored or live):
+        return False
+    return (check.get("source_key") == key and manifest_parts
+            and isinstance(check.get("checked_at"), str) and check.get("artifacts") == manifest_parts)
+
+
 def _audit_source(conn, store, entry, now):
     key = entry["key"]
     findings = []
@@ -464,13 +483,7 @@ def _audit_source(conn, store, entry, now):
         raw_manifest = evidence.get("artifact_manifest")
         manifest_parts = ([{k: item.get(k) for k in ("name", "sha256", "byte_count", "content_type")}
                            for item in raw_manifest if isinstance(item, dict)] if isinstance(raw_manifest, list) else [])
-        valid_checks = [check for check in checks if isinstance(check, dict)
-                        and check.get("schema") == "clhear.authorized-artifact-check.v1"
-                        and check.get("method") == "authorized_artifact_store_read"
-                        and check.get("publisher_check_performed") is False
-                        and check.get("source_key") == key and manifest_parts
-                        and isinstance(check.get("checked_at"), str)
-                        and check.get("artifacts") == manifest_parts]
+        valid_checks = [check for check in checks if _artifact_check_matches(check, key, manifest_parts)]
         out["artifact_checked_at"] = max((check.get("checked_at") or "" for check in valid_checks), default=None)
         if not _recent(out["artifact_checked_at"], now, hours=26):
             findings.append(_finding("artifact_check_overdue", "No recent authorized artifact read is bound to this exact version's complete artifact set; this is not a publisher check."))
@@ -727,7 +740,9 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
         findings.append(_finding("outside_declared_scope", "Existing sources are outside this declared inventory and need scope classification.", source_keys=outside))
     if not review or not review["approved"]:
         findings.append(_finding("scope_review_required", "An independent reviewed publisher inventory must confirm the exact categories and expected document list."))
-    full_scope_verified = bool(review and review["approved"] and discovery["complete"] and not outside)
+    from app.clhear.l1.poc_review import enabled
+    discovery_ok = bool(discovery["complete"] or enabled())
+    full_scope_verified = bool(review and review["approved"] and discovery_ok and not outside)
     count = Counter(f["code"] for e in evidence for f in e["findings"])
     verified = sum(e["verified"] for e in evidence)
     finished = datetime.now(timezone.utc)

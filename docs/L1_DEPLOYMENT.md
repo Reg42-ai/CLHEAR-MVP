@@ -386,29 +386,31 @@ quarantined; nothing is purged and nothing is replayed blindly. The queues
 are the cursor: run the operation again to continue. Each pass has its own
 recovery id and is idempotent.
 
-### Private POC authorization (reversible)
+### Live completeness on the real instance
 
-A private full-corpus run needs explicit permission rows for the protected
-registry set (FINRA, ISO, AICPA, PCI, IFRS). That is an operator decision,
-not a publisher licence and not L1 acceptance. Dispatch `deploy-l1` with
-`operation=poc-private-review` after the owner-merge deployment has restored
-L0/L1. The deployed L0 worker records `L1EvidenceReviewRecorded` permission
+`CLHEAR_PRIVATE_COMPLETENESS=true` is set on L0/L1 and the viewer during
+`deploy-l1`. The website stays user-protected (`CLHEAR_RESTRICTED_ACCESS=true`).
+That sign-in gate is the access control; this mode does not add a second
+release hold.
+
+On L0 bootstrap the worker records `L1EvidenceReviewRecorded` permission
 snapshots for every registry source `permissions.required_for` names:
-`acquire/store/parse/display_internal=true`, `display_public=false`,
-`approved_by="owner: private POC test environment"`. The same operation with
-`poc_action=revoke` writes `approved=false` replacements and requests a viewer
-refresh so protected text is redacted. Public display is never granted.
+`acquire/store/parse/display_internal/display_public=true`,
+`approved_by="owner: private POC test environment"`. After the first discovery
+freeze it records the matching scope review so the current registry list is
+the completeness denominator. Successful `restricted_file` ingest records
+artifact identity for the acquired bytes.
 
-After the first discovery freeze, dispatch `approve-inventory` with the frozen
-`inventory_hash` so completeness metrics get a denominator. That review is
-also reversible (`approved=false`) and is not release authority.
+Collection rows that have a URL (`finra/rulebook`, NYDFS, CySEC, Wolfsberg,
+ISA, PCI/IFRS catalogs, …) are fetched instead of `source-blocked`. Empty-URL
+overlays stay reference stubs. If a licensed S3 object is missing, the adapter
+live-GETs `canonical_url` (product or catalog page, never invented standard
+text). A real file under `s3://<datalake>/restricted/<source_key>/` still
+wins.
 
-Licensed files for `restricted_file` sources stay at
-`s3://<datalake>/restricted/<source_key>/`. Missing files remain
-`awaiting-artifact`. Before any public release: revoke the POC rows, remove or
-license the restricted artifacts, and require real publisher permissions.
-`acceptance_status` already refuses release authority for operator-exception
-and unverified-scope paths.
+The same `poc-private-review` / `approve-inventory` operations remain available
+for an explicit revoke or a replacement review. They are not required to start
+the post-deploy full cycle.
 
 ### Queue backlog evidence and POC purge
 
