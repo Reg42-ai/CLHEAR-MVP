@@ -58,6 +58,12 @@ TASK_FIELDS = {
 # cycle snapshots, so the registered service must use the same size.
 L0_TASK_CPU = "1024"
 L0_TASK_MEMORY_MIB = 8192
+# Completeness snapshots include granted source text. The 512 MiB / 512 MiB
+# /tmp viewer OOM'd or 503'd the anonymous probe after bootstrap 35355899299
+# succeeded. 3008 / 4096 leaves room for the download staging file plus SQLite.
+VIEWER_MEMORY_SIZE = 3008
+VIEWER_TIMEOUT_S = 120
+VIEWER_EPHEMERAL_STORAGE_MB = 4096
 SUSPENDED = {"DynamicScalingInSuspended": True, "DynamicScalingOutSuspended": True,
              "ScheduledScalingSuspended": True}
 # These service-generated outputs can change while an accepted update finishes.
@@ -851,9 +857,14 @@ class Deployer:
                    CLHEAR_DB_S3_URI=f"s3://{BUCKET}/{self.inputs.viewer_key}", CLHEAR_RELEASES_S3_PREFIX=RELEASES,
                    CLHEAR_EVENTS_QUEUE_URL=QUEUES["l0"])
         updated_config = self._write("lambda", "update_function_configuration", FunctionName=FUNCTION,
-            RevisionId=config["RevisionId"], Environment={"Variables": env})
+            RevisionId=config["RevisionId"], Environment={"Variables": env},
+            MemorySize=VIEWER_MEMORY_SIZE, Timeout=VIEWER_TIMEOUT_S,
+            EphemeralStorage={"Size": VIEWER_EPHEMERAL_STORAGE_MB})
         expected_config = copy.deepcopy(config)
         expected_config["Environment"] = {"Variables": env}
+        expected_config["MemorySize"] = VIEWER_MEMORY_SIZE
+        expected_config["Timeout"] = VIEWER_TIMEOUT_S
+        expected_config["EphemeralStorage"] = {"Size": VIEWER_EPHEMERAL_STORAGE_MB}
         current = self._complete_lambda_update(expected_config, updated_config, phase="configuration", expected_code_hash=code_hash)
         # Capture only after our conditional update has completed. Its service
         # fields (such as LastModified) may legitimately differ from preflight;
@@ -877,6 +888,7 @@ class Deployer:
             # zero. Reservation failures must never fall back to unreserved.
             self._write("lambda", "put_function_concurrency", FunctionName=FUNCTION, ReservedConcurrentExecutions=max(old, 1))
             self._confirm_viewer_concurrency(max(old, 1))
+        probes = []
         for path, expected in (("/api/clhear/health", 200), ("/api/clhear/sources", 401)):
             event = {"version": "2.0", "routeKey": "$default", "rawPath": path, "rawQueryString": "",
                      "headers": {"accept": "application/json", "host": "clhear.org"},
@@ -884,7 +896,14 @@ class Deployer:
                         "sourceIp": "127.0.0.1", "protocol": "HTTP/1.1", "userAgent": "clhear-deployment-verifier"}}, "isBase64Encoded": False}
             response = self._write("lambda", "invoke", FunctionName=FUNCTION, InvocationType="RequestResponse", Payload=json.dumps(event).encode())
             result = json.loads(response["Payload"].read())
-            require(not response.get("FunctionError") and result.get("statusCode") == expected, "Viewer anonymous access verification failed")
+            status = result.get("statusCode") if isinstance(result, dict) else None
+            probe = {"path": path, "expected_status": expected,
+                     "function_error": bool(response.get("FunctionError"))}
+            if isinstance(status, int) and 100 <= status <= 599:
+                probe["status_code"] = status
+            probes.append(probe)
+            self.report["viewer_access_probes"] = probes
+            require(not response.get("FunctionError") and status == expected, "Viewer anonymous access verification failed")
         if old == 0:
             self._write("lambda", "put_function_concurrency", FunctionName=FUNCTION, ReservedConcurrentExecutions=0)
             self._confirm_viewer_concurrency(0)
