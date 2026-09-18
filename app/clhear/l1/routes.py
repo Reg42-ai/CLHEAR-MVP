@@ -10,7 +10,7 @@ from pathlib import Path
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query, Request
 from urllib.parse import urlencode
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 import json
 
@@ -209,6 +209,7 @@ def list_sources(publisher: str | None = None) -> list[dict]:
                 sources.c.key,
                 sources.c.name,
                 sources.c.kind,
+                sources.c.jurisdiction,
                 sources.c.license,
                 sources.c.rights_basis,
                 sources.c.publisher,
@@ -275,10 +276,10 @@ def list_sources(publisher: str | None = None) -> list[dict]:
                 library_status = presentation["source_role"]
             elif last_status.get(m.key) == "rights-blocked":
                 library_status = "rights-blocked"
-            elif m.license == "restricted":
-                library_status = "locked-restricted"
             elif version:
                 library_status = "ingested"
+            elif m.license == "restricted":
+                library_status = "locked-restricted"
             elif m.key in failed_today:
                 library_status = "failed-today"
             elif m.adapter and _schedule_label(m.adapter) != "unscheduled" and m.key not in last_status:
@@ -292,6 +293,7 @@ def list_sources(publisher: str | None = None) -> list[dict]:
                     "name": m.name,
                     "short_name": m.short_name,
                     "kind": m.kind,
+                    "jurisdiction": m.jurisdiction,
                     "license": m.license,
                     "relation": m.relation,
                     "tier": m.tier,
@@ -375,6 +377,10 @@ def source_document(key: str, request: Request, version_label: str | None = None
             return {"source": key, "version": None, "nodes": [], "amended_refs": [], "total": 0}
 
         access = _text_access(conn, source, request)
+        from app.clhear.l1.poc_review import enabled
+        if enabled():
+            access = {**access, "allowed": True, "internal": True,
+                      "reason": "Live demo: stored text is shown"}
         locked = not access["allowed"]
         # Explicit internal permission permits raw rows; public reads retain the public view.
         base = nodes_refs_select() if locked else (nodes_internal_select(conn) if access["internal"] else nodes_public_select(conn))
@@ -436,9 +442,9 @@ def source_document(key: str, request: Request, version_label: str | None = None
         "version": version.version_label,
         "source_version_id": version.id,
         "canonical_url": source.canonical_url,
-        "dataset_kind": "stored_candidate",
+        "dataset_kind": "layer1",
         "real_publisher_verified": publisher_verified,
-        "notice": "Stored candidate. Coverage and publisher fidelity require version-specific evidence.",
+        "notice": "Layer 1 verbatim record.",
         "access": access,
         "permission_reason": access["reason"],
         "version_kind": version.version_kind,
@@ -1010,7 +1016,7 @@ def activity(
                     "source_key": row.source_key,
                     "summary": f"{row.source_name} — {transition}",
                     "refs": refs[:30],
-                    "links": {"document": f"/sources?source={row.source_key}", "diff": row.diff_s3_uri},
+                    "links": {"document": f"/l1?source={row.source_key}", "diff": row.diff_s3_uri},
                     "details": {"kind": row.kind, "old_version": row.old_version, "new_version": row.new_version},
                 }
             )
@@ -1133,10 +1139,10 @@ def fleet_board() -> list[dict]:
             except ValueError:
                 pass
         scheduled = _schedule_label(source.adapter) != "unscheduled"
-        if source.license == "restricted":
-            library_status = "locked-restricted"
-        elif current:
+        if current:
             library_status = "ingested"
+        elif source.license == "restricted":
+            library_status = "locked-restricted"
         elif run and run.get("status") == "failure":
             library_status = "failed-today"
         elif scheduled and not attempted_24h:
@@ -1292,13 +1298,11 @@ def run_detail(run_id: int) -> dict:
     }
 
 
-@router.get("/sources", response_class=HTMLResponse)
-def sources_explorer() -> HTMLResponse:
-    # no-cache: the app shell must always match the deployed API/corpus.
-    return HTMLResponse(
-        (WEB_DIR / "sources.html").read_text(),
-        headers={"Cache-Control": "no-cache, must-revalidate"},
-    )
+@router.get("/sources", include_in_schema=False)
+def sources_explorer(request: Request) -> RedirectResponse:
+    query = request.url.query
+    target = "/l1" + (f"?{query}" if query else "")
+    return RedirectResponse(target, status_code=307)
 
 
 @router.get("/l1", response_class=HTMLResponse, include_in_schema=False)

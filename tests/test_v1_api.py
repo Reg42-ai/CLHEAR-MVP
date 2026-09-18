@@ -157,8 +157,12 @@ def test_l1_browser_page_is_served(client):
     resp = client.get("/l1")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    for needle in ("Sources", "Fleet", "Evals", "Changes", "source_version_id", "recordMatches"):
+    for needle in ("Sources", "Changes", "source_version_id", "recordMatches", 'href="/l8"'):
         assert needle in resp.text
-    assert client.get("/sources").text == resp.text
+    assert "L1 Sources" not in resp.text
+    redirected = client.get("/sources", follow_redirects=False)
+    assert redirected.status_code == 307
+    assert redirected.headers["location"] == "/l1"
+    assert client.get("/sources", follow_redirects=True).text == resp.text
     # The JSON API under the same prefix still answers.
     assert client.get("/l1/sources").json()["total"] == 0

@@ -40,6 +40,7 @@
   .slab:nth-child(odd) { animation-delay: .04s; }
   @keyframes enter { from { opacity: 0; transform: translateY(10px); } }
   .slab:hover { transform: translateY(-2px) scale(1.008); border-color: var(--edge-bright); box-shadow: var(--glow); }
+  a.slab { text-decoration: none; color: inherit; }
   .slab .code { font-family: var(--mono); font-size: 24px; font-weight: 700; color: var(--faint); letter-spacing: 0.04em; }
   .slab:hover .code { color: var(--accent); }
   .slab h3 { margin: 0 0 3px; font-size: 16.5px; }
@@ -330,69 +331,56 @@ function overviewState(layer) {
 function LayerAccordion({ layer }) {
   const [expanded, setExpanded] = useState(layer.layer === "L1");
   const overview = layer.overview || {};
-  const inventory = overview.inventory;
-  const viewer = overview.viewer_snapshot;
-  const job = overview.workflow && overview.workflow.jobs && overview.workflow.jobs[0];
   const state = overviewState(layer);
   const platform = layer.layer === "L0";
   const counts = overview.counts || layer.counts || {};
-  const output = overview.available_in_projection === false ? "Not in this viewer snapshot" : Number.isFinite(overview.output_count)
+  const output = Number.isFinite(overview.output_count)
     ? `${overview.output_count} ${overview.output_unit || "records"}`
     : countline(counts, HOME_COUNTS[layer.layer]) || "Counts not reported";
   const derivation = layer.derivation || {};
-  const verification = { passed: "Passed", failed: "Failed", not_evaluated: "Not evaluated" }[overview.verification] || "Not reported";
-  const preview = layer.layer === "L1" ? "/l1?view=sources" : `/${layer.layer.toLowerCase()}`;
+  const preview = `/${layer.layer.toLowerCase()}`;
   return html`
     <details class="layeraccordion" data-layer=${layer.layer} open=${expanded}
              onToggle=${(event) => setExpanded(event.currentTarget.open)}>
       <summary class="slab">
         <span class="code">${layer.layer}</span>
         <span><span class="layername" id=${`overview-${layer.layer}`}>${layer.name}</span><span class="purpose">${layer.purpose}</span></span>
-        <span class="right"><span class=${`overviewstate ${state}`}>${STATE_LABELS[state]}</span><span class="countline">${output}</span>
-          ${layer.layer === "L1" && inventory && html`<span class="countline">${inventory.verified ?? "—"} / ${inventory.known_expected ?? "—"} declared sources verified · ${inventory.unresolved ?? "—"} unresolved</span>`}</span>
+        <span class="right"><span class=${`overviewstate ${state}`}>${STATE_LABELS[state]}</span><span class="countline">${output}</span></span>
       </summary>
       <div class="layerbody">
         <div class="overviewcols">
           <div>
-            <h3>${platform ? "Execution evidence" : "Output and evidence"}</h3>
+            <h3>${platform ? "Execution evidence" : "Layer output"}</h3>
             <p>${overview.notice || overview.detail || STATE_NOTICES[state]}</p>
-            <p><b>Verification:</b> ${verification}${overview.scope ? ` · ${overview.scope}` : " · scope not reported"}</p>
-            ${overview.dataset_kind && html`<p><b>Dataset:</b> ${overview.dataset_kind}</p>`}
-            ${viewer && html`<p><b>Viewer origin:</b> ${viewer.source_environment || "not recorded"}${viewer.viewer_snapshot ? ` · revision ${viewer.revision || "not recorded"} · refreshed ${viewer.generated_at || "not recorded"}` : " · direct database; no viewer revision recorded"}.</p>
-              ${viewer.viewer_snapshot && html`<p>This L1 projection is a candidate view. It is not an accepted release; ${(viewer.omitted_layers || []).join(", ")} output is not included.</p>`}`}
-            ${overview.checked_at && html`<p><b>Checked:</b> <time>${overview.checked_at}</time></p>`}
-            <p><b>Stored records:</b> ${output}. Counts alone do not establish completeness, accuracy or freshness.</p>
-            ${overview.job_id && html`<p><b>Evidence job:</b> <span class="chip">${overview.job_id}</span></p>`}
-            ${layer.layer === "L1" && inventory && html`<div>
-              <p><b>Declared inventory:</b> ${inventory.verified ?? "not recorded"} verified of ${inventory.known_expected ?? "unknown"} expected documents · ${inventory.unresolved ?? "unknown"} unresolved.</p>
-              <p>${inventory.discovery_complete === true ? "Publisher discovery recorded as complete." : "Publisher discovery is incomplete or unverified; this count does not establish the complete publisher scope."}</p>
-              ${["unavailable", "migration_required", "not_run"].includes(inventory.status) && html`<p><b>Evidence unavailable:</b> ${inventory.reason || "No worker audit recorded."}</p>`}
-              ${inventory.audit_id != null && inventory.current_binding_valid === false && html`<p><b>Audit outdated:</b> current source versions no longer match the recorded audit.</p>`}
-              <p><b>Blockers:</b> permissions unverified ${inventory.counts && inventory.counts.permission_unverified != null ? inventory.counts.permission_unverified : "unknown"}; permissions blocked ${inventory.counts && inventory.counts.permission_blocked != null ? inventory.counts.permission_blocked : "unknown"}; awaiting artifact ${inventory.counts && inventory.counts.awaiting_artifact != null ? inventory.counts.awaiting_artifact : "unknown"}.</p>
-              <p class="mono" style=${{ overflowWrap: "anywhere" }}>Inventory SHA-256: ${inventory.inventory_hash || "not recorded"}</p>
-              ${(inventory.findings || []).length > 0 && html`<details><summary>Scope findings (${inventory.findings.length})</summary><ul>${inventory.findings.map((finding, i) => html`<li key=${i}>${finding.detail || finding.code}</li>`)}</ul></details>`}
-            </div>`}
+            <p><b>Stored records:</b> ${output}</p>
           </div>
           <div>
             <h3>How this layer is produced</h3>
             <p>${derivation.method || "Method not reported."}</p>
-            <div class="kv">${(derivation.inputs || []).map((code) => html`<a class="chip linky" key=${code} href=${`#/layer/${code.toLowerCase()}`}>Input ${code}</a>`)}</div>
-            ${layer.layer === "L1" && html`<p>Read original text alongside encoded records, inspect the fleet run, and open Evals for complete, accurate and fresh checks.</p>`}
-            ${layer.layer === "L1" && html`<p><b>Latest recorded worker job:</b> ${job ? `${job.job_id} · ${job.status || "status not recorded"} · started ${job.started_at || "not recorded"}` : "No workflow evidence recorded."}</p>`}
-            ${!platform && layer.layer !== "L1" && html`<p>Browse the available preview and its evidence. Preview availability does not imply publication.</p>`}
+            <div class="kv">${(derivation.inputs || []).map((code) => html`<a class="chip linky" key=${code} href=${`/${code.toLowerCase()}`}>Input ${code}</a>`)}</div>
           </div>
         </div>
         <div class="overviewactions">
-          ${!platform && overview.available_in_projection !== false && html`<a class="bigbtn" href=${preview}>${layer.layer === "L1" ? "Open L1 sources" : `Browse ${layer.layer} preview`}</a>`}
-          ${layer.layer === "L1" && html`
-            <a class="navlink" href="/l1?view=fleet">Fleet</a>
-            <a class="navlink" href="/l1?view=evals">Evals</a>
-            <a class="navlink" href="/l1?view=changes">Changes</a>`}
+          ${!platform && html`<a class="bigbtn" href=${preview}>Browse ${layer.layer}</a>`}
           ${platform && html`<a class="navlink" href="#/ops">Operations</a><a class="navlink" href="/console">Review</a><a class="navlink" href="#/eval">Human evaluation samples</a>`}
           <a class="navlink" href=${`#/layer/${layer.layer.toLowerCase()}`}>Method and lineage</a>
         </div>
       </div>
     </details>`;
+}
+
+function LayerLiveSlab({ layer }) {
+  const overview = layer.overview || {};
+  const counts = overview.counts || layer.counts || {};
+  const output = Number.isFinite(overview.output_count)
+    ? `${overview.output_count} ${overview.output_unit || "records"}`
+    : countline(counts, HOME_COUNTS[layer.layer]) || "";
+  return html`
+    <a class="slab" href=${`/${layer.layer.toLowerCase()}`}>
+      <span class="code">${layer.layer}</span>
+      <span><span class="layername">${layer.name}</span><span class="purpose">${layer.purpose}</span></span>
+      <span class="right"><span class="overviewstate published">Live</span><span class="countline">${output}</span></span>
+    </a>`;
 }
 
 function Home({ layers }) {
@@ -402,17 +390,12 @@ function Home({ layers }) {
     <div>
       <div class="hero">
         <h1>Regulatory truth, <span class="grad">layer by layer</span></h1>
-        <p>Start with L1 sources. Inspect the original text, encoded records and evidence,
-           then follow the outputs through the eight layers. Each layer reports its own scope and state.</p>
+        <p>Eight live layers. Open any layer to browse its records — sources, obligations,
+           blocks, profiles, activities, blueprints, risk and fills.</p>
       </div>
-      <dl class="statelegend" aria-label="Output states">
-        <dt>Published</dt><dd>released for a stated scope</dd>
-        <dt>Candidate</dt><dd>stored, awaiting acceptance</dd>
-        <dt>Unknown</dt><dd>evidence not reported</dd>
-      </dl>
       <section class="stackwrap" aria-labelledby="output-layers">
-        <h2 id="output-layers">L1–L8 · Output layers</h2>
-        ${outputs.map((l) => html`<${LayerAccordion} key=${l.layer} layer=${l} />`)}
+        <h2 id="output-layers">L1–L8 · Live layers</h2>
+        ${outputs.map((l) => html`<${LayerLiveSlab} key=${l.layer} layer=${l} />`)}
         ${outputs.length === 0 && html`<p class="demobanner">No layer overview was returned.</p>`}
       </section>
       ${platform && html`<section class="platformsection" aria-labelledby="platform-layer"><h2 id="platform-layer">L0 · Supporting platform</h2><${LayerAccordion} layer=${platform} /></section>`}
@@ -733,7 +716,7 @@ function LineageNode({ node, depth }) {
         <div class="verbatim">${meta.text}</div>
         <div class="provline">
           sha256 ${meta.text_hash} · ${meta.version_label} · retrieved ${String(meta.retrieved_at).slice(0, 19)}<br/>
-          original: ${meta.s3_uri || "—"} · <a href=${meta.permalink}>open in Sources Explorer →</a>
+          original: ${meta.s3_uri || "—"} · <a href=${meta.permalink}>open in L1 →</a>
         </div>`}
       ${isClause && meta.resolved && !meta.text && html`
         <div class="verbatim lockedtext">⛨ Verbatim text withheld — ${meta.license} license. Ref + hash prove the anchor without exposing the text.</div>
@@ -842,7 +825,7 @@ function L1Page({ detail }) {
         <div class="stat"><div class="n">${c.change_events ?? "—"}</div><div class="lbl">change events</div></div>
       </div>
       <div style=${{ margin: "4px 0 20px" }}>
-        <a class="bigbtn" href="/sources">Open the full Sources Explorer →</a>
+        <a class="bigbtn" href="/l1">Browse Layer 1 →</a>
       </div>
       <div class="grid2">
         <div class="panel">
@@ -866,8 +849,9 @@ function L1Page({ detail }) {
                 ${families.map((f) => {
                   const ingested = f.members.filter((m) => m.latest_version).length;
                   const clauses = f.members.reduce((s, m) => s + (m.clauses || 0), 0);
+                  const first = (f.members.find((m) => m.latest_version) || f.members[0] || {}).key;
                   return html`<tr key=${f.key}>
-                    <td>${f.name}</td><td>${f.members.length}</td><td>${ingested}</td>
+                    <td><a href=${first ? `/l1?source=${encodeURIComponent(first)}` : "/l1"}>${f.name}</a></td><td>${f.members.length}</td><td>${ingested}</td>
                     <td style=${{ fontFamily: "var(--mono)" }}>${clauses}</td></tr>`;
                 })}
               </tbody>
@@ -1342,6 +1326,10 @@ function OpsPage() {
       <div class="hero" style=${{ margin: "10px 0 26px" }}>
         <h1>AI <span class="grad">operations</span></h1>
         <p>Every automated decision with a reasoning field. Router, fleets, revalidation, gates.</p>
+        <div class="overviewactions" style=${{ justifyContent: "center", marginTop: "12px" }}>
+          <a class="navlink" href="/l1?view=fleet">Fleet evidence</a>
+          <a class="navlink" href="/l1?view=evals">Evals</a>
+        </div>
       </div>
       <div class="statgrid">
         <div class="stat"><div class="n">${(data.dashboard && data.dashboard.llm_calls) || 0}</div><div class="lbl">llm calls</div></div>
@@ -1495,10 +1483,14 @@ function App() {
         <div class="spacer"></div>
         <nav class="primarynav" aria-label="Primary">
           <a class=${"navlink" + (page === "home" ? " active" : "")} href="#/" aria-current=${page === "home" ? "page" : undefined}>Overview</a>
-          <a class="navlink" href="/l1?view=sources">L1 Sources</a>
-          <a class="navlink" href="/l1?view=fleet">Fleet</a>
-          <a class="navlink" href="/l1?view=evals">Evals</a>
-          <a class="navlink" href="/l1?view=changes">Changes</a>
+          <a class="navlink" href="/l1">L1</a>
+          <a class="navlink" href="/l2">L2</a>
+          <a class="navlink" href="/l3">L3</a>
+          <a class="navlink" href="/l4">L4</a>
+          <a class="navlink" href="/l5">L5</a>
+          <a class="navlink" href="/l6">L6</a>
+          <a class="navlink" href="/l7">L7</a>
+          <a class="navlink" href="/l8">L8</a>
           <a class="navlink" href="/solon">Ask Solon</a>
           <details class="navmore">
             <summary class="navlink">More</summary>

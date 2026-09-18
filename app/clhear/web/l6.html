@@ -354,12 +354,12 @@ function App() {
   else body = html`<${Blueprint} openItem=${openItem} />`;
   return html`<div>
     <header class="appbar">
-      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>L6 · blueprint</span></div>
+      <div class="wordmark" onClick=${() => (location.href = "/")}><b>CLHEAR</b><span>the compliance stack</span></div>
       <div class="spacer"></div>
-      <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink active" href="/l6">L6</a><a class="navlink" href="/l7">L7</a><a class="navlink" href="/l8">L8</a>
+      <nav class="primarynav" aria-label="Layers"><a class="navlink" href="/">Start</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink active" href="/l6">L6</a><a class="navlink" href="/l7">L7</a><a class="navlink" href="/l8">L8</a></nav>
       <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
     </header>
-    <main id="main"><h1 class="visually-hidden">L6 — Blueprints</h1>
+    <main id="main"><h1 class="visually-hidden">L6 · blueprint</h1>
       <div class="tabs">
         ${[["blueprint", "Blueprint"], ["blueprints", "Stored blueprints"], ["compare", "Compare profiles"], ["scorecard", "Scorecard"]].map(([k, label]) =>
           html`<button key=${k} class=${tab === k && view.page === "list" ? "on" : ""} onClick=${() => { setTab(k); setView({ page: "list" }); history.replaceState(null, "", "#" + k); }}>${label}</button>`)}
