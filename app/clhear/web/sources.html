@@ -760,7 +760,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
       </div>
       <div class="layout">
         ${toc.length > 1 && html`
-          <nav class="toc">
+          <nav class="toc" aria-label="Document contents">
             <h3>Contents</h3>
             ${toc.map((t) => html`
               <a key=${t.id} class=${t.level === 1 ? "lvl1" : "lvl2"} title=${t.text}
