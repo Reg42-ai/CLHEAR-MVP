@@ -204,6 +204,21 @@ def test_mlr_roundtrip_mini_e3(engine, client, tmp_path):
     needle = "A relevant person must apply customer due diligence measures"
     assert needle in from_db and needle in from_artifact
 
+    # The hosted viewer must be able to walk the same document in pages that
+    # each stay under the Lambda response cap and reassemble it exactly.
+    assert payload["has_more"] is False and payload["offset"] == 0 and len(payload["nodes"]) == payload["total"]
+    paged, offset = [], 0
+    while True:
+        page = client.get("/api/clhear/sources/uksi/2017/692/document", params={"offset": offset, "limit": 97}).json()
+        assert page["total"] == payload["total"] and page["offset"] == offset and page["limit"] == 97
+        assert len(page["nodes"]) <= 97
+        paged.extend(page["nodes"])
+        if not page["has_more"]:
+            break
+        offset += len(page["nodes"])
+    assert paged == payload["nodes"]
+    assert client.get("/api/clhear/sources/uksi/2017/692/document", params={"limit": 50_000}).status_code == 422
+
     # Inspector payload for a provision node.
     provision = next(n for n in payload["nodes"] if n["ref"] == "regulation-28")
     info = client.get(f"/api/clhear/nodes/{provision['id']}").json()

@@ -359,22 +359,32 @@ def _declared_source_only(engine, key: str) -> dict:
             "inventory": evidence, "provenance": {"text_states": [], "related_instruments": []}}
 
 
+# The hosted viewer answers through a Lambda whose synchronous response is
+# capped at 6 MB. A consolidated Act re-parsed into >100k fine-grained nodes
+# is several times that as JSON, so the shell requests node pages and walks
+# them until ``total`` is reached. Without ``limit`` the whole list is returned.
+DOCUMENT_PAGE_MAX = 5000
+
+
 @router.get("/api/clhear/sources/{key:path}/document")
-def source_document(key: str, request: Request, version_label: str | None = None) -> dict:
+def source_document(key: str, request: Request, version_label: str | None = None,
+                    offset: int = Query(0, ge=0), limit: int | None = Query(None, ge=1, le=DOCUMENT_PAGE_MAX)) -> dict:
     """Ordered node list for reconstructing the original document view."""
     engine = get_engine()
+    page = {"offset": offset, "limit": limit}
+    empty = {"source": key, "version": None, "nodes": [], "amended_refs": [], "total": 0, **page, "has_more": False}
     with engine.connect() as conn:
         source = conn.execute(sa.select(sources).where(sources.c.key == key)).first()
         if source is None:
             _declared_source_only(engine, key)
             if version_label:
                 raise HTTPException(status_code=404, detail="source version not found")
-            return {"source": key, "version": None, "nodes": [], "amended_refs": [], "total": 0}
+            return empty
         version = _resolve_version(conn, source, version_label)
         if version is None:
             if version_label:
                 raise HTTPException(status_code=404, detail="source version not found")
-            return {"source": key, "version": None, "nodes": [], "amended_refs": [], "total": 0}
+            return empty
 
         access = _text_access(conn, source, request)
         from app.clhear.l1.poc_review import enabled
@@ -384,9 +394,11 @@ def source_document(key: str, request: Request, version_label: str | None = None
         locked = not access["allowed"]
         # Explicit internal permission permits raw rows; public reads retain the public view.
         base = nodes_refs_select() if locked else (nodes_internal_select(conn) if access["internal"] else nodes_public_select(conn))
-        rows = conn.execute(
-            base.where(doc_nodes.c.source_version_id == version.id).order_by(doc_nodes.c.seq)
-        ).all()
+        scoped = base.where(doc_nodes.c.source_version_id == version.id)
+        total = conn.execute(sa.select(sa.func.count()).select_from(scoped.order_by(None).subquery())).scalar_one()
+        ordered = scoped.order_by(doc_nodes.c.seq).offset(offset)
+        rows = conn.execute(ordered.limit(limit) if limit else ordered).all()
+        page_ids = [r.id for r in rows]
         # Clause understanding layer: annotations keyed by doc_node_id
         # (llm explainer preferred, heuristic classification as fallback).
         annotations: dict[int, dict] = {}
@@ -400,6 +412,7 @@ def source_document(key: str, request: Request, version_label: str | None = None
             )
             .join(clause_annotations, clause_annotations.c.clause_id == clauses.c.id)
             .where(clauses.c.source_version_id == version.id)
+            .where(clauses.c.doc_node_id.in_(page_ids) if page_ids else sa.false())
             .where(sa.literal(not locked))
             .order_by(clause_annotations.c.origin)  # 'heuristic' < 'llm': llm overwrites
         ):
@@ -429,7 +442,7 @@ def source_document(key: str, request: Request, version_label: str | None = None
             .where(source_versions.c.version_kind == "as_published")
             .limit(1)
         ).scalar()
-        _audit_text_read(conn, request, source, version, access, request.url.path, [r.id for r in rows])
+        _audit_text_read(conn, request, source, version, access, request.url.path, page_ids)
 
     from app.clhear import legal
     from app.clhear.l1.inventory import source_inventory_evidence
@@ -456,7 +469,9 @@ def source_document(key: str, request: Request, version_label: str | None = None
         "locked": locked,
         "attribution": legal.attribution_for(source.key, source.license),
         "amended_refs": amended,
-        "total": len(rows),
+        "total": total,
+        **page,
+        "has_more": offset + len(rows) < total,
         "short_name": source.short_name,
         "nodes": [
             {
