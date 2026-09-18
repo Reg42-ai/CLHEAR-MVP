@@ -17,8 +17,8 @@ from botocore.loaders import Loader
 from botocore.waiter import Waiter, WaiterModel
 
 from scripts.deploy_l1 import (ACCOUNT, ADAPTER_SCHEDULES, BUCKET, CLUSTER, ENVIRONMENT, FLEETS, FUNCTION,
-                              L0_TASK_MEMORY_MIB, QUEUES, REGION, SUSPENDED, WORKFLOW, Deployer, DeploymentError,
-                              Inputs, _apply_l0_memory)
+                              L0_TASK_CPU, L0_TASK_MEMORY_MIB, QUEUES, REGION, SUSPENDED, WORKFLOW, Deployer,
+                              DeploymentError, Inputs, _apply_l0_memory)
 
 SHA = "a" * 40
 DIGEST = "b" * 64
@@ -508,15 +508,18 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
     assert len([op for op in operations[:launches[0][0]] if op == "register_task_definition"]) == 9
     assert all(args["networkConfiguration"] == cloud.services["l0"]["networkConfiguration"] for _, args in launches)
     assert all(args["launchType"] == "FARGATE" and "capacityProviderStrategy" not in args for _, args in launches)
-    assert cloud.definitions[cloud.services["l0"]["taskDefinition"]]["memory"] == "2048"
+    assert cloud.definitions[cloud.services["l0"]["taskDefinition"]]["cpu"] == "1024"
+    assert cloud.definitions[cloud.services["l0"]["taskDefinition"]]["memory"] == "8192"
+    assert cloud.definitions[cloud.services["l0"]["taskDefinition"]]["containerDefinitions"][0]["memory"] == 8192
     assert all(cloud.definitions[cloud.services[fleet]["taskDefinition"]]["memory"] == "512" for fleet in FLEETS if fleet != "l0")
     for _, args in launches:
         command = args["overrides"]["containerOverrides"][0]["command"]
         if command[0] == "--request-l1-cycle" or (len(command) > 1 and command[1] in {"bootstrap", "publish"}):
-            assert args["overrides"]["memory"] == "2048"
-            assert args["overrides"]["containerOverrides"][0]["memory"] == 2048
+            assert args["overrides"]["cpu"] == "1024" and args["overrides"]["memory"] == "8192"
+            assert args["overrides"]["containerOverrides"][0]["cpu"] == 1024
+            assert args["overrides"]["containerOverrides"][0]["memory"] == 8192
         else:
-            assert "memory" not in args["overrides"]
+            assert "memory" not in args["overrides"] and "cpu" not in args["overrides"]
     old_wait = next(index for index, (_, op, args) in enumerate(cloud.calls) if op == "wait:tasks_stopped" and "old-downstream-task" in args["tasks"])
     assert old_wait < launches[0][0]
     verify_wait = next(args for _, op, args in cloud.calls if op == "wait:tasks_stopped" and any(arn.endswith("/verify") for arn in args["tasks"]))
@@ -543,13 +546,20 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
 
 
 def test_l0_memory_raise_never_shrinks_a_larger_existing_size():
-    task = {"memory": "4096", "containerDefinitions": [
-        {"name": "worker", "memory": 4096, "memoryReservation": 2048}]}
+    task = {"cpu": "2048", "memory": "16384", "containerDefinitions": [
+        {"name": "worker", "cpu": 2048, "memory": 16384, "memoryReservation": 2048}]}
     _apply_l0_memory(task)
-    assert task["memory"] == "4096"
-    assert task["containerDefinitions"][0]["memory"] == 4096
+    assert task["cpu"] == "2048" and task["memory"] == "16384"
+    assert task["containerDefinitions"][0]["memory"] == 16384
     assert task["containerDefinitions"][0]["memoryReservation"] == 2048
-    assert L0_TASK_MEMORY_MIB == 2048
+    assert L0_TASK_CPU == "1024" and L0_TASK_MEMORY_MIB == 8192
+
+
+def test_l0_register_sets_container_hard_limit_even_when_source_omitted_it():
+    task = {"cpu": "512", "memory": "1024", "containerDefinitions": [{"name": "worker"}]}
+    _apply_l0_memory(task)
+    assert task["cpu"] == "1024" and task["memory"] == "8192"
+    assert task["containerDefinitions"][0]["memory"] == 8192
 
 
 def test_l0_register_and_one_offs_raise_memory_after_bootstrap_oom():
@@ -563,15 +573,15 @@ def test_l0_register_and_one_offs_raise_memory_after_bootstrap_oom():
     assert result["status"] == "verified"
     l0 = cloud.definitions[cloud.services["l0"]["taskDefinition"]]
     l1 = cloud.definitions[cloud.services["l1"]["taskDefinition"]]
-    assert l0["cpu"] == "512" and l0["memory"] == "2048"
-    assert l0["containerDefinitions"][0]["memory"] == 2048
+    assert l0["cpu"] == "1024" and l0["memory"] == "8192"
+    assert l0["containerDefinitions"][0]["memory"] == 8192
     assert l1["cpu"] == "1024" and l1["memory"] == "2048"
     assert l1["containerDefinitions"][0]["memory"] == 2048
     launches = [args for _, op, args in cloud.calls if op == "run_task"]
     bootstrap = next(args for args in launches if args["overrides"]["containerOverrides"][0]["command"][1] == "bootstrap")
     verify = next(args for args in launches if args["overrides"]["containerOverrides"][0]["command"][1] == "verify")
-    assert bootstrap["overrides"]["memory"] == "2048"
-    assert bootstrap["overrides"]["containerOverrides"][0]["memory"] == 2048
+    assert bootstrap["overrides"]["cpu"] == "1024" and bootstrap["overrides"]["memory"] == "8192"
+    assert bootstrap["overrides"]["containerOverrides"][0]["memory"] == 8192
     assert "memory" not in verify["overrides"]
 
 

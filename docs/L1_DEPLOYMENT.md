@@ -225,11 +225,12 @@ The workflow launches these as ECS tasks. Do not run them against local files or
 substitute a separate import script. Each deployment uses a new ID; retries of
 the same worker phase retain its durable child event identities.
 
-L0 registers at 2048 MiB (valid with 512 CPU) and L0 one-off `run_task`
-overrides use the same floor. Completeness-mode bootstrap builds the viewer
-snapshot plus permission and inventory rows in-process; 1024 MiB OOM-killed
-apply `35341410131`. Re-running that job without the memory raise will OOM
-again. L1 ingest was already 2048 MiB.
+L0 registers at 1024 CPU / 8192 MiB and L0 one-off `run_task` overrides use
+the same pair (container hard limit included). Completeness-mode bootstrap
+builds the viewer snapshot in-process; 1024 MiB OOM-killed apply
+`35341410131` and 2048 MiB still OOM-killed `35351651353` on the same ~76s
+curve. Re-running those jobs without the 8 GiB raise will OOM again. L1
+ingest stays 2048 MiB.
 
 `verify` exit 0 means the FINRA candidate and unchanged-run check passed; exit 2
 means review evidence is available with explicit coverage/permission gaps; exit

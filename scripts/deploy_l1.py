@@ -51,10 +51,13 @@ TASK_FIELDS = {
     "tags", "pidMode", "ipcMode", "proxyConfiguration", "inferenceAccelerators",
     "ephemeralStorage", "runtimePlatform", "enableFaultInjection",
 }
-# L0 bootstrap builds the viewer snapshot in-process. The live 512 CPU / 1024 MiB
-# Fargate pair OOM-killed (exit 137) on deploy-l1 35341410131 after completeness
-# mode landed. 512/2048 is a valid Fargate pair and matches L1 ingest sizing.
-L0_TASK_MEMORY_MIB = 2048
+# L0 bootstrap builds the viewer snapshot in-process. Completeness-mode applies
+# OOM-killed at 1024 MiB (35341410131) and again at the 2048 MiB floor
+# (35351651353) with the same ~76s curve, so the snapshot spike exceeds 2 GiB.
+# 1024 CPU / 8192 MiB is a valid Fargate pair. Standing L0 also compiles
+# cycle snapshots, so the registered service must use the same size.
+L0_TASK_CPU = "1024"
+L0_TASK_MEMORY_MIB = 8192
 SUSPENDED = {"DynamicScalingInSuspended": True, "DynamicScalingOutSuspended": True,
              "ScheduledScalingSuspended": True}
 # These service-generated outputs can change while an accepted update finishes.
@@ -89,22 +92,30 @@ def _failure_details(error):
 
 
 def _apply_l0_memory(task):
-    """Raise L0 task and container memory to L0_TASK_MEMORY_MIB; never shrink a larger size."""
-    target = max(int(task.get("memory") or 0), L0_TASK_MEMORY_MIB)
-    task["memory"] = str(target)
+    """Raise L0 task and container size to the snapshot floor; never shrink a larger size.
+
+    Fargate kills on the container hard limit. A task-only raise leaves a copied
+    1024 MiB container.memory in place, so the container field is always set.
+    """
+    cpu = max(int(task.get("cpu") or 0), int(L0_TASK_CPU))
+    memory = max(int(task.get("memory") or 0), L0_TASK_MEMORY_MIB)
+    task["cpu"] = str(cpu)
+    task["memory"] = str(memory)
     for container in task.get("containerDefinitions", []):
-        if container.get("memory") is not None:
-            container["memory"] = max(int(container["memory"]), target)
+        container["memory"] = max(int(container["memory"]) if container.get("memory") is not None else 0, memory)
+        if container.get("cpu") is not None:
+            container["cpu"] = max(int(container["cpu"]), cpu)
         reservation = container.get("memoryReservation")
         if reservation is not None:
-            container["memoryReservation"] = min(int(reservation), int(container.get("memory") or target))
+            container["memoryReservation"] = min(int(reservation), int(container["memory"]))
 
 
 def _l0_run_overrides(container_override):
-    """Task- and container-level memory must rise together or Fargate still kills at the old hard limit."""
+    """Task- and container-level cpu/memory must rise together or Fargate keeps the old hard limit."""
     override = dict(container_override)
+    override["cpu"] = int(L0_TASK_CPU)
     override["memory"] = L0_TASK_MEMORY_MIB
-    return {"memory": str(L0_TASK_MEMORY_MIB), "containerOverrides": [override]}
+    return {"cpu": L0_TASK_CPU, "memory": str(L0_TASK_MEMORY_MIB), "containerOverrides": [override]}
 
 
 def _supported_worker_invocation(worker):
@@ -693,6 +704,13 @@ class Deployer:
         step = {"fleet": fleet.upper(), "action": action, "task_arn": arn,
                 "exit_code": code, "duration_ms": round((time.monotonic() - started) * 1000),
                 **self._worker_evidence(action)}
+        if isinstance(task.get("cpu"), str) and task["cpu"].isdigit():
+            step["task_cpu"] = task["cpu"]
+        if isinstance(task.get("memory"), str) and task["memory"].isdigit():
+            step["task_memory"] = task["memory"]
+        reasons = [task.get("stoppedReason"), *(c.get("reason") for c in workers)]
+        if any(isinstance(reason, str) and "OutOfMemoryError" in reason for reason in reasons):
+            step["oom_killed"] = True
         self.report["steps"].append(step)
         require(task.get("lastStatus") == "STOPPED" and code in ({0, 2} if action == "verify" else {0}), f"{action} worker failed; deployment remains held")
         return code
