@@ -131,8 +131,11 @@ resource "aws_lambda_function" "webui" {
   s3_bucket        = aws_s3_bucket.deploy.id
   s3_key           = var.webui_zip_key
   source_code_hash = var.webui_zip_sha256
-  memory_size      = 512
-  timeout          = 60
+  memory_size      = 3008
+  timeout          = 120
+  ephemeral_storage {
+    size = 4096
+  }
 
   environment {
     variables = {

@@ -293,6 +293,12 @@ class Cloud:
                 raise ClientError({"Error": {"Code": "PreconditionFailedException", "Message": "test-only-private-sdk-message"}},
                                   "UpdateFunctionConfiguration")
             self.config["Environment"] = copy.deepcopy(args["Environment"])
+            if "MemorySize" in args:
+                self.config["MemorySize"] = args["MemorySize"]
+            if "Timeout" in args:
+                self.config["Timeout"] = args["Timeout"]
+            if "EphemeralStorage" in args:
+                self.config["EphemeralStorage"] = copy.deepcopy(args["EphemeralStorage"])
             return self.start_lambda_update("configuration")
         if operation == "invoke":
             if self.concurrency == 0:
@@ -542,6 +548,12 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
     assert env["CLHEAR_PRIVATE_COMPLETENESS"] == "true"
     assert env["CLHEAR_SESSION_SECRET"].startswith("test-only-private-session") and env["GOOGLE_OAUTH_CLIENT_SECRET"] == "private-oauth-value"
     assert env["CLHEAR_EVENTS_QUEUE_URL"] == QUEUES["l0"]
+    assert cloud.config["MemorySize"] == 3008 and cloud.config["Timeout"] == 120
+    assert cloud.config["EphemeralStorage"] == {"Size": 4096}
+    assert result["viewer_access_probes"] == [
+        {"path": "/api/clhear/health", "expected_status": 200, "function_error": False, "status_code": 200},
+        {"path": "/api/clhear/sources", "expected_status": 401, "function_error": False, "status_code": 401},
+    ]
     assert cloud.concurrency is None
 
 
@@ -731,6 +743,8 @@ def test_async_code_and_configuration_completion_revisions_drive_next_conditiona
         assert row["response"]["RevisionId"] != row["completed"]["RevisionId"]
     config_write = next(args for _, op, args in cloud.calls if op == "update_function_configuration")
     assert config_write["RevisionId"] == cloud.lambda_update_evidence[0]["completed"]["RevisionId"]
+    assert config_write["MemorySize"] == 3008 and config_write["Timeout"] == 120
+    assert config_write["EphemeralStorage"] == {"Size": 4096}
     assert deployer.state["verified_viewer_configuration"]["RevisionId"] == cloud.lambda_update_evidence[1]["completed"]["RevisionId"]
 
 
@@ -1179,6 +1193,8 @@ def test_failed_anonymous_denial_rolls_back_while_preserving_private_configurati
     assert result["status"] == "failed_maintenance" and cloud.concurrency == 0
     assert cloud.config["Environment"]["Variables"]["CLHEAR_RESTRICTED_ACCESS"] == "true"
     assert all(s["desiredCount"] == 0 for s in cloud.services.values())
+    assert result["viewer_access_probes"][-1] == {
+        "path": "/api/clhear/sources", "expected_status": 401, "function_error": False, "status_code": 200}
 
 
 def test_unconfirmed_pause_never_restores_public_legacy_viewer_code():

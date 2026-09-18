@@ -190,7 +190,10 @@ There is no arbitrary deployment ref input. The workflow:
    before viewer traffic resumes.
 4. Runs L0 `bootstrap`: migrations and registered-source metadata, followed by
    a worker-built candidate snapshot. Switches Lambda code/configuration to
-   restricted review against that candidate.
+   restricted review against that candidate. Completeness snapshots include
+   granted source text, so deploy-l1 raises the viewer to 3008 MiB memory,
+   120 s timeout, and 4096 MiB ephemeral storage (the 512/512 pair 503'd or
+   OOM'd the anonymous probe after apply `35355899299`).
 5. Runs L1 `verify`: inventory audit, FINRA ingestion, and an immediate repeat
    through the normal durable handlers. Runs L0 `publish` to expose results.
 6. Restores the reviewed viewer capacity and verifies it by readback before
