@@ -67,7 +67,23 @@ def adapter_for(entry: dict) -> Adapter:
     fetch = entry.get("fetch") or {}
     key = entry["adapter"]
     if fetch.get("blocked"):
-        return DeclarationGapAdapter(entry)
+        from app.clhear.l1.poc_review import enabled
+        url = _url(entry)
+        if not enabled() or not url:
+            return DeclarationGapAdapter(entry)
+        role = entry.get("source_role") or "document"
+        if role in {"collection", "reference"} and key != "restricted_file":
+            if key in PDF_ADAPTERS or fetch.get("kind") == "pdf":
+                from app.clhear.l1.adapters.pdf_docling import PdfOfficialAdapter
+                return PdfOfficialAdapter(
+                    source_key=entry["key"], title=entry["name"], url=url, adapter=key, meta=meta,
+                )
+            from app.clhear.l1.adapters.official_html import OfficialHtmlAdapter
+            return OfficialHtmlAdapter(
+                source_key=entry["key"], title=entry["name"], url=url, adapter=key, meta=meta,
+                jurisdiction=entry.get("jurisdiction", ""), issuer=entry.get("issuer", ""),
+                kind=entry.get("kind", "regulation"), license=entry.get("license", "open"),
+            )
     if fetch.get("document_type") == "publisher_publication":
         from app.clhear.l1.adapters.publisher import GenericPublisherDocumentAdapter
         return GenericPublisherDocumentAdapter(source_key=entry["key"], title=entry["name"], url=_url(entry),

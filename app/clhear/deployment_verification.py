@@ -198,6 +198,17 @@ def run_phase(engine, gateway, phase, verification_id, *, bootstrap=None):
                             exception_result = exception_bootstrap(engine)
                             stage.details.update(exception_result)
                             result["steps"]["operator_exception"] = exception_result
+                        from app.clhear.l1.poc_review import apply_private_review, enabled as completeness_enabled
+                        if completeness_enabled():
+                            with workflow.stage("private_completeness", {"worker": "l0"}) as stage:
+                                review = apply_private_review(
+                                    engine, "activate", "poc:private-completeness",
+                                    verification_id=verification_id,
+                                )
+                                summary = {key: review.get(key) for key in (
+                                    "status", "action", "display_public", "recorded", "already_recorded")}
+                                stage.details.update(summary)
+                                result["steps"]["private_completeness"] = summary
                     with workflow.stage("viewer_snapshot", {"worker": "l0", "accepted": False}) as stage:
                         snapshot = _dispatch(engine, gateway, verification_id, f"{phase}.snapshot", "ViewerSnapshotRequested",
                                              {"job_id": job_id}, "l0", "viewer/current")

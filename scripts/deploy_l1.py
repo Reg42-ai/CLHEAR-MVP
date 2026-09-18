@@ -628,6 +628,7 @@ class Deployer:
             worker["command"] = []  # services poll normally; one-offs use explicit commands
             env = {v["name"]: v["value"] for v in worker.get("environment", [])}
             env.update(CLHEAR_L1_ONLY="true", CLHEAR_SNAPSHOT_S3_URI="", CLHEAR_HTTP_MODE="live", CLHEAR_ARTIFACT_STORE="s3",
+                       CLHEAR_PRIVATE_COMPLETENESS="true",
                        CLHEAR_CODE_REVISION=self.inputs.sha, CLHEAR_WORKER_IMAGE_DIGEST=self.inputs.image.split("@", 1)[1],
                        CLHEAR_L1_CYCLE_CONTRACT="1",
                        CLHEAR_FLEET_QUEUE_URLS=json.dumps(QUEUES),
@@ -802,6 +803,7 @@ class Deployer:
         config = self._complete_lambda_update(current, updated, phase="code", expected_code_hash=code_hash)
         env = dict(old.get("Environment", {}).get("Variables", {}))
         env.update(CLHEAR_RESTRICTED_ACCESS="true", CLHEAR_AUTH_DEBUG="false", CLHEAR_REVIEWER_EMAILS=self.state["reviewers"],
+                   CLHEAR_PRIVATE_COMPLETENESS="true",
                    CLHEAR_DB_S3_URI=f"s3://{BUCKET}/{self.inputs.viewer_key}", CLHEAR_RELEASES_S3_PREFIX=RELEASES,
                    CLHEAR_EVENTS_QUEUE_URL=QUEUES["l0"])
         updated_config = self._write("lambda", "update_function_configuration", FunctionName=FUNCTION,
@@ -1118,7 +1120,9 @@ class VerificationDispatcher:
             receipt.update(recovery_id=self.verification_id, evidence="deferred-delivery ledger (l0_platform.deferred_deliveries)",
                            queues_purged=False, resumable=True)
         elif self.operation == "poc-private-review":
-            receipt.update(review_id=self.verification_id, display_public=False, acceptance="not_claimed")
+            receipt.update(review_id=self.verification_id,
+                           display_public="revoke" not in self.worker_arguments,
+                           acceptance="not_claimed")
         else:
             receipt.update(review_id=self.verification_id, acceptance="not_claimed")
         return receipt

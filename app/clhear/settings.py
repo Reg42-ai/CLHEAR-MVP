@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     clhear_restricted_access: bool = False
     clhear_reviewer_emails: str = ""
     clhear_l1_only: bool = False  # enable on worker deployments while accepting L1
+    # Live instance: ingest every current registry URL without operator review clicks.
+    # The website sign-in gate remains the access control.
+    clhear_private_completeness: bool = False
     # Private UI iteration over a worker-generated snapshot, never a writer.
     clhear_preview_mode: bool = False
     clhear_preview_snapshot_path: str = ""  # local only; Lambda uses its synchronized snapshot

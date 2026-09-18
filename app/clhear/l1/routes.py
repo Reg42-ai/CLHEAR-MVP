@@ -271,7 +271,7 @@ def list_sources(publisher: str | None = None) -> list[dict]:
         for m in sorted((m for m in members if m.family_id == family.id), key=lambda m: (m.relation != "root", m.key)):
             version = latest.get(m.source_id)
             presentation = _source_presentation(m)
-            if presentation["source_role"] != "document":
+            if presentation["source_role"] != "document" and not version:
                 library_status = presentation["source_role"]
             elif last_status.get(m.key) == "rights-blocked":
                 library_status = "rights-blocked"
@@ -313,8 +313,8 @@ def list_sources(publisher: str | None = None) -> list[dict]:
                     "publisher": m.publisher or m.issuer,
                     "publisher_ids": publisher_ids({"key": m.key}),
                     "acquisition_status": acquisition[m.key],
-                    "import_status": ("stored" if version else "not_imported") if presentation["source_role"] == "document" else "not_a_document",
-                    "verification_status": "inspect_version_evidence" if version and presentation["source_role"] == "document" else "unverified",
+                    "import_status": ("stored" if version else "not_imported") if (presentation["source_role"] == "document" or version) else "not_a_document",
+                    "verification_status": "inspect_version_evidence" if version else "unverified",
                     **presentation,
                 }
             )

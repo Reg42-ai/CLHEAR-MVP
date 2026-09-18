@@ -519,12 +519,14 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
         assert worker["image"] == inputs().image and worker["secrets"] == old["containerDefinitions"][0]["secrets"]
         env = {v["name"]: v["value"] for v in worker["environment"]}
         assert env["CLHEAR_L1_ONLY"] == "true" and env["CLHEAR_SNAPSHOT_S3_URI"] == "" and env["CLHEAR_ARTIFACT_STORE"] == "s3"
+        assert env["CLHEAR_PRIVATE_COMPLETENESS"] == "true"
         assert env["LEGACY_UNKNOWN_SETTING"] == "private-env-value"
         assert cloud.scaling[fleet]["SuspendedState"] == {key: False for key in SUSPENDED}
     for fleet in ("l0", "l1"):
         assert cloud.services[fleet]["desiredCount"] == cloud.scaling[fleet]["MinCapacity"] == 1
     env = cloud.config["Environment"]["Variables"]
     assert env["CLHEAR_RESTRICTED_ACCESS"] == "true" and env["CLHEAR_AUTH_DEBUG"] == "false"
+    assert env["CLHEAR_PRIVATE_COMPLETENESS"] == "true"
     assert env["CLHEAR_SESSION_SECRET"].startswith("test-only-private-session") and env["GOOGLE_OAUTH_CLIENT_SECRET"] == "private-oauth-value"
     assert env["CLHEAR_EVENTS_QUEUE_URL"] == QUEUES["l0"]
     assert cloud.concurrency is None

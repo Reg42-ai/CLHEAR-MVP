@@ -459,6 +459,15 @@ def _llm_propose_hints(gateway, artifacts, missing_spans: list[str]) -> list[dic
     return [h for h in hints if isinstance(h, dict) and h.get("match") and h.get("node_type")]
 
 
+def _record_completeness_artifact(engine, meta, summary, job_id):
+    digest = summary.get("content_hash")
+    if not digest:
+        return
+    from app.clhear.l1 import poc_review
+    vid = job_id if isinstance(job_id, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", job_id) else "completeness-artifact"
+    poc_review.record_restricted_artifact(engine, meta, digest, verification_id=vid)
+
+
 def ingest(engine: Engine, adapter: Adapter, store: ArtifactStore, **kwargs) -> dict:
     """Worker entrypoint: evidence is scoped to this acquisition only."""
     from app.clhear.l1 import http as l1_http
@@ -660,7 +669,10 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
                      "content_type": a.content_type} for a in result.artifacts]
         if (isinstance(check, dict) and check.get("schema") == "clhear.authorized-artifact-check.v1"
                 and check.get("source_key") == meta.source_key and check.get("artifacts") == expected
-                and check.get("method") == "authorized_artifact_store_read" and check.get("publisher_check_performed") is False):
+                and ((check.get("method") == "authorized_artifact_store_read"
+                      and check.get("publisher_check_performed") is False)
+                     or (check.get("method") == "publisher_url_read"
+                         and check.get("publisher_check_performed") is True))):
             recorder.artifact_check = dict(check)
     freshness = ("stale" if l1_http.last_good_used() else
                  "live" if l1_http.publisher_checked_at() else
@@ -726,6 +738,7 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
                 "original_verification": original_proof,
             }
             outputs = recorder.finish("unchanged", summary)
+            _record_completeness_artifact(engine, meta, summary, job_id)
             return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"],
                     **({"authorized_artifact_check": recorder.artifact_check} if recorder.artifact_check else {})}
         recorder.stage("projection_repair", reason="stored projection differs from validated source parse")
@@ -886,13 +899,15 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
         if l1_http.last_good_used():
             raise RuntimeError("Repair acquisition used stale cached bytes; previous version retained")
         with workflow.stage("persistence", details={"parser_identity": identity}):
-            return _persist(
+            persisted = _persist(
                 engine, store, meta, source_id, previous, result, content_hash, report,
                 hints_used, new_llm_hints, recovered_spans, llm_assisted, recorder,
                 force=force, llm_router=gateway, index_embeddings=index_embeddings, freshness=freshness,
                 public_ok=public_ok, protected=protected, permission_checks=permission_checks,
                 parser=identity,
             )
+            _record_completeness_artifact(engine, meta, persisted, job_id)
+            return persisted
     except Exception as exc:
         # The raw driver message carries the SQL statement and its parameters;
         # only the redacted, structured description leaves the worker.

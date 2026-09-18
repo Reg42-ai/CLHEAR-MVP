@@ -412,9 +412,13 @@ def start(engine, envelope):
 def plan_sources(engine, scope, audit_id=None):
     from app.clhear.l1.fleet import fleet_plan
     from app.clhear.l1 import inventory
+    from app.clhear.l1.poc_review import enabled as completeness_enabled
+    include_collections = completeness_enabled()
     plans = {}
     for key in adapter_keys():
-        source_keys = {adapter.meta().source_key for _, adapter in fleet_plan(key)} - {"finra/rulebook"}
+        source_keys = {adapter.meta().source_key for _, adapter in fleet_plan(key)}
+        if not include_collections:
+            source_keys.discard("finra/rulebook")
         source_keys.update(entry["key"] for entry in inventory.planned_entries(engine, scope=scope, adapter_key=key,
                           **({"audit_id": audit_id} if audit_id else {})))
         plans[key] = sorted(source_keys)

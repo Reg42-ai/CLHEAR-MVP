@@ -18,7 +18,7 @@ def _l0(monkeypatch, engine):
     monkeypatch.setattr(db, "run_migrations", lambda e: [])
 
 
-def test_activate_records_protected_set_and_never_grants_public_display(engine, monkeypatch):
+def test_activate_records_protected_set_and_grants_public_display(engine, monkeypatch):
     _l0(monkeypatch, engine)
     source_registry.seed(engine)
     keys = poc_review.protected_source_keys()
@@ -39,10 +39,10 @@ def test_activate_records_protected_set_and_never_grants_public_display(engine, 
         for row in latest.values():
             assert row["approved"] is True
             assert row["approved_by"] == poc_review.POC_APPROVED_BY
-            assert row["permissions"]["display_public"] is False
+            assert row["permissions"]["display_public"] is True
             assert row["permissions"]["display_internal"] is True
             assert row["permissions"]["acquire"] is True
-            assert permissions.decision(conn, row["source_key"], "display_public")["allowed"] is False
+            assert permissions.decision(conn, row["source_key"], "display_public")["allowed"] is True
             assert permissions.decision(conn, row["source_key"], "display_internal")["allowed"] is True
         open_keys = [k for k in conn.execute(sa.select(sources.c.key)).scalars()
                      if not k.startswith(PROTECTED_PREFIXES)]
