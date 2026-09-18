@@ -9,9 +9,11 @@ locals {
   deploy_workers = var.worker_image != "" && local.have_network
 
   # layer -> fleet sizing. L1 ingest is I/O heavy (dozens of sources per night);
-  # derivation fleets are thin clients of Infer.
+  # L0 bootstrap builds the viewer snapshot in-process and needs 2048 MiB
+  # (512/1024 OOM-killed completeness apply 35341410131). Derivation fleets
+  # are thin clients of Infer.
   fleets = {
-    l0 = { cpu = 512, memory = 1024, max = 1, description = "platform: relay, releases, gates, approvals" }
+    l0 = { cpu = 512, memory = 2048, max = 1, description = "platform: relay, releases, gates, approvals" }
     l1 = { cpu = 1024, memory = 2048, max = var.worker_max_count, description = "verbatim corpus adapters" }
     l2 = { cpu = 512, memory = 1024, max = 2, description = "obligations: extract / consolidate / change / judge" }
     l3 = { cpu = 512, memory = 1024, max = 2, description = "building blocks: decompose / characterize / harmonize" }

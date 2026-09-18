@@ -51,6 +51,10 @@ TASK_FIELDS = {
     "tags", "pidMode", "ipcMode", "proxyConfiguration", "inferenceAccelerators",
     "ephemeralStorage", "runtimePlatform", "enableFaultInjection",
 }
+# L0 bootstrap builds the viewer snapshot in-process. The live 512 CPU / 1024 MiB
+# Fargate pair OOM-killed (exit 137) on deploy-l1 35341410131 after completeness
+# mode landed. 512/2048 is a valid Fargate pair and matches L1 ingest sizing.
+L0_TASK_MEMORY_MIB = 2048
 SUSPENDED = {"DynamicScalingInSuspended": True, "DynamicScalingOutSuspended": True,
              "ScheduledScalingSuspended": True}
 # These service-generated outputs can change while an accepted update finishes.
@@ -82,6 +86,25 @@ def _failure_details(error):
             if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,127}", value):
                 details[key] = value
     return details
+
+
+def _apply_l0_memory(task):
+    """Raise L0 task and container memory to L0_TASK_MEMORY_MIB; never shrink a larger size."""
+    target = max(int(task.get("memory") or 0), L0_TASK_MEMORY_MIB)
+    task["memory"] = str(target)
+    for container in task.get("containerDefinitions", []):
+        if container.get("memory") is not None:
+            container["memory"] = max(int(container["memory"]), target)
+        reservation = container.get("memoryReservation")
+        if reservation is not None:
+            container["memoryReservation"] = min(int(reservation), int(container.get("memory") or target))
+
+
+def _l0_run_overrides(container_override):
+    """Task- and container-level memory must rise together or Fargate still kills at the old hard limit."""
+    override = dict(container_override)
+    override["memory"] = L0_TASK_MEMORY_MIB
+    return {"memory": str(L0_TASK_MEMORY_MIB), "containerOverrides": [override]}
 
 
 def _supported_worker_invocation(worker):
@@ -634,6 +657,8 @@ class Deployer:
                        CLHEAR_FLEET_QUEUE_URLS=json.dumps(QUEUES),
                        CLHEAR_VIEWER_SNAPSHOT_S3_URI=f"s3://{BUCKET}/{self.inputs.viewer_key}", CLHEAR_RELEASES_S3_PREFIX=RELEASES)
             worker["environment"] = [{"name": k, "value": v} for k, v in env.items()]
+            if fleet == "l0":
+                _apply_l0_memory(task)
             task["tags"] = [v for v in task.get("tags", []) if v["key"] != "clhear:git-sha"] + [{"key": "clhear:git-sha", "value": self.inputs.sha}]
             arn = self._write("ecs", "register_task_definition", **task)["taskDefinition"]["taskDefinitionArn"]
             old["new_task_definition"] = arn
@@ -642,12 +667,13 @@ class Deployer:
     def _worker(self, fleet, action, command=None):
         values = self.state["fleets"][fleet]
         service = values["service"]
+        container = {"name": "worker", "command": command or
+                     ["--verify-deployment", action, "--verification-id", self.inputs.deployment_id]}
         args = {"cluster": CLUSTER, "taskDefinition": values["new_task_definition"], "count": 1,
                 "networkConfiguration": service["networkConfiguration"],
                 "clientToken": hashlib.sha256(f"{self.inputs.deployment_id}:{action}".encode()).hexdigest(),
                 "startedBy": f"clhear-l1-{self.inputs.sha[:12]}",
-                "overrides": {"containerOverrides": [{"name": "worker", "command": command or
-                    ["--verify-deployment", action, "--verification-id", self.inputs.deployment_id]}]}}
+                "overrides": _l0_run_overrides(container) if fleet == "l0" else {"containerOverrides": [container]}}
         # Deployment checks must not be interrupted by Spot reclamation. Normal
         # service capacity-provider settings remain untouched.
         args["launchType"] = "FARGATE"
@@ -1097,7 +1123,7 @@ class VerificationDispatcher:
                 "networkConfiguration": service["networkConfiguration"],
                 "startedBy": self.verification_id[:36],
                 "clientToken": self.verification_id,
-                "overrides": {"containerOverrides": [{"name": "worker", "command": command}]}}
+                "overrides": _l0_run_overrides({"name": "worker", "command": command})}
         if service.get("platformVersion"):
             args["platformVersion"] = service["platformVersion"]
         launched = self._write("ecs", "run_task", **args)
