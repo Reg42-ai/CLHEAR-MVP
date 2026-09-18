@@ -91,9 +91,10 @@ def test_verify_only_runs_existing_l0_submission_and_reports_separate_identity()
     assert run["taskDefinition"] == cloud.services["l0"]["taskDefinition"]
     assert run["networkConfiguration"] == cloud.services["l0"]["networkConfiguration"]
     assert run["clientToken"] == "l1-cycle-123-1"
-    assert run["overrides"]["memory"] == "2048"
-    assert set(run["overrides"]["containerOverrides"][0]) == {"name", "command", "memory"}
-    assert run["overrides"]["containerOverrides"][0]["memory"] == 2048
+    assert run["overrides"]["cpu"] == "1024" and run["overrides"]["memory"] == "8192"
+    assert set(run["overrides"]["containerOverrides"][0]) == {"name", "command", "cpu", "memory"}
+    assert run["overrides"]["containerOverrides"][0]["cpu"] == 1024
+    assert run["overrides"]["containerOverrides"][0]["memory"] == 8192
 
 
 @pytest.mark.parametrize("changes", [{"GITHUB_REF": "refs/heads/feature"}, {"GITHUB_REPOSITORY": "outside/repo"},
