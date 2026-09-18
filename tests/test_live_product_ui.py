@@ -25,7 +25,7 @@ def test_licensed_slots_have_public_fetch_urls():
 
 
 def test_layer_pages_share_peer_nav(client):
-    for path in ("/", "/l1", "/l2", "/l3", "/l4", "/l5", "/l6", "/l7", "/l8"):
+    for path in ("/", "/l1", "/l2", "/l3", "/l4", "/l5", "/l6", "/l7", "/l8", "/explore"):
         page = client.get(path)
         assert page.status_code == 200, path
         body = page.text

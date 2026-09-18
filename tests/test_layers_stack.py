@@ -313,6 +313,8 @@ def test_ui_shells_served(client):
     assert 'class="layeraccordion"' in home.text
     assert '<summary class="slab">' in home.text
     assert 'id="output-layers">L1–L8' in home.text
+    assert "Live layers" in home.text
+    assert "LayerLiveSlab" in home.text
     assert 'id="platform-layer">L0' in home.text
     assert 'aria-label="Primary"' in home.text
     for href in ("/l1", "/l2", "/l3", "/l4", "/l5", "/l6", "/l7", "/l8"):

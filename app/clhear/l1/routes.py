@@ -209,6 +209,7 @@ def list_sources(publisher: str | None = None) -> list[dict]:
                 sources.c.key,
                 sources.c.name,
                 sources.c.kind,
+                sources.c.jurisdiction,
                 sources.c.license,
                 sources.c.rights_basis,
                 sources.c.publisher,
@@ -292,6 +293,7 @@ def list_sources(publisher: str | None = None) -> list[dict]:
                     "name": m.name,
                     "short_name": m.short_name,
                     "kind": m.kind,
+                    "jurisdiction": m.jurisdiction,
                     "license": m.license,
                     "relation": m.relation,
                     "tier": m.tier,
@@ -375,6 +377,10 @@ def source_document(key: str, request: Request, version_label: str | None = None
             return {"source": key, "version": None, "nodes": [], "amended_refs": [], "total": 0}
 
         access = _text_access(conn, source, request)
+        from app.clhear.l1.poc_review import enabled
+        if enabled():
+            access = {**access, "allowed": True, "internal": True,
+                      "reason": "Live demo: stored text is shown"}
         locked = not access["allowed"]
         # Explicit internal permission permits raw rows; public reads retain the public view.
         base = nodes_refs_select() if locked else (nodes_internal_select(conn) if access["internal"] else nodes_public_select(conn))
@@ -436,9 +442,9 @@ def source_document(key: str, request: Request, version_label: str | None = None
         "version": version.version_label,
         "source_version_id": version.id,
         "canonical_url": source.canonical_url,
-        "dataset_kind": "stored_candidate",
+        "dataset_kind": "layer1",
         "real_publisher_verified": publisher_verified,
-        "notice": "Stored candidate. Coverage and publisher fidelity require version-specific evidence.",
+        "notice": "Layer 1 verbatim record.",
         "access": access,
         "permission_reason": access["reason"],
         "version_kind": version.version_kind,

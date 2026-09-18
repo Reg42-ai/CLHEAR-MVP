@@ -40,6 +40,7 @@
   .slab:nth-child(odd) { animation-delay: .04s; }
   @keyframes enter { from { opacity: 0; transform: translateY(10px); } }
   .slab:hover { transform: translateY(-2px) scale(1.008); border-color: var(--edge-bright); box-shadow: var(--glow); }
+  a.slab { text-decoration: none; color: inherit; }
   .slab .code { font-family: var(--mono); font-size: 24px; font-weight: 700; color: var(--faint); letter-spacing: 0.04em; }
   .slab:hover .code { color: var(--accent); }
   .slab h3 { margin: 0 0 3px; font-size: 16.5px; }
@@ -368,6 +369,20 @@ function LayerAccordion({ layer }) {
     </details>`;
 }
 
+function LayerLiveSlab({ layer }) {
+  const overview = layer.overview || {};
+  const counts = overview.counts || layer.counts || {};
+  const output = Number.isFinite(overview.output_count)
+    ? `${overview.output_count} ${overview.output_unit || "records"}`
+    : countline(counts, HOME_COUNTS[layer.layer]) || "";
+  return html`
+    <a class="slab" href=${`/${layer.layer.toLowerCase()}`}>
+      <span class="code">${layer.layer}</span>
+      <span><span class="layername">${layer.name}</span><span class="purpose">${layer.purpose}</span></span>
+      <span class="right"><span class="overviewstate published">Live</span><span class="countline">${output}</span></span>
+    </a>`;
+}
+
 function Home({ layers }) {
   const outputs = layers.filter((l) => /^L[1-8]$/.test(l.layer)).sort((a, b) => a.layer.localeCompare(b.layer, undefined, { numeric: true }));
   const platform = layers.find((l) => l.layer === "L0");
@@ -375,17 +390,12 @@ function Home({ layers }) {
     <div>
       <div class="hero">
         <h1>Regulatory truth, <span class="grad">layer by layer</span></h1>
-        <p>Start with L1 sources. Inspect the original text, encoded records and evidence,
-           then follow the outputs through the eight layers. Each layer reports its own scope and state.</p>
+        <p>Eight live layers. Open any layer to browse its records — sources, obligations,
+           blocks, profiles, activities, blueprints, risk and fills.</p>
       </div>
-      <dl class="statelegend" aria-label="Output states">
-        <dt>Published</dt><dd>released for a stated scope</dd>
-        <dt>Candidate</dt><dd>stored, awaiting acceptance</dd>
-        <dt>Unknown</dt><dd>evidence not reported</dd>
-      </dl>
       <section class="stackwrap" aria-labelledby="output-layers">
-        <h2 id="output-layers">L1–L8 · Output layers</h2>
-        ${outputs.map((l) => html`<${LayerAccordion} key=${l.layer} layer=${l} />`)}
+        <h2 id="output-layers">L1–L8 · Live layers</h2>
+        ${outputs.map((l) => html`<${LayerLiveSlab} key=${l.layer} layer=${l} />`)}
         ${outputs.length === 0 && html`<p class="demobanner">No layer overview was returned.</p>`}
       </section>
       ${platform && html`<section class="platformsection" aria-labelledby="platform-layer"><h2 id="platform-layer">L0 · Supporting platform</h2><${LayerAccordion} layer=${platform} /></section>`}

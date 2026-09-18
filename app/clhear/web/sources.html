@@ -524,37 +524,24 @@ function SourceAuditEvidence({ audit, doc }) {
 }
 
 function Library({ families, open }) {
-  const [meta, setMeta] = useState(_meta);
   const [publisher, setPublisher] = useState("");
-  useEffect(() => { getMeta().then(setMeta).catch(() => {}); }, []);
   const allMembers = families.flatMap((f) => f.members);
   const publishers = [...new Set(allMembers.map(m => m.publisher).filter(Boolean))].sort();
   const filtered = families.map(f => ({...f, members: f.members.filter(m => !publisher || m.publisher === publisher)})).filter(f => f.members.length);
-  const ingested = allMembers.filter((m) => m.source_role === "document" && m.latest_version);
-  const failed = allMembers.filter((m) => m.library_status === "failed-today");
-  const never = allMembers.filter((m) => m.library_status === "never-fetched" || m.library_status === "schedule-missed");
-  const locked = allMembers.filter((m) => m.library_status === "locked-restricted");
   return html`
     <div>
-      ${meta && meta.schedules && html`
-        <div class="schedbar">
-          <strong>Configured schedules</strong> · daily publisher checks
-          ${Object.entries(meta.schedules).map(([k, s]) => html`
-            <span class="scheditem" key=${k} title=${s.covers}>
-              <span class="mono">${k}</span> ${s.cadence} · ${s.utc_time} UTC
-            </span>`)}
-        </div>`}
-      <div class="recordbar"><label>Publisher <select aria-label="Filter source publisher" value=${publisher} onChange=${e => setPublisher(e.target.value)}><option value="">All publishers</option>${publishers.map(name => html`<option key=${name} value=${name}>${name}</option>`)}</select></label><span>${new Set(filtered.flatMap(f => f.members.map(m => m.key))).size} distinct source declarations</span></div>
+      <div class="layerhead" style=${{ display: "flex", alignItems: "baseline", gap: "14px", margin: "0 0 8px" }}>
+        <span style=${{ fontFamily: "var(--mono)", fontSize: "32px", fontWeight: "800", color: "var(--accent)" }}>L1</span>
+        <h2 style=${{ margin: 0 }}>Verbatim sources</h2>
+      </div>
+      <p class="about">Official texts, clause by clause. Open any source to read it.</p>
+      <div class="recordbar"><label>Publisher <select aria-label="Filter source publisher" value=${publisher} onChange=${e => setPublisher(e.target.value)}><option value="">All publishers</option>${publishers.map(name => html`<option key=${name} value=${name}>${name}</option>`)}</select></label><span>${new Set(filtered.flatMap(f => f.members.map(m => m.key))).size} sources</span></div>
       ${filtered.length === 0 && html`<div class="empty">No sources match this selection.</div>`}
       ${filtered.map((f) => html`
         <div class="family" key=${f.key}>
           <h2>${f.name}</h2>
-          ${f.scope_charter && f.scope_charter.binding && html`
-            <div class="charter">charter — binding: ${f.scope_charter.binding}${f.scope_charter.out ? ` · out of scope: ${[].concat(f.scope_charter.out).join(", ")}` : ""}</div>`}
-          ${f.scope_charter && f.scope_charter.registry && html`
-            <div class="charter">${f.scope_charter.registry}</div>`}
           <table class="members">
-            <thead><tr><th>source</th><th>relation</th><th>tier</th><th>acquisition</th><th>import / version</th><th>verification</th><th>clauses</th></tr></thead>
+            <thead><tr><th>source</th><th>jurisdiction</th><th>kind</th><th>clauses</th></tr></thead>
             <tbody>
             ${f.members.map((m) => html`
               <tr key=${m.key}>
@@ -562,24 +549,14 @@ function Library({ families, open }) {
                   <a class="srcname" title=${m.name} href=${sourceUrl(m.key, m.latest_version)}
                         onClick=${(e) => { e.preventDefault(); open(m.key, null, null, m.latest_version); }}>${m.short_name || m.name}</a>
                   ${m.short_name && html`<div class="charter" style=${{ margin: 0 }}>${m.name}</div>`}
-                  <div class="mono">${m.key}</div>
-                  ${m.about && html`<div class="about" style=${{ margin: "4px 0 0" }}>${m.about.slice(0, 220)}${m.about.length > 220 ? "…" : ""}
-                    ${(m.topics || []).map((t) => html`<span class="topic" key=${t}>${t}</span>`)}</div>`}
                 </td>
-                <td><span class="badge ${m.relation === "root" ? "root" : "binding"}">${m.relation}</span></td>
-                <td><span class="badge ${m.tier}">${m.tier}</span></td>
-                <td><span class=${"badge " + evidenceTone(m.acquisition_status)}>${evidenceLabel(m.acquisition_status)}</span><div class="charter">License classification: ${m.license}</div></td>
-                <td>${evidenceLabel(m.source_role === "document" ? m.import_status : m.source_role)}<div class="mono">${m.latest_version || "No stored version"}</div></td>
-                <td><a href=${sourceUrl(m.key, m.latest_version)}>Inspect version evidence</a><div class="charter">${evidenceLabel(m.verification_status)}</div></td>
+                <td>${m.jurisdiction || "—"}</td>
+                <td>${m.kind || "—"}</td>
                 <td class="mono">${m.clauses ?? "—"}</td>
               </tr>`)}
             </tbody>
           </table>
         </div>`)}
-      <div class="charter" style=${{ textAlign: "center" }}>
-        ${ingested.length} ingested · ${failed.length} failed-today · ${never.length} never-fetched · ${locked.length} locked-restricted
-        · scope is the source registry; inspect each version’s recorded evidence in Evals.
-      </div>
     </div>`;
 }
 
