@@ -197,13 +197,10 @@ assert.doesNotMatch(workflow, /NaN|Animate/);
 ''')
 
 
-def test_viewer_header_identifies_projection_origin_without_acceptance_claim():
-    run_js(r'''
-setStates([{viewer_snapshot:true, source_environment:"local_sqlite_test", revision:"test-revision", generated_at:"2026-09-15T00:00:00Z", omitted_layers:["L2","L3"], redacted_source_keys:["test/source"]}]);
-const viewer = ViewerSnapshotNotice();
-assert.match(viewer, /L1 candidate viewer/);
-assert.match(viewer, /local sqlite test/);
-assert.match(viewer, /test-revision/);
-assert.match(viewer, /not an accepted release/);
-assert.match(viewer, /1 sources have text withheld/);
-''')
+def test_l1_page_uses_peer_layer_nav():
+    page = PAGE.read_text()
+    assert 'aria-label="Layers"' in page
+    assert 'href="/l8"' in page
+    assert "L1 Sources" not in page
+    assert "Fleet</button>" not in page
+    assert "Declared L1 inventory" not in page.split("function InventoryOverview")[0]

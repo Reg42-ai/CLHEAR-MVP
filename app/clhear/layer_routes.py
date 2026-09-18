@@ -104,7 +104,7 @@ main p, main li{{color:var(--muted);font-size:14.5px;line-height:1.7;}}
 padding:10px 16px;color:var(--warn);font-size:13px;margin-bottom:20px;}}</style></head>
 <body><header class="appbar"><div class="wordmark" onclick="location.href='/'"><b>CLHEAR</b>
 <span>the compliance stack</span></div><div class="spacer"></div>
-<a class="navlink" href="/">Stack</a><a class="navlink" href="/sources">Sources Explorer</a></header>
+<a class="navlink" href="/">Overview</a><a class="navlink" href="/l1">L1</a><a class="navlink" href="/l2">L2</a><a class="navlink" href="/l3">L3</a><a class="navlink" href="/l4">L4</a><a class="navlink" href="/l5">L5</a><a class="navlink" href="/l6">L6</a><a class="navlink" href="/l7">L7</a><a class="navlink" href="/l8">L8</a></header>
 <main><div class="draft">DRAFT — pending counsel review before commercial promotion.</div>{body}</main></body></html>"""
 
 

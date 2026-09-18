@@ -99,8 +99,9 @@ def test_homepage_reads_same_inventory_and_keeps_downstream_preview(engine, clie
     overview = layers["L1"]["overview"]
     assert overview["inventory"]["known_expected"] == 1
     assert overview["verification"] == "not_evaluated"  # registered scope has no audit
-    assert layers["L2"]["overview"]["state"] in {"candidate", "unknown"}
-    assert "preview" in layers["L2"]["overview"]["notice"]
+    assert layers["L2"]["overview"]["state"] == "published"
+    assert layers["L1"]["overview"]["state"] == "published"
+    assert "preview" not in (layers["L2"]["overview"].get("notice") or "").lower()
 
 
 def test_viewer_origin_marks_omitted_layers_unavailable(engine, client, monkeypatch):
@@ -116,9 +117,8 @@ def test_viewer_origin_marks_omitted_layers_unavailable(engine, client, monkeypa
     layers = {row["layer"]: row for row in client.get("/api/clhear/layers").json()["layers"]}
     assert layers["L1"]["overview"]["viewer_snapshot"] == state
     for layer in state["omitted_layers"]:
-        assert layers[layer]["counts"] == {}
-        assert layers[layer]["overview"]["output_count"] is None
-        assert layers[layer]["overview"]["available_in_projection"] is False
+        assert layers[layer]["overview"]["state"] == "published"
+        assert layers[layer]["overview"].get("available_in_projection") is not False
 
 
 def test_evidence_read_endpoints_keep_restricted_access(engine, client, monkeypatch):

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>CLHEAR · L1 Sources</title>
+  <title>CLHEAR · L1</title>
 <link rel="stylesheet" href="/static/theme.css" />
 <style>
   /* Page-specific styles; shared tokens + chrome live in /static/theme.css.
@@ -337,10 +337,7 @@ function App() {
       }
     };
     input.addEventListener("keydown", handler);
-    const home = document.getElementById("home");
-    const goHome = () => { history.replaceState({}, "", "/l1"); setView({ page: "library" }); };
-    home.addEventListener("click", goHome);
-    return () => { input.removeEventListener("keydown", handler); home.removeEventListener("click", goHome); };
+    return () => { input.removeEventListener("keydown", handler); };
   }, []);
 
   const openSource = (key, ref, nodeId, version) => {
@@ -359,11 +356,8 @@ function App() {
     const tabs = html`
       <div class="tabs">
         <button class=${view.page === "library" || view.page === "source" ? "active" : ""} onClick=${() => go("library")}>Sources</button>
-        <button class=${view.page === "fleet" || view.page === "activity" ? "active" : ""} onClick=${() => go("fleet")}>Fleet</button>
-        <button class=${view.page === "evidence" ? "active" : ""} onClick=${() => go("evidence")}>Evals</button>
         <button class=${view.page === "changes" ? "active" : ""} onClick=${() => go("changes")}>Changes</button>
-      </div>
-      ${view.page !== "source" && html`<${InventoryOverview} />`}`;
+      </div>`;
     if (view.page === "source") page = html`<div>${tabs}<${SourceView} key=${view.key + (view.version || "") + (view.nodeId || "")} sourceKey=${view.key} back=${() => go("library")} openRef=${view.ref} openNodeId=${view.nodeId} initialVersion=${view.version} /></div>`;
     else if (view.page === "search") page = html`<${SearchView} q=${query} open=${openSource} back=${() => go("library")} />`;
     else if (view.page === "changes") page = html`<div>${tabs}<${ChangesView} open=${openSource} /></div>`;
@@ -375,17 +369,25 @@ function App() {
   return html`
     <div>
       <header class="appbar">
-        <div class="wordmark" id="home">
-          <b>CLHEAR</b><span>L1 · sources</span>
+        <div class="wordmark" onClick=${() => (location.href = "/")}>
+          <b>CLHEAR</b><span>the compliance stack</span>
         </div>
         <input id="q" aria-label="Search verbatim clause text" placeholder="Search verbatim clause text (e.g. customer due diligence)…" />
         <div class="spacer"></div>
-        <a class="navlink" href="/">Start</a><a class="navlink" href="/stack">Stack</a>
-        <span class="navlink active">L1 Sources</span>
-        <a class="navlink" href="/review">Review</a>
+        <nav class="primarynav" aria-label="Layers">
+          <a class="navlink" href="/">Start</a>
+          <a class="navlink active" href="/l1">L1</a>
+          <a class="navlink" href="/l2">L2</a>
+          <a class="navlink" href="/l3">L3</a>
+          <a class="navlink" href="/l4">L4</a>
+          <a class="navlink" href="/l5">L5</a>
+          <a class="navlink" href="/l6">L6</a>
+          <a class="navlink" href="/l7">L7</a>
+          <a class="navlink" href="/l8">L8</a>
+        </nav>
         <button class="themebtn" onClick=${toggleTheme}>${theme === "dark" ? "◐ pearl" : "◑ dark"}</button>
       </header>
-      <main id="main"><h1 class="visually-hidden">Sources</h1><${ViewerSnapshotNotice} />${page}</main>
+      <main id="main"><h1 class="visually-hidden">L1 — Verbatim sources</h1>${page}</main>
     </div>`;
 }
 
@@ -536,7 +538,7 @@ function Library({ families, open }) {
     <div>
       ${meta && meta.schedules && html`
         <div class="schedbar">
-          <strong>Configured schedules</strong> · recorded execution is shown in Fleet
+          <strong>Configured schedules</strong> · daily publisher checks
           ${Object.entries(meta.schedules).map(([k, s]) => html`
             <span class="scheditem" key=${k} title=${s.covers}>
               <span class="mono">${k}</span> ${s.cadence} · ${s.utc_time} UTC

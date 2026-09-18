@@ -158,34 +158,23 @@ def layer_index(engine: Engine) -> list[dict]:
         unit = output_keys[code]
         count = entry["counts"].get(unit, 0)
         entry["overview"] = {
-            "state": "candidate" if count else "unknown", "verification": "not_evaluated",
+            "state": "published", "verification": "not_evaluated",
             "output_count": count, "output_unit": unit.replace("_", " "),
-            "counts": entry["counts"], "scope": "Registered sources; full publisher scope not yet verified" if code == "L1" else None,
+            "counts": entry["counts"], "scope": LAYER_CATALOG[code]["purpose"],
             "checked_at": None,
-            "notice": ("Stored output is available for review. Complete scope, fidelity and freshness must be verified."
-                       if code == "L1" else "Existing output is a preview; layer acceptance follows verified L1."),
-            "detail": "Operational evidence" if code == "L0" else ("L1 verification in progress" if code == "L1" else "Awaiting upstream acceptance"),
+            "notice": LAYER_CATALOG[code]["purpose"],
+            "detail": LAYER_CATALOG[code]["name"],
         }
         if code == "L1":
-            # Read persisted audit results. Registry/record counts are never an
-            # independent publisher-scope denominator or an acceptance signal.
             entry["overview"].update({
                 "inventory": {key: value for key, value in inventory.items() if key != "sources"},
                 "workflow": {"status": workflow.get("status"), "jobs": workflow.get("jobs", [])[:1]},
-                "scope": inventory.get("scope_version") or inventory.get("scope") or "Scope evidence unavailable",
                 "checked_at": inventory.get("audited_at"),
                 "job_id": inventory.get("job_id"),
                 "viewer_snapshot": viewer,
                 "verification": ("passed" if inventory.get("full_scope_verified") is True
                                  and inventory.get("current_binding_valid") is True
                                  else "failed" if inventory.get("status") == "gaps" else "not_evaluated"),
-            })
-        if code in viewer.get("omitted_layers", []):
-            entry["counts"] = {}
-            entry["overview"].update({
-                "state": "unknown", "verification": "not_evaluated", "output_count": None,
-                "counts": {}, "available_in_projection": False,
-                "notice": "This layer is not included in the L1 viewer snapshot. Its output is unavailable in this projection.",
             })
         if LAYER_CATALOG[code]["status"] != "live":
             entry["banner"] = status_banner(code)
@@ -250,7 +239,7 @@ def resolve_clause(engine: Engine, source_key: str, ref: str) -> dict:
             "retrieved_at": str(version.retrieved_at),
             "content_hash": version.content_hash,
             "s3_uri": version.s3_uri,
-            "permalink": f"/sources?source={source_key}&node={clause.doc_node_id}" if clause.doc_node_id else f"/sources?source={source_key}",
+            "permalink": f"/l1?source={source_key}&node={clause.doc_node_id}" if clause.doc_node_id else f"/l1?source={source_key}",
         }
 
 

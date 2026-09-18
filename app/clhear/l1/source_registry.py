@@ -56,6 +56,7 @@ def _src(family, key, short_name, name, kind, jurisdiction, issuer, url, adapter
 
 
 EURLEX = "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:"
+EURLEX_HTML = "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:"
 UKLEG = "https://www.legislation.gov.uk/"
 EU_ISSUER = "European Parliament and Council (Publications Office)"
 UK_ISSUER = "UK Parliament / HM Government (The National Archives)"
@@ -249,11 +250,17 @@ _src("au-afsl", "au/asic-rg271", "ASIC RG 271", "ASIC Regulatory Guide 271 — I
 _src("il-isa", "il/securities-law-5728", "IL Securities Law", "ISA English legislation collection — translations require document identification", "law", "IL", "Israel Securities Authority", "https://www.isa.gov.il/sites/ISAEng/1489/1511/Pages/default.aspx", "isa", "root", "binding", ["securities", "israel"], ["IL-001"], 3, fetch={"url": "https://www.isa.gov.il/sites/ISAEng/1489/1511/Pages/default.aspx", "kind": "pdf"}, rights_basis="derived_only")
 _src("sg-mas", "sg/mas-psn02", "MAS PSN02", "MAS Notice PSN02 — Prevention of Money Laundering and Countering the Financing of Terrorism (digital payment token services)", "guidance", "SG", "MAS", "https://www.mas.gov.sg/regulation/notices/psn02-aml-cft-notice---digital-payment-token-service", "mas", "supplements", "binding", ["aml", "crypto", "sg"], ["SG-003"], 3, fetch={"url": "https://www.mas.gov.sg/regulation/notices/psn02-aml-cft-notice---digital-payment-token-service", "kind": "pdf"})
 _src("standards", "wolfsberg/standards", "Wolfsberg", "Wolfsberg standards collection — individual documents require discovery", "standard", "INTL", "Wolfsberg Group", "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "wolfsberg", "supplements", "guidance", ["aml", "standards"], ["GRP-027"], 3, fetch={"url": "https://www.wolfsberg-principles.com/wolfsberg-group-standards", "kind": "pdf"})
-_src("standards", "iso/27001-2022", "ISO 27001:2022", "ISO/IEC 27001:2022 — base standard [RESTRICTED]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/27001", "restricted_file", "supplements", "guidance", ["infosec", "standards"], ["STD-001"], 4, license="restricted")
-_src("standards", "iso/27001-2022-amd1-2024", "ISO 27001 Amd 1:2024", "ISO/IEC 27001:2022/Amd 1:2024 — Climate action changes [RESTRICTED]", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/88435.html", "restricted_file", "amends", "guidance", ["infosec", "standards"], ["STD-001-A1"], 4, license="restricted")
-_src("standards", "aicpa/soc2-tsc", "SOC 2 TSC", "AICPA Trust Services Criteria 2017 (2022 points of focus) [RESTRICTED]", "standard", "US", "AICPA", "https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022", "restricted_file", "supplements", "guidance", ["infosec", "assurance", "standards"], ["STD-002"], 4, license="restricted")
-_src("standards", "pci/dss-v4", "PCI DSS v4", "PCI standards catalog — exact edition inventory and authorized artifacts required", "standard", "INTL", "PCI SSC", "https://www.pcisecuritystandards.org/", "restricted_file", "supplements", "guidance", ["payments", "infosec"], ["STD-004"], 4, license="restricted")
-_src("standards", "ifrs/standards", "IFRS", "IFRS standards catalog — individual standards, editions and authorized artifacts required", "standard", "INTL", "IFRS Foundation", "https://www.ifrs.org/", "restricted_file", "supplements", "guidance", ["financial-reporting"], ["GRP-009"], 4, license="restricted")
+# Licensed originals stay identified by canonical_url. fetch.url is a public
+# stand-in the live demo can scrape now (NIST / EUR-Lex). Swap back to the
+# licensed file when redistribution rights are in place.
+_NIST_CSF = "https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.29.pdf"
+_NIST_171 = "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r3.pdf"
+_NIST_PRIVACY = "https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.01162020.pdf"
+_src("standards", "iso/27001-2022", "ISO 27001:2022", "ISO/IEC 27001:2022 — demo uses NIST CSF 2.0 (public domain) until the licensed ISO file is attached", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/27001", "restricted_file", "supplements", "guidance", ["infosec", "standards"], ["STD-001"], 4, license="restricted", fetch={"url": _NIST_CSF, "kind": "pdf"})
+_src("standards", "iso/27001-2022-amd1-2024", "ISO 27001 Amd 1:2024", "ISO/IEC 27001:2022/Amd 1:2024 — demo uses the NIST Privacy Framework (public domain) until the licensed amendment is attached", "standard", "INTL", "ISO/IEC", "https://www.iso.org/standard/88435.html", "restricted_file", "amends", "guidance", ["infosec", "standards"], ["STD-001-A1"], 4, license="restricted", fetch={"url": _NIST_PRIVACY, "kind": "pdf"})
+_src("standards", "aicpa/soc2-tsc", "SOC 2 TSC", "AICPA Trust Services Criteria — demo uses NIST SP 800-171 (public domain) until the licensed TSC file is attached", "standard", "US", "AICPA", "https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022", "restricted_file", "supplements", "guidance", ["infosec", "assurance", "standards"], ["STD-002"], 4, license="restricted", fetch={"url": _NIST_171, "kind": "pdf"})
+_src("standards", "pci/dss-v4", "PCI DSS v4", "PCI DSS v4 — demo uses the public EU PSD2 RTS on strong customer authentication (OJ L 69, 2018) until a PCI SSC artifact is attached", "standard", "INTL", "PCI SSC", "https://www.pcisecuritystandards.org/", "restricted_file", "supplements", "guidance", ["payments", "infosec"], ["STD-004"], 4, license="restricted",      fetch={"url": EURLEX_HTML + "32018R0389", "kind": "html", "celex": "32018R0389"})
+_src("standards", "ifrs/standards", "IFRS", "IFRS — demo uses Commission Regulation (EU) 2023/2468 (IAS 12 / OECD Pillar Two, Official Journal) until licensed IFRS text is attached", "standard", "INTL", "IFRS Foundation", "https://www.ifrs.org/", "restricted_file", "supplements", "guidance", ["financial-reporting"], ["GRP-009"], 4, license="restricted", fetch={"url": EURLEX_HTML + "32023R2468", "kind": "html", "celex": "32023R2468"})
 
 # ---- F20 host-state-overlays ----
 for _cc, _name, _ids in [
@@ -270,7 +277,7 @@ for _cc, _name, _ids in [
 # documents or be passed through a whole-page text adapter as a substitute.
 COLLECTION_SOURCE_KEYS = frozenset({
     "finra/rulebook", "nydfs/part200-500", "cy/l87i-2017", "sc/securities-act-2007",
-    "wolfsberg/standards", "il/securities-law-5728", "pci/dss-v4", "ifrs/standards",
+    "wolfsberg/standards", "il/securities-law-5728",
 })
 REFERENCE_SOURCE_KEYS = frozenset({"ovl/be", "ovl/fr", "ovl/es", "ovl/de", "ovl/it"})
 
@@ -290,8 +297,7 @@ for _entry in S:
     if is_collection(_entry["key"]):
         _entry["short_name"] = {"finra/rulebook": "FINRA collection", "nydfs/part200-500": "NYDFS regulations collection",
             "cy/l87i-2017": "CySEC legislation collection", "sc/securities-act-2007": "Seychelles legislation collection",
-            "wolfsberg/standards": "Wolfsberg collection", "il/securities-law-5728": "ISA legislation collection",
-            "pci/dss-v4": "PCI standards catalog", "ifrs/standards": "IFRS standards catalog"}[_entry["key"]]
+            "wolfsberg/standards": "Wolfsberg collection", "il/securities-law-5728": "ISA legislation collection"}[_entry["key"]]
         _entry["instrument"] = _entry["short_name"]
     if _entry["key"].startswith("finra/"):
         _entry["license"] = "restricted"
