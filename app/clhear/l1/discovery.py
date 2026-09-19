@@ -65,6 +65,13 @@ def _insert_once(conn, table, values):
     conn.execute(insert(table).values(**values).on_conflict_do_nothing())
 
 
+# One catalog page may wait out publisher throttling (inventory._fetch_discovery
+# sleeps up to THROTTLE_WAITS_S in total) before its checkpoint is written; the
+# lease must outlive that, or the write fails with "checkpoint lease lost" and
+# the whole cycle fails (19 Sep 2026, cycle-manual-l1-cycle-35453100897-1).
+PAGE_LEASE = timedelta(minutes=6)
+
+
 def _throttled(exc) -> bool:
     status = getattr(getattr(exc, "response", None), "status_code", None)
     return status == 429 or (isinstance(status, int) and status >= 500) or "throttled" in str(exc).lower()
@@ -89,7 +96,7 @@ def _claim(engine, cycle_id, job_id):
             return None
         token = str(uuid.uuid4())
         changed = conn.execute(pages.update().where(pages.c.id == row["id"], eligible).values(
-            status="leased", lease_token=token, lease_until=now + timedelta(minutes=2), last_job_id=job_id,
+            status="leased", lease_token=token, lease_until=now + PAGE_LEASE, last_job_id=job_id,
             attempts=pages.c.attempts + 1))
         return {**row, "lease_token": token} if changed.rowcount else None
 

@@ -30,6 +30,9 @@ from app.clhear.l1.models import BigId, Json, L1_SCHEMA, clauses, doc_nodes, sou
 from app.clhear.models import runs
 
 log = logging.getLogger("clhear.l1.inventory")
+# Successive waits after a 429 on one catalog page: 150 s in total, well inside
+# discovery.PAGE_LEASE (6 min) including the fetches themselves.
+THROTTLE_WAITS_S = (30.0, 60.0, 60.0)
 SCOPE_VERSION = "2026-09-16.2"
 SCOPES = frozenset({"registered", "finra", "all_publishers"})
 FINRA_CATEGORIES = (
@@ -269,13 +272,16 @@ def _fetch_discovery(url):
     import httpx
     # Same publisher courtesy as document fetches: paced per host, and a 429
     # waits for Retry-After instead of burning the page's retry budget.
-    for attempt in range(4):
+    for attempt in range(len(THROTTLE_WAITS_S) + 1):
         http._pace(url)
         with httpx.stream("GET", url, headers={"User-Agent": http.USER_AGENT}, timeout=20, follow_redirects=False) as response:
             if response.is_redirect:
                 raise ValueError("Publisher redirect requires an independently validated official discovery URL")
-            if response.status_code == 429 and attempt < 3:
-                pause = max(http._retry_after_seconds(response) or 0.0, 30.0 * (attempt + 1))
+            if response.status_code == 429 and attempt < len(THROTTLE_WAITS_S):
+                # Bounded so the page's discovery lease (discovery.PAGE_LEASE)
+                # outlives the waits; a page still throttled after them stays
+                # pending and is retried later in the cycle.
+                pause = min(max(http._retry_after_seconds(response) or 0.0, THROTTLE_WAITS_S[attempt]), THROTTLE_WAITS_S[-1])
                 log.warning("discovery throttled by %s; waiting %.0fs", urlparse(url).hostname, pause)
                 time.sleep(pause)
                 continue

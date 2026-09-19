@@ -236,7 +236,9 @@ def test_live_discovery_is_paced_and_waits_out_publisher_throttling(monkeypatch)
             self.headers = {"retry-after": "7"} if status == 429 else {}
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def raise_for_status(self): pass
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError(str(self.status_code), request=httpx.Request("GET", "https://www.finra.org/x"), response=httpx.Response(self.status_code))
         def iter_bytes(self): yield self._body
 
     responses = [Stream(429), Stream(200, b"<main><a href='/rules-guidance/rulebooks/finra-rules/3110'>3110</a></main>")]
@@ -248,6 +250,17 @@ def test_live_discovery_is_paced_and_waits_out_publisher_throttling(monkeypatch)
     assert origin == "live" and b"3110" in body and len(calls) == 2
     assert 30.0 in naps  # a 429 waits at least 30 s (Retry-After 7 s is shorter)
     assert any(0 < n < 1 for n in naps)  # and the retry itself is host-paced
+    # The waits are bounded so one page's discovery lease outlives them: the
+    # 19 Sep full cycle died with "checkpoint lease lost" after 30+60+90 s.
+    from app.clhear.l1 import discovery
+    assert sum(inv.THROTTLE_WAITS_S) + 60 < discovery.PAGE_LEASE.total_seconds()
+    naps.clear(); calls.clear()
+    responses[:] = [Stream(429), Stream(429), Stream(429), Stream(429)]
+    for r in responses:
+        r.headers = {"retry-after": "900"}  # a publisher asking for 15 min is still capped
+    with pytest.raises(httpx.HTTPStatusError):  # the last 429 surfaces; run_batch keeps the page pending
+        inv._fetch_discovery("https://www.finra.org/rules-guidance/rulebooks/finra-rules")
+    assert len(calls) == 4 and max(n for n in naps if n >= 1) <= max(inv.THROTTLE_WAITS_S)
 
 
 def test_discovery_requires_each_exact_permission_before_fetch(engine, tmp_path, monkeypatch):
