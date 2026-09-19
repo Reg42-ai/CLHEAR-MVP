@@ -282,6 +282,28 @@ const api = async (p) => {
 };
 const ws = (s) => (s || "").split(/\s+/).join(" ").trim();
 const sourcePath = (key) => `/api/clhear/sources/${key.split("/").map(encodeURIComponent).join("/")}`;
+// The hosted API caps one response near 6 MB, so long Acts arrive in node pages.
+// Each page is handed to onPage so the reader can render while the rest loads.
+const DOC_PAGE = 5000;
+async function loadDocument(base, versionQuery, onPage, isCancelled) {
+  const q = (offset) => `${base}/document?${versionQuery ? versionQuery + "&" : ""}offset=${offset}&limit=${DOC_PAGE}`;
+  let doc = await api(q(0));
+  const version = doc.version;
+  const sourceVersionId = doc.source_version_id;
+  let nodes = doc.nodes || [];
+  onPage({ ...doc, nodes, loading: doc.has_more === true });
+  while (doc.has_more && !isCancelled()) {
+    const next = await api(q(nodes.length) + (version ? `&version_label=${encodeURIComponent(version)}` : ""));
+    if (next.version !== version || (sourceVersionId != null && next.source_version_id !== sourceVersionId)) {
+      throw new Error("The source changed while it was loading. Reload to read the current version.");
+    }
+    if (!next.nodes || !next.nodes.length) break;
+    nodes = nodes.concat(next.nodes);
+    doc = next;
+    onPage({ ...doc, nodes, loading: doc.has_more === true });
+  }
+  return { ...doc, nodes, loading: false };
+}
 function sourceUrl(key, version, nodeId, ref) {
   const q = new URLSearchParams({ source: key });
   if (version) q.set("version", version);
@@ -608,11 +630,17 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
         if (linked.source_key !== sourceKey) throw new Error("This node belongs to a different source.");
         requested = linked.version_label;
       }
-      const q = requested ? `?version_label=${encodeURIComponent(requested)}` : "";
-      const [details, document] = await Promise.all([api(sourcePath(sourceKey)), api(`${sourcePath(sourceKey)}/document${q}`)]);
+      const versionQuery = requested ? `version_label=${encodeURIComponent(requested)}` : "";
+      const detailsPromise = api(sourcePath(sourceKey)).then((d) => { if (!cancelled) setDetail(d); return d; });
+      const document = await loadDocument(sourcePath(sourceKey), versionQuery, (partial) => {
+        if (cancelled) return;
+        if (requested && partial.version !== requested) throw new Error("The returned document does not match the requested version.");
+        setDoc(partial);
+      }, () => cancelled);
+      await detailsPromise;
       if (requested && document.version !== requested) throw new Error("The returned document does not match the requested version.");
       if (cancelled) return;
-      setDetail(details); setDoc(document);
+      setDoc(document);
       history.replaceState({}, "", sourceUrl(sourceKey, document.version, selectedId, openRef));
       if (document.version) {
         api(`${sourcePath(sourceKey)}/evals?version_label=${encodeURIComponent(document.version)}`)
@@ -745,7 +773,8 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
       ${doc.locked === true && html`<div class="locked">Original text is withheld for this account. ${doc.permission_reason || "Permission to view this version has not been established."} Available references and integrity records are shown below.</div>`}
       ${doc.access && doc.access.authority_type === "operator_exception" && html`<div class="notice"><strong>Internal-use override · publisher permission unverified</strong><br />Private reviewer access only. This is not an accepted release or permission for public, model or export use.</div>`}
       ${doc.locked !== true && doc.permission_reason && html`<div class="notice">Access: ${doc.permission_reason}</div>`}
-      ${!doc.nodes.length && html`<div class="empty">${doc.version ? "This version has no document nodes available. No source text is displayed." : "No version has been imported for this source."}</div>`}
+      ${doc.loading && html`<div class="notice" role="status">Loading this record… ${doc.nodes.length.toLocaleString()} of ${(doc.total || 0).toLocaleString()} nodes so far.</div>`}
+      ${!doc.nodes.length && !doc.loading && html`<div class="empty">${doc.version ? "This version has no document nodes available. No source text is displayed." : "No version has been imported for this source."}</div>`}
       ${evidence && html`<${EvidencePanel} card=${scorecard} error=${scoreError} sourceKey=${sourceKey} version=${doc.version} sourceVersionId=${doc.source_version_id} contentHash=${doc.content_hash} />`}
       ${english && doc.version && html`<${EnglishView} key=${sourceKey + ":" + doc.version} sourceKey=${sourceKey} version=${doc.version} sourceVersionId=${doc.source_version_id} contentHash=${doc.content_hash} />`}
       <div class="readerbar">
