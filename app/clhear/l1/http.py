@@ -32,8 +32,10 @@ DEFAULT_FIXTURES_DIR = "tests/fixtures/http"
 # Minimum seconds between live requests to one publisher host. finra.org
 # answers the identifying UA but rate-limits bursts (429 on 18 Sep 2026 while
 # enumerating the 652-rule index); a browser UA is refused outright (403), so
-# pacing, not disguise, is the remedy.
-HOST_PACING_S = {"www.finra.org": 2.0, "files.finra.org": 2.0}
+# pacing, not disguise, is the remedy. At 2 s finra.org still returned 429
+# after 5-9 requests (19 Sep, cycle 35453100897) and every penalty cost 30-90 s;
+# 4 s ran 12 consecutive pages clean.
+HOST_PACING_S = {"www.finra.org": 4.0, "files.finra.org": 4.0}
 RETRY_AFTER_CAP_S = 300.0
 _observations: ContextVar[tuple] = ContextVar("l1_http_observations", default=())
 _response_meta: ContextVar[dict | None] = ContextVar("l1_http_response", default=None)
