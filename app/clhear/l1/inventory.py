@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -28,6 +29,7 @@ from app.clhear.l1.public import nodes_internal_select
 from app.clhear.l1.models import BigId, Json, L1_SCHEMA, clauses, doc_nodes, source_versions, sources
 from app.clhear.models import runs
 
+log = logging.getLogger("clhear.l1.inventory")
 SCOPE_VERSION = "2026-09-16.2"
 SCOPES = frozenset({"registered", "finra", "all_publishers"})
 FINRA_CATEGORIES = (
@@ -37,7 +39,11 @@ FINRA_CATEGORIES = (
     ("cab_rules", "Capital Acquisition Broker rules", "https://www.finra.org/rules-guidance/rulebooks/capital-acquisition-broker-rules"),
     ("funding_portal_rules", "Funding Portal rules", "https://www.finra.org/rules-guidance/rulebooks/funding-portal-rules"),
     # finra.org retired /rulebooks/nasd-rules (404 on 19 Sep 2026); the archive
-    # now lives under /rulebooks/retired-rules and is deliberately not seeded.
+    # now lives under /rulebooks/retired-rules. The row stays declared (never
+    # seeded) so the operator-exception ledger's existing collection binding
+    # for finra/catalog/nasd_archive still validates; dropping it made
+    # control_state report invalid_binding_evidence and L0 could not publish.
+    ("nasd_archive", "Published NASD rule archive", "https://www.finra.org/rules-guidance/rulebooks/nasd-rules"),
     ("nyse_archive", "Published incorporated NYSE rule archive", "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules"),
     ("filings", "Rule filings and amendments", "https://www.finra.org/rules-guidance/rule-filings"),
     ("notices", "Regulatory notices", "https://www.finra.org/rules-guidance/notices"),
@@ -261,19 +267,29 @@ def _fetch_discovery(url):
             raise http.FixtureMissing("Discovery fixture unavailable")
         return http._read_fixture(path), "fixture"
     import httpx
-    with httpx.stream("GET", url, headers={"User-Agent": http.USER_AGENT}, timeout=20, follow_redirects=False) as response:
-        if response.is_redirect:
-            raise ValueError("Publisher redirect requires an independently validated official discovery URL")
-        response.raise_for_status()
-        body = bytearray()
-        for chunk in response.iter_bytes():
-            body.extend(chunk)
-            limit = max(1, min(int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_BYTES", str(16 * 1024 * 1024))), 64 * 1024 * 1024))
-            if len(body) > limit:
-                raise ValueError("Discovery page exceeds the configured bounded byte limit")
-        if not body:
-            raise ValueError("Publisher returned an empty discovery page")
-        return bytes(body), "live"
+    # Same publisher courtesy as document fetches: paced per host, and a 429
+    # waits for Retry-After instead of burning the page's retry budget.
+    for attempt in range(4):
+        http._pace(url)
+        with httpx.stream("GET", url, headers={"User-Agent": http.USER_AGENT}, timeout=20, follow_redirects=False) as response:
+            if response.is_redirect:
+                raise ValueError("Publisher redirect requires an independently validated official discovery URL")
+            if response.status_code == 429 and attempt < 3:
+                pause = max(http._retry_after_seconds(response) or 0.0, 30.0 * (attempt + 1))
+                log.warning("discovery throttled by %s; waiting %.0fs", urlparse(url).hostname, pause)
+                time.sleep(pause)
+                continue
+            response.raise_for_status()
+            body = bytearray()
+            for chunk in response.iter_bytes():
+                body.extend(chunk)
+                limit = max(1, min(int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_BYTES", str(16 * 1024 * 1024))), 64 * 1024 * 1024))
+                if len(body) > limit:
+                    raise ValueError("Discovery page exceeds the configured bounded byte limit")
+            if not body:
+                raise ValueError("Publisher returned an empty discovery page")
+            return bytes(body), "live"
+    raise RuntimeError("Publisher discovery stayed throttled")
 
 
 def _discover(engine, store):

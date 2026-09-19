@@ -152,6 +152,20 @@ def test_catalog_pagination_and_attachment_require_their_own_exact_bindings(engi
     bind(engine, active, source_key="finra/rulebook", canonical_url="https://finra.org/rules-guidance/rulebooks/finra-rules", source_role="collection")
 
 
+def test_retired_catalog_seed_keeps_its_ledger_binding_valid(engine):
+    """finra.org retired /rulebooks/nasd-rules. The category stays declared but
+    unseeded so the 16 Sep collection binding still validates; an invalid
+    binding would make control_state unavailable and stop L0 publishing."""
+    from app.clhear.l1.inventory import FINRA_CATEGORIES, finra_seed_categories
+    declared = {key: url for key, _, url in FINRA_CATEGORIES}
+    assert "nasd_archive" in declared and "nasd_archive" not in {k for k, _, _ in finra_seed_categories()}
+    active = activate(engine)
+    bind(engine, active, source_key="finra/catalog/nasd_archive", canonical_url=declared["nasd_archive"], source_role="collection")
+    with engine.connect() as conn:
+        state = oe.control_state(conn)
+    assert state["status"] == "available" and len(state["bindings"]) == 1
+
+
 def test_manifest_binding_idempotency_and_current_control_digest(engine):
     active = activate(engine)
     bound = bind(engine, active)

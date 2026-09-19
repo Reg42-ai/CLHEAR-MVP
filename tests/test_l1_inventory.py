@@ -220,6 +220,36 @@ def test_legacy_unbound_manifest_and_unknown_publisher_checks_fail(small_scope):
     assert codes(result["sources"][0]) >= {"artifact_manifest_unverified", "parser_provenance_unverified", "publisher_check_unverified"}
 
 
+def test_live_discovery_is_paced_and_waits_out_publisher_throttling(monkeypatch):
+    """finra.org answered 429 to a burst of ~80 ms discovery requests on 19 Sep;
+    discovery must pace like document fetches and obey Retry-After."""
+    import httpx
+    from app.clhear.l1 import http as l1_http
+    monkeypatch.setenv("CLHEAR_HTTP_MODE", "live")
+    monkeypatch.setattr(l1_http, "HOST_PACING_S", {"www.finra.org": 0.05})
+    naps, calls = [], []
+    monkeypatch.setattr(inv.time, "sleep", lambda s: naps.append(s))  # inventory and http share the time module
+
+    class Stream:
+        def __init__(self, status, body=b""):
+            self.status_code, self._body, self.is_redirect = status, body, False
+            self.headers = {"retry-after": "7"} if status == 429 else {}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def raise_for_status(self): pass
+        def iter_bytes(self): yield self._body
+
+    responses = [Stream(429), Stream(200, b"<main><a href='/rules-guidance/rulebooks/finra-rules/3110'>3110</a></main>")]
+    def stream(method, url, **kwargs):
+        calls.append(url)
+        return responses.pop(0)
+    monkeypatch.setattr(httpx, "stream", stream)
+    body, origin = inv._fetch_discovery("https://www.finra.org/rules-guidance/rulebooks/finra-rules")
+    assert origin == "live" and b"3110" in body and len(calls) == 2
+    assert 30.0 in naps  # a 429 waits at least 30 s (Retry-After 7 s is shorter)
+    assert any(0 < n < 1 for n in naps)  # and the retry itself is host-paced
+
+
 def test_discovery_requires_each_exact_permission_before_fetch(engine, tmp_path, monkeypatch):
     store = LocalStore(tmp_path / "discovery")
     monkeypatch.setattr(inv, "_fetch_discovery", lambda url: pytest.fail("unauthorized discovery network fetch"))
