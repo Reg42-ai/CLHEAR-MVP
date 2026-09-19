@@ -60,10 +60,13 @@ L0_TASK_CPU = "1024"
 L0_TASK_MEMORY_MIB = 8192
 # Completeness snapshots include granted source text. The 512 MiB / 512 MiB
 # /tmp viewer OOM'd or 503'd the anonymous probe after bootstrap 35355899299
-# succeeded. 3008 / 4096 leaves room for the download staging file plus SQLite.
-VIEWER_MEMORY_SIZE = 3008
+# succeeded; at 3008 / 4096 the 3.4 GB candidate of 19 Sep (35433640762) no
+# longer fit beside a partial init-phase download and the probe 503'd again.
+# 6144 MiB buys network throughput for the cold download; 10240 MiB /tmp is
+# the Lambda maximum and holds staging plus the live file.
+VIEWER_MEMORY_SIZE = 6144
 VIEWER_TIMEOUT_S = 120
-VIEWER_EPHEMERAL_STORAGE_MB = 4096
+VIEWER_EPHEMERAL_STORAGE_MB = 10240
 SUSPENDED = {"DynamicScalingInSuspended": True, "DynamicScalingOutSuspended": True,
              "ScheduledScalingSuspended": True}
 # These service-generated outputs can change while an accepted update finishes.

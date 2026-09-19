@@ -56,6 +56,7 @@ def _prepare_db() -> None:
             if not os.path.exists(DB_LOCAL_PATH):
                 raise FileNotFoundError("Snapshot synchronization did not create a database")
         except Exception as exc:
+            log.warning("snapshot load failed: %s: %s", type(exc).__name__, str(exc)[:300])
             _snapshot_error = SnapshotUnavailable("The configured corpus snapshot could not be loaded")
             raise _snapshot_error from exc
         _state.update(pending)
@@ -89,6 +90,7 @@ def _refresh_db() -> None:
             db.dispose_engine()
         _snapshot_error = None
     except Exception as exc:
+        log.warning("snapshot refresh failed: %s: %s", type(exc).__name__, str(exc)[:300])
         if restricted or not os.path.exists(DB_LOCAL_PATH):
             _snapshot_error = SnapshotUnavailable("The current corpus and permission snapshot could not be verified")
             raise _snapshot_error from exc
