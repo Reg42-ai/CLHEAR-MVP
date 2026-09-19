@@ -67,9 +67,62 @@ FINRA_RULEBOOK_CATEGORIES = ("manual", "governing", "rules", "cab_rules", "fundi
 
 
 def finra_seed_categories():
-    if os.environ.get("CLHEAR_L1_FINRA_FULL_DISCOVERY", "").lower() == "true":
+    if full_finra_discovery():
         return FINRA_CATEGORIES
     return tuple(row for row in FINRA_CATEGORIES if row[0] in FINRA_RULEBOOK_CATEGORIES)
+
+
+def full_finra_discovery():
+    return os.environ.get("CLHEAR_L1_FINRA_FULL_DISCOVERY", "").lower() == "true"
+
+
+def rulebook_url(url):
+    """Current FINRA rulebook pages live under /rules-guidance/rulebooks.
+
+    Notices, filings, decisions and comment PDFs are a different catalog. A
+    rulebook cycle that follows those links never finishes: the 19 Sep live
+    frontier mixed 1,400 notice pages into the same-day rulebook crawl.
+    """
+    return urlparse(url or "").path.startswith("/rules-guidance/rulebooks")
+
+
+def rulebook_document(entry):
+    key = entry.get("key") or entry.get("source_key") or ""
+    if key.startswith("finra/rule/"):
+        return True
+    url = entry.get("canonical_url") or (entry.get("fetch") or {}).get("url") or entry.get("url") or ""
+    return rulebook_url(url)
+
+
+def terminal_rulebook_leaf(page):
+    """A rulebook leaf is enumerated from its index and fetched by the import."""
+    if page.get("role") == "collection":
+        return False
+    key = page.get("source_key") or ""
+    if key.startswith("finra/rule/"):
+        return True
+    return rulebook_url(page.get("url") or "") and page.get("role") == "document"
+
+
+def settle_finra_page(page):
+    """How discovery should treat one persisted frontier page.
+
+    ``None`` — fetch it (catalog indexes and, in full discovery, non-leaf pages).
+    ``terminal`` — record it without a network fetch; the import retrieves it.
+    ``skip`` — close an off-book leftover so it cannot keep the cycle pending.
+    """
+    if full_finra_discovery():
+        return "terminal" if terminal_rulebook_leaf(page) else None
+    url = page.get("url") or ""
+    if page.get("role") == "collection" and rulebook_url(url):
+        return None
+    if not rulebook_url(url):
+        return "skip"
+    if terminal_rulebook_leaf(page):
+        return "terminal"
+    return None
+
+
 FINRA_BOUNDARIES = {
     "include": ["Manual", "governing documents", "current rules", "published rule archives",
                 "filings and amendments", "notices and interpretive guidance", "examination reports",
@@ -319,11 +372,15 @@ def _discover(engine, store):
             if urlparse(parent["url"]).path != parsed.path or parent["role"] != "collection":
                 return None
             return {"url": target, "source_key": parent["source_key"], "category": parent["category"], "role": "collection"}
+        if not full_finra_discovery() and not rulebook_url(target):
+            # A rule page's sidebar links every notice. Following them is how
+            # the rulebook frontier filled with 19 Sep's notice crawl.
+            return None
         entry = _discovered_entry(target, parent["category"])
         found = {"url": target, "source_key": entry["key"], "category": parent["category"], "role": "document", "entry": entry}
-        if entry["key"].startswith("finra/rule/"):
-            # The FINRA Rules index lists every rule page. finra.org allows about
-            # a hundred requests an hour, so a rule is enumerated (and bound)
+        if terminal_rulebook_leaf(found):
+            # The rulebook indexes list every leaf. finra.org allows about a
+            # hundred requests an hour, so a leaf is enumerated (and bound)
             # from the index and fetched once, by the import, not twice.
             found["terminal"] = True
         return found
@@ -331,6 +388,7 @@ def _discover(engine, store):
     entries, report = run_batch(engine, store, publisher_id="finra", profile={"scope_version": SCOPE_VERSION, "boundaries": FINRA_BOUNDARIES},
                      seeds=seeds, job_id=context["job_id"] if context else str(uuid.uuid4()),
                      fetcher=_fetch_discovery, classify=classify, decoder=decoder(classify), decode_documents=True,
+                     settle=settle_finra_page,
                      max_pages=int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_PAGES", "100")))
     report["findings"].append({"publisher_id": "finra", "code": "finra_enforcement_search_contract_required",
         "detail": "Disciplinary Actions Online search records and tool-hosted filing status require a reviewed structured contract; monthly publications and linked decisions are enumerated separately."})
@@ -382,9 +440,12 @@ def planned_entries(engine, scope="finra", adapter_key=None, *, audit_id=None):
     with engine.connect() as conn:
         definition = conn.execute(sa.select(inventory_snapshots.c.definition)
                                   .where(inventory_snapshots.c.id == prior["inventory_id"])).scalar_one()
-    return [entry for entry in definition["entries"] if entry.get("discovered_category")
-            and entry.get("source_role", "document") == "document"
-            and (adapter_key is None or entry.get("adapter") == adapter_key)]
+    entries = [entry for entry in definition["entries"] if entry.get("discovered_category")
+               and entry.get("source_role", "document") == "document"
+               and (adapter_key is None or entry.get("adapter") == adapter_key)]
+    if scope == "finra" and not full_finra_discovery():
+        entries = [entry for entry in entries if rulebook_document(entry)]
+    return entries
 
 
 def record_scope_review(engine, inventory_hash, evidence_ref, approved_by, approved):
@@ -733,6 +794,10 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
         # A failed/partial crawl cannot silently remove previously expected
         # documents from the denominator. Removal requires a new scope review.
         discovered.update(new_entries)
+    if scope == "finra" and not full_finra_discovery():
+        # Notices that leaked onto a same-day rulebook frontier stay in older
+        # snapshots; a rulebook cycle must not plan them as imports.
+        discovered = {key: entry for key, entry in discovered.items() if rulebook_document(entry)}
     aliases, alias_findings = list(prior_aliases), []
     declared_urls = {}
     for entry in entries.values():
