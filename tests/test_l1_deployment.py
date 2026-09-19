@@ -553,7 +553,7 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
     assert env["CLHEAR_PRIVATE_COMPLETENESS"] == "true"
     assert env["CLHEAR_SESSION_SECRET"].startswith("test-only-private-session") and env["GOOGLE_OAUTH_CLIENT_SECRET"] == "private-oauth-value"
     assert env["CLHEAR_EVENTS_QUEUE_URL"] == QUEUES["l0"]
-    assert cloud.config["MemorySize"] == 6144 and cloud.config["Timeout"] == 120
+    assert cloud.config["MemorySize"] == 3008 and cloud.config["Timeout"] == 120
     assert cloud.config["EphemeralStorage"] == {"Size": 10240}
     assert result["viewer_access_probes"] == [
         {"path": "/api/clhear/health", "expected_status": 200, "function_error": False, "status_code": 200},
@@ -748,7 +748,7 @@ def test_async_code_and_configuration_completion_revisions_drive_next_conditiona
         assert row["response"]["RevisionId"] != row["completed"]["RevisionId"]
     config_write = next(args for _, op, args in cloud.calls if op == "update_function_configuration")
     assert config_write["RevisionId"] == cloud.lambda_update_evidence[0]["completed"]["RevisionId"]
-    assert config_write["MemorySize"] == 6144 and config_write["Timeout"] == 120
+    assert config_write["MemorySize"] == 3008 and config_write["Timeout"] == 120
     assert config_write["EphemeralStorage"] == {"Size": 10240}
     assert deployer.state["verified_viewer_configuration"]["RevisionId"] == cloud.lambda_update_evidence[1]["completed"]["RevisionId"]
 

@@ -62,9 +62,10 @@ L0_TASK_MEMORY_MIB = 8192
 # /tmp viewer OOM'd or 503'd the anonymous probe after bootstrap 35355899299
 # succeeded; at 3008 / 4096 the 3.4 GB candidate of 19 Sep (35433640762) no
 # longer fit beside a partial init-phase download and the probe 503'd again.
-# 6144 MiB buys network throughput for the cold download; 10240 MiB /tmp is
+# This account caps function memory at 3008 MiB (UpdateFunctionConfiguration
+# rejected 6144 with ValidationException on 35438390933); 10240 MiB /tmp is
 # the Lambda maximum and holds staging plus the live file.
-VIEWER_MEMORY_SIZE = 6144
+VIEWER_MEMORY_SIZE = 3008
 VIEWER_TIMEOUT_S = 120
 VIEWER_EPHEMERAL_STORAGE_MB = 10240
 SUSPENDED = {"DynamicScalingInSuspended": True, "DynamicScalingOutSuspended": True,

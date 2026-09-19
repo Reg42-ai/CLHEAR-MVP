@@ -336,17 +336,19 @@ capacity-only contents and source binding into `infra/recovery/<plan-id>.json`
 before using it. Repeated failures retain the approved original targets instead
 of replacing them with the temporary maintenance zeros.
 
-For the current incident, the active selection is `l1-35433640762-1`, the plan
-emitted by the #39 recovery apply of 19 Sep 2026 (verify exited 2, publish 0,
+For the current incident, the active selection is `l1-35438390933-1`, the plan
+emitted by the #40 apply of 19 Sep 2026 (the viewer memory raise to 6144 MiB was
+rejected: this account caps Lambda memory at 3008 MiB; /tmp is 10240 MiB). The
+preceding `l1-35433640762-1` came from the #39 recovery apply of 19 Sep 2026 (verify exited 2, publish 0,
 then the viewer health probe returned 503: the 3.4 GB candidate no longer fit
-the 4096 MiB /tmp beside a partial init download; the viewer is now 6144 MiB /
+the 4096 MiB /tmp beside a partial init download; the viewer is now 3008 MiB /
 10240 MiB). The preceding `l1-35427436860-1` came from the #38 apply of 19 Sep 2026. L0 bootstrap exited 0; L1 verify
 exited 1 because the five FINRA rules came back `unchanged` through the new
 dynamic-bytes shortcut without an `artifact_manifest`, so readback reported
 `artifact_manifest_missing` (fixed: the shortcut now names the stored version's
 archived originals). Rollback restored the pre-apply `:21` task definitions
 (the `35413268372` cutover), paused the viewer, and left every fleet at zero.
-The earlier selections `l1-35427436860-1` (`:21`), `l1-35382351183-1` (`:18`), `l1-35341410131-1` (`:14`),
+The earlier selections `l1-35433640762-1` (`:21`), `l1-35427436860-1` (`:21`), `l1-35382351183-1` (`:18`), `l1-35341410131-1` (`:14`),
 `l1-35106288646-1` (`:12`) and `l1-34967901665-1` are retained for history; they
 must not be the automatic pointer while live bindings are `:21`. The plan restores L0/L1 desired capacity
 one, the observed L2 and L7 desired counts from that apply, and the viewer's
