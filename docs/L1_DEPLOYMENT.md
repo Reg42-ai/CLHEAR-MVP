@@ -336,14 +336,16 @@ capacity-only contents and source binding into `infra/recovery/<plan-id>.json`
 before using it. Repeated failures retain the approved original targets instead
 of replacing them with the temporary maintenance zeros.
 
-For the current incident, the active selection is `l1-35382351183-1`, the plan
-emitted by the #35 apply of 18 Sep 2026. L0 bootstrap exited 0 at 8 GiB; L1
-verify then exited 1 (not 2 / `review_ready`) after ~333s at 2048 MiB. Rollback
-restored the pre-apply `:18` task definitions (the last successful
-`35369249740` cutover), paused the viewer, and left every fleet at zero. The
-earlier selections `l1-35341410131-1` (`:14`), `l1-35106288646-1` (`:12`) and
-`l1-34967901665-1` are retained for history; they must not be the automatic
-pointer while live bindings are `:18`. The plan restores L0/L1 desired capacity
+For the current incident, the active selection is `l1-35427436860-1`, the plan
+emitted by the #38 apply of 19 Sep 2026. L0 bootstrap exited 0; L1 verify
+exited 1 because the five FINRA rules came back `unchanged` through the new
+dynamic-bytes shortcut without an `artifact_manifest`, so readback reported
+`artifact_manifest_missing` (fixed: the shortcut now names the stored version's
+archived originals). Rollback restored the pre-apply `:21` task definitions
+(the `35413268372` cutover), paused the viewer, and left every fleet at zero.
+The earlier selections `l1-35382351183-1` (`:18`), `l1-35341410131-1` (`:14`),
+`l1-35106288646-1` (`:12`) and `l1-34967901665-1` are retained for history; they
+must not be the automatic pointer while live bindings are `:21`. The plan restores L0/L1 desired capacity
 one, the observed L2 and L7 desired counts from that apply, and the viewer's
 shared, unreserved capacity. Recovery applies it only after `validate_plan`
 confirms the exact maintenance state: viewer concurrency 0, every fleet at zero

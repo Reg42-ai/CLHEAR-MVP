@@ -90,6 +90,12 @@ def test_pipeline_diff_and_events(engine, tmp_path):
     noisy = pipeline.ingest(engine, _StubAdapter("v1-noisy", v1.tree, nonce="request-7f3a"), store)
     assert noisy["status"] == "unchanged" and noisy["artifact_bytes_changed"] is True
     assert noisy["version"] == "v1" and noisy["observed_content_hash"] != s1["content_hash"]
+    # Deployment verification reads the stored version back from this summary:
+    # the archived originals of v1 must be named, so the check can pass.
+    from app.clhear.l1 import readback
+    assert noisy["artifact_manifest"] == s1["artifact_manifest"]
+    verified = readback.verify_source_version(engine, store, v1.meta().source_key, noisy)
+    assert verified["verified"], verified["findings"]
     with engine.connect() as conn:
         assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 1
         assert conn.execute(sa.select(sa.func.count()).select_from(change_events)).scalar_one() == 1
