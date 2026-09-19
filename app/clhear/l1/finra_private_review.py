@@ -5,6 +5,7 @@ URL or a licence grant. No publisher bytes are acquired by this coordinator.
 """
 import os
 import re
+from datetime import datetime, timezone
 
 import sqlalchemy as sa
 
@@ -92,6 +93,11 @@ def request_frontier_bindings(engine, cycle_id):
                 status="permission_blocked", result={**(row["result"] or {}), "findings": findings, "publisher_denied": True}))
         if waiting:
             conn.execute(discovery.pages.update().where(discovery.pages.c.id.in_(waiting)).values(status="awaiting_exception_binding"))
+        # Enumerated leaves are inserted directly as awaiting; they need the
+        # same L0 request even when no fetched page is waiting.
+        already_waiting = conn.execute(sa.select(sa.func.count()).select_from(discovery.pages).where(
+            discovery.pages.c.cycle_id == cycle_id, discovery.pages.c.status == "awaiting_exception_binding")).scalar_one()
+        if waiting or already_waiting:
             # One outstanding request per discovery cycle: a second batch that finds
             # more waiting pages while the first request is unrelayed does not add another.
             outstanding = conn.execute(sa.select(events.events.c.id).where(
@@ -122,8 +128,13 @@ def bind_frontier(engine, cycle_id):
                         scope_version=contract["scope_version"], sources=[{
                             "source_key": row["source_key"], "canonical_url": row["url"], "source_role": row["role"]}],
                         bound_by="l0.discovery_frontier")
-                    conn.execute(discovery.pages.update().where(discovery.pages.c.id == row["id"]).values(
-                        status="pending", result={}, checked_at=None))
+                    if (row["result"] or {}).get("terminal"):
+                        # Enumerated from its index; the import fetches it, discovery never does.
+                        conn.execute(discovery.pages.update().where(discovery.pages.c.id == row["id"]).values(
+                            status="checked", checked_at=datetime.now(timezone.utc)))
+                    else:
+                        conn.execute(discovery.pages.update().where(discovery.pages.c.id == row["id"]).values(
+                            status="pending", result={}, checked_at=None))
                     bound += 1
                     continue
                 except ValueError:

@@ -38,7 +38,7 @@ def decoder(classify):
                 continue
             if found["url"] == page["url"]:
                 continue
-            links[found["url"]] = {k: found[k] for k in ("url", "source_key", "category", "role")}
+            links[found["url"]] = {k: found[k] for k in ("url", "source_key", "category", "role", "terminal") if k in found}
             if found.get("entry"):
                 entry = found["entry"]
                 if a.get_text(strip=True):

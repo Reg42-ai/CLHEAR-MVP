@@ -195,9 +195,23 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
             if not changed.rowcount:
                 raise RuntimeError("Discovery checkpoint lease lost")
             for link in result["links"]:
+                row = _page(cycle_id, link["url"], link["source_key"], link["category"], link["role"])
                 if link.get("terminal"):
-                    continue
-                _insert_once(conn, pages, _page(cycle_id, link["url"], link["source_key"], link["category"], link["role"]))
+                    # An enumerated leaf: never fetched by discovery. It still
+                    # needs its permission binding before the import may run,
+                    # so it waits for L0 exactly like a fetched page would; a
+                    # publisher denial stays a denial and is never bound.
+                    result_row = {"terminal": True, "entries": [], "links": [], "findings": []}
+                    if permissions.candidate_decision(conn, link["source_key"], "acquire", canonical_url=link["url"])["allowed"]:
+                        row.update(status="checked", result=result_row, checked_at=datetime.now(timezone.utc))
+                    elif permissions.decision(conn, link["source_key"], "acquire").get("reason") == "not_approved":
+                        result_row["findings"].append({"code": "publisher_permission_denied",
+                            "detail": "The publisher explicitly denied acquisition; the operator exception does not apply."})
+                        row.update(status="permission_blocked", result={**result_row, "publisher_denied": True},
+                                   checked_at=datetime.now(timezone.utc))
+                    else:
+                        row.update(status="awaiting_exception_binding", result=result_row)
+                _insert_once(conn, pages, row)
     from app.clhear.l1.finra_private_review import request_frontier_bindings
     request_frontier_bindings(engine, cycle_id)
     return read_cycle(engine, cycle_id)
