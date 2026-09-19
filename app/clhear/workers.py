@@ -211,7 +211,7 @@ def run_adapter_fleet(
                                                                       source=source_key, worker="l1", task_id=task_id,
                                                                       stage=workflow.current_stage())
                     workflow.finish_task(engine, task_id, token,
-                        status="completed" if success else "blocked" if status in {"rights-blocked", "source-blocked", "awaiting-artifact"} else "failed",
+                        status="completed" if success else "blocked" if status in {"rights-blocked", "source-blocked", "awaiting-artifact", "catalog-page"} else "failed",
                         summary=summary, error=None if success else (summary.get("failure") or summary.get("error", status)))
                     token = None
                     if not success:

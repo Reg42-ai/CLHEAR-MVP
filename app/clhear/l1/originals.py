@@ -274,6 +274,7 @@ def _pdf_structure_rows(pages, source_key, adapter_key, part=1):
     pattern = grammar.PROVISION if grammar else SECTION
     heading_pattern = grammar.HEADING if grammar else None
     rows, stack, heading, heading_ref, active, seen, seq = [], [], "", None, None, set(), 0
+    first_marker, contents_resolved = None, False
     for page, raw in enumerate(pages, 1):
         for physical_line, line in enumerate(raw.splitlines(), 1):
             text = normalize(line)
@@ -282,6 +283,15 @@ def _pdf_structure_rows(pages, source_key, adapter_key, part=1):
             seq += 1
             marker = pattern.match(text) if pattern else None
             is_heading = heading_pattern.match(text) if heading_pattern and not marker else None
+            if (not grammar and marker and not contents_resolved and first_marker is not None
+                    and marker.group("ref") == first_marker and rows and rows[0][2] == "section"):
+                # Same shape as pdf_docling.pages_to_tree: a numbered contents
+                # listing followed by the body restarting at its first marker.
+                # The listing becomes unnumbered paragraphs of the title node.
+                rows = [(r[0], r[1], "paragraph", "", None, r[5]) for r in rows]
+                stack, active, seen, contents_resolved = [], None, set(), True
+            if not grammar and marker and first_marker is None:
+                first_marker = marker.group("ref")
             if grammar:
                 if is_heading:
                     kind, ref, parent = "group", f"{source_key}/p{part}s{seq}", None

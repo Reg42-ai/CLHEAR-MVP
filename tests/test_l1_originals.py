@@ -140,6 +140,34 @@ def test_real_pdf_bytes_two_decoders_sections_and_wrong_parent(adapter_key):
     assert not originals.verify_original_projection("fixture/pdf", adapter_key, [Artifact("document.pdf", body)], tree)["verified"]
 
 
+def test_pdf_contents_listing_then_body_is_resolved_once_and_still_verified():
+    """SR-filing PDFs open with a numbered contents list, then the body restarts
+    at the same first marker. The listing is kept verbatim as unnumbered text;
+    a mid-body repeat stays unresolvable."""
+    from app.clhear.l1.adapters.pdf_docling import extract_pdf_pages, pages_to_tree
+    body = minimal_pdf(["1 Purpose", "2 Statutory Basis", "1 Purpose", "FINRA proposes a change.", "2 Statutory Basis", "Section 15A applies."])
+    tree = pages_to_tree(extract_pdf_pages(body), "fixture/filing", "Test filing")
+    kinds = [n.node_type for n in tree[0].children]
+    assert kinds == ["paragraph", "paragraph", "section", "section"]
+    assert [n.ref for n in tree[0].children[2:]] == ["fixture/filing/section/1", "fixture/filing/section/2"]
+    assert tree[0].children[0].raw_text == "1 Purpose" and "FINRA proposes a change." in tree[0].children[2].subtree_text()
+    report = proof("fixture/filing", "finra", body, tree, "document.pdf")
+    assert report["verified"], report["findings"]
+    with pytest.raises(ValueError, match="repeats a section"):
+        pages_to_tree(extract_pdf_pages(minimal_pdf(["1 Scope", "text", "2 Review", "text", "2 Review again"])), "fixture/x", "T")
+
+
+def test_finra_navigation_page_is_catalog_structure_not_a_failure():
+    from app.clhear.l1.adapters.finra_document import NavigationPage, document_markup
+    container = (b"<html><body><main><h1>ARTICLE IV BOARD OF DIRECTORS</h1><div class='node__content'>"
+                 b"<div class='book-navigation'><ul><li><a href='/rules-guidance/rulebooks/corporate-organization/general-powers'>General Powers</a></li>"
+                 b"<li><a href='/rules-guidance/rulebooks/corporate-organization/number-directors'>Number of Directors</a></li></ul></div></div></main></body></html>")
+    with pytest.raises(NavigationPage):
+        document_markup(container)
+    with pytest.raises(ValueError, match="lacks an identified title"):
+        document_markup(b"<html><body><main><h1>Untitled</h1><div class='node__content'></div></main></body></html>")
+
+
 def test_numbered_publisher_pdf_uses_independent_line_and_parent_evidence():
     from app.clhear.l1.adapters.standards_bodies import FatfAdapter
     body = minimal_pdf(["A. POLICIES", "1. First requirement", "Records must be retained.", "2. Second requirement"])

@@ -15,9 +15,11 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -27,8 +29,43 @@ log = logging.getLogger("clhear.l1.http")
 
 USER_AGENT = "CLHEAR/0.1 (regulatory corpus builder; contact clhear@reg42.ai)"
 DEFAULT_FIXTURES_DIR = "tests/fixtures/http"
+# Minimum seconds between live requests to one publisher host. finra.org
+# answers the identifying UA but rate-limits bursts (429 on 18 Sep 2026 while
+# enumerating the 652-rule index); a browser UA is refused outright (403), so
+# pacing, not disguise, is the remedy.
+HOST_PACING_S = {"www.finra.org": 2.0, "files.finra.org": 2.0}
+RETRY_AFTER_CAP_S = 300.0
 _observations: ContextVar[tuple] = ContextVar("l1_http_observations", default=())
 _response_meta: ContextVar[dict | None] = ContextVar("l1_http_response", default=None)
+_pacing_lock = threading.Lock()
+_last_request_at: dict[str, float] = {}
+
+
+def _pace(url: str) -> None:
+    host = (urlsplit(url).hostname or "").lower()
+    interval = HOST_PACING_S.get(host)
+    if not interval:
+        return
+    with _pacing_lock:
+        wait = _last_request_at.get(host, 0.0) + interval - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_request_at[host] = time.monotonic()
+
+
+def _retry_after_seconds(response) -> float | None:
+    """A publisher's own throttle instruction beats the default backoff curve."""
+    value = (getattr(response, "headers", None) or {}).get("retry-after")
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            seconds = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError):
+            return None
+    return min(max(seconds, 0.0), RETRY_AFTER_CAP_S)
 
 
 def begin_fetch() -> None:
@@ -148,6 +185,7 @@ def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts:
         try:
             request_url, redirect_chain = url, []
             for hop in range(6):
+                _pace(request_url)
                 resp = httpx.get(
                     request_url,
                     headers={"User-Agent": USER_AGENT, **(headers or {})},
@@ -193,8 +231,13 @@ def _fetch_live(url: str, timeout: float, headers: dict | None = None, attempts:
                 raise  # other 4xx: retrying will not help
             last_error = exc
             if attempt < attempts - 1:
-                log.warning("fetch %s failed (%s); backing off %.0fs", url, exc, delay)
-                time.sleep(delay)
+                pause = delay
+                if status == 429:
+                    # Throttled: obey Retry-After when given, otherwise back off
+                    # at least half a minute so the next attempt is not a burst.
+                    pause = max(_retry_after_seconds(exc.response) or 0.0, delay, 30.0)
+                log.warning("fetch %s failed (%s); backing off %.0fs", url, exc, pause)
+                time.sleep(pause)
                 delay *= 2
     raise RuntimeError(f"fetch failed after {attempts} attempts: {url}") from last_error
 

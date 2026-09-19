@@ -12,11 +12,20 @@ HOSTS = {"www.finra.org", "finra.org", "files.finra.org"}
 BODY_SELECTORS = ("#block-body .field--name-body", "article .field--name-body", ".node--type-regulatory-notice .field--name-body", ".node--type-notice .field--name-body")
 
 
+class NavigationPage(ValueError):
+    """A rulebook container (e.g. By-Laws "ARTICLE IV") whose only content is
+    the list of its child sections. Its children are the documents; the page
+    itself is catalog structure and must not be recorded as an import failure."""
+
+
 def document_markup(content):
     soup = BeautifulSoup(content, "html.parser")
     title = soup.find("h1")
     body = next((soup.select_one(selector) for selector in BODY_SELECTORS if soup.select_one(selector) is not None), None)
     if title is None or body is None or not title.get_text(strip=True):
+        navigation = soup.select_one(".node__content .book-navigation, main .book-navigation")
+        if title is not None and body is None and navigation is not None and navigation.find_all("a", href=True):
+            raise NavigationPage("FINRA rulebook page lists child sections only; constituent pages carry the text")
         raise ValueError("FINRA publication lacks an identified title and official article body")
     text = body.get_text(" ", strip=True)
     link_text = " ".join(a.get_text(" ", strip=True) for a in body.find_all("a"))

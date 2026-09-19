@@ -646,6 +646,16 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
                 "source_version_id": previous.id if previous else None,
             })
             return {**outputs, "run_id": recorder.run_id}
+        from app.clhear.l1.adapters.finra_document import NavigationPage
+        if isinstance(exc, NavigationPage):
+            # Discovered container page: structure only, children hold the text.
+            outputs = recorder.finish("catalog-page", {
+                "source": meta.source_key, "freshness": "live" if l1_http.publisher_checked_at() else "not_checked",
+                "error_type": "NavigationPage", "note": str(exc)[:200],
+                "previous_version_preserved": previous is not None,
+                "source_version_id": previous.id if previous else None,
+            })
+            return {**outputs, "run_id": recorder.run_id}
         error = str(exc)[:500]
         log.exception("fetch crashed for %s", meta.source_key)
         if previous is not None:
