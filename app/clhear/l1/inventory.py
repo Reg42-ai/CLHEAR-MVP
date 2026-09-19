@@ -320,7 +320,13 @@ def _discover(engine, store):
                 return None
             return {"url": target, "source_key": parent["source_key"], "category": parent["category"], "role": "collection"}
         entry = _discovered_entry(target, parent["category"])
-        return {"url": target, "source_key": entry["key"], "category": parent["category"], "role": "document", "entry": entry}
+        found = {"url": target, "source_key": entry["key"], "category": parent["category"], "role": "document", "entry": entry}
+        if entry["key"].startswith("finra/rule/"):
+            # The FINRA Rules index lists every rule page. finra.org allows about
+            # a hundred requests an hour, so a rule is enumerated (and bound)
+            # from the index and fetched once, by the import, not twice.
+            found["terminal"] = True
+        return found
     from app.clhear.l1.finra_catalog import decoder
     entries, report = run_batch(engine, store, publisher_id="finra", profile={"scope_version": SCOPE_VERSION, "boundaries": FINRA_BOUNDARIES},
                      seeds=seeds, job_id=context["job_id"] if context else str(uuid.uuid4()),
