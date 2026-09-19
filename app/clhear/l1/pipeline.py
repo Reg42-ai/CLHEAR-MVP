@@ -761,12 +761,15 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
             return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"],
                     **({"authorized_artifact_check": recorder.artifact_check} if recorder.artifact_check else {})}
         recorder.stage("projection_repair", reason="stored projection differs from validated source parse")
-    elif previous is not None and not force and not strict_violations and original_proof["verified"]:
+    elif (previous is not None and not force and not strict_violations and original_proof["verified"]
+          and len(result.artifacts) == 1):
         # finra.org (and other dynamic publishers) never serve the same bytes
         # twice, so the artifact-set hash alone would mint a new version and a
         # zero-clause "amended" event on every daily check. When the validated
-        # parse reproduces the stored projection exactly, the text is unchanged;
-        # the byte difference is recorded, not versioned.
+        # parse of a single-document page reproduces the stored projection
+        # exactly, the text is unchanged; the byte difference is recorded, not
+        # versioned. Multi-part bundles keep versioning on any boundary shift so
+        # every preserved original stays addressable by its own version.
         with engine.connect() as conn:
             matching = _projection_matches(conn, previous.id, result.tree, public_ok, ignore_artifact_provenance=True)
         if matching:
