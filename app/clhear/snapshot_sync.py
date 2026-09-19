@@ -54,6 +54,15 @@ def sync_snapshot(
     ):
         return False
     tmp = f"{local_path}.new"
+    # A download cut off by the Lambda init deadline leaves staging files that
+    # would otherwise compete with this one for the ephemeral disk.
+    directory, prefix = os.path.dirname(local_path) or ".", os.path.basename(tmp)
+    for name in os.listdir(directory):
+        if name.startswith(prefix):
+            try:
+                os.remove(os.path.join(directory, name))
+            except OSError:
+                pass
     s3_client.download_file(bucket, key, tmp)
     os.replace(tmp, local_path)
     state["etag"] = etag
