@@ -727,17 +727,21 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
     validator = getattr(adapter, "validate_tree", None)
     strict_violations = validator(result.tree, result.artifacts) if validator else []
     original_proof = _original_proof(meta, result)
+
+    def _prior_manifest(conn):
+        """The archive manifest recorded when the stored version was imported."""
+        for previous_run in conn.execute(sa.select(runs.c.outputs)
+                .where(runs.c.inputs["source"].as_string() == meta.source_key).order_by(runs.c.id.desc())):
+            evidence = previous_run.outputs or {}
+            if (evidence.get("source_version_id") == previous.id and evidence.get("content_hash") == previous.content_hash
+                    and evidence.get("artifact_manifest")):
+                return evidence["artifact_manifest"]
+        return None
+
     if previous is not None and previous.content_hash == content_hash and not force and not strict_violations and original_proof["verified"]:
         with engine.connect() as conn:
             matching = _projection_matches(conn, previous.id, result.tree, public_ok)
-            prior_manifest = None
-            for previous_run in conn.execute(sa.select(runs.c.outputs)
-                    .where(runs.c.inputs["source"].as_string() == meta.source_key).order_by(runs.c.id.desc())):
-                evidence = previous_run.outputs or {}
-                if (evidence.get("source_version_id") == previous.id and evidence.get("content_hash") == content_hash
-                        and evidence.get("artifact_manifest")):
-                    prior_manifest = evidence["artifact_manifest"]
-                    break
+            prior_manifest = _prior_manifest(conn)
             # Legacy imports without a complete archive manifest get an
             # append-only repair, not invented acquisition provenance.
             matching = matching and _archive_matches(store, prior_manifest, result.artifacts,
@@ -772,7 +776,10 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
         # every preserved original stays addressable by its own version.
         with engine.connect() as conn:
             matching = _projection_matches(conn, previous.id, result.tree, public_ok, ignore_artifact_provenance=True)
-        if matching:
+            # Readback verifies the stored version's archived originals from this
+            # manifest; without it the shortcut would report an unverifiable import.
+            prior_manifest = _prior_manifest(conn) if matching else None
+        if matching and prior_manifest:
             summary = {
                 "source": meta.source_key,
                 "version": previous.version_label,
@@ -785,6 +792,7 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
                 "content_hash_method": "artifact-set-v2",
                 "parser_identity": identity,
                 "canonical_text_hash": sha256(spans.canonical_text(result.tree).encode()),
+                "artifact_manifest": prior_manifest,
                 "original_verification": original_proof,
             }
             recorder.stage("unchanged_text", artifact_bytes_changed=True, observed_content_hash=content_hash)
