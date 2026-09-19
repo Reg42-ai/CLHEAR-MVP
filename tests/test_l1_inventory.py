@@ -291,8 +291,9 @@ def test_discovery_pagination_limits_and_attachment_gaps_are_preserved(engine, t
         return bodies[url], "live"
     monkeypatch.setattr(inv, "_fetch_discovery", fetch)
     entries, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
-    assert KEY in entries and inv._source_key(attachment) in entries
-    assert URL not in fetched  # new document has no permission yet
+    assert KEY in entries and inv._source_key(attachment) not in entries
+    assert URL not in fetched  # a rule leaf is enumerated, not fetched
+    assert attachment not in fetched  # off-book PDFs stay off the rulebook frontier
     assert not result["complete"] and "discovery_limit" in codes(result)
     assert "Test firms" not in str(result)
 
@@ -318,6 +319,54 @@ def test_throttled_seed_page_stays_pending_instead_of_planning_from_a_gap(engine
     monkeypatch.setattr(inv, "_fetch_discovery", lambda url: (_ for _ in ()).throw(ValueError("not a catalog")))
     _, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
     assert result["pending_pages"] == 0 and "discovery_failed" in codes(result)  # a real failure still fails
+
+
+def test_rulebook_discovery_ignores_notice_links_and_settles_leftover_frontier(engine, tmp_path, monkeypatch):
+    """19 Sep: the same-day frontier already held pending rule leaves and notices.
+    Discovery fetched both, 429'd, and the queued rulebook cycle never started."""
+    from app.clhear.l1 import discovery
+    index = "https://www.finra.org/rules-guidance/rulebooks/finra-rules"
+    notice = "https://www.finra.org/rules-guidance/notices/00-10"
+    leftover = index + "/7630"
+    monkeypatch.setattr(inv, "FINRA_CATEGORIES", (("rules", "Rules", index),))
+    grant(engine, "finra/catalog/rules")
+    grant(engine, KEY)
+    grant(engine, "finra/rule/7630")
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        return (f'<main><a href="{URL}">2210</a><a href="{notice}">Notice</a></main>'.encode(), "live")
+    monkeypatch.setattr(inv, "_fetch_discovery", fetch)
+    entries, first = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert fetched == [index] and KEY in entries
+    assert inv._source_key(notice) not in entries
+    with engine.begin() as conn:
+        cycle_id = conn.execute(sa.select(discovery.cycles.c.id)).scalar_one()
+        conn.execute(discovery.pages.insert(), [
+            discovery._page(cycle_id, notice, inv._source_key(notice), "notices", "document"),
+            discovery._page(cycle_id, leftover, "finra/rule/7630", "rules", "document"),
+        ])
+    entries, second = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert fetched == [index]
+    assert second["pending_pages"] == 0 and KEY in entries
+    with engine.connect() as conn:
+        rows = {row["url"]: row for row in conn.execute(sa.select(discovery.pages)).mappings()}
+    assert rows[notice]["status"] == "checked" and rows[notice]["result"]["out_of_scope"] is True
+    assert rows[leftover]["status"] == "checked" and rows[leftover]["result"]["terminal"] is True
+    assert rows[leftover]["attempts"] == 0
+
+
+def test_finra_audit_drops_leaked_notice_documents_from_the_rulebook_plan(engine, tmp_path, monkeypatch):
+    engine, store = engine, LocalStore(tmp_path / "originals")
+    notice = inv._discovered_entry("https://www.finra.org/rules-guidance/notices/00-10", "notices")
+    extra = inv._discovered_entry(URL.replace("2210", "9999"), "rules")
+    monkeypatch.setattr(inv, "_discover", lambda engine, store: ({notice["key"]: notice, extra["key"]: extra}, {
+        "complete": False, "checked_at": None, "categories": [], "pages": [], "findings": []}))
+    first = inv.run_inventory_audit(engine, store, job_id="leaked-notices", scope="finra", discover=True)
+    assert extra["key"] in {e["source_key"] for e in first["sources"]}
+    assert notice["key"] not in {e["source_key"] for e in first["sources"]}
+    assert extra["key"] in {e["key"] for e in inv.planned_entries(engine, scope="finra")}
+    assert notice["key"] not in {e["key"] for e in inv.planned_entries(engine, scope="finra")}
 
 
 def test_failed_discovery_keeps_previously_expected_documents(small_scope, monkeypatch):
