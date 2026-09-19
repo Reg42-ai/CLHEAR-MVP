@@ -65,6 +65,11 @@ def _insert_once(conn, table, values):
     conn.execute(insert(table).values(**values).on_conflict_do_nothing())
 
 
+def _throttled(exc) -> bool:
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status == 429 or (isinstance(status, int) and status >= 500) or "throttled" in str(exc).lower()
+
+
 def _page(cycle_id, url, source_key, category, role):
     return dict(id=_hash([cycle_id, url]), cycle_id=cycle_id, url=url, source_key=source_key,
                 category=category, role=role, status="pending", attempts=0, result={})
@@ -166,6 +171,12 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
                 state = "failed"
                 result = {**({"artifact": result["artifact"]} if result.get("artifact") else {}),
                           "entries": [], "links": [], "findings": [{"code": "discovery_failed", "detail": "Publisher discovery failed; the checkpoint remains retryable.", "error_type": type(exc).__name__}]}
+                if _throttled(exc) and page["attempts"] < 5:
+                    # A throttled or 5xx catalog page is not a discovery result. Keep
+                    # it pending so this cycle retries it after the other pages,
+                    # instead of planning imports from an incomplete inventory.
+                    state = "pending"
+                    result["findings"][-1].update(code="discovery_throttled", detail="Publisher throttled or failed transiently; the page stays pending in this cycle.")
         max_links = max(1, min(int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_DOCUMENTS", "10000")), 50000))
         if len(result["links"]) > max_links or len(result["entries"]) > max_links:
             result["links"] = result["links"][:max_links]

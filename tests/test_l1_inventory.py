@@ -284,6 +284,29 @@ def test_discovery_pagination_limits_and_attachment_gaps_are_preserved(engine, t
     assert "Test firms" not in str(result)
 
 
+def test_throttled_seed_page_stays_pending_instead_of_planning_from_a_gap(engine, tmp_path, monkeypatch):
+    """19 Sep: every rulebook seed 429'd, was marked failed, and the cycle planned
+    with no FINRA Rules. A throttled catalog page must remain pending in the cycle."""
+    import httpx
+    from app.clhear.l1 import discovery
+    index = "https://www.finra.org/rules-guidance/rulebooks/finra-rules"
+    monkeypatch.setattr(inv, "FINRA_CATEGORIES", (("rules", "Rules", index),))
+    monkeypatch.setenv("CLHEAR_L1_DISCOVERY_MAX_PAGES", "1")
+    grant(engine, "finra/catalog/rules")
+    def throttled(url):
+        response = httpx.Response(429, request=httpx.Request("GET", url))
+        raise httpx.HTTPStatusError("429", request=response.request, response=response)
+    monkeypatch.setattr(inv, "_fetch_discovery", throttled)
+    _, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert result["pending_pages"] == 1 and "discovery_throttled" in codes(result) and not result["complete"]
+    with engine.connect() as conn:
+        row = conn.execute(sa.select(discovery.pages.c.status, discovery.pages.c.attempts)).one()
+    assert (row.status, row.attempts) == ("pending", 1)
+    monkeypatch.setattr(inv, "_fetch_discovery", lambda url: (_ for _ in ()).throw(ValueError("not a catalog")))
+    _, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert result["pending_pages"] == 0 and "discovery_failed" in codes(result)  # a real failure still fails
+
+
 def test_failed_discovery_keeps_previously_expected_documents(small_scope, monkeypatch):
     engine, store = small_scope
     other = inv._discovered_entry(URL.replace("2210", "3110"), "rules")
