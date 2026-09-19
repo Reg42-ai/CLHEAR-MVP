@@ -304,12 +304,21 @@ def diff_clauses(old: dict[str, str], new: dict[str, str]) -> dict[str, list[str
     return {"added": added, "removed": removed, "amended": amended}
 
 
-def _projection_matches(conn: Connection, version_id: int, tree: list[DocNode], public_ok: bool) -> bool:
+def _projection_matches(conn: Connection, version_id: int, tree: list[DocNode], public_ok: bool,
+                        *, ignore_artifact_provenance: bool = False) -> bool:
     """Unchanged bytes do not prove that an older parser stored this tree.
 
     Strict adapters check both the document and its clause projection before
     accepting a hash hit, including repairs of already corrupted stored rows.
+    ``ignore_artifact_provenance`` compares a re-fetch whose bytes differ: every
+    text, fragment, offset and hash must still match; only the locator's
+    archived-artifact digests may differ.
     """
+    def locator(value):
+        value = dict(value or {})
+        if ignore_artifact_provenance:
+            value.pop("artifacts", None)
+        return value
     expected = [node for root in tree for node in root.walk()]
     rows = conn.execute(sa.select(doc_nodes).where(doc_nodes.c.source_version_id == version_id)
                         .order_by(doc_nodes.c.seq)).mappings().all()
@@ -332,7 +341,7 @@ def _projection_matches(conn: Connection, version_id: int, tree: list[DocNode], 
             return False
         if any(row[field] != getattr(node, field) for field in fields):
             return False
-        if (row.get("source_locator") or {}) != node.source_locator:
+        if locator(row.get("source_locator")) != locator(node.source_locator):
             return False
         if (seq_by_id.get(row["parent_id"]), row["depth"]) != parents[id(node)]:
             return False
@@ -646,6 +655,16 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
                 "source_version_id": previous.id if previous else None,
             })
             return {**outputs, "run_id": recorder.run_id}
+        from app.clhear.l1.adapters.finra_document import NavigationPage
+        if isinstance(exc, NavigationPage):
+            # Discovered container page: structure only, children hold the text.
+            outputs = recorder.finish("catalog-page", {
+                "source": meta.source_key, "freshness": "live" if l1_http.publisher_checked_at() else "not_checked",
+                "error_type": "NavigationPage", "note": str(exc)[:200],
+                "previous_version_preserved": previous is not None,
+                "source_version_id": previous.id if previous else None,
+            })
+            return {**outputs, "run_id": recorder.run_id}
         error = str(exc)[:500]
         log.exception("fetch crashed for %s", meta.source_key)
         if previous is not None:
@@ -742,6 +761,36 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
             return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"],
                     **({"authorized_artifact_check": recorder.artifact_check} if recorder.artifact_check else {})}
         recorder.stage("projection_repair", reason="stored projection differs from validated source parse")
+    elif (previous is not None and not force and not strict_violations and original_proof["verified"]
+          and len(result.artifacts) == 1):
+        # finra.org (and other dynamic publishers) never serve the same bytes
+        # twice, so the artifact-set hash alone would mint a new version and a
+        # zero-clause "amended" event on every daily check. When the validated
+        # parse of a single-document page reproduces the stored projection
+        # exactly, the text is unchanged; the byte difference is recorded, not
+        # versioned. Multi-part bundles keep versioning on any boundary shift so
+        # every preserved original stays addressable by its own version.
+        with engine.connect() as conn:
+            matching = _projection_matches(conn, previous.id, result.tree, public_ok, ignore_artifact_provenance=True)
+        if matching:
+            summary = {
+                "source": meta.source_key,
+                "version": previous.version_label,
+                "content_hash": previous.content_hash,
+                "source_version_id": previous.id,
+                "freshness": freshness,
+                "note": "Publisher bytes differ (dynamic page markup) but the parsed text and stored projection are unchanged.",
+                "artifact_bytes_changed": True,
+                "observed_content_hash": content_hash,
+                "content_hash_method": "artifact-set-v2",
+                "parser_identity": identity,
+                "canonical_text_hash": sha256(spans.canonical_text(result.tree).encode()),
+                "original_verification": original_proof,
+            }
+            recorder.stage("unchanged_text", artifact_bytes_changed=True, observed_content_hash=content_hash)
+            outputs = recorder.finish("unchanged", summary)
+            _record_completeness_artifact(engine, meta, summary, job_id)
+            return {**summary, "status": "unchanged", "run_id": recorder.run_id, "stages": outputs["stages"]}
 
     # ---- fidelity gate + escalation loop -----------------------------------
     threshold = settings.clhear_fidelity_threshold

@@ -357,12 +357,27 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None, control_p
         target.dispose()
 
 
-def publish_viewer_snapshot(engine, uri, region, *, job_id=None, s3_client=None):
+def _aware(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else None
+
+
+def publish_viewer_snapshot(engine, uri, region, *, job_id=None, s3_client=None, requested_at=None):
     """L0 publishes only after local compilation and integrity verification.
 
     A single atomic S3 PutObject replaces the private viewer object. A failed
     compilation/upload leaves the previous object intact. This never changes
     accepted-release pointers or the authoritative DATABASE_URL.
+
+    ``requested_at`` is the refresh request's event time. Every finished task
+    requests a refresh, and one compile of the 2 GB projection takes minutes,
+    so a burst of requests is answered by the first compile that *started*
+    after the request; the rest are coalesced instead of rebuilt.
     """
     parsed = urlparse(uri)
     if (parsed.scheme != "s3" or not parsed.netloc or parsed.username or parsed.password
@@ -374,10 +389,18 @@ def publish_viewer_snapshot(engine, uri, region, *, job_id=None, s3_client=None)
     # Compare-and-swap prevents a slower event from replacing a newer viewer.
     # Capture the ETag before compilation, not just before uploading.
     from botocore.exceptions import ClientError
+    started_at = datetime.now(timezone.utc)
     try:
         previous = s3_client.head_object(Bucket=parsed.netloc, Key=parsed.path.lstrip("/"))
         expected_etag = previous["ETag"]
         condition = {"IfMatch": expected_etag}
+        metadata = {str(k).lower(): v for k, v in (previous.get("Metadata") or {}).items()}
+        compiled_from, wanted = _aware(metadata.get("compiled-from")), _aware(requested_at)
+        if compiled_from and wanted and compiled_from > wanted:
+            return {"status": "coalesced", "coalesced": True, "kind": "candidate_viewer", "viewer_snapshot": True,
+                    "accepted_release": False, "snapshot_uri": uri, "revision": metadata.get("revision"),
+                    "sha256": metadata.get("sha256"), "requested_at": wanted.isoformat(),
+                    "compiled_from": compiled_from.isoformat()}
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") not in {"404", "NoSuchKey", "NotFound"}:
             raise
@@ -401,7 +424,8 @@ def publish_viewer_snapshot(engine, uri, region, *, job_id=None, s3_client=None)
             s3_client.put_object(Bucket=parsed.netloc, Key=parsed.path.lstrip("/"), Body=body,
                 ContentType="application/vnd.sqlite3", CacheControl="private, no-store", ServerSideEncryption="AES256",
                 Metadata={"revision": manifest["revision"], "sha256": digest, "kind": "candidate-viewer",
-                          "source-environment": manifest["source_environment"]}, **condition)
+                          "source-environment": manifest["source_environment"],
+                          "compiled-from": started_at.isoformat()}, **condition)
         return {**manifest, "snapshot_uri": uri, "sha256": digest, "byte_count": path.stat().st_size}
 
 

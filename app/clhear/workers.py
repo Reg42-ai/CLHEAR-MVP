@@ -211,7 +211,7 @@ def run_adapter_fleet(
                                                                       source=source_key, worker="l1", task_id=task_id,
                                                                       stage=workflow.current_stage())
                     workflow.finish_task(engine, task_id, token,
-                        status="completed" if success else "blocked" if status in {"rights-blocked", "source-blocked", "awaiting-artifact"} else "failed",
+                        status="completed" if success else "blocked" if status in {"rights-blocked", "source-blocked", "awaiting-artifact", "catalog-page"} else "failed",
                         summary=summary, error=None if success else (summary.get("failure") or summary.get("error", status)))
                     token = None
                     if not success:
@@ -655,7 +655,7 @@ def handle_viewer_snapshot(engine: Engine, gateway: Gateway, envelope: Envelope)
     if not uri:
         raise ValueError("CLHEAR_VIEWER_SNAPSHOT_S3_URI must identify the private reviewer object")
     return publish_viewer_snapshot(engine, uri, get_settings().aws_region,
-                                   job_id=(envelope.payload or {}).get("job_id"))
+                                   job_id=(envelope.payload or {}).get("job_id"), requested_at=envelope.ts)
 
 
 def handle_community_write(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
@@ -1160,6 +1160,7 @@ def cli(argv=None) -> int:
     parser.add_argument("--verification-id")
     parser.add_argument("--request-l1-cycle", action="store_true")
     parser.add_argument("--unchanged-repeat", action="store_true")
+    parser.add_argument("--scope", choices=("all_publishers", "registered", "finra"), default="all_publishers")
     parser.add_argument("--recover-queues", action="store_true")
     parser.add_argument("--poc-private-review", choices=("activate", "revoke"))
     parser.add_argument("--approve-inventory")
@@ -1216,7 +1217,7 @@ def cli(argv=None) -> int:
         from app.clhear.l1.cycles import request_cycle
         engine = get_engine()
         run_migrations(engine)
-        print(json.dumps(request_cycle(engine, args.verification_id, unchanged_repeat=args.unchanged_repeat)))
+        print(json.dumps(request_cycle(engine, args.verification_id, scope=args.scope, unchanged_repeat=args.unchanged_repeat)))
         return 0
     if args.verify_deployment:
         if not args.verification_id:

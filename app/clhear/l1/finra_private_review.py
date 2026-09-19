@@ -17,7 +17,7 @@ AUTHORIZATION_COMMAND = "finra-private-review-owner-authorization-2026-09-16"
 def manifest():
     from app.clhear.l1.source_registry import S, source_role
     seeds = [{"url": inventory._url(url), "source_key": f"finra/catalog/{key}", "category": key}
-             for key, _, url in inventory.FINRA_CATEGORIES]
+             for key, _, url in inventory.finra_seed_categories()]
     profile = {"scope_version": inventory.SCOPE_VERSION, "boundaries": inventory.FINRA_BOUNDARIES}
     registered = [{"source_key": e["key"], "canonical_url": inventory._url(e["canonical_url"]),
                    "source_role": source_role(e["key"])}

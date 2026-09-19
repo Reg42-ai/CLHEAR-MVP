@@ -29,9 +29,31 @@ def extract_pdf_pages(content: bytes) -> list[str]:
     return pages
 
 
+def _demote_contents(root: DocNode) -> None:
+    """The numbered lines seen so far were a table of contents, not the body.
+
+    Keep every line verbatim as an unnumbered paragraph of the title node so the
+    independent readback still accounts for the text, and free the markers for
+    the body. ``originals._pdf_structure_rows`` applies the same resolution.
+    """
+    lines: list[DocNode] = []
+
+    def flatten(node: DocNode) -> None:
+        line = " ".join(part for part in (node.label, node.raw_text) if part).strip()
+        if line:
+            lines.append(DocNode(node_type="paragraph", raw_text=line, source_locator=node.source_locator))
+        for child in node.children:
+            flatten(child)
+
+    for node in root.children:
+        flatten(node)
+    root.children = lines
+
+
 def pages_to_tree(pages: list[str], source_key: str, title: str) -> list[DocNode]:
     root = DocNode(node_type="title", ref=source_key, heading=title, source_locator={"structure": "pdf-root"})
-    current, sections, seen = root, [], set()
+    current, sections, seen, order = root, [], set(), []
+    contents_resolved = False
     for page_number, page in enumerate(pages, 1):
         for line_number, raw in enumerate(page.splitlines(), 1):
             text = raw.strip()
@@ -42,8 +64,18 @@ def pages_to_tree(pages: list[str], source_key: str, title: str) -> list[DocNode
             if match:
                 marker = match.group("ref")
                 if marker in seen:
-                    raise ValueError("PDF repeats a section/control marker; contents/header/body scope must be resolved")
+                    # Rule filings and standards open with a numbered contents
+                    # list, then the body restarts at the same first marker. That
+                    # exact shape is resolvable once; any other repeat is not.
+                    if not contents_resolved and order and marker == order[0] and all(
+                            child.node_type == "section" for child in root.children):
+                        _demote_contents(root)
+                        sections, seen, order, contents_resolved = [], set(), [], True
+                        current = root
+                    else:
+                        raise ValueError("PDF repeats a section/control marker; contents/header/body scope must be resolved")
                 seen.add(marker)
+                order.append(marker)
                 depth = marker.count(".")
                 while sections and sections[-1][0] >= depth:
                     sections.pop()

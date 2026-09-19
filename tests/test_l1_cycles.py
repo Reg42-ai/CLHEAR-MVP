@@ -114,6 +114,31 @@ def test_all_32_normal_lanes_fanout_once_and_final_review_after_children(engine,
     assert summary["cycles"][0]["manifest"]["manifest_hash"]
 
 
+def test_finra_scoped_cycle_runs_only_the_finra_lane(engine, monkeypatch):
+    """The rulebook cycle the deployment requests first: FINRA discovery, one
+    AdapterRunRequested for the finra lane, review-complete without touching the
+    other 31 lanes or waiting for the whole-publisher cycle."""
+    keys = cycles.adapter_keys()
+    calls, audits, _ = fake_cycle(monkeypatch, keys)
+    monkeypatch.setenv("CLHEAR_VIEWER_SNAPSHOT_S3_URI", "s3://fixture/private/candidate.db")
+    request = envelope("L1CycleRequested", {"scope": "finra", "cycle_id": "cycle-manual-l1-finra-9-1"})
+    result = dispatch(engine, monkeypatch, request, "l0")
+    assert result["cycle_id"] == "cycle-manual-l1-finra-9-1"
+    dispatch(engine, monkeypatch, queued(engine, "L1CycleDiscoveryRequested")[0], "l1")
+    dispatch(engine, monkeypatch, queued(engine, "L1CycleAdvanceRequested")[0], "l0")
+    assert dispatch(engine, monkeypatch, request, "l0") is None
+    children = queued(engine, "AdapterRunRequested")
+    assert [e.payload["adapter"] for e in children] == ["finra"]
+    assert cycles.cycle_summary(engine, result["cycle_id"])["cycles"][0]["manifest"]["adapter_keys"] == ["finra"]
+    for env in children:
+        dispatch(engine, monkeypatch, env, "l1")
+    assert calls == ["finra"]
+    final = finish(engine, monkeypatch)
+    assert final["status"] == "completed_for_review" and not final["accepted_release"]
+    with pytest.raises(ValueError, match="FINRA rulebooks"):
+        dispatch(engine, monkeypatch, envelope("L1CycleRequested", {"scope": "nasdaq", "cycle_id": "cycle-manual-x"}), "l0")
+
+
 def test_retry_preserves_completed_source_and_resumes_same_child(engine, monkeypatch):
     from app.clhear.l1 import fleet, pipeline
     fake_cycle(monkeypatch, ("alpha",))
@@ -255,6 +280,10 @@ def test_request_cli_only_emits_idempotent_l0_command(engine, monkeypatch, capsy
     assert workers.cli(["--request-l1-cycle", "--verification-id", "fixture"]) == 0
     assert workers.cli(["--request-l1-cycle", "--verification-id", "fixture"]) == 0
     assert len(queued(engine, "L1CycleRequested")) == 1
+    assert workers.cli(["--request-l1-cycle", "--scope", "finra", "--verification-id", "finra-fixture"]) == 0
+    assert queued(engine, "L1CycleRequested")[-1].payload["scope"] == "finra"
+    with pytest.raises(ValueError, match="another scope"):
+        cycles.request_cycle(engine, "finra-fixture", scope="all_publishers")
     assert not cycles.cycle_summary(engine)["cycles"]
 
 

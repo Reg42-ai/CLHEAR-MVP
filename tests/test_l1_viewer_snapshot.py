@@ -206,6 +206,34 @@ def test_worker_publication_uses_private_atomic_object_and_never_changes_databas
     assert store.value == last_good
 
 
+def test_refresh_requests_older_than_the_published_compile_are_coalesced(engine):
+    """52 queued refreshes must not mean 52 rebuilds of a 2 GB projection."""
+    class Store:
+        compiled = None
+        puts = 0
+        def head_object(self, **kwargs):
+            metadata = {"revision": "rev-1", "sha256": "ab" * 32}
+            if self.compiled:
+                metadata["compiled-from"] = self.compiled
+            return {"ETag": '"etag"', "Metadata": metadata}
+        def put_object(self, **kwargs):
+            self.puts += 1
+            kwargs["Body"].read()
+            self.compiled = kwargs["Metadata"]["compiled-from"]
+    store = Store()
+    uri = "s3://private/webui/latest.db"
+    early = "2026-09-18T20:00:00+00:00"
+    first = viewer.publish_viewer_snapshot(engine, uri, "us-east-1", s3_client=store, requested_at=early)
+    assert store.puts == 1 and first["sha256"] and store.compiled
+    again = viewer.publish_viewer_snapshot(engine, uri, "us-east-1", s3_client=store, requested_at=early)
+    assert again["status"] == "coalesced" and again["revision"] == "rev-1" and store.puts == 1
+    # A request newer than the last compile, or without a timestamp, still compiles.
+    later = datetime.now(timezone.utc).isoformat()
+    assert viewer.publish_viewer_snapshot(engine, uri, "us-east-1", s3_client=store, requested_at=later)["sha256"]
+    assert store.puts == 2
+    assert viewer.publish_viewer_snapshot(engine, uri, "us-east-1", s3_client=store)["sha256"] and store.puts == 3
+
+
 def test_review_and_audit_commands_request_l0_viewer_refresh(engine, monkeypatch):
     from app.clhear.workers import handle_envelope, WrongFleet
     monkeypatch.setenv("CLHEAR_VIEWER_SNAPSHOT_S3_URI", "s3://private/webui/clhear-latest.db")

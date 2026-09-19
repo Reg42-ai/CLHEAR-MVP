@@ -177,6 +177,7 @@ def test_finra_includes_nonrule_decisions_and_actual_year_form_values(engine, tm
     assert {'nac','oho','sanctions','faqs'} <= categories
     index = 'https://www.finra.org/rules-guidance/notices'
     monkeypatch.setattr(inventory, 'FINRA_CATEGORIES', (('notices','Notices',index),))
+    monkeypatch.setenv('CLHEAR_L1_FINRA_FULL_DISCOVERY', 'true')  # notices are outside the default rulebook seeds
     monkeypatch.setenv('CLHEAR_L1_DISCOVERY_MAX_PAGES', '1')
     grant(engine, 'finra/catalog/notices')
     monkeypatch.setattr(inventory, '_fetch_discovery', lambda url: (b'<main><form method="get"><select name="year"><option value="1995">1995</option><option value="2026">2026</option></select></form><nav><a rel="next" href="?page=1">Next</a></nav></main>', 'live'))

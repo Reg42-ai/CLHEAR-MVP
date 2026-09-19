@@ -34,7 +34,10 @@ FINRA_CATEGORIES = (
     ("manual", "Manual and governing documents", "https://www.finra.org/rules-guidance/rulebooks"),
     ("governing", "Corporate organization and governing documents", "https://www.finra.org/rules-guidance/rulebooks/corporate-organization"),
     ("rules", "Current FINRA rules", "https://www.finra.org/rules-guidance/rulebooks/finra-rules"),
-    ("nasd_archive", "Published NASD rule archive", "https://www.finra.org/rules-guidance/rulebooks/nasd-rules"),
+    ("cab_rules", "Capital Acquisition Broker rules", "https://www.finra.org/rules-guidance/rulebooks/capital-acquisition-broker-rules"),
+    ("funding_portal_rules", "Funding Portal rules", "https://www.finra.org/rules-guidance/rulebooks/funding-portal-rules"),
+    # finra.org retired /rulebooks/nasd-rules (404 on 19 Sep 2026); the archive
+    # now lives under /rulebooks/retired-rules and is deliberately not seeded.
     ("nyse_archive", "Published incorporated NYSE rule archive", "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules"),
     ("filings", "Rule filings and amendments", "https://www.finra.org/rules-guidance/rule-filings"),
     ("notices", "Regulatory notices", "https://www.finra.org/rules-guidance/notices"),
@@ -46,6 +49,18 @@ FINRA_CATEGORIES = (
     ("oho", "Office of Hearing Officers decisions", "https://www.finra.org/rules-guidance/adjudication-decisions/office-hearing-officers-oho/about"),
     ("sanctions", "Sanction guidelines", "https://www.finra.org/rules-guidance/oversight-enforcement/sanction-guidelines"),
 )
+# The rulebooks proper. Notices, filings, decisions and enforcement archives
+# run to thousands of pages and PDFs; a cycle that seeds them never finishes
+# between deploys. Discovery seeds the rulebooks unless the worker opts into
+# the full catalog with CLHEAR_L1_FINRA_FULL_DISCOVERY=true. L0 and L1 read the
+# same setting, so the operator-exception manifest and the crawl agree.
+FINRA_RULEBOOK_CATEGORIES = ("manual", "governing", "rules", "cab_rules", "funding_portal_rules", "nyse_archive")
+
+
+def finra_seed_categories():
+    if os.environ.get("CLHEAR_L1_FINRA_FULL_DISCOVERY", "").lower() == "true":
+        return FINRA_CATEGORIES
+    return tuple(row for row in FINRA_CATEGORIES if row[0] in FINRA_RULEBOOK_CATEGORIES)
 FINRA_BOUNDARIES = {
     "include": ["Manual", "governing documents", "current rules", "published rule archives",
                 "filings and amendments", "notices and interpretive guidance", "examination reports",
@@ -209,16 +224,26 @@ def _source_key(url):
     return "finra/document/" + _hash(url.encode())[:24]
 
 
+RULEBOOK_PATH = "/rules-guidance/rulebooks/"
+
+
 def _discovered_entry(url, category):
     key = _source_key(url)
     rule = key.startswith("finra/rule/")
+    path = urlparse(url).path
+    # Any page under /rulebooks/ (FINRA Rules, By-Laws, CAB, Funding Portal,
+    # incorporated NYSE) is rule text, not guidance, even when keyed by hash.
+    rulebook = rule or (path.startswith(RULEBOOK_PATH) and not path.lower().endswith(".pdf"))
+    slug = path.rsplit("/", 1)[-1]
     return {
-        "key": key, "family": "us-broker-dealer", "name": "FINRA Rule " + key.rsplit("/", 1)[-1] if rule else "FINRA publication " + urlparse(url).path.rsplit("/", 1)[-1],
-        "short_name": "FINRA " + key.rsplit("/", 1)[-1], "canonical_url": url,
-        "kind": "regulation" if rule else "guidance", "issuer": "FINRA", "publisher": "FINRA",
+        "key": key, "family": "us-broker-dealer",
+        "name": ("FINRA Rule " + key.rsplit("/", 1)[-1] if rule else
+                 "FINRA rulebook " + slug.replace("-", " ") if rulebook else "FINRA publication " + slug),
+        "short_name": "FINRA " + (key.rsplit("/", 1)[-1] if rule else slug.replace("-", " ")[:40]), "canonical_url": url,
+        "kind": "regulation" if rulebook else "guidance", "issuer": "FINRA", "publisher": "FINRA",
         "jurisdiction": "US", "license": "restricted", "rights_basis": "derived_only",
         "adapter": "finra", "source_role": "document", "publisher_ids": ["finra"], "relation": "supplements",
-        "tier": "binding" if rule else "informative", "topics": ["us", "finra"], "registry_ids": [],
+        "tier": "binding" if rulebook else "informative", "topics": ["us", "finra"], "registry_ids": [],
         "wave": 2, "fetch": {"url": url, "channel": "finra", "document_type": "rule" if rule else "attachment" if urlparse(url).path.lower().endswith(".pdf") else "publication"}, "discovered_category": category,
     }
 
@@ -256,7 +281,7 @@ def _discover(engine, store):
     from app.clhear.l1.workflow import execution_context
     context = execution_context()
     seeds = [{"url": _url(url), "source_key": f"finra/catalog/{key}", "category": key}
-             for key, _, url in FINRA_CATEGORIES]
+             for key, _, url in finra_seed_categories()]
     seed_paths = {urlparse(seed["url"]).path: seed for seed in seeds}
     def classify(raw, parent):
         target = _url(raw)

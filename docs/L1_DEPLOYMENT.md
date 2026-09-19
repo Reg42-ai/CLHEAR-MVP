@@ -499,7 +499,16 @@ verification progress and "ready for private review" with the viewer link,
 deployed revision and snapshot timestamp. Corpus acceptance is never implied.
 
 After a verified deployment restores capacity and L0/L1 are running on the
-deployed definition, the controller asks L0 for the full diagnostic cycle
+deployed definition, the controller first asks L0 for the FINRA rulebook
+cycle (`--request-l1-cycle --scope finra`, verification `l1-finra-RUN-ATTEMPT`):
+FINRA discovery seeded from the rulebooks only (`FINRA_RULEBOOK_CATEGORIES`:
+manual, By-Laws, the 652 FINRA Rules, CAB, Funding Portal, incorporated NYSE;
+`CLHEAR_L1_FINRA_FULL_DISCOVERY=true` restores notices, filings and decisions),
+operator-exception frontier binding, then the `finra` lane alone. finra.org
+serves the identifying user agent but throttles bursts, so live requests to it
+are paced (`HOST_PACING_S`) and `Retry-After` is honoured; a browser user agent
+is refused (403) and is never sent. Then the controller asks for the full
+diagnostic cycle
 (45 publishers, 32 lanes, `--request-l1-cycle --unchanged-repeat`). The
 unchanged-source repeat is requested once, from the first cycle's terminal
 result, and its evaluation compares every bound source version with the first

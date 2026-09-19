@@ -743,10 +743,13 @@ class Deployer:
         stay visible and block corpus acceptance. This never changes the deployment
         outcome: a request that cannot be made is recorded, not rolled back."""
         verification_id = "l1-cycle-" + self.inputs.deployment_id.removeprefix("l1-")
+        finra_id = "l1-finra-" + self.inputs.deployment_id.removeprefix("l1-")
         receipt = {"verification_id": verification_id, "cycle_id": "cycle-manual-" + verification_id,
                    "repeat_cycle_id": "cycle-manual-" + verification_id + "-repeat",
                    "scope": "all_publishers", "publishers": self.FULL_CYCLE_PUBLISHERS, "lanes": self.FULL_CYCLE_LANES,
-                   "unchanged_repeat": True, "corpus_acceptance": "pending", "status": "not_requested"}
+                   "unchanged_repeat": True, "corpus_acceptance": "pending", "status": "not_requested",
+                   "finra_rulebooks": {"verification_id": finra_id, "cycle_id": "cycle-manual-" + finra_id,
+                                       "scope": "finra", "status": "not_requested"}}
         try:
             for _ in range(self.TRANSPORT_HEALTH_ATTEMPTS):
                 if self._transport_healthy():
@@ -756,6 +759,12 @@ class Deployer:
             else:
                 receipt.update(reason="L0/L1 workers did not reach running state on the deployed definition")
                 return receipt
+            # The FINRA rulebooks first: one lane, ~900 pages, finishes within the
+            # hour. The whole-publisher cycle and its unchanged repeat queue behind
+            # it on the single cycle slot.
+            code = self._worker("l0", "finra_rulebook_cycle_request",
+                                ["--request-l1-cycle", "--scope", "finra", "--verification-id", finra_id])
+            receipt["finra_rulebooks"].update(status="cycle_requested", exit_code=code)
             code = self._worker("l0", "full_cycle_request",
                                 ["--request-l1-cycle", "--unchanged-repeat", "--verification-id", verification_id])
             receipt.update(status="cycle_requested", exit_code=code)

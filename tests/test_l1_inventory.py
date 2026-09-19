@@ -225,7 +225,10 @@ def test_discovery_requires_each_exact_permission_before_fetch(engine, tmp_path,
     monkeypatch.setattr(inv, "_fetch_discovery", lambda url: pytest.fail("unauthorized discovery network fetch"))
     entries, result = inv._discover(engine, store)
     assert entries == {} and not result["complete"]
-    assert len([f for f in result["findings"] if f["code"] == "discovery_permission_blocked"]) == len(inv.FINRA_CATEGORIES)
+    assert len([f for f in result["findings"] if f["code"] == "discovery_permission_blocked"]) == len(inv.finra_seed_categories())
+    assert {key for key, _, _ in inv.finra_seed_categories()} == set(inv.FINRA_RULEBOOK_CATEGORIES)
+    monkeypatch.setenv("CLHEAR_L1_FINRA_FULL_DISCOVERY", "true")
+    assert inv.finra_seed_categories() == inv.FINRA_CATEGORIES
     assert any(f["code"] == "finra_enforcement_search_contract_required" for f in result["findings"])
 
 
