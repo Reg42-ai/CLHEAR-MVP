@@ -655,7 +655,7 @@ def handle_viewer_snapshot(engine: Engine, gateway: Gateway, envelope: Envelope)
     if not uri:
         raise ValueError("CLHEAR_VIEWER_SNAPSHOT_S3_URI must identify the private reviewer object")
     return publish_viewer_snapshot(engine, uri, get_settings().aws_region,
-                                   job_id=(envelope.payload or {}).get("job_id"))
+                                   job_id=(envelope.payload or {}).get("job_id"), requested_at=envelope.ts)
 
 
 def handle_community_write(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:

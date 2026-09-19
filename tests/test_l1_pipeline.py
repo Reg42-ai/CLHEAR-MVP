@@ -21,10 +21,11 @@ class _StubAdapter:
 
     key = "stub"
 
-    def __init__(self, version: str, tree: list[DocNode], license: str = "open"):
+    def __init__(self, version: str, tree: list[DocNode], license: str = "open", nonce: str = ""):
         self.version = version
         self.tree = tree
         self.license = license
+        self.nonce = nonce  # byte-level noise a dynamic publisher adds per response
 
     def meta(self) -> SourceMeta:
         return SourceMeta(
@@ -45,6 +46,8 @@ class _StubAdapter:
         if since_version == self.version:
             return None
         root = ET.Element("Legislation")
+        if self.nonce:
+            ET.SubElement(root, "Metadata", nonce=self.nonce)  # outside the document body, like page chrome
         body = ET.SubElement(ET.SubElement(root, "Secondary"), "Body")
         for node in self.tree:
             provision = ET.SubElement(body, "P1", id=node.ref)
@@ -81,6 +84,15 @@ def test_pipeline_diff_and_events(engine, tmp_path):
 
     # Re-ingest of the same artifact is a probed hash match (not a label skip).
     assert pipeline.ingest(engine, v1, store)["status"] == "unchanged"
+
+    # Dynamic publishers (finra.org) change bytes on every response. Identical
+    # parsed text must not mint a version or a zero-clause "amended" event.
+    noisy = pipeline.ingest(engine, _StubAdapter("v1-noisy", v1.tree, nonce="request-7f3a"), store)
+    assert noisy["status"] == "unchanged" and noisy["artifact_bytes_changed"] is True
+    assert noisy["version"] == "v1" and noisy["observed_content_hash"] != s1["content_hash"]
+    with engine.connect() as conn:
+        assert conn.execute(sa.select(sa.func.count()).select_from(source_versions)).scalar_one() == 1
+        assert conn.execute(sa.select(sa.func.count()).select_from(change_events)).scalar_one() == 1
 
     # v2: r2 amended, r3 removed, r4 added.
     v2 = _StubAdapter("v2", _tree(("r1", "alpha"), ("r2", "bravo AMENDED"), ("r4", "delta")))
