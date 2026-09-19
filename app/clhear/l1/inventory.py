@@ -49,6 +49,18 @@ FINRA_CATEGORIES = (
     ("oho", "Office of Hearing Officers decisions", "https://www.finra.org/rules-guidance/adjudication-decisions/office-hearing-officers-oho/about"),
     ("sanctions", "Sanction guidelines", "https://www.finra.org/rules-guidance/oversight-enforcement/sanction-guidelines"),
 )
+# The rulebooks proper. Notices, filings, decisions and enforcement archives
+# run to thousands of pages and PDFs; a cycle that seeds them never finishes
+# between deploys. Discovery seeds the rulebooks unless the worker opts into
+# the full catalog with CLHEAR_L1_FINRA_FULL_DISCOVERY=true. L0 and L1 read the
+# same setting, so the operator-exception manifest and the crawl agree.
+FINRA_RULEBOOK_CATEGORIES = ("manual", "governing", "rules", "cab_rules", "funding_portal_rules", "nyse_archive")
+
+
+def finra_seed_categories():
+    if os.environ.get("CLHEAR_L1_FINRA_FULL_DISCOVERY", "").lower() == "true":
+        return FINRA_CATEGORIES
+    return tuple(row for row in FINRA_CATEGORIES if row[0] in FINRA_RULEBOOK_CATEGORIES)
 FINRA_BOUNDARIES = {
     "include": ["Manual", "governing documents", "current rules", "published rule archives",
                 "filings and amendments", "notices and interpretive guidance", "examination reports",
@@ -269,7 +281,7 @@ def _discover(engine, store):
     from app.clhear.l1.workflow import execution_context
     context = execution_context()
     seeds = [{"url": _url(url), "source_key": f"finra/catalog/{key}", "category": key}
-             for key, _, url in FINRA_CATEGORIES]
+             for key, _, url in finra_seed_categories()]
     seed_paths = {urlparse(seed["url"]).path: seed for seed in seeds}
     def classify(raw, parent):
         target = _url(raw)
