@@ -344,17 +344,23 @@ def _emit(conn, kind, cycle_id, payload=None):
 REPEAT_SUFFIX = "-repeat"
 
 
+CYCLE_SCOPES = frozenset({"registered", "all_publishers", "finra"})
+
+
 def request_cycle(engine, verification_id, *, scope="all_publishers", unchanged_repeat=False):
     """L0 CLI receipt only. No discovery, imports or acceptance in the caller.
 
     ``unchanged_repeat`` chains a second full cycle after this one finishes: the
     same scope again, expected to change nothing. Its evaluation compares every
     source version with the first cycle's and reports ``unchanged_repeat``.
+    ``scope="finra"`` discovers and imports the FINRA rulebooks only.
     """
     if os.environ.get("CLHEAR_FLEET", "").lower() != "l0":
         raise ValueError("Only the L0 worker may request an L1 cycle")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,100}", verification_id or ""):
         raise ValueError("A safe, unique verification ID is required")
+    if scope not in CYCLE_SCOPES:
+        raise ValueError("scope must be all_publishers, registered or finra")
     cycle_id = "cycle-manual-" + verification_id
     payload = {"cycle_id": cycle_id, "scope": scope}
     if unchanged_repeat:
@@ -385,8 +391,8 @@ def start(engine, envelope):
     if envelope.producer == "eventbridge":
         raise ValueError("Per-adapter scheduler deliveries must retain their individual occurrence identities")
     scope = envelope.payload.get("scope", "all_publishers")
-    if scope not in {"registered", "all_publishers"}:
-        raise ValueError("L1 cycles cover the complete declared publisher scope")
+    if scope not in CYCLE_SCOPES:
+        raise ValueError("L1 cycles cover the complete declared publisher scope or the FINRA rulebooks")
     cycle_id = envelope.payload.get("cycle_id") or "cycle-manual-" + digest(envelope.event_id)[:24]
     if not re.fullmatch(r"cycle-manual-[A-Za-z0-9._-]{1,110}", cycle_id):
         raise ValueError("Invalid manual cycle ID")
@@ -415,7 +421,10 @@ def plan_sources(engine, scope, audit_id=None):
     from app.clhear.l1.poc_review import enabled as completeness_enabled
     include_collections = completeness_enabled()
     plans = {}
-    for key in adapter_keys():
+    # A FINRA cycle runs the FINRA lane only: registered rules plus every
+    # rulebook page the frozen discovery enumerated. Other lanes keep their
+    # own scheduled occurrences and the full cycle.
+    for key in (["finra"] if scope == "finra" else adapter_keys()):
         source_keys = {adapter.meta().source_key for _, adapter in fleet_plan(key)}
         if not include_collections:
             source_keys.discard("finra/rulebook")

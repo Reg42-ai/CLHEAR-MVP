@@ -1160,6 +1160,7 @@ def cli(argv=None) -> int:
     parser.add_argument("--verification-id")
     parser.add_argument("--request-l1-cycle", action="store_true")
     parser.add_argument("--unchanged-repeat", action="store_true")
+    parser.add_argument("--scope", choices=("all_publishers", "registered", "finra"), default="all_publishers")
     parser.add_argument("--recover-queues", action="store_true")
     parser.add_argument("--poc-private-review", choices=("activate", "revoke"))
     parser.add_argument("--approve-inventory")
@@ -1216,7 +1217,7 @@ def cli(argv=None) -> int:
         from app.clhear.l1.cycles import request_cycle
         engine = get_engine()
         run_migrations(engine)
-        print(json.dumps(request_cycle(engine, args.verification_id, unchanged_repeat=args.unchanged_repeat)))
+        print(json.dumps(request_cycle(engine, args.verification_id, scope=args.scope, unchanged_repeat=args.unchanged_repeat)))
         return 0
     if args.verify_deployment:
         if not args.verification_id:

@@ -430,8 +430,11 @@ def test_split_worker_entrypoint_is_canonicalized_before_phase_command_overrides
             "python", "-m", "app.clhear.workers", "--verify-deployment", action,
             "--verification-id", inputs().deployment_id,
         ]
-    # after capacity is restored the deployment asks deployed L0 for the full cycle + unchanged repeat
-    [request] = cycle_request
+    # after capacity is restored the deployment asks deployed L0 for the FINRA
+    # rulebook cycle, then the full cycle + unchanged repeat
+    finra, request = cycle_request
+    assert finra["overrides"]["containerOverrides"][0]["command"] == [
+        "--request-l1-cycle", "--scope", "finra", "--verification-id", "l1-finra-" + inputs().deployment_id.removeprefix("l1-")]
     assert request["overrides"]["containerOverrides"][0]["command"] == [
         "--request-l1-cycle", "--unchanged-repeat", "--verification-id", "l1-cycle-" + inputs().deployment_id.removeprefix("l1-")]
     assert all(cloud.definitions[arn] == definition for arn, definition in original.items())
@@ -506,7 +509,9 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
     operations = [op for _, op, _ in cloud.calls]
     launches = [(index, args) for index, (_, op, args) in enumerate(cloud.calls) if op == "run_task"]
     assert [args["overrides"]["containerOverrides"][0]["command"][1] for _, args in launches][:3] == ["bootstrap", "verify", "publish"]
-    assert launches[3][1]["overrides"]["containerOverrides"][0]["command"][0] == "--request-l1-cycle"
+    assert launches[3][1]["overrides"]["containerOverrides"][0]["command"][:3] == ["--request-l1-cycle", "--scope", "finra"]
+    assert launches[4][1]["overrides"]["containerOverrides"][0]["command"][0] == "--request-l1-cycle"
+    assert result["full_cycle_request"]["finra_rulebooks"]["status"] == "cycle_requested"
     assert result["full_cycle_request"]["status"] == "cycle_requested" and result["full_cycle_request"]["unchanged_repeat"] is True
     assert result["full_cycle_request"]["publishers"] == 45 and result["full_cycle_request"]["lanes"] == 32
     assert result["full_cycle_request"]["corpus_acceptance"] == "pending" and result["full_cycle_request"]["transport_health"] == "established"

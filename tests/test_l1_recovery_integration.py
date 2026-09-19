@@ -95,7 +95,7 @@ def test_recovery_restores_original_capacity_after_worker_phases_and_keeps_obser
     launches = [args for _, operation, args in cloud.calls if operation == "run_task"]
     phases = [args for args in launches if args["overrides"]["containerOverrides"][0]["command"][0] == "--verify-deployment"]
     assert [args["overrides"]["containerOverrides"][0]["command"][1] for args in phases] == ["bootstrap", "verify", "publish"]
-    assert [args["overrides"]["containerOverrides"][0]["command"][0] for args in launches[len(phases):]] == ["--request-l1-cycle"]
+    assert [args["overrides"]["containerOverrides"][0]["command"][0] for args in launches[len(phases):]] == ["--request-l1-cycle", "--request-l1-cycle"]
     for fleet in FLEETS:
         expected = plan["fleets"][fleet]
         assert cloud.services[fleet]["desiredCount"] == (max(1, expected["desired_count"]) if fleet in {"l0", "l1"} else expected["desired_count"])
