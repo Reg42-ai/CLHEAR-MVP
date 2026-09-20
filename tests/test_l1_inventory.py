@@ -356,6 +356,39 @@ def test_rulebook_discovery_ignores_notice_links_and_settles_leftover_frontier(e
     assert rows[leftover]["attempts"] == 0
 
 
+def test_source_key_keeps_lettered_and_drupal_alias_finra_rules():
+    """20 Sep live index: 664 finra-rules child paths, but only 606 matched
+    \\d{4,5}[A-Z]?. Lettered TRF/ADF series and 12407-0 aliases were hashed."""
+    assert inv._source_key(URL) == KEY
+    assert inv._source_key("https://www.finra.org/rules-guidance/rulebooks/finra-rules/6300a") == "finra/rule/6300A"
+    assert inv._source_key("https://www.finra.org/rules-guidance/rulebooks/finra-rules/6340B") == "finra/rule/6340B"
+    assert inv._source_key("https://www.finra.org/rules-guidance/rulebooks/finra-rules/12407-0") == "finra/rule/12407"
+    assert inv._source_key("https://www.finra.org/rules-guidance/rulebooks/finra-rules/part-iv").startswith("finra/document/")
+    nyse = inv._discovered_entry(
+        "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409", "nyse_archive")
+    assert nyse["key"].startswith("finra/document/") and inv.rulebook_import(nyse)
+
+
+def test_rulebook_index_enumerates_lettered_rules_without_fetching_them(engine, tmp_path, monkeypatch):
+    index = "https://www.finra.org/rules-guidance/rulebooks/finra-rules"
+    lettered = index + "/6300a"
+    alias = index + "/12407-0"
+    monkeypatch.setattr(inv, "FINRA_CATEGORIES", (("rules", "Rules", index),))
+    grant(engine, "finra/catalog/rules")
+    grant(engine, "finra/rule/6300A")
+    grant(engine, "finra/rule/12407")
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        return (f'<main><a href="{lettered}">6300A</a><a href="{alias}">12407</a></main>'.encode(), "live")
+    monkeypatch.setattr(inv, "_fetch_discovery", fetch)
+    entries, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert fetched == [index]
+    assert "finra/rule/6300A" in entries and "finra/rule/12407" in entries
+    assert lettered not in fetched and alias not in fetched
+    assert result["pending_pages"] == 0
+
+
 def test_finra_audit_drops_leaked_notice_documents_from_the_rulebook_plan(engine, tmp_path, monkeypatch):
     engine, store = engine, LocalStore(tmp_path / "originals")
     notice = inv._discovered_entry("https://www.finra.org/rules-guidance/notices/00-10", "notices")

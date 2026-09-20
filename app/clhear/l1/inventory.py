@@ -293,10 +293,18 @@ def _in_scope_url(value, *, attachment=False):
                                 or (parsed.hostname == "files.finra.org" and parsed.path.lower().endswith(".pdf")))))
 
 
+# Live finra-rules slugs include 6300a / 6340b (lettered TRF/ADF series) and
+# Drupal aliases like 12407-0. The 4-5 digit uppercase-only pattern dropped
+# those ~60 leaves from finra/rule/*, so a rulebook cycle planned 606 instead
+# of the ~652 listed on the official index.
+_FINRA_RULE_SLUG = re.compile(r"/rules-guidance/rulebooks/finra-rules/(\d{4,5})([A-Za-z])?(?:-\d+)?$")
+
+
 def _source_key(url):
-    match = re.fullmatch(r"/rules-guidance/rulebooks/finra-rules/(\d{4,5}[A-Z]?)", urlparse(url).path)
+    match = _FINRA_RULE_SLUG.fullmatch(urlparse(url).path)
     if match:
-        return f"finra/rule/{match.group(1)}"
+        number, letter = match.group(1), match.group(2)
+        return "finra/rule/" + number + (letter.upper() if letter else "")
     return "finra/document/" + _hash(url.encode())[:24]
 
 
