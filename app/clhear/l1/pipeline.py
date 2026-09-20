@@ -665,6 +665,20 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
                 "source_version_id": previous.id if previous else None,
             })
             return {**outputs, "run_id": recorder.run_id}
+        from app.clhear.l1.inventory import official_nyse_leaf
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        leaf_url = getattr(adapter, "_url", None) or getattr(meta, "canonical_url", "")
+        if status == 404 and official_nyse_leaf(leaf_url):
+            # Series titles name a range; not every integer in 45–299C is a
+            # published article. A 404 is publisher-absent residue, not a
+            # parser crash that should retry the lane.
+            outputs = recorder.finish("not-published", {
+                "source": meta.source_key, "freshness": "live" if l1_http.publisher_checked_at() else "not_checked",
+                "error_type": "HTTP404", "note": "Official incorporated NYSE rule path is not published",
+                "previous_version_preserved": previous is not None,
+                "source_version_id": previous.id if previous else None,
+            })
+            return {**outputs, "run_id": recorder.run_id}
         error = str(exc)[:500]
         log.exception("fetch crashed for %s", meta.source_key)
         if previous is not None:

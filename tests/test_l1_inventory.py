@@ -366,7 +366,11 @@ def test_source_key_keeps_lettered_and_drupal_alias_finra_rules():
     assert inv._source_key("https://www.finra.org/rules-guidance/rulebooks/finra-rules/part-iv").startswith("finra/document/")
     nyse = inv._discovered_entry(
         "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409", "nyse_archive")
-    assert nyse["key"].startswith("finra/document/") and inv.rulebook_import(nyse)
+    assert nyse["key"] == "finra/nyse/409" and inv.rulebook_import(nyse)
+    assert inv._source_key(
+        "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-299c") == "finra/nyse/299C"
+    assert inv.official_nyse_leaf(
+        "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-1")
 
 
 def test_rulebook_index_enumerates_lettered_rules_without_fetching_them(engine, tmp_path, monkeypatch):
@@ -387,6 +391,63 @@ def test_rulebook_index_enumerates_lettered_rules_without_fetching_them(engine, 
     assert "finra/rule/6300A" in entries and "finra/rule/12407" in entries
     assert lettered not in fetched and alias not in fetched
     assert result["pending_pages"] == 0
+
+
+def test_official_nyse_titles_name_published_rule_paths():
+    from app.clhear.l1.finra_catalog import official_nyse_leaf_urls, official_nyse_rule_numbers
+    from bs4 import BeautifulSoup
+    numbers = official_nyse_rule_numbers("Dealings and Settlements (Rules 45–299C)")
+    assert numbers[0] == "45" and "299" in numbers and "299C" in numbers
+    assert len(numbers) == 256  # 45..299 plus 299C
+    assert official_nyse_rule_numbers("Rules 1–10000") == []  # unbounded range is not enumerated
+    soup = BeautifulSoup(
+        "<main><h1>Incorporated NYSE Rules</h1>"
+        "<a href='/rules-guidance/rulebooks/incorporated-nyse-rules-1'>Definitions (Rules 1–2)</a>"
+        "<a href='/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409'>Rule 409. Statements</a>"
+        "</main>", "html.parser")
+    urls = official_nyse_leaf_urls(soup)
+    assert "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-1" in urls
+    assert "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-2" in urls
+    assert "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409" in urls
+
+
+def test_nyse_index_enumerates_official_rule_paths_without_fetching_them(engine, tmp_path, monkeypatch):
+    index = "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules"
+    monkeypatch.setattr(inv, "FINRA_CATEGORIES", (("nyse_archive", "NYSE", index),))
+    grant(engine, "finra/catalog/nyse_archive")
+    grant(engine, "finra/nyse/1")
+    grant(engine, "finra/nyse/2")
+    grant(engine, "finra/nyse/409")
+    fetched = []
+    html = (
+        "<main><h1>Incorporated NYSE Rules</h1>"
+        "<a href='/rules-guidance/rulebooks/incorporated-nyse-rules-1'>Definitions (Rules 1–2)</a>"
+        "<a href='/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409'>Rule 409. Statements</a>"
+        "</main>"
+    ).encode()
+    def fetch(url):
+        fetched.append(url)
+        return (html, "live")
+    monkeypatch.setattr(inv, "_fetch_discovery", fetch)
+    entries, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert {"finra/nyse/1", "finra/nyse/2", "finra/nyse/409"} <= set(entries)
+    assert all("/rule-" not in url for url in fetched)
+    assert result["pending_pages"] == 0
+
+
+def test_unpublished_official_nyse_leaf_is_listed_residue(engine, tmp_path, monkeypatch):
+    import httpx
+    from app.clhear.l1.adapters.finra_document import FinraDocumentAdapter
+    url = "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-46"
+    grant(engine, "finra/nyse/46")
+    adapter = FinraDocumentAdapter("finra/nyse/46", "Incorporated NYSE Rule 46", url)
+    def boom(_since=None):
+        request = httpx.Request("GET", url)
+        raise httpx.HTTPStatusError("404", request=request, response=httpx.Response(404, request=request))
+    monkeypatch.setattr(adapter, "fetch", boom)
+    from app.clhear.l1.pipeline import ingest
+    summary = ingest(engine, adapter, LocalStore(tmp_path / "originals"), index_embeddings=False)
+    assert summary["status"] == "not-published"
 
 
 def test_finra_audit_drops_leaked_notice_documents_from_the_rulebook_plan(engine, tmp_path, monkeypatch):

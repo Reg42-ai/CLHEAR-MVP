@@ -33,7 +33,7 @@ log = logging.getLogger("clhear.l1.inventory")
 # Successive waits after a 429 on one catalog page: 150 s in total, well inside
 # discovery.PAGE_LEASE (6 min) including the fetches themselves.
 THROTTLE_WAITS_S = (30.0, 60.0, 60.0)
-SCOPE_VERSION = "2026-09-16.2"
+SCOPE_VERSION = "2026-09-20.1"
 SCOPES = frozenset({"registered", "finra", "all_publishers"})
 FINRA_CATEGORIES = (
     ("manual", "Manual and governing documents", "https://www.finra.org/rules-guidance/rulebooks"),
@@ -88,7 +88,7 @@ def rulebook_url(url):
 
 def rulebook_document(entry):
     key = entry.get("key") or entry.get("source_key") or ""
-    if key.startswith("finra/rule/"):
+    if key.startswith(("finra/rule/", "finra/nyse/")):
         return True
     url = entry.get("canonical_url") or (entry.get("fetch") or {}).get("url") or entry.get("url") or ""
     return rulebook_url(url)
@@ -113,7 +113,7 @@ def terminal_rulebook_leaf(page):
     if page.get("role") == "collection":
         return False
     key = page.get("source_key") or ""
-    if key.startswith("finra/rule/"):
+    if key.startswith(("finra/rule/", "finra/nyse/")):
         return True
     return rulebook_url(page.get("url") or "") and page.get("role") == "document"
 
@@ -298,14 +298,26 @@ def _in_scope_url(value, *, attachment=False):
 # those ~60 leaves from finra/rule/*, so a rulebook cycle planned 606 instead
 # of the ~652 listed on the official index.
 _FINRA_RULE_SLUG = re.compile(r"/rules-guidance/rulebooks/finra-rules/(\d{4,5})([A-Za-z])?(?:-\d+)?$")
+_FINRA_NYSE_SLUG = re.compile(r"/rules-guidance/rulebooks/incorporated-nyse-rules/rule-(\d+)([A-Za-z])?$")
+_FINRA_NYSE_SERIES = re.compile(r"/rules-guidance/rulebooks/incorporated-nyse-rules-\d+$")
 
 
 def _source_key(url):
-    match = _FINRA_RULE_SLUG.fullmatch(urlparse(url).path)
+    path = urlparse(url).path
+    match = _FINRA_RULE_SLUG.fullmatch(path)
     if match:
         number, letter = match.group(1), match.group(2)
         return "finra/rule/" + number + (letter.upper() if letter else "")
+    nyse = _FINRA_NYSE_SLUG.fullmatch(path)
+    if nyse:
+        number, letter = nyse.group(1), nyse.group(2)
+        return "finra/nyse/" + number + (letter.upper() if letter else "")
     return "finra/document/" + _hash(url.encode())[:24]
+
+
+def official_nyse_leaf(url):
+    """An official incorporated NYSE rule article, not a series heading."""
+    return bool(_FINRA_NYSE_SLUG.fullmatch(urlparse(url or "").path))
 
 
 RULEBOOK_PATH = "/rules-guidance/rulebooks/"
@@ -314,16 +326,18 @@ RULEBOOK_PATH = "/rules-guidance/rulebooks/"
 def _discovered_entry(url, category):
     key = _source_key(url)
     rule = key.startswith("finra/rule/")
+    nyse = key.startswith("finra/nyse/")
     path = urlparse(url).path
     # Any page under /rulebooks/ (FINRA Rules, By-Laws, CAB, Funding Portal,
     # incorporated NYSE) is rule text, not guidance, even when keyed by hash.
-    rulebook = rule or (path.startswith(RULEBOOK_PATH) and not path.lower().endswith(".pdf"))
+    rulebook = rule or nyse or (path.startswith(RULEBOOK_PATH) and not path.lower().endswith(".pdf"))
     slug = path.rsplit("/", 1)[-1]
     return {
         "key": key, "family": "us-broker-dealer",
         "name": ("FINRA Rule " + key.rsplit("/", 1)[-1] if rule else
+                 "Incorporated NYSE Rule " + key.rsplit("/", 1)[-1] if nyse else
                  "FINRA rulebook " + slug.replace("-", " ") if rulebook else "FINRA publication " + slug),
-        "short_name": "FINRA " + (key.rsplit("/", 1)[-1] if rule else slug.replace("-", " ")[:40]), "canonical_url": url,
+        "short_name": "FINRA " + (key.rsplit("/", 1)[-1] if rule or nyse else slug.replace("-", " ")[:40]), "canonical_url": url,
         "kind": "regulation" if rulebook else "guidance", "issuer": "FINRA", "publisher": "FINRA",
         "jurisdiction": "US", "license": "restricted", "rights_basis": "derived_only",
         "adapter": "finra", "source_role": "document", "publisher_ids": ["finra"], "relation": "supplements",
@@ -390,6 +404,13 @@ def _discover(engine, store):
             # A catalog's reviewed permission covers that same catalog's
             # numeric page/year variants, never its constituent documents.
             return {"url": target, "source_key": seed["source_key"], "category": seed["category"], "role": "collection"}
+        if _FINRA_NYSE_SERIES.fullmatch(parsed.path):
+            # Drupal series headings (Rules 1–19, 45–299C, …) are book
+            # containers. The index HTML omits at least series-5; fetching
+            # the official series path yields the range title used to
+            # enumerate /rule-N leaves.
+            return {"url": target, "source_key": "finra/catalog/nyse_archive",
+                    "category": "nyse_archive", "role": "collection"}
         if parsed.query:
             if urlparse(parent["url"]).path != parsed.path or parent["role"] != "collection":
                 return None

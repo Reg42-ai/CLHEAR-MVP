@@ -1,8 +1,63 @@
 """FINRA publication and exposed archive metadata decoder, called by workers."""
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from app.clhear.l1.publisher_catalogs import form_continuations, language_metadata
+
+# The incorporated NYSE index HTML only links series headings plus 409/435.
+# Individual articles exist at /incorporated-nyse-rules/rule-N (verified
+# 20 Sep 2026: rule-1 "The Exchange", rule-312, rule-409). Series titles
+# on the official pages name the published ranges.
+_NYSE_RANGE = re.compile(r"Rules?\s+(\d+)([A-Za-z])?\s*[–—-]\s*(\d+)([A-Za-z])?", re.I)
+_NYSE_SINGLE = re.compile(r"\bRule\s+(\d+)([A-Za-z])?\b", re.I)
+_NYSE_INDEX_PATH = "/rules-guidance/rulebooks/incorporated-nyse-rules"
+MAX_NYSE_OFFICIAL_LEAVES = 400
+# Official series page omitted from the collapsed book nav; its h1 is
+# "Operation of Member Organizations (Rules 325–465)".
+NYSE_EXTRA_SERIES = (
+    "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules-5",
+)
+
+
+def official_nyse_rule_numbers(text):
+    """Rule numbers named on an official incorporated NYSE page."""
+    numbers, seen = [], set()
+
+    def add(num, letter=None):
+        token = str(int(num)) + (letter.upper() if letter else "")
+        if token not in seen:
+            seen.add(token)
+            numbers.append(token)
+
+    for match in _NYSE_RANGE.finditer(text or ""):
+        lo, hi = int(match.group(1)), int(match.group(3))
+        if hi < lo or hi - lo > MAX_NYSE_OFFICIAL_LEAVES:
+            continue
+        for n in range(lo, hi + 1):
+            add(n)
+        if match.group(2):
+            add(match.group(1), match.group(2))
+        if match.group(4):
+            add(match.group(3), match.group(4))
+    for match in _NYSE_SINGLE.finditer(text or ""):
+        add(match.group(1), match.group(2))
+    return numbers
+
+
+def official_nyse_leaf_urls(soup):
+    """Official /rule-N URLs named by series titles and linked rule headings."""
+    texts = []
+    title = soup.find("h1")
+    if title:
+        texts.append(title.get_text(" ", strip=True))
+    area = soup.find("main") or soup
+    for anchor in area.find_all("a"):
+        texts.append(anchor.get_text(" ", strip=True))
+    urls = []
+    for token in official_nyse_rule_numbers(" \n ".join(texts))[:MAX_NYSE_OFFICIAL_LEAVES]:
+        slug = token[:-1] + token[-1].lower() if token[-1:].isalpha() else token
+        urls.append("https://www.finra.org" + _NYSE_INDEX_PATH + "/rule-" + slug)
+    return urls
 
 
 def decoder(classify):
@@ -46,6 +101,22 @@ def decoder(classify):
                 entry["catalog_evidence"] = {"url": page["url"], "method": "official_link"}
                 if page["role"] == "document":
                     entry["related_document_key"] = page["source_key"]
+                entries[entry["key"]] = entry
+        if "incorporated-nyse-rules" in (page.get("url") or ""):
+            # Series titles name published ranges; the index HTML does not
+            # link each /rule-N article. Enumerate those official paths.
+            if urlparse(page["url"]).path.rstrip("/") == _NYSE_INDEX_PATH:
+                for extra in NYSE_EXTRA_SERIES:
+                    found = classify(extra, page)
+                    if found and found["url"] != page["url"]:
+                        links[found["url"]] = {k: found[k] for k in ("url", "source_key", "category", "role", "terminal") if k in found}
+            for url in official_nyse_leaf_urls(soup):
+                found = classify(url, page)
+                if not found or not found.get("entry") or found["url"] == page["url"]:
+                    continue
+                links[found["url"]] = {k: found[k] for k in ("url", "source_key", "category", "role", "terminal") if k in found}
+                entry = found["entry"]
+                entry.setdefault("catalog_evidence", {"url": page["url"], "method": "official_rulebook_path"})
                 entries[entry["key"]] = entry
         form_links, form_findings = form_continuations(area, page, classify)
         links.update({link["url"]: link for link in form_links})

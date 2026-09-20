@@ -288,6 +288,21 @@ def test_frozen_leftover_finra_notice_is_not_fetched(engine, monkeypatch):
     assert tasks[nyse["key"]]["status"] == "completed"
 
 
+def test_unpublished_nyse_leaf_does_not_fail_the_job(engine, monkeypatch):
+    pipeline, audits, evaluations = _fake_fleet(monkeypatch)
+    from app.clhear.l1 import fleet
+    missing = {"key": "finra/nyse/46",
+               "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-46"}
+    adapter = SimpleNamespace(key="finra", meta=lambda: SimpleNamespace(
+        source_key=missing["key"], canonical_url=missing["canonical_url"]))
+    monkeypatch.setattr(fleet, "fleet_plan", lambda key: [(missing, adapter)])
+    monkeypatch.setattr(pipeline, "ingest", lambda *a, **k: {"status": "not-published", "source": missing["key"]})
+    result = workers.handle_envelope(engine, None, _body())
+    assert result["failures"] == []
+    task = workflow.workflow_summary(engine)["tasks"][0]
+    assert task["status"] == "blocked" and task["summary"]["status"] == "not-published"
+
+
 def test_retry_freezes_source_keys_and_rejects_changed_inventory(engine, monkeypatch):
     from app.clhear.l1 import fleet, inventory
     pipeline, audits, evaluations = _fake_fleet(monkeypatch)

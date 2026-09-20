@@ -514,7 +514,11 @@ manual, By-Laws, the 652 FINRA Rules, CAB, Funding Portal, incorporated NYSE;
 operator-exception frontier binding, then the `finra` lane alone. A rulebook
 batch does not follow notice/filing links, closes leftover pending rule
 leaves and off-book pages without fetching them, and does not fetch leftover
-notice/filing imports even if a frozen job still lists them. finra.org
+notice/filing imports even if a frozen job still lists them. Incorporated
+NYSE leaves are enumerated from official series-title ranges at
+`/incorporated-nyse-rules/rule-N` (the index HTML only links headings plus
+409/435); a 404 on that path is listed residue, not a retryable failure.
+finra.org
 serves the identifying user agent but throttles bursts, so live requests to it
 are paced (`HOST_PACING_S`) and `Retry-After` is honoured; a browser user agent
 is refused (403) and is never sent. Then the controller asks for the full
