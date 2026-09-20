@@ -26,12 +26,26 @@ def document_markup(content):
         navigation = soup.select_one(".node__content .book-navigation, main .book-navigation")
         if title is not None and body is None and navigation is not None and navigation.find_all("a", href=True):
             raise NavigationPage("FINRA rulebook page lists child sections only; constituent pages carry the text")
+        if _collection_landing(soup):
+            raise NavigationPage("FINRA rulebook collection page lists child documents only")
         raise ValueError("FINRA publication lacks an identified title and official article body")
     text = body.get_text(" ", strip=True)
     link_text = " ".join(a.get_text(" ", strip=True) for a in body.find_all("a"))
     if len(text) < 40 or len(link_text) >= len(text) * 0.9:
-        raise ValueError("FINRA publication body is empty or a document catalog")
+        raise NavigationPage("FINRA publication body is a document catalog")
     return ("<main>" + str(title) + str(body) + "</main>").encode()
+
+
+def _collection_landing(soup):
+    """Expanded indexes and pending-rule-change landings have no article body."""
+    nav = soup.select_one(".node__content .book-navigation, main .book-navigation, main .book-nav")
+    if nav and nav.find_all("a", href=True):
+        return True
+    title = soup.find("h1")
+    text = (title.get_text(" ", strip=True) if title else "") + " " + soup.get_text(" ", strip=True)[:200]
+    return bool(re.search(
+        r"finra rules expanded|immediately effective rule changes|recently approved rule changes",
+        text, re.I))
 
 
 class FinraDocumentAdapter:

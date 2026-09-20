@@ -26,6 +26,20 @@ def normalize(text: str) -> str:
     return " ".join(text.split())
 
 
+def _heading_page(soup: BeautifulSoup, title: Tag) -> bool:
+    """Series titles and reserved stubs have a numbered h1 but no official body.
+
+    Live 20 Sep 2026 examples: 1018 'Reserved', 1100 'MEMBER APPLICATION',
+    11300 'DELIVERY OF SECURITIES'. Child / next / parent links live in
+    book-navigation; the article field is absent by design.
+    """
+    heading = normalize(title.get_text())
+    if re.search(r"\bReserved\b", heading):
+        return True
+    nav = soup.select_one(".node__content .book-navigation, main .book-navigation, #the-rule .book-navigation")
+    return bool(nav and nav.find_all("a", href=True))
+
+
 def _scope(content: bytes) -> tuple[Tag, Tag, str]:
     soup = BeautifulSoup(content, "html.parser")
     title = soup.find("h1")
@@ -33,6 +47,11 @@ def _scope(content: bytes) -> tuple[Tag, Tag, str]:
         raise ValueError("FINRA article has no numbered rule h1 (rulebook indexes are not rule articles)")
     body = soup.select_one(_BODY)
     if body is None:
+        # Series headings and reserved numbers are catalog structure. Treating
+        # them as fetch crashes keeps the rulebook cycle retrying forever.
+        if _heading_page(soup, title):
+            from app.clhear.l1.adapters.finra_document import NavigationPage
+            raise NavigationPage("FINRA rule path is a series heading or reserved stub; child pages carry the text")
         # Retain the small, chrome-free historical golden fixtures. A full site
         # page with a missing field is a publisher/selector failure, never a fallback.
         if soup.select_one("#the-rule, #block-body, article, main, nav, header, footer"):

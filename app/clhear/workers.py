@@ -220,15 +220,17 @@ def run_adapter_fleet(
                         if entry is None and adapter.key in CITATOR_KEYS and status in {"added", "amended", "unchanged", "up-to-date"}:
                             families.sync_citator(engine, adapter, trigger=trigger, job_id=job_id)
                     success = status in {"added", "amended", "unchanged", "up-to-date"}
-                    skipped = status in {"out-of-scope", "not-published"}
+                    skipped = status in {"out-of-scope", "not-published", "catalog-page"}
+                    listed = status in {"rights-blocked", "source-blocked", "awaiting-artifact",
+                                       "catalog-page", "out-of-scope", "not-published", "not-fully-successful"}
                     if not success and not skipped and status == "failed" and "failure" not in summary:
                         from app.clhear.platform import failures as failure_details
                         summary["failure"] = failure_details.describe(RuntimeError(summary.get("error") or status),
                                                                       source=source_key, worker="l1", task_id=task_id,
                                                                       stage=workflow.current_stage())
                     workflow.finish_task(engine, task_id, token,
-                        status="completed" if success else "blocked" if status in {"rights-blocked", "source-blocked", "awaiting-artifact", "catalog-page", "out-of-scope", "not-published"} else "failed",
-                        summary=summary, error=None if success or skipped else (summary.get("failure") or summary.get("error", status)))
+                        status="completed" if success else "blocked" if listed else "failed",
+                        summary=summary, error=None if success or skipped or status == "not-fully-successful" else (summary.get("failure") or summary.get("error", status)))
                     token = None
                     if not success and not skipped:
                         failures.append(source_key)

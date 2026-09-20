@@ -266,12 +266,14 @@ def test_frozen_leftover_finra_notice_is_not_fetched(engine, monkeypatch):
               "canonical_url": "https://www.finra.org/rules-guidance/notices/16-37"}
     nyse = {"key": "finra/document/leftovernyse",
             "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409"}
+    expanded = {"key": "finra/document/leftoverexpanded",
+                "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules-expanded"}
     adapters = [
         SimpleNamespace(key="finra", meta=lambda row=row: SimpleNamespace(
             source_key=row["key"], canonical_url=row["canonical_url"]))
-        for row in (rule, notice, nyse)
+        for row in (rule, notice, nyse, expanded)
     ]
-    monkeypatch.setattr(fleet, "fleet_plan", lambda key: list(zip((rule, notice, nyse), adapters)))
+    monkeypatch.setattr(fleet, "fleet_plan", lambda key: list(zip((rule, notice, nyse, expanded), adapters)))
     ingested = []
     def ingest(engine, adapter, store, **kwargs):
         ingested.append(adapter.meta().source_key)
@@ -280,12 +282,46 @@ def test_frozen_leftover_finra_notice_is_not_fetched(engine, monkeypatch):
     result = workers.handle_envelope(engine, None, _body())
     assert ingested == [rule["key"], nyse["key"]]
     assert notice["key"] not in ingested
+    assert expanded["key"] not in ingested
     assert result["failures"] == []
     tasks = {t["source_key"]: t for t in workflow.workflow_summary(engine)["tasks"]}
     assert tasks[notice["key"]]["status"] == "blocked"
     assert tasks[notice["key"]]["summary"]["status"] == "out-of-scope"
+    assert tasks[expanded["key"]]["status"] == "blocked"
+    assert tasks[expanded["key"]]["summary"]["status"] == "out-of-scope"
     assert tasks[rule["key"]]["status"] == "completed"
     assert tasks[nyse["key"]]["status"] == "completed"
+
+
+def test_finra_catalog_page_does_not_fail_the_job(engine, monkeypatch):
+    pipeline, audits, evaluations = _fake_fleet(monkeypatch)
+    from app.clhear.l1 import fleet
+    heading = {"key": "finra/rule/11300",
+               "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules/11300"}
+    adapter = SimpleNamespace(key="finra", meta=lambda: SimpleNamespace(
+        source_key=heading["key"], canonical_url=heading["canonical_url"]))
+    monkeypatch.setattr(fleet, "fleet_plan", lambda key: [(heading, adapter)])
+    monkeypatch.setattr(pipeline, "ingest", lambda *a, **k: {"status": "catalog-page", "source": heading["key"]})
+    result = workers.handle_envelope(engine, None, _body())
+    assert result["failures"] == []
+    task = workflow.workflow_summary(engine)["tasks"][0]
+    assert task["status"] == "blocked" and task["summary"]["status"] == "catalog-page"
+
+
+def test_not_fully_successful_finra_rule_is_listed_residue(engine, monkeypatch):
+    pipeline, audits, evaluations = _fake_fleet(monkeypatch)
+    from app.clhear.l1 import fleet
+    rule = {"key": "finra/rule/0160",
+            "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules/0160"}
+    adapter = SimpleNamespace(key="finra", meta=lambda: SimpleNamespace(
+        source_key=rule["key"], canonical_url=rule["canonical_url"]))
+    monkeypatch.setattr(fleet, "fleet_plan", lambda key: [(rule, adapter)])
+    monkeypatch.setattr(pipeline, "ingest", lambda *a, **k: {
+        "status": "not-fully-successful", "source": rule["key"], "coverage": 1.0})
+    with pytest.raises(workers.AdapterRunIncomplete):
+        workers.handle_envelope(engine, None, _body())
+    task = workflow.workflow_summary(engine)["tasks"][0]
+    assert task["status"] == "blocked" and task["summary"]["status"] == "not-fully-successful"
 
 
 def test_unpublished_nyse_leaf_does_not_fail_the_job(engine, monkeypatch):

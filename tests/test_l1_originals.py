@@ -164,6 +164,18 @@ def test_finra_navigation_page_is_catalog_structure_not_a_failure():
                  b"<li><a href='/rules-guidance/rulebooks/corporate-organization/number-directors'>Number of Directors</a></li></ul></div></div></main></body></html>")
     with pytest.raises(NavigationPage):
         document_markup(container)
+    catalog = (
+        b"<html><body><main><h1>FINRA Rules Expanded</h1>"
+        b"<div id='block-body'><div class='field--name-body'>"
+        b"<p><a href='/rules-guidance/rulebooks/finra-rules/2111'>2111</a> "
+        b"<a href='/rules-guidance/rulebooks/finra-rules/2210'>2210</a></p>"
+        b"</div></div></main></body></html>"
+    )
+    with pytest.raises(NavigationPage, match="document catalog"):
+        document_markup(catalog)
+    landing = b"<html><body><main><h1>Immediately Effective Rule Changes Pending SEC Notification</h1></main></body></html>"
+    with pytest.raises(NavigationPage, match="collection page"):
+        document_markup(landing)
     with pytest.raises(ValueError, match="lacks an identified title"):
         document_markup(b"<html><body><main><h1>Untitled</h1><div class='node__content'></div></main></body></html>")
 

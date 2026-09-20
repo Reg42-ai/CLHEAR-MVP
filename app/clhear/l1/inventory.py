@@ -94,6 +94,31 @@ def rulebook_document(entry):
     return rulebook_url(url)
 
 
+# Catalog landings that leaked into the 20 Sep frozen plan as hashed
+# finra/document/* keys. They are indexes, not rule/By-Law/CAB leaves.
+_RULEBOOK_INDEX_SLUGS = frozenset({
+    "rulebooks",
+    "finra-rules",
+    "finra-rules-expanded",
+    "corporate-organization",
+    "capital-acquisition-broker-rules",
+    "funding-portal-rules",
+    "incorporated-nyse-rules",
+    "immediately-effective-rule-changes-pending-sec-notification",
+    "immediately-effective-rule-changes-pending-issuance-regulatory-notice",
+    "recently-approved-rule-changes-pending-determination-effective-date",
+    "trf-llc-agreements",
+})
+
+
+def rulebook_collection_url(url):
+    """A rulebook index/landing, not a numbered rule or article leaf."""
+    path = urlparse(url or "").path.rstrip("/")
+    if not path.startswith("/rules-guidance/rulebooks"):
+        return False
+    return path.rsplit("/", 1)[-1] in _RULEBOOK_INDEX_SLUGS
+
+
 def rulebook_import(entry):
     """Whether this planned document should be fetched on a rulebook-only cycle.
 
@@ -101,7 +126,12 @@ def rulebook_import(entry):
     ``finra/rule/*`` pages and other /rulebooks/ documents (By-Laws, CAB,
     Funding Portal, incorporated NYSE) import. Notices and filings keyed as
     ``finra/document/*`` do not, unless CLHEAR_L1_FINRA_FULL_DISCOVERY is on.
+    Hashed leftover catalog landings (expanded index, pending-change pages)
+    stay out of the fetch plan so they cannot 429 the rule walk.
     """
+    url = entry.get("canonical_url") or (entry.get("fetch") or {}).get("url") or entry.get("url") or ""
+    if rulebook_collection_url(url):
+        return False
     key = str(entry.get("key") or entry.get("source_key") or "")
     if not key.startswith("finra/document/"):
         return True

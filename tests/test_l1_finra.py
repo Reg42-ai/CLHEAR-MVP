@@ -186,6 +186,34 @@ def test_duplicate_paragraph_is_not_hidden_by_synthetic_ref_suffix():
         adapter().parse(content)
 
 
+def _heading_html(rule: str, title: str, children: list[str]) -> bytes:
+    links = "".join(
+        f'<li><a href="/rules-guidance/rulebooks/finra-rules/{child}">{child}</a></li>'
+        for child in children
+    )
+    return (
+        f'<html><body><div id="the-rule"><h1>{rule}. {title}</h1>'
+        f'<div class="book-navigation"><ul>{links}</ul></div></div></body></html>'
+    ).encode()
+
+
+def test_series_heading_and_reserved_stub_are_navigation_pages():
+    from app.clhear.l1.adapters.finra_document import NavigationPage
+
+    reserved = _heading_html("1018", "Reserved", ["1017", "1000", "1019"])
+    series = _heading_html("11300", "DELIVERY OF SECURITIES", ["11310", "11320", "11330"])
+    with pytest.raises(NavigationPage, match="series heading or reserved stub"):
+        adapter("1018").parse(reserved)
+    with pytest.raises(NavigationPage, match="series heading or reserved stub"):
+        adapter("11300").parse(series)
+    missing = (
+        b'<html><body><header>chrome</header><article><div id="the-rule">'
+        b'<h1>2210. Communications</h1></div></article></body></html>'
+    )
+    with pytest.raises(ValueError, match="missing its official rule body field"):
+        adapter().parse(missing)
+
+
 def test_legacy_minimal_finra_fixture_remains_supported():
     content = b'<html><body><h1>3110. Supervision</h1><p>(a) Heading</p><p>Body.</p><p>(1) Child.</p></body></html>'
     a = adapter("3110")
