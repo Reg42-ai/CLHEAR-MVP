@@ -97,13 +97,13 @@ def rulebook_document(entry):
 def rulebook_import(entry):
     """Whether this planned document should be fetched on a rulebook-only cycle.
 
-    Non-FINRA entries always import. Numbered FINRA rules and other /rulebooks/
-    pages (By-Laws, CAB, Funding Portal, incorporated NYSE) import even when
-    keyed as finra/document/*. Notices, filings and other leftovers do not,
-    unless CLHEAR_L1_FINRA_FULL_DISCOVERY is on.
+    Only leaked ``finra/document/*`` leftovers are filtered. Numbered
+    ``finra/rule/*`` pages and other /rulebooks/ documents (By-Laws, CAB,
+    Funding Portal, incorporated NYSE) import. Notices and filings keyed as
+    ``finra/document/*`` do not, unless CLHEAR_L1_FINRA_FULL_DISCOVERY is on.
     """
     key = str(entry.get("key") or entry.get("source_key") or "")
-    if not key.startswith("finra/"):
+    if not key.startswith("finra/document/"):
         return True
     return full_finra_discovery() or rulebook_document(entry)
 

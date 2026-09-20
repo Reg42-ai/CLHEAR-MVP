@@ -436,6 +436,8 @@ def test_registered_audit_drops_leaked_finra_notices_from_the_import_plan(engine
     assert notice["key"] not in {e["key"] for e in inv.planned_entries(engine, scope="all_publishers")}
     assert all(inv.rulebook_import(row) for row in (extra, bylaw, cab, funding, nyse))
     assert not inv.rulebook_import(notice) and not inv.rulebook_import(filing)
+    # Cycle stubs use finra/<lane>/doc, not leftover document hashes.
+    assert inv.rulebook_import({"key": "finra/doc"})
 
 
 def test_failed_discovery_keeps_previously_expected_documents(small_scope, monkeypatch):
