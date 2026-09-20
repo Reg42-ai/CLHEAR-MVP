@@ -17,7 +17,12 @@ _BODY = "#the-rule #block-body .field--name-body"
 _BLOCKS = frozenset({"div", "p", "li", "ul", "ol", "table", "tbody", "thead", "tfoot", "tr", "td", "th", "blockquote", "pre", "section", "article", "h1", "h2", "h3", "h4", "h5", "h6"})
 _IGNORED = frozenset({"script", "style", "noscript", "template"})
 _RULE = re.compile(r"^(?P<rule>\d{4,5}[A-Z]?)\.\s+(?P<title>\S.*)$", re.S)
-_MARKER = re.compile(r"^(?P<label>(?:\([A-Za-z0-9]+\))+|\.\d{2})(?=\s|$)")
+# Official FINRA markers only: (a)/(A)/(1)/(i)/(iv) and .01 supplementary.
+# Parentheticals such as (Date) in Uniform Practice Code notes are not markers;
+# treating them as labels crashed 11630/11870 with duplicate 11630.01(Date).
+_MARKER = re.compile(
+    r"^(?P<label>(?:\((?:[A-Za-z]|\d{1,2}|[ivxlcdm]{2,4}|[IVXLCDM]{2,4})\))+|\.\d{2})(?=\s|$)"
+)
 _TOKENS = re.compile(r"\(([A-Za-z0-9]+)\)")
 _ROMAN = re.compile(r"^[ivxlcdm]+$")
 

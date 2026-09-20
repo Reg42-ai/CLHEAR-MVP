@@ -109,6 +109,22 @@ def test_supplementary_material_history_footnotes_and_inline_punctuation_are_ret
     assert "Footnote text" not in provisions(tree)["2210.02"].subtree_text()
 
 
+def test_supplementary_date_parentheticals_are_not_paragraph_markers():
+    content = page(
+        '<div>.01 Delivery versus payment.</div>'
+        '<div>(Date) First dated note.</div>'
+        '<div>(Date) Second dated note.</div>'
+        '<div>(a) Actual duty after the dates.</div>',
+        "11630",
+    )
+    a = adapter("11630")
+    tree = a.parse(content)
+    assert a.validate_tree(tree, artifacts(content)) == []
+    assert list(provisions(tree)) == ["11630", "11630.01", "11630.01(a)"]
+    assert "First dated note." in provisions(tree)["11630.01"].subtree_text()
+    assert "Second dated note." in provisions(tree)["11630.01"].subtree_text()
+
+
 @pytest.mark.parametrize("corruption", ["drop_repeat", "duplicate", "reorder", "substring", "unparsed_marker"])
 def test_strict_validator_rejects_text_and_clause_loss_even_when_membership_coverage_passes(corruption):
     content = page('<div>(a) Repeat duty.</div><div>(b) Repeat duty.</div><div>(c) A member must not act.</div>')
