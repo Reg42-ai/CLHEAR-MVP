@@ -83,6 +83,15 @@ class AdapterRunIncomplete(RuntimeError):
     """Persisted candidate work is resumable; this event has not succeeded."""
 
 
+def _rulebook_import_entry(entry, adapter):
+    """Identity used to decide whether a planned FINRA document is fetched."""
+    meta = adapter.meta()
+    row = dict(entry or {})
+    row.setdefault("key", getattr(meta, "source_key", None))
+    row.setdefault("canonical_url", getattr(meta, "canonical_url", None) or "")
+    return row
+
+
 def run_adapter_fleet(
     engine: Engine, adapter_key: str, gateway: Gateway | None = None, *,
     force_nightly: bool = False, nightly_only: bool = False,
@@ -195,6 +204,12 @@ def run_adapter_fleet(
                                 step.status = "blocked"
                             summary = {"status": "source-blocked", "source": source_key,
                                        "declaration_gap": adapter.declaration_gap, "freshness": "not_checked"}
+                        elif not inventory.rulebook_import(_rulebook_import_entry(entry, adapter)):
+                            # A frozen registered job can still list leaked
+                            # notices/filings. Do not fetch them on a rulebook cycle.
+                            with workflow.stage("acquisition_parse", {"source": source_key, "skipped": "finra_rulebook_only"}) as step:
+                                step.status = "blocked"
+                            summary = {"status": "out-of-scope", "source": source_key, "reason": "finra_rulebook_only"}
                         else:
                             summary = pipeline.ingest(engine, adapter, store, trigger=trigger, gateway=gateway,
                                                       job_id=job_id, index_embeddings=False)
@@ -205,16 +220,17 @@ def run_adapter_fleet(
                         if entry is None and adapter.key in CITATOR_KEYS and status in {"added", "amended", "unchanged", "up-to-date"}:
                             families.sync_citator(engine, adapter, trigger=trigger, job_id=job_id)
                     success = status in {"added", "amended", "unchanged", "up-to-date"}
-                    if not success and status == "failed" and "failure" not in summary:
+                    skipped = status in {"out-of-scope", "not-published"}
+                    if not success and not skipped and status == "failed" and "failure" not in summary:
                         from app.clhear.platform import failures as failure_details
                         summary["failure"] = failure_details.describe(RuntimeError(summary.get("error") or status),
                                                                       source=source_key, worker="l1", task_id=task_id,
                                                                       stage=workflow.current_stage())
                     workflow.finish_task(engine, task_id, token,
-                        status="completed" if success else "blocked" if status in {"rights-blocked", "source-blocked", "awaiting-artifact", "catalog-page"} else "failed",
-                        summary=summary, error=None if success else (summary.get("failure") or summary.get("error", status)))
+                        status="completed" if success else "blocked" if status in {"rights-blocked", "source-blocked", "awaiting-artifact", "catalog-page", "out-of-scope", "not-published"} else "failed",
+                        summary=summary, error=None if success or skipped else (summary.get("failure") or summary.get("error", status)))
                     token = None
-                    if not success:
+                    if not success and not skipped:
                         failures.append(source_key)
             except Exception as exc:
                 log.exception("L1 source task failed for %s", source_key)
