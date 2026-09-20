@@ -443,8 +443,9 @@ def planned_entries(engine, scope="finra", adapter_key=None, *, audit_id=None):
     entries = [entry for entry in definition["entries"] if entry.get("discovered_category")
                and entry.get("source_role", "document") == "document"
                and (adapter_key is None or entry.get("adapter") == adapter_key)]
-    if scope == "finra" and not full_finra_discovery():
-        entries = [entry for entry in entries if rulebook_document(entry)]
+    if not full_finra_discovery():
+        entries = [entry for entry in entries if not str(entry.get("key") or "").startswith("finra/")
+                   or rulebook_document(entry)]
     return entries
 
 
@@ -794,10 +795,13 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
         # A failed/partial crawl cannot silently remove previously expected
         # documents from the denominator. Removal requires a new scope review.
         discovered.update(new_entries)
-    if scope == "finra" and not full_finra_discovery():
-        # Notices that leaked onto a same-day rulebook frontier stay in older
-        # snapshots; a rulebook cycle must not plan them as imports.
-        discovered = {key: entry for key, entry in discovered.items() if rulebook_document(entry)}
+    if not full_finra_discovery():
+        # Notices that leaked onto a 19 Sep frontier stay in older snapshots.
+        # A rulebook-only crawl must not plan them as imports — including the
+        # registered / all_publishers nightly, which otherwise imports every
+        # leftover finra/document/* and 429s finra.org for hours.
+        discovered = {key: entry for key, entry in discovered.items()
+                      if not str(entry.get("key") or "").startswith("finra/") or rulebook_document(entry)}
     aliases, alias_findings = list(prior_aliases), []
     declared_urls = {}
     for entry in entries.values():

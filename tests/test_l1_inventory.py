@@ -369,6 +369,26 @@ def test_finra_audit_drops_leaked_notice_documents_from_the_rulebook_plan(engine
     assert notice["key"] not in {e["key"] for e in inv.planned_entries(engine, scope="finra")}
 
 
+def test_registered_audit_drops_leaked_finra_notices_from_the_import_plan(engine, tmp_path, monkeypatch):
+    """20 Sep nightly: all_publishers reused the 19 Sep snapshot and imported
+    leftover finra/document notices, 429'd 4511, and never reached GovInfo/NIST."""
+    notice = inv._discovered_entry("https://www.finra.org/rules-guidance/notices/07-57", "notices")
+    filing = inv._discovered_entry("https://www.finra.org/rules-guidance/rule-filings/sr-finra-2016-043", "filings")
+    extra = inv._discovered_entry(URL.replace("2210", "9999"), "rules")
+    report = {"complete": False, "checked_at": None, "categories": [], "pages": [], "findings": []}
+    monkeypatch.setattr(inv, "_discover_publishers", lambda engine, store, job_id: (
+        {notice["key"]: notice, filing["key"]: filing, extra["key"]: extra}, report))
+    audit = inv.run_inventory_audit(engine, LocalStore(tmp_path / "originals"),
+                                    job_id="registered-leaked-notices", scope="registered", discover=True)
+    keys = {e["source_key"] for e in audit["sources"]}
+    assert extra["key"] in keys
+    assert notice["key"] not in keys and filing["key"] not in keys
+    planned = {e["key"] for e in inv.planned_entries(engine, scope="registered")}
+    assert extra["key"] in planned
+    assert notice["key"] not in planned and filing["key"] not in planned
+    assert notice["key"] not in {e["key"] for e in inv.planned_entries(engine, scope="all_publishers")}
+
+
 def test_failed_discovery_keeps_previously_expected_documents(small_scope, monkeypatch):
     engine, store = small_scope
     other = inv._discovered_entry(URL.replace("2210", "3110"), "rules")
