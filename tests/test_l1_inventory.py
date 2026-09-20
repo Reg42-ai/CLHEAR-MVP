@@ -435,6 +435,43 @@ def test_nyse_index_enumerates_official_rule_paths_without_fetching_them(engine,
     assert result["pending_pages"] == 0
 
 
+def test_finra_series_heading_ingest_is_catalog_page_residue(engine, tmp_path, monkeypatch):
+    from app.clhear.l1.adapters.sec_edgar import SecEdgarAdapter
+    from app.clhear.l1.pipeline import ingest
+    url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/11300"
+    grant(engine, "finra/rule/11300")
+    html = (
+        b'<html><body><div id="the-rule"><h1>11300. DELIVERY OF SECURITIES</h1>'
+        b'<div class="book-navigation"><ul>'
+        b'<li><a href="/rules-guidance/rulebooks/finra-rules/11310">11310</a></li>'
+        b'<li><a href="/rules-guidance/rulebooks/finra-rules/11320">11320</a></li>'
+        b'</ul></div></div></body></html>'
+    )
+    adapter = SecEdgarAdapter(channel="finra", source_key="finra/rule/11300",
+                              title="FINRA 11300", url=url)
+    adapter.key = "finra"
+    monkeypatch.setattr(adapter, "fetch_bytes", lambda: [("page.html", html)])
+    summary = ingest(engine, adapter, LocalStore(tmp_path / "originals"), index_embeddings=False)
+    assert summary["status"] == "catalog-page"
+
+
+def test_rulebook_collection_landings_are_not_imported():
+    expanded = {"key": "finra/document/expandedhash",
+                "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules-expanded"}
+    pending = {"key": "finra/document/pendinghash",
+               "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/immediately-effective-rule-changes-pending-sec-notification"}
+    agreements = {"key": "finra/document/trfhash",
+                  "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/corporate-organization/trf-llc-agreements"}
+    article = {"key": "finra/document/bylawhash",
+               "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/corporate-organization/article-iv-board-directors"}
+    assert not inv.rulebook_import(expanded)
+    assert not inv.rulebook_import(pending)
+    assert not inv.rulebook_import(agreements)
+    assert inv.rulebook_import(article)
+    assert inv.rulebook_collection_url(expanded["canonical_url"])
+    assert not inv.rulebook_collection_url(article["canonical_url"])
+
+
 def test_unpublished_official_nyse_leaf_is_listed_residue(engine, tmp_path, monkeypatch):
     import httpx
     from app.clhear.l1.adapters.finra_document import FinraDocumentAdapter
