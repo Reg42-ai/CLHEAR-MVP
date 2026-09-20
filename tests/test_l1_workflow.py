@@ -256,6 +256,38 @@ def test_blocked_permission_does_not_retry_import_or_mark_handled(engine, monkey
     assert all(t["status"] == "blocked" for t in workflow.workflow_summary(engine)["tasks"])
 
 
+def test_frozen_leftover_finra_notice_is_not_fetched(engine, monkeypatch):
+    """A frozen registered job that still lists leaked notices must not fetch them."""
+    pipeline, audits, evaluations = _fake_fleet(monkeypatch)
+    from app.clhear.l1 import fleet
+    rule = {"key": "finra/rule/2210",
+            "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules/2210"}
+    notice = {"key": "finra/document/leftovernotice",
+              "canonical_url": "https://www.finra.org/rules-guidance/notices/16-37"}
+    nyse = {"key": "finra/document/leftovernyse",
+            "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409"}
+    adapters = [
+        SimpleNamespace(key="finra", meta=lambda row=row: SimpleNamespace(
+            source_key=row["key"], canonical_url=row["canonical_url"]))
+        for row in (rule, notice, nyse)
+    ]
+    monkeypatch.setattr(fleet, "fleet_plan", lambda key: list(zip((rule, notice, nyse), adapters)))
+    ingested = []
+    def ingest(engine, adapter, store, **kwargs):
+        ingested.append(adapter.meta().source_key)
+        return {"status": "unchanged"}
+    monkeypatch.setattr(pipeline, "ingest", ingest)
+    result = workers.handle_envelope(engine, None, _body())
+    assert ingested == [rule["key"], nyse["key"]]
+    assert notice["key"] not in ingested
+    assert result["failures"] == []
+    tasks = {t["source_key"]: t for t in workflow.workflow_summary(engine)["tasks"]}
+    assert tasks[notice["key"]]["status"] == "blocked"
+    assert tasks[notice["key"]]["summary"]["status"] == "out-of-scope"
+    assert tasks[rule["key"]]["status"] == "completed"
+    assert tasks[nyse["key"]]["status"] == "completed"
+
+
 def test_retry_freezes_source_keys_and_rejects_changed_inventory(engine, monkeypatch):
     from app.clhear.l1 import fleet, inventory
     pipeline, audits, evaluations = _fake_fleet(monkeypatch)

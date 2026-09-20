@@ -94,6 +94,20 @@ def rulebook_document(entry):
     return rulebook_url(url)
 
 
+def rulebook_import(entry):
+    """Whether this planned document should be fetched on a rulebook-only cycle.
+
+    Non-FINRA entries always import. Numbered FINRA rules and other /rulebooks/
+    pages (By-Laws, CAB, Funding Portal, incorporated NYSE) import even when
+    keyed as finra/document/*. Notices, filings and other leftovers do not,
+    unless CLHEAR_L1_FINRA_FULL_DISCOVERY is on.
+    """
+    key = str(entry.get("key") or entry.get("source_key") or "")
+    if not key.startswith("finra/"):
+        return True
+    return full_finra_discovery() or rulebook_document(entry)
+
+
 def terminal_rulebook_leaf(page):
     """A rulebook leaf is enumerated from its index and fetched by the import."""
     if page.get("role") == "collection":
@@ -443,10 +457,7 @@ def planned_entries(engine, scope="finra", adapter_key=None, *, audit_id=None):
     entries = [entry for entry in definition["entries"] if entry.get("discovered_category")
                and entry.get("source_role", "document") == "document"
                and (adapter_key is None or entry.get("adapter") == adapter_key)]
-    if not full_finra_discovery():
-        entries = [entry for entry in entries if not str(entry.get("key") or "").startswith("finra/")
-                   or rulebook_document(entry)]
-    return entries
+    return [entry for entry in entries if rulebook_import(entry)]
 
 
 def record_scope_review(engine, inventory_hash, evidence_ref, approved_by, approved):
@@ -795,13 +806,11 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
         # A failed/partial crawl cannot silently remove previously expected
         # documents from the denominator. Removal requires a new scope review.
         discovered.update(new_entries)
-    if not full_finra_discovery():
-        # Notices that leaked onto a 19 Sep frontier stay in older snapshots.
-        # A rulebook-only crawl must not plan them as imports — including the
-        # registered / all_publishers nightly, which otherwise imports every
-        # leftover finra/document/* and 429s finra.org for hours.
-        discovered = {key: entry for key, entry in discovered.items()
-                      if not str(entry.get("key") or "").startswith("finra/") or rulebook_document(entry)}
+    # Notices that leaked onto a 19 Sep frontier stay in older snapshots.
+    # A rulebook-only crawl must not plan them as imports — including the
+    # registered / all_publishers nightly, which otherwise imports every
+    # leftover finra/document/* and 429s finra.org for hours.
+    discovered = {key: entry for key, entry in discovered.items() if rulebook_import(entry)}
     aliases, alias_findings = list(prior_aliases), []
     declared_urls = {}
     for entry in entries.values():
