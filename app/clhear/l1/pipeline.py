@@ -665,16 +665,26 @@ def _ingest_recorded(engine, adapter, store, recorder, meta, settings, *, trigge
                 "source_version_id": previous.id if previous else None,
             })
             return {**outputs, "run_id": recorder.run_id}
-        from app.clhear.l1.inventory import official_nyse_leaf
+        if isinstance(exc, ValueError) and str(exc).startswith("FINRA duplicate paragraph reference"):
+            # Live 21 Sep 2026: 4210(f)(1), 4540(a), 6622(d)(1). Parse residue
+            # is listed, not a retryable fetch crash.
+            outputs = recorder.finish("not-fully-successful", {
+                "source": meta.source_key, "freshness": "live" if l1_http.publisher_checked_at() else "not_checked",
+                "error_type": "DuplicateParagraph", "note": str(exc)[:200],
+                "previous_version_preserved": previous is not None,
+                "source_version_id": previous.id if previous else None,
+            })
+            return {**outputs, "run_id": recorder.run_id}
+        from app.clhear.l1.inventory import official_nyse_leaf, unpublished_finra_path
         status = getattr(getattr(exc, "response", None), "status_code", None)
         leaf_url = getattr(adapter, "_url", None) or getattr(meta, "canonical_url", "")
-        if status == 404 and official_nyse_leaf(leaf_url):
+        if status == 404 and (official_nyse_leaf(leaf_url) or unpublished_finra_path(leaf_url)):
             # Series titles name a range; not every integer in 45–299C is a
-            # published article. A 404 is publisher-absent residue, not a
-            # parser crash that should retry the lane.
+            # published article. Numbered FINRA 4554/6470 and leftover hashed
+            # notice 26-10 also 404. Publisher-absent residue, not a parser crash.
             outputs = recorder.finish("not-published", {
                 "source": meta.source_key, "freshness": "live" if l1_http.publisher_checked_at() else "not_checked",
-                "error_type": "HTTP404", "note": "Official incorporated NYSE rule path is not published",
+                "error_type": "HTTP404", "note": "Official FINRA rulebook or notice path is not published",
                 "previous_version_preserved": previous is not None,
                 "source_version_id": previous.id if previous else None,
             })

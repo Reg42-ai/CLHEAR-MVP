@@ -472,6 +472,74 @@ def test_rulebook_collection_landings_are_not_imported():
     assert not inv.rulebook_collection_url(article["canonical_url"])
 
 
+def test_unpublished_official_finra_rule_and_notice_are_listed_residue(engine, tmp_path, monkeypatch):
+    import httpx
+    from app.clhear.l1.adapters.finra_document import FinraDocumentAdapter
+    from app.clhear.l1.pipeline import ingest
+
+    rule_url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/4554"
+    grant(engine, "finra/rule/4554")
+    rule = FinraDocumentAdapter("finra/rule/4554", "FINRA 4554", rule_url)
+
+    def missing_rule(_since=None):
+        request = httpx.Request("GET", rule_url)
+        raise httpx.HTTPStatusError("404", request=request, response=httpx.Response(404, request=request))
+
+    monkeypatch.setattr(rule, "fetch", missing_rule)
+    assert ingest(engine, rule, LocalStore(tmp_path / "originals"), index_embeddings=False)["status"] == "not-published"
+
+    notice_url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/rules-guidance/notices/26-10"
+    grant(engine, "finra/document/daba56f08d3d0360")
+    notice = FinraDocumentAdapter("finra/document/daba56f08d3d0360", "Notice 26-10", notice_url)
+
+    def missing_notice(_since=None):
+        request = httpx.Request("GET", notice_url)
+        raise httpx.HTTPStatusError("404", request=request, response=httpx.Response(404, request=request))
+
+    monkeypatch.setattr(notice, "fetch", missing_notice)
+    assert ingest(engine, notice, LocalStore(tmp_path / "notice"), index_embeddings=False)["status"] == "not-published"
+    assert inv.official_finra_rule_leaf(rule_url)
+    assert inv.unpublished_finra_path(notice_url)
+    assert not inv.unpublished_finra_path("https://example.com/rules-guidance/notices/26-10")
+
+
+def _official_rule_html(rule: str, body: str) -> bytes:
+    return (
+        f'<html><body><div id="the-rule"><h1>{rule}. Synthetic Rule</h1>'
+        f'<div id="block-body"><div class="field--name-body">{body}</div></div>'
+        f'</div></body></html>'
+    ).encode()
+
+
+def test_duplicate_paragraph_ingest_is_listed_not_fully_successful(engine, tmp_path, monkeypatch):
+    from app.clhear.l1.adapters.sec_edgar import SecEdgarAdapter
+    from app.clhear.l1.pipeline import ingest
+
+    url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/4210"
+    grant(engine, "finra/rule/4210")
+    html = _official_rule_html("4210", "<div>(a) One.</div><div>(a) Duplicate.</div>")
+    adapter = SecEdgarAdapter(channel="finra", source_key="finra/rule/4210",
+                              title="FINRA 4210", url=url)
+    adapter.key = "finra"
+    monkeypatch.setattr(adapter, "fetch_bytes", lambda: [("page.html", html)])
+    summary = ingest(engine, adapter, LocalStore(tmp_path / "originals"), index_embeddings=False)
+    assert summary["status"] == "not-fully-successful"
+
+
+def test_empty_rule_body_ingest_is_catalog_page_residue(engine, tmp_path, monkeypatch):
+    from app.clhear.l1.adapters.sec_edgar import SecEdgarAdapter
+    from app.clhear.l1.pipeline import ingest
+
+    url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/9130"
+    grant(engine, "finra/rule/9130")
+    adapter = SecEdgarAdapter(channel="finra", source_key="finra/rule/9130",
+                              title="FINRA 9130", url=url)
+    adapter.key = "finra"
+    monkeypatch.setattr(adapter, "fetch_bytes", lambda: [("page.html", _official_rule_html("9130", ""))])
+    summary = ingest(engine, adapter, LocalStore(tmp_path / "originals"), index_embeddings=False)
+    assert summary["status"] == "catalog-page"
+
+
 def test_unpublished_official_nyse_leaf_is_listed_residue(engine, tmp_path, monkeypatch):
     import httpx
     from app.clhear.l1.adapters.finra_document import FinraDocumentAdapter

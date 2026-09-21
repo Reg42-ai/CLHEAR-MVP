@@ -186,14 +186,23 @@ def test_source_identity_and_acquisition_url_must_match_article():
 
 @pytest.mark.parametrize("content", [
     b'<html><body><div id="the-rule"><h1>2210. Title</h1><p>Navigation only.</p></div></body></html>',
-    page(""),
-    page("<div>(a) Body.</div>").replace(b"2210. Synthetic Rule", b"FINRA Rules"),
 ])
-def test_missing_malformed_or_empty_rule_body_fails_closed(content):
+def test_missing_official_body_field_fails_closed(content):
     a = adapter()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="missing its official rule body field"):
         a.parse(content)
     assert a.validate_tree([], artifacts(content))
+
+
+def test_empty_official_body_and_unnumbered_h1_are_navigation_pages():
+    from app.clhear.l1.adapters.finra_document import NavigationPage
+
+    a = adapter()
+    with pytest.raises(NavigationPage, match="rule body is empty"):
+        a.parse(page(""))
+    with pytest.raises(NavigationPage, match="no numbered rule h1"):
+        a.parse(page("<div>(a) Body.</div>").replace(b"2210. Synthetic Rule", b"FINRA Rules"))
+    assert a.validate_tree([], artifacts(page("")))
 
 
 def test_duplicate_paragraph_is_not_hidden_by_synthetic_ref_suffix():

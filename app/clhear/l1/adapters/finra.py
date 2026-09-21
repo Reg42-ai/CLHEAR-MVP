@@ -49,7 +49,10 @@ def _scope(content: bytes) -> tuple[Tag, Tag, str]:
     soup = BeautifulSoup(content, "html.parser")
     title = soup.find("h1")
     if title is None or not (match := _RULE.match(normalize(title.get_text()))):
-        raise ValueError("FINRA article has no numbered rule h1 (rulebook indexes are not rule articles)")
+        # Live 21 Sep 2026: 13400 returned 200 with no numbered rule h1.
+        # That is a catalog/index shape, not a fetch crash.
+        from app.clhear.l1.adapters.finra_document import NavigationPage
+        raise NavigationPage("FINRA article has no numbered rule h1 (rulebook indexes are not rule articles)")
     body = soup.select_one(_BODY)
     if body is None:
         # Series headings and reserved numbers are catalog structure. Treating
@@ -65,7 +68,10 @@ def _scope(content: bytes) -> tuple[Tag, Tag, str]:
         if body is None:
             raise ValueError("FINRA article is missing its rule body")
     if not normalize(_visible_text(body, exclude=title)):
-        raise ValueError("FINRA rule body is empty")
+        # Live 21 Sep 2026: 9130/9140/9260/9350/9520 published an empty official
+        # field. Retrying them as failed keeps execution_failed true forever.
+        from app.clhear.l1.adapters.finra_document import NavigationPage
+        raise NavigationPage("FINRA rule body is empty; child or sibling pages carry the text")
     return title, body, match.group("rule")
 
 
