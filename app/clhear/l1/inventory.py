@@ -350,6 +350,25 @@ def official_nyse_leaf(url):
     return bool(_FINRA_NYSE_SLUG.fullmatch(urlparse(url or "").path))
 
 
+def official_finra_rule_leaf(url):
+    """An official numbered FINRA rule article path."""
+    return bool(_FINRA_RULE_SLUG.fullmatch(urlparse(url or "").path))
+
+
+def unpublished_finra_path(url):
+    """A 404 on an official finra.org rulebook or notice path is publisher-absent.
+
+    Live 21 Sep 2026: numbered 4554/6470 and leftover hashed notice 26-10
+    (relative join under /rules-guidance/) returned HTTP 404. Those are not
+    retryable parser crashes.
+    """
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower()
+    if host not in {"www.finra.org", "finra.org"}:
+        return False
+    return (parsed.path or "").startswith("/rules-guidance/")
+
+
 RULEBOOK_PATH = "/rules-guidance/rulebooks/"
 
 
