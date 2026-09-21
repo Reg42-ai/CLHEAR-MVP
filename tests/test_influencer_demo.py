@@ -61,6 +61,8 @@ def test_demo_keys_resolve_to_pinned_text_and_stay_out_of_finra_discovery():
     guide_url = guides.section_url("255.5")
     assert "subchapter=B" in guide_url and "section=255.5" in guide_url
     assert _entry("cfr/16/255")["kind"] == "guidance"
+    from app.clhear.l1 import publishers
+    assert publishers.publisher_ids(_entry("cfr/16/255")) == ["ftc"]
 
     marketing = adapter_for(_entry("cfr/17/ia-marketing"))
     assert marketing.sections == ("275.206(4)-1",)

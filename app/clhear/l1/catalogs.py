@@ -12,6 +12,7 @@ from app.clhear.l1.discovery import run_batch
 CATALOG_SOURCES = {
     "cysec": "cy/l87i-2017", "nydfs": "nydfs/part200-500", "seychelles": "sc/securities-act-2007",
     "wolfsberg": "wolfsberg/standards", "isa": "il/securities-law-5728",
+    "ftc": "cfr/16/255",
 }
 
 

@@ -25,6 +25,7 @@ _PUBLISHERS = {
     "fca": ("Financial Conduct Authority", "regulator"),
     "us-law": ("US Congress / Government Publishing Office", "legislation"),
     "sec": ("US Securities and Exchange Commission", "regulator"),
+    "ftc": ("US Federal Trade Commission", "regulator"),
     "finra": ("FINRA", "regulator"), "fincen": ("FinCEN", "regulator"),
     "irs": ("US Treasury / Internal Revenue Service", "regulator"),
     "ofac": ("US Treasury OFAC", "regulator"), "nydfs": ("New York DFS", "regulator"),
@@ -50,8 +51,9 @@ _PUBLISHERS = {
 }
 _PREFIXES = {
     "celex/": ("eu-law",), "esma/": ("esma",), "ukpga/": ("uk-law",), "uksi/": ("uk-law",), "eur/": ("uk-law",),
-    "fca/": ("fca",), "finra/": ("finra",), "sec/": ("sec",), "usc/15/": ("us-law",),
+    "fca/": ("fca",), "finra/": ("finra",),     "sec/": ("sec",), "usc/15/": ("us-law",),
     "usc/26/": ("us-law", "irs"), "cfr/17/": ("sec",), "cfr/26/": ("irs",), "cfr/31/": ("fincen",),
+    "cfr/16/": ("ftc",),
     "nasdaq/": ("nasdaq",), "nydfs/": ("nydfs",), "nist/": ("nist",), "cy/": ("cysec",),
     "au/asic": ("asic", "au-law"), "au/aml": ("austrac", "au-law"), "au/": ("au-law",),
     "sg/mas": ("mas",), "sg/pdpa": ("sg-law", "sg-privacy"), "sg/": ("sg-law", "mas"),

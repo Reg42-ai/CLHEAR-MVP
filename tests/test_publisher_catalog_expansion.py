@@ -36,9 +36,9 @@ def test_every_reviewed_library_seed_classifies_as_collection(publisher_id):
         assert 'entry' not in found
 
 
-def test_all45_profiles_have_executable_contract_without_claiming_complete():
+def test_all_profiles_have_executable_contract_without_claiming_complete():
     all_profiles = publishers.publisher_profiles()
-    assert len(all_profiles) == 45
+    assert len(all_profiles) == 46
     assert all(p['discovery_adapter'] for p in all_profiles)
     assert all(not p['denominator_known'] and p['expected_documents'] is None for p in all_profiles)
 
