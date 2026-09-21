@@ -1177,6 +1177,8 @@ def cli(argv=None) -> int:
     parser.add_argument("--verify-deployment", choices=("bootstrap", "verify", "publish"))
     parser.add_argument("--verification-id")
     parser.add_argument("--request-l1-cycle", action="store_true")
+    parser.add_argument("--request-demo-import", action="store_true")
+    parser.add_argument("--derive-demo", action="store_true")
     parser.add_argument("--unchanged-repeat", action="store_true")
     parser.add_argument("--scope", choices=("all_publishers", "registered", "finra"), default="all_publishers")
     parser.add_argument("--recover-queues", action="store_true")
@@ -1187,8 +1189,9 @@ def cli(argv=None) -> int:
     parser.add_argument("--max-seconds", type=int, default=None)
     parser.add_argument("--queues", default="")
     args = parser.parse_args(argv)
-    exclusive = [bool(args.recover_queues), bool(args.request_l1_cycle), bool(args.verify_deployment),
-                 bool(args.once), bool(args.poc_private_review), bool(args.approve_inventory)]
+    exclusive = [bool(args.recover_queues), bool(args.request_l1_cycle), bool(args.request_demo_import),
+                 bool(args.derive_demo), bool(args.verify_deployment), bool(args.once),
+                 bool(args.poc_private_review), bool(args.approve_inventory)]
     if sum(exclusive) > 1:
         parser.error("choose one worker action")
     if args.poc_private_review:
@@ -1236,6 +1239,24 @@ def cli(argv=None) -> int:
         engine = get_engine()
         run_migrations(engine)
         print(json.dumps(request_cycle(engine, args.verification_id, scope=args.scope, unchanged_repeat=args.unchanged_repeat)))
+        return 0
+    if args.request_demo_import:
+        if not args.verification_id:
+            parser.error("--request-demo-import requires --verification-id and cannot be combined with other actions")
+        if os.environ.get("CLHEAR_FLEET", "").lower() != "l0":
+            parser.error("--request-demo-import must run on the L0 worker")
+        from app.clhear.db import get_engine, run_migrations
+        from app.clhear.demo_corpus import request_demo_import
+        engine = get_engine()
+        run_migrations(engine)
+        print(json.dumps(request_demo_import(engine, args.verification_id)))
+        return 0
+    if args.derive_demo:
+        from app.clhear.db import get_engine, run_migrations
+        from app.clhear.demo_corpus import derive_demo
+        engine = get_engine()
+        run_migrations(engine)
+        print(json.dumps(derive_demo(engine), default=str))
         return 0
     if args.verify_deployment:
         if not args.verification_id:

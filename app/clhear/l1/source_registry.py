@@ -26,6 +26,7 @@ FAMILIES = [
     ("uk-fincrime", "UK financial crime", "POCA, TACT, CFA 2017, ECCTA, Bribery (F9: UK-030..034; MLRs live in uk-mlr)"),
     ("uk-data-products", "UK data, e-money & wrappers", "UK GDPR/DPA/PECR, ISA regs, EMRs/PSRs, safeguarding (F10: GRP-031, UK-040..052)"),
     ("us-broker-dealer", "US broker-dealer & listed company", "Exchange Act BD rules, Reg BI/S-P/S-ID, FINRA, CAT, Securities Act/SOX/Nasdaq (F11: US-001..010, GRP-001..008)"),
+    ("us-marketing", "US advertising & adviser marketing", "FTC Act §5, 16 CFR Part 255 Endorsement Guides, Advisers Act marketing rule"),
     ("us-crypto-msb", "US crypto MSB & state", "BSA/31 CFR X, MTLs, NYDFS 200/500, GENIUS radar (F12: US-020..025)"),
     ("au-afsl", "Australia (ASIC/AUSTRAC)", "Corporations Act Ch 7, DDO, CFD PIO, DTR 2024, AML/CTF reform, RE stack (F13: AU-001..010, GRP-034)"),
     ("me-adgm", "ADGM / UAE (FSRA)", "FSMR + rulebooks, VA framework, UAE AML, ADGM DPR (F14: ME-001..005)"),
@@ -176,6 +177,32 @@ _uk("uk-data-products", "uksi/2017/752", "PSRs 2017", "Payment Services Regulati
 
 # ---- F11 us-broker-dealer ----
 _src("us-broker-dealer", "usc/15/exchange-act", "Exchange Act 1934", "Securities Exchange Act of 1934 (15 USC ch. 2B)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm", "govinfo_us", "root", "binding", ["securities", "us"], ["US-001", "GRP-002", "GRP-005", "GRP-006"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm"})
+
+# Influencer demo corpus. One HTML page and two pinned eCFR sections. No finra.org.
+# 16 CFR 255 is guidance (it interprets FTC Act §5) and is still in the binding
+# derivation set: the procedure cites §255.5, so L2 has to extract that clause.
+_FTC_ACT_45 = "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2-subchapI-sec45.htm"
+_src("us-marketing", "usc/15/ftc-act-45", "FTC Act §5",
+     "Federal Trade Commission Act §5 (15 USC §45) — unfair or deceptive acts or practices",
+     "law", "US", "US Congress (GPO)", _FTC_ACT_45, "govinfo_us", "root", "binding",
+     ["marketing", "consumer", "us"], ["US-MKT-001"], 2, rights_basis="public_domain",
+     fetch={"url": _FTC_ACT_45})
+_src("us-marketing", "cfr/16/255", "Endorsement Guides",
+     "16 CFR Part 255 — Guides Concerning the Use of Endorsements and Testimonials in Advertising",
+     "guidance", "US", "FTC (eCFR)",
+     "https://www.ecfr.gov/current/title-16/chapter-I/subchapter-B/part-255",
+     "govinfo_us", "interprets", "binding",
+     ["marketing", "endorsement", "us"], ["US-MKT-002"], 2, rights_basis="public_domain",
+     fetch={"ecfr_title": "16", "ecfr_sections": ["255.0", "255.1", "255.2", "255.3", "255.4", "255.5", "255.6"],
+            "chapter": "I", "subchapter": "B", "part": "255"})
+_src("us-marketing", "cfr/17/ia-marketing", "IA Marketing Rule",
+     "17 CFR §275.206(4)-1 — Investment Adviser Marketing",
+     "regulation", "US", "SEC (eCFR)",
+     "https://www.ecfr.gov/current/title-17/chapter-II/part-275/section-275.206(4)-1",
+     "govinfo_us", "implements", "binding",
+     ["marketing", "adviser", "us"], ["US-MKT-003"], 2, rights_basis="public_domain",
+     fetch={"ecfr_title": "17", "ecfr_sections": ["275.206(4)-1"],
+            "chapter": "II", "subchapter": "", "part": "275"})
 _src("us-broker-dealer", "cfr/17/240-bd", "SEC BD rules (17 CFR 240)", "SEC broker-dealer rules — 15c3-1, 15c3-3, 17a-3/4/5, 10b-10, 606", "regulation", "US", "SEC (published by GPO/eCFR)", "https://www.ecfr.gov/current/title-17/chapter-II/part-240", "govinfo_us", "implements", "binding", ["broker-dealer", "us"], ["US-001", "US-003"], 2, fetch={"url": "https://www.ecfr.gov/current/title-17/chapter-II/part-240"})
 _src("us-broker-dealer", "cfr/17/reg-bi-sp", "Reg BI / S-P / S-ID", "SEC Regulations Best Interest, S-P (as amended 2024), S-ID", "regulation", "US", "SEC (eCFR)", "https://www.ecfr.gov/current/title-17/chapter-II/part-240/subpart-N", "govinfo_us", "implements", "binding", ["conduct", "privacy", "us"], ["US-002", "US-004", "US-005"], 2, fetch={"ecfr_title": "17", "ecfr_sections": ["240.15l-1", "248.30", "248.201"], "chapter": "II", "part": "240"})
 _src("us-broker-dealer", "finra/rulebook", "FINRA rulebook collection", "FINRA rulebook collection index — constituent rules are separate documents", "regulation", "US", "FINRA", "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "finra", "supplements", "binding", ["supervision", "aml", "communications", "us"], ["US-006", "US-007", "US-008"], 2, fetch={"url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules", "channel": "finra"}, rights_basis="derived_only", publisher="FINRA (official rulebook on finra.org)")
