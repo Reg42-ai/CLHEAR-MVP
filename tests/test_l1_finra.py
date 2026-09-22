@@ -109,6 +109,22 @@ def test_supplementary_material_history_footnotes_and_inline_punctuation_are_ret
     assert "Footnote text" not in provisions(tree)["2210.02"].subtree_text()
 
 
+def test_supplementary_date_parentheticals_are_not_paragraph_markers():
+    content = page(
+        '<div>.01 Delivery versus payment.</div>'
+        '<div>(Date) First dated note.</div>'
+        '<div>(Date) Second dated note.</div>'
+        '<div>(a) Actual duty after the dates.</div>',
+        "11630",
+    )
+    a = adapter("11630")
+    tree = a.parse(content)
+    assert a.validate_tree(tree, artifacts(content)) == []
+    assert list(provisions(tree)) == ["11630", "11630.01", "11630.01(a)"]
+    assert "First dated note." in provisions(tree)["11630.01"].subtree_text()
+    assert "Second dated note." in provisions(tree)["11630.01"].subtree_text()
+
+
 @pytest.mark.parametrize("corruption", ["drop_repeat", "duplicate", "reorder", "substring", "unparsed_marker"])
 def test_strict_validator_rejects_text_and_clause_loss_even_when_membership_coverage_passes(corruption):
     content = page('<div>(a) Repeat duty.</div><div>(b) Repeat duty.</div><div>(c) A member must not act.</div>')
@@ -170,20 +186,57 @@ def test_source_identity_and_acquisition_url_must_match_article():
 
 @pytest.mark.parametrize("content", [
     b'<html><body><div id="the-rule"><h1>2210. Title</h1><p>Navigation only.</p></div></body></html>',
-    page(""),
-    page("<div>(a) Body.</div>").replace(b"2210. Synthetic Rule", b"FINRA Rules"),
 ])
-def test_missing_malformed_or_empty_rule_body_fails_closed(content):
+def test_missing_official_body_field_fails_closed(content):
     a = adapter()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="missing its official rule body field"):
         a.parse(content)
     assert a.validate_tree([], artifacts(content))
+
+
+def test_empty_official_body_and_unnumbered_h1_are_navigation_pages():
+    from app.clhear.l1.adapters.finra_document import NavigationPage
+
+    a = adapter()
+    with pytest.raises(NavigationPage, match="rule body is empty"):
+        a.parse(page(""))
+    with pytest.raises(NavigationPage, match="no numbered rule h1"):
+        a.parse(page("<div>(a) Body.</div>").replace(b"2210. Synthetic Rule", b"FINRA Rules"))
+    assert a.validate_tree([], artifacts(page("")))
 
 
 def test_duplicate_paragraph_is_not_hidden_by_synthetic_ref_suffix():
     content = page('<div>(a) One.</div><div>(a) Duplicate.</div>')
     with pytest.raises(ValueError, match="duplicate paragraph reference"):
         adapter().parse(content)
+
+
+def _heading_html(rule: str, title: str, children: list[str]) -> bytes:
+    links = "".join(
+        f'<li><a href="/rules-guidance/rulebooks/finra-rules/{child}">{child}</a></li>'
+        for child in children
+    )
+    return (
+        f'<html><body><div id="the-rule"><h1>{rule}. {title}</h1>'
+        f'<div class="book-navigation"><ul>{links}</ul></div></div></body></html>'
+    ).encode()
+
+
+def test_series_heading_and_reserved_stub_are_navigation_pages():
+    from app.clhear.l1.adapters.finra_document import NavigationPage
+
+    reserved = _heading_html("1018", "Reserved", ["1017", "1000", "1019"])
+    series = _heading_html("11300", "DELIVERY OF SECURITIES", ["11310", "11320", "11330"])
+    with pytest.raises(NavigationPage, match="series heading or reserved stub"):
+        adapter("1018").parse(reserved)
+    with pytest.raises(NavigationPage, match="series heading or reserved stub"):
+        adapter("11300").parse(series)
+    missing = (
+        b'<html><body><header>chrome</header><article><div id="the-rule">'
+        b'<h1>2210. Communications</h1></div></article></body></html>'
+    )
+    with pytest.raises(ValueError, match="missing its official rule body field"):
+        adapter().parse(missing)
 
 
 def test_legacy_minimal_finra_fixture_remains_supported():

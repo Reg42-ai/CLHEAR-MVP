@@ -511,7 +511,23 @@ cycle (`--request-l1-cycle --scope finra`, verification `l1-finra-RUN-ATTEMPT`):
 FINRA discovery seeded from the rulebooks only (`FINRA_RULEBOOK_CATEGORIES`:
 manual, By-Laws, the 652 FINRA Rules, CAB, Funding Portal, incorporated NYSE;
 `CLHEAR_L1_FINRA_FULL_DISCOVERY=true` restores notices, filings and decisions),
-operator-exception frontier binding, then the `finra` lane alone. finra.org
+operator-exception frontier binding, then the `finra` lane alone. A rulebook
+batch does not follow notice/filing links, closes leftover pending rule
+leaves and off-book pages without fetching them, and does not fetch leftover
+notice/filing imports even if a frozen job still lists them. Incorporated
+NYSE leaves are enumerated from official series-title ranges at
+`/incorporated-nyse-rules/rule-N` (the index HTML only links headings plus
+409/435); a 404 on that path is listed residue, not a retryable failure.
+FINRA Rules series headings and reserved stubs (numbered h1, no official
+body field — e.g. 1018 Reserved, 11300 Delivery of Securities), empty
+official bodies (9130/9140/9260/9350/9520), unnumbered-h1 indexes (13400),
+and leftover hashed catalog landings (expanded index, pending-change pages)
+close as `catalog-page` residue. A 404 on an official finra.org
+`/rules-guidance/` path (numbered 4554/6470, leftover notice 26-10, NYSE
+rule-N) is `not-published`. Duplicate paragraph parse residue (4210/4540/6622)
+and exhausted fidelity on a real rule are `not-fully-successful` listed
+residue, not a retryable fetch crash.
+finra.org
 serves the identifying user agent but throttles bursts, so live requests to it
 are paced (`HOST_PACING_S`) and `Retry-After` is honoured; a browser user agent
 is refused (403) and is never sent. Then the controller asks for the full

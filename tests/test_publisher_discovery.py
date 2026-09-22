@@ -61,9 +61,7 @@ def test_same_catalog_pagination_preserves_catalog_permission_not_document_grant
     monkeypatch.setattr(inventory, "_fetch_discovery", fetch)
     entries, report = inventory._discover(engine, LocalStore(tmp_path))
     assert set(fetched) == {INDEX, NEXT}
-    assert {"finra/rule/2210", inventory._source_key(PDF)} <= entries.keys()
-    assert entries[inventory._source_key(PDF)]["adapter"] == "finra"
-    assert entries[inventory._source_key(PDF)]["fetch"]["document_type"] == "attachment"
+    assert "finra/rule/2210" in entries and inventory._source_key(PDF) not in entries
     assert not report["complete"]
     assert all(f.get("source_key") != inventory._source_key(NEXT) for f in report["findings"])
 

@@ -17,7 +17,12 @@ _BODY = "#the-rule #block-body .field--name-body"
 _BLOCKS = frozenset({"div", "p", "li", "ul", "ol", "table", "tbody", "thead", "tfoot", "tr", "td", "th", "blockquote", "pre", "section", "article", "h1", "h2", "h3", "h4", "h5", "h6"})
 _IGNORED = frozenset({"script", "style", "noscript", "template"})
 _RULE = re.compile(r"^(?P<rule>\d{4,5}[A-Z]?)\.\s+(?P<title>\S.*)$", re.S)
-_MARKER = re.compile(r"^(?P<label>(?:\([A-Za-z0-9]+\))+|\.\d{2})(?=\s|$)")
+# Official FINRA markers only: (a)/(A)/(1)/(i)/(iv) and .01 supplementary.
+# Parentheticals such as (Date) in Uniform Practice Code notes are not markers;
+# treating them as labels crashed 11630/11870 with duplicate 11630.01(Date).
+_MARKER = re.compile(
+    r"^(?P<label>(?:\((?:[A-Za-z]|\d{1,2}|[ivxlcdm]{2,4}|[IVXLCDM]{2,4})\))+|\.\d{2})(?=\s|$)"
+)
 _TOKENS = re.compile(r"\(([A-Za-z0-9]+)\)")
 _ROMAN = re.compile(r"^[ivxlcdm]+$")
 
@@ -26,13 +31,35 @@ def normalize(text: str) -> str:
     return " ".join(text.split())
 
 
+def _heading_page(soup: BeautifulSoup, title: Tag) -> bool:
+    """Series titles and reserved stubs have a numbered h1 but no official body.
+
+    Live 20 Sep 2026 examples: 1018 'Reserved', 1100 'MEMBER APPLICATION',
+    11300 'DELIVERY OF SECURITIES'. Child / next / parent links live in
+    book-navigation; the article field is absent by design.
+    """
+    heading = normalize(title.get_text())
+    if re.search(r"\bReserved\b", heading):
+        return True
+    nav = soup.select_one(".node__content .book-navigation, main .book-navigation, #the-rule .book-navigation")
+    return bool(nav and nav.find_all("a", href=True))
+
+
 def _scope(content: bytes) -> tuple[Tag, Tag, str]:
     soup = BeautifulSoup(content, "html.parser")
     title = soup.find("h1")
     if title is None or not (match := _RULE.match(normalize(title.get_text()))):
-        raise ValueError("FINRA article has no numbered rule h1 (rulebook indexes are not rule articles)")
+        # Live 21 Sep 2026: 13400 returned 200 with no numbered rule h1.
+        # That is a catalog/index shape, not a fetch crash.
+        from app.clhear.l1.adapters.finra_document import NavigationPage
+        raise NavigationPage("FINRA article has no numbered rule h1 (rulebook indexes are not rule articles)")
     body = soup.select_one(_BODY)
     if body is None:
+        # Series headings and reserved numbers are catalog structure. Treating
+        # them as fetch crashes keeps the rulebook cycle retrying forever.
+        if _heading_page(soup, title):
+            from app.clhear.l1.adapters.finra_document import NavigationPage
+            raise NavigationPage("FINRA rule path is a series heading or reserved stub; child pages carry the text")
         # Retain the small, chrome-free historical golden fixtures. A full site
         # page with a missing field is a publisher/selector failure, never a fallback.
         if soup.select_one("#the-rule, #block-body, article, main, nav, header, footer"):
@@ -41,7 +68,10 @@ def _scope(content: bytes) -> tuple[Tag, Tag, str]:
         if body is None:
             raise ValueError("FINRA article is missing its rule body")
     if not normalize(_visible_text(body, exclude=title)):
-        raise ValueError("FINRA rule body is empty")
+        # Live 21 Sep 2026: 9130/9140/9260/9350/9520 published an empty official
+        # field. Retrying them as failed keeps execution_failed true forever.
+        from app.clhear.l1.adapters.finra_document import NavigationPage
+        raise NavigationPage("FINRA rule body is empty; child or sibling pages carry the text")
     return title, body, match.group("rule")
 
 

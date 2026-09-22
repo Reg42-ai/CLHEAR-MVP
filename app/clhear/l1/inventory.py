@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -28,7 +29,11 @@ from app.clhear.l1.public import nodes_internal_select
 from app.clhear.l1.models import BigId, Json, L1_SCHEMA, clauses, doc_nodes, source_versions, sources
 from app.clhear.models import runs
 
-SCOPE_VERSION = "2026-09-16.2"
+log = logging.getLogger("clhear.l1.inventory")
+# Successive waits after a 429 on one catalog page: 150 s in total, well inside
+# discovery.PAGE_LEASE (6 min) including the fetches themselves.
+THROTTLE_WAITS_S = (30.0, 60.0, 60.0)
+SCOPE_VERSION = "2026-09-20.1"
 SCOPES = frozenset({"registered", "finra", "all_publishers"})
 FINRA_CATEGORIES = (
     ("manual", "Manual and governing documents", "https://www.finra.org/rules-guidance/rulebooks"),
@@ -37,7 +42,11 @@ FINRA_CATEGORIES = (
     ("cab_rules", "Capital Acquisition Broker rules", "https://www.finra.org/rules-guidance/rulebooks/capital-acquisition-broker-rules"),
     ("funding_portal_rules", "Funding Portal rules", "https://www.finra.org/rules-guidance/rulebooks/funding-portal-rules"),
     # finra.org retired /rulebooks/nasd-rules (404 on 19 Sep 2026); the archive
-    # now lives under /rulebooks/retired-rules and is deliberately not seeded.
+    # now lives under /rulebooks/retired-rules. The row stays declared (never
+    # seeded) so the operator-exception ledger's existing collection binding
+    # for finra/catalog/nasd_archive still validates; dropping it made
+    # control_state report invalid_binding_evidence and L0 could not publish.
+    ("nasd_archive", "Published NASD rule archive", "https://www.finra.org/rules-guidance/rulebooks/nasd-rules"),
     ("nyse_archive", "Published incorporated NYSE rule archive", "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules"),
     ("filings", "Rule filings and amendments", "https://www.finra.org/rules-guidance/rule-filings"),
     ("notices", "Regulatory notices", "https://www.finra.org/rules-guidance/notices"),
@@ -58,9 +67,106 @@ FINRA_RULEBOOK_CATEGORIES = ("manual", "governing", "rules", "cab_rules", "fundi
 
 
 def finra_seed_categories():
-    if os.environ.get("CLHEAR_L1_FINRA_FULL_DISCOVERY", "").lower() == "true":
+    if full_finra_discovery():
         return FINRA_CATEGORIES
     return tuple(row for row in FINRA_CATEGORIES if row[0] in FINRA_RULEBOOK_CATEGORIES)
+
+
+def full_finra_discovery():
+    return os.environ.get("CLHEAR_L1_FINRA_FULL_DISCOVERY", "").lower() == "true"
+
+
+def rulebook_url(url):
+    """Current FINRA rulebook pages live under /rules-guidance/rulebooks.
+
+    Notices, filings, decisions and comment PDFs are a different catalog. A
+    rulebook cycle that follows those links never finishes: the 19 Sep live
+    frontier mixed 1,400 notice pages into the same-day rulebook crawl.
+    """
+    return urlparse(url or "").path.startswith("/rules-guidance/rulebooks")
+
+
+def rulebook_document(entry):
+    key = entry.get("key") or entry.get("source_key") or ""
+    if key.startswith(("finra/rule/", "finra/nyse/")):
+        return True
+    url = entry.get("canonical_url") or (entry.get("fetch") or {}).get("url") or entry.get("url") or ""
+    return rulebook_url(url)
+
+
+# Catalog landings that leaked into the 20 Sep frozen plan as hashed
+# finra/document/* keys. They are indexes, not rule/By-Law/CAB leaves.
+_RULEBOOK_INDEX_SLUGS = frozenset({
+    "rulebooks",
+    "finra-rules",
+    "finra-rules-expanded",
+    "corporate-organization",
+    "capital-acquisition-broker-rules",
+    "funding-portal-rules",
+    "incorporated-nyse-rules",
+    "immediately-effective-rule-changes-pending-sec-notification",
+    "immediately-effective-rule-changes-pending-issuance-regulatory-notice",
+    "recently-approved-rule-changes-pending-determination-effective-date",
+    "trf-llc-agreements",
+})
+
+
+def rulebook_collection_url(url):
+    """A rulebook index/landing, not a numbered rule or article leaf."""
+    path = urlparse(url or "").path.rstrip("/")
+    if not path.startswith("/rules-guidance/rulebooks"):
+        return False
+    return path.rsplit("/", 1)[-1] in _RULEBOOK_INDEX_SLUGS
+
+
+def rulebook_import(entry):
+    """Whether this planned document should be fetched on a rulebook-only cycle.
+
+    Only leaked ``finra/document/*`` leftovers are filtered. Numbered
+    ``finra/rule/*`` pages and other /rulebooks/ documents (By-Laws, CAB,
+    Funding Portal, incorporated NYSE) import. Notices and filings keyed as
+    ``finra/document/*`` do not, unless CLHEAR_L1_FINRA_FULL_DISCOVERY is on.
+    Hashed leftover catalog landings (expanded index, pending-change pages)
+    stay out of the fetch plan so they cannot 429 the rule walk.
+    """
+    url = entry.get("canonical_url") or (entry.get("fetch") or {}).get("url") or entry.get("url") or ""
+    if rulebook_collection_url(url):
+        return False
+    key = str(entry.get("key") or entry.get("source_key") or "")
+    if not key.startswith("finra/document/"):
+        return True
+    return full_finra_discovery() or rulebook_document(entry)
+
+
+def terminal_rulebook_leaf(page):
+    """A rulebook leaf is enumerated from its index and fetched by the import."""
+    if page.get("role") == "collection":
+        return False
+    key = page.get("source_key") or ""
+    if key.startswith(("finra/rule/", "finra/nyse/")):
+        return True
+    return rulebook_url(page.get("url") or "") and page.get("role") == "document"
+
+
+def settle_finra_page(page):
+    """How discovery should treat one persisted frontier page.
+
+    ``None`` — fetch it (catalog indexes and, in full discovery, non-leaf pages).
+    ``terminal`` — record it without a network fetch; the import retrieves it.
+    ``skip`` — close an off-book leftover so it cannot keep the cycle pending.
+    """
+    if full_finra_discovery():
+        return "terminal" if terminal_rulebook_leaf(page) else None
+    url = page.get("url") or ""
+    if page.get("role") == "collection" and rulebook_url(url):
+        return None
+    if not rulebook_url(url):
+        return "skip"
+    if terminal_rulebook_leaf(page):
+        return "terminal"
+    return None
+
+
 FINRA_BOUNDARIES = {
     "include": ["Manual", "governing documents", "current rules", "published rule archives",
                 "filings and amendments", "notices and interpretive guidance", "examination reports",
@@ -217,11 +323,50 @@ def _in_scope_url(value, *, attachment=False):
                                 or (parsed.hostname == "files.finra.org" and parsed.path.lower().endswith(".pdf")))))
 
 
+# Live finra-rules slugs include 6300a / 6340b (lettered TRF/ADF series) and
+# Drupal aliases like 12407-0. The 4-5 digit uppercase-only pattern dropped
+# those ~60 leaves from finra/rule/*, so a rulebook cycle planned 606 instead
+# of the ~652 listed on the official index.
+_FINRA_RULE_SLUG = re.compile(r"/rules-guidance/rulebooks/finra-rules/(\d{4,5})([A-Za-z])?(?:-\d+)?$")
+_FINRA_NYSE_SLUG = re.compile(r"/rules-guidance/rulebooks/incorporated-nyse-rules/rule-(\d+)([A-Za-z])?$")
+_FINRA_NYSE_SERIES = re.compile(r"/rules-guidance/rulebooks/incorporated-nyse-rules-\d+$")
+
+
 def _source_key(url):
-    match = re.fullmatch(r"/rules-guidance/rulebooks/finra-rules/(\d{4,5}[A-Z]?)", urlparse(url).path)
+    path = urlparse(url).path
+    match = _FINRA_RULE_SLUG.fullmatch(path)
     if match:
-        return f"finra/rule/{match.group(1)}"
+        number, letter = match.group(1), match.group(2)
+        return "finra/rule/" + number + (letter.upper() if letter else "")
+    nyse = _FINRA_NYSE_SLUG.fullmatch(path)
+    if nyse:
+        number, letter = nyse.group(1), nyse.group(2)
+        return "finra/nyse/" + number + (letter.upper() if letter else "")
     return "finra/document/" + _hash(url.encode())[:24]
+
+
+def official_nyse_leaf(url):
+    """An official incorporated NYSE rule article, not a series heading."""
+    return bool(_FINRA_NYSE_SLUG.fullmatch(urlparse(url or "").path))
+
+
+def official_finra_rule_leaf(url):
+    """An official numbered FINRA rule article path."""
+    return bool(_FINRA_RULE_SLUG.fullmatch(urlparse(url or "").path))
+
+
+def unpublished_finra_path(url):
+    """A 404 on an official finra.org rulebook or notice path is publisher-absent.
+
+    Live 21 Sep 2026: numbered 4554/6470 and leftover hashed notice 26-10
+    (relative join under /rules-guidance/) returned HTTP 404. Those are not
+    retryable parser crashes.
+    """
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower()
+    if host not in {"www.finra.org", "finra.org"}:
+        return False
+    return (parsed.path or "").startswith("/rules-guidance/")
 
 
 RULEBOOK_PATH = "/rules-guidance/rulebooks/"
@@ -230,16 +375,18 @@ RULEBOOK_PATH = "/rules-guidance/rulebooks/"
 def _discovered_entry(url, category):
     key = _source_key(url)
     rule = key.startswith("finra/rule/")
+    nyse = key.startswith("finra/nyse/")
     path = urlparse(url).path
     # Any page under /rulebooks/ (FINRA Rules, By-Laws, CAB, Funding Portal,
     # incorporated NYSE) is rule text, not guidance, even when keyed by hash.
-    rulebook = rule or (path.startswith(RULEBOOK_PATH) and not path.lower().endswith(".pdf"))
+    rulebook = rule or nyse or (path.startswith(RULEBOOK_PATH) and not path.lower().endswith(".pdf"))
     slug = path.rsplit("/", 1)[-1]
     return {
         "key": key, "family": "us-broker-dealer",
         "name": ("FINRA Rule " + key.rsplit("/", 1)[-1] if rule else
+                 "Incorporated NYSE Rule " + key.rsplit("/", 1)[-1] if nyse else
                  "FINRA rulebook " + slug.replace("-", " ") if rulebook else "FINRA publication " + slug),
-        "short_name": "FINRA " + (key.rsplit("/", 1)[-1] if rule else slug.replace("-", " ")[:40]), "canonical_url": url,
+        "short_name": "FINRA " + (key.rsplit("/", 1)[-1] if rule or nyse else slug.replace("-", " ")[:40]), "canonical_url": url,
         "kind": "regulation" if rulebook else "guidance", "issuer": "FINRA", "publisher": "FINRA",
         "jurisdiction": "US", "license": "restricted", "rights_basis": "derived_only",
         "adapter": "finra", "source_role": "document", "publisher_ids": ["finra"], "relation": "supplements",
@@ -261,19 +408,32 @@ def _fetch_discovery(url):
             raise http.FixtureMissing("Discovery fixture unavailable")
         return http._read_fixture(path), "fixture"
     import httpx
-    with httpx.stream("GET", url, headers={"User-Agent": http.USER_AGENT}, timeout=20, follow_redirects=False) as response:
-        if response.is_redirect:
-            raise ValueError("Publisher redirect requires an independently validated official discovery URL")
-        response.raise_for_status()
-        body = bytearray()
-        for chunk in response.iter_bytes():
-            body.extend(chunk)
-            limit = max(1, min(int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_BYTES", str(16 * 1024 * 1024))), 64 * 1024 * 1024))
-            if len(body) > limit:
-                raise ValueError("Discovery page exceeds the configured bounded byte limit")
-        if not body:
-            raise ValueError("Publisher returned an empty discovery page")
-        return bytes(body), "live"
+    # Same publisher courtesy as document fetches: paced per host, and a 429
+    # waits for Retry-After instead of burning the page's retry budget.
+    for attempt in range(len(THROTTLE_WAITS_S) + 1):
+        http._pace(url)
+        with httpx.stream("GET", url, headers={"User-Agent": http.USER_AGENT}, timeout=20, follow_redirects=False) as response:
+            if response.is_redirect:
+                raise ValueError("Publisher redirect requires an independently validated official discovery URL")
+            if response.status_code == 429 and attempt < len(THROTTLE_WAITS_S):
+                # Bounded so the page's discovery lease (discovery.PAGE_LEASE)
+                # outlives the waits; a page still throttled after them stays
+                # pending and is retried later in the cycle.
+                pause = min(max(http._retry_after_seconds(response) or 0.0, THROTTLE_WAITS_S[attempt]), THROTTLE_WAITS_S[-1])
+                log.warning("discovery throttled by %s; waiting %.0fs", urlparse(url).hostname, pause)
+                time.sleep(pause)
+                continue
+            response.raise_for_status()
+            body = bytearray()
+            for chunk in response.iter_bytes():
+                body.extend(chunk)
+                limit = max(1, min(int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_BYTES", str(16 * 1024 * 1024))), 64 * 1024 * 1024))
+                if len(body) > limit:
+                    raise ValueError("Discovery page exceeds the configured bounded byte limit")
+            if not body:
+                raise ValueError("Publisher returned an empty discovery page")
+            return bytes(body), "live"
+    raise RuntimeError("Publisher discovery stayed throttled")
 
 
 def _discover(engine, store):
@@ -293,16 +453,34 @@ def _discover(engine, store):
             # A catalog's reviewed permission covers that same catalog's
             # numeric page/year variants, never its constituent documents.
             return {"url": target, "source_key": seed["source_key"], "category": seed["category"], "role": "collection"}
+        if _FINRA_NYSE_SERIES.fullmatch(parsed.path):
+            # Drupal series headings (Rules 1–19, 45–299C, …) are book
+            # containers. The index HTML omits at least series-5; fetching
+            # the official series path yields the range title used to
+            # enumerate /rule-N leaves.
+            return {"url": target, "source_key": "finra/catalog/nyse_archive",
+                    "category": "nyse_archive", "role": "collection"}
         if parsed.query:
             if urlparse(parent["url"]).path != parsed.path or parent["role"] != "collection":
                 return None
             return {"url": target, "source_key": parent["source_key"], "category": parent["category"], "role": "collection"}
+        if not full_finra_discovery() and not rulebook_url(target):
+            # A rule page's sidebar links every notice. Following them is how
+            # the rulebook frontier filled with 19 Sep's notice crawl.
+            return None
         entry = _discovered_entry(target, parent["category"])
-        return {"url": target, "source_key": entry["key"], "category": parent["category"], "role": "document", "entry": entry}
+        found = {"url": target, "source_key": entry["key"], "category": parent["category"], "role": "document", "entry": entry}
+        if terminal_rulebook_leaf(found):
+            # The rulebook indexes list every leaf. finra.org allows about a
+            # hundred requests an hour, so a leaf is enumerated (and bound)
+            # from the index and fetched once, by the import, not twice.
+            found["terminal"] = True
+        return found
     from app.clhear.l1.finra_catalog import decoder
     entries, report = run_batch(engine, store, publisher_id="finra", profile={"scope_version": SCOPE_VERSION, "boundaries": FINRA_BOUNDARIES},
                      seeds=seeds, job_id=context["job_id"] if context else str(uuid.uuid4()),
                      fetcher=_fetch_discovery, classify=classify, decoder=decoder(classify), decode_documents=True,
+                     settle=settle_finra_page,
                      max_pages=int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_PAGES", "100")))
     report["findings"].append({"publisher_id": "finra", "code": "finra_enforcement_search_contract_required",
         "detail": "Disciplinary Actions Online search records and tool-hosted filing status require a reviewed structured contract; monthly publications and linked decisions are enumerated separately."})
@@ -354,9 +532,10 @@ def planned_entries(engine, scope="finra", adapter_key=None, *, audit_id=None):
     with engine.connect() as conn:
         definition = conn.execute(sa.select(inventory_snapshots.c.definition)
                                   .where(inventory_snapshots.c.id == prior["inventory_id"])).scalar_one()
-    return [entry for entry in definition["entries"] if entry.get("discovered_category")
-            and entry.get("source_role", "document") == "document"
-            and (adapter_key is None or entry.get("adapter") == adapter_key)]
+    entries = [entry for entry in definition["entries"] if entry.get("discovered_category")
+               and entry.get("source_role", "document") == "document"
+               and (adapter_key is None or entry.get("adapter") == adapter_key)]
+    return [entry for entry in entries if rulebook_import(entry)]
 
 
 def record_scope_review(engine, inventory_hash, evidence_ref, approved_by, approved):
@@ -705,6 +884,11 @@ def run_inventory_audit(engine, store, *, job_id, scope="registered", discover=F
         # A failed/partial crawl cannot silently remove previously expected
         # documents from the denominator. Removal requires a new scope review.
         discovered.update(new_entries)
+    # Notices that leaked onto a 19 Sep frontier stay in older snapshots.
+    # A rulebook-only crawl must not plan them as imports — including the
+    # registered / all_publishers nightly, which otherwise imports every
+    # leftover finra/document/* and 429s finra.org for hours.
+    discovered = {key: entry for key, entry in discovered.items() if rulebook_import(entry)}
     aliases, alias_findings = list(prior_aliases), []
     declared_urls = {}
     for entry in entries.values():

@@ -65,6 +65,18 @@ def _insert_once(conn, table, values):
     conn.execute(insert(table).values(**values).on_conflict_do_nothing())
 
 
+# One catalog page may wait out publisher throttling (inventory._fetch_discovery
+# sleeps up to THROTTLE_WAITS_S in total) before its checkpoint is written; the
+# lease must outlive that, or the write fails with "checkpoint lease lost" and
+# the whole cycle fails (19 Sep 2026, cycle-manual-l1-cycle-35453100897-1).
+PAGE_LEASE = timedelta(minutes=6)
+
+
+def _throttled(exc) -> bool:
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status == 429 or (isinstance(status, int) and status >= 500) or "throttled" in str(exc).lower()
+
+
 def _page(cycle_id, url, source_key, category, role):
     return dict(id=_hash([cycle_id, url]), cycle_id=cycle_id, url=url, source_key=source_key,
                 category=category, role=role, status="pending", attempts=0, result={})
@@ -84,13 +96,53 @@ def _claim(engine, cycle_id, job_id):
             return None
         token = str(uuid.uuid4())
         changed = conn.execute(pages.update().where(pages.c.id == row["id"], eligible).values(
-            status="leased", lease_token=token, lease_until=now + timedelta(minutes=2), last_job_id=job_id,
+            status="leased", lease_token=token, lease_until=now + PAGE_LEASE, last_job_id=job_id,
             attempts=pages.c.attempts + 1))
         return {**row, "lease_token": token} if changed.rowcount else None
 
 
+def _terminal_resolution(conn, source_key, url):
+    result = {"terminal": True, "entries": [], "links": [], "findings": []}
+    if permissions.candidate_decision(conn, source_key, "acquire", canonical_url=url)["allowed"]:
+        return "checked", result
+    if permissions.decision(conn, source_key, "acquire").get("reason") == "not_approved":
+        result["findings"].append({"code": "publisher_permission_denied",
+            "detail": "The publisher explicitly denied acquisition; the operator exception does not apply."})
+        return "permission_blocked", {**result, "publisher_denied": True}
+    return "awaiting_exception_binding", result
+
+
+def _close_without_fetch(conn, page, mode):
+    if mode == "skip":
+        return "checked", {"skipped": True, "out_of_scope": True, "entries": [], "links": [], "findings": []}
+    if mode == "terminal":
+        return _terminal_resolution(conn, page["source_key"], page["url"])
+    raise ValueError("Unknown discovery settle mode")
+
+
+def _settle_existing(engine, cycle_id, settle):
+    """Close leftover leaf/off-book pages without spending the fetch budget.
+
+    The live 19 Sep frontier already had pending rule leaves and notice pages.
+    Claiming them one-by-one at 4 s + 429 backoff kept the rulebook cycle queued.
+    """
+    now = datetime.now(timezone.utc)
+    eligible = sa.or_(
+        pages.c.status.in_(["pending", "failed", "awaiting_exception_binding"]),
+        sa.and_(pages.c.status == "leased", pages.c.lease_until < now),
+    )
+    with engine.begin() as conn:
+        rows = list(conn.execute(sa.select(pages).where(pages.c.cycle_id == cycle_id, eligible)).mappings())
+        for row in rows:
+            mode = settle(row)
+            if mode == "skip" or (mode == "terminal" and row["status"] != "awaiting_exception_binding"):
+                status, result = _close_without_fetch(conn, row, mode)
+                conn.execute(pages.update().where(pages.c.id == row["id"], eligible).values(
+                    status=status, result=result, checked_at=now, lease_token=None, lease_until=None))
+
+
 def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, classify, max_pages=100,
-              cycle_date=None, decoder=None, decode_documents=False):
+              cycle_date=None, decoder=None, decode_documents=False, settle=None):
     """Resume one publisher's UTC cycle. classify(url, parent) -> target or None.
 
     A target has url/source_key/category/role and optional entry. Catalog
@@ -106,12 +158,26 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
         _insert_once(conn, cycles, dict(id=cycle_id, publisher_id=publisher_id, profile_hash=profile_hash, cycle_date=stamp))
         for seed in seeds:
             _insert_once(conn, pages, _page(cycle_id, seed["url"], seed["source_key"], seed["category"], "collection"))
+    if settle is not None:
+        _settle_existing(engine, cycle_id, settle)
     for _ in range(max(1, min(int(max_pages), 10000))):
         page = _claim(engine, cycle_id, job_id)
         if not page:
             break
         result = {"findings": [], "entries": [], "links": []}
         state = "checked"
+        mode = settle(page) if settle is not None else None
+        if mode:
+            with engine.begin() as conn:
+                state, result = _close_without_fetch(conn, page, mode)
+                changed = conn.execute(pages.update().where(
+                    pages.c.id == page["id"], pages.c.lease_token == page["lease_token"],
+                    pages.c.lease_until > datetime.now(timezone.utc)).values(
+                    status=state, result=result, checked_at=datetime.now(timezone.utc),
+                    lease_token=None, lease_until=None))
+                if not changed.rowcount:
+                    raise RuntimeError("Discovery checkpoint lease lost")
+            continue
         with engine.connect() as conn:
             choices = {op: permissions.candidate_decision(conn, page["source_key"], op, canonical_url=page["url"])
                        for op in ("acquire", "store", "parse")}
@@ -166,6 +232,12 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
                 state = "failed"
                 result = {**({"artifact": result["artifact"]} if result.get("artifact") else {}),
                           "entries": [], "links": [], "findings": [{"code": "discovery_failed", "detail": "Publisher discovery failed; the checkpoint remains retryable.", "error_type": type(exc).__name__}]}
+                if _throttled(exc) and page["attempts"] < 5:
+                    # A throttled or 5xx catalog page is not a discovery result. Keep
+                    # it pending so this cycle retries it after the other pages,
+                    # instead of planning imports from an incomplete inventory.
+                    state = "pending"
+                    result["findings"][-1].update(code="discovery_throttled", detail="Publisher throttled or failed transiently; the page stays pending in this cycle.")
         max_links = max(1, min(int(os.environ.get("CLHEAR_L1_DISCOVERY_MAX_DOCUMENTS", "10000")), 50000))
         if len(result["links"]) > max_links or len(result["entries"]) > max_links:
             result["links"] = result["links"][:max_links]
@@ -177,9 +249,15 @@ def run_batch(engine, store, *, publisher_id, profile, seeds, job_id, fetcher, c
             if not changed.rowcount:
                 raise RuntimeError("Discovery checkpoint lease lost")
             for link in result["links"]:
+                row = _page(cycle_id, link["url"], link["source_key"], link["category"], link["role"])
                 if link.get("terminal"):
-                    continue
-                _insert_once(conn, pages, _page(cycle_id, link["url"], link["source_key"], link["category"], link["role"]))
+                    # An enumerated leaf: never fetched by discovery. It still
+                    # needs its permission binding before the import may run,
+                    # so it waits for L0 exactly like a fetched page would; a
+                    # publisher denial stays a denial and is never bound.
+                    status, result_row = _terminal_resolution(conn, link["source_key"], link["url"])
+                    row.update(status=status, result=result_row, checked_at=datetime.now(timezone.utc))
+                _insert_once(conn, pages, row)
     from app.clhear.l1.finra_private_review import request_frontier_bindings
     request_frontier_bindings(engine, cycle_id)
     return read_cycle(engine, cycle_id)

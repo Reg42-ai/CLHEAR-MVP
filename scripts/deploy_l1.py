@@ -58,6 +58,16 @@ TASK_FIELDS = {
 # cycle snapshots, so the registered service must use the same size.
 L0_TASK_CPU = "1024"
 L0_TASK_MEMORY_MIB = 8192
+# The deploy runner starts as `python scripts/deploy_l1.py`, so the repo root
+# is not on sys.path and `app` cannot be imported. These four keys must stay
+# equal to app.clhear.demo_corpus.DEMO_SOURCE_KEYS. The worker, not this
+# process, performs the import.
+_DEMO_SOURCE_KEYS = (
+    "usc/15/ftc-act-45",
+    "cfr/16/255",
+    "cfr/17/ia-marketing",
+    "nist/csf-2.0",
+)
 # Completeness snapshots include granted source text. The 512 MiB / 512 MiB
 # /tmp viewer OOM'd or 503'd the anonymous probe after bootstrap 35355899299
 # succeeded; at 3008 / 4096 the 3.4 GB candidate of 19 Sep (35433640762) no
@@ -725,7 +735,6 @@ class Deployer:
         require(task.get("lastStatus") == "STOPPED" and code in ({0, 2} if action == "verify" else {0}), f"{action} worker failed; deployment remains held")
         return code
 
-    FULL_CYCLE_PUBLISHERS, FULL_CYCLE_LANES = 45, 32
     TRANSPORT_HEALTH_ATTEMPTS = 40  # × 15 s
 
     def _transport_healthy(self):
@@ -740,20 +749,17 @@ class Deployer:
                 return False
         return True
 
-    def _request_full_cycle(self):
-        """After a verified deployment: ask deployed L0 for the full diagnostic
-        cycle over the whole publisher scope (45 publishers, 32 lanes) followed by an
-        unchanged-source repeat. Results are published for sampling; unresolved gaps
-        stay visible and block corpus acceptance. This never changes the deployment
-        outcome: a request that cannot be made is recorded, not rolled back."""
-        verification_id = "l1-cycle-" + self.inputs.deployment_id.removeprefix("l1-")
-        finra_id = "l1-finra-" + self.inputs.deployment_id.removeprefix("l1-")
-        receipt = {"verification_id": verification_id, "cycle_id": "cycle-manual-" + verification_id,
-                   "repeat_cycle_id": "cycle-manual-" + verification_id + "-repeat",
-                   "scope": "all_publishers", "publishers": self.FULL_CYCLE_PUBLISHERS, "lanes": self.FULL_CYCLE_LANES,
-                   "unchanged_repeat": True, "corpus_acceptance": "pending", "status": "not_requested",
-                   "finra_rulebooks": {"verification_id": finra_id, "cycle_id": "cycle-manual-" + finra_id,
-                                       "scope": "finra", "status": "not_requested"}}
+    def _request_demo_import(self):
+        """After a verified deployment: ask deployed L0 for one fixed import of
+        the four influencer-demo sources. discover stays false. This does not
+        request a FINRA cycle or an all-publisher cycle. A request that cannot
+        be made is recorded and does not roll the deployment back. A direct
+        adapter run waits until reconcile has failed any cycle whose worker
+        revision no longer matches."""
+        verification_id = "l1-demo-" + self.inputs.deployment_id.removeprefix("l1-")
+        receipt = {"verification_id": verification_id, "adapter": "govinfo_us",
+                   "source_keys": list(_DEMO_SOURCE_KEYS), "discover": False,
+                   "scope": "demo", "status": "not_requested"}
         try:
             for _ in range(self.TRANSPORT_HEALTH_ATTEMPTS):
                 if self._transport_healthy():
@@ -763,15 +769,9 @@ class Deployer:
             else:
                 receipt.update(reason="L0/L1 workers did not reach running state on the deployed definition")
                 return receipt
-            # The FINRA rulebooks first: one lane, ~900 pages, finishes within the
-            # hour. The whole-publisher cycle and its unchanged repeat queue behind
-            # it on the single cycle slot.
-            code = self._worker("l0", "finra_rulebook_cycle_request",
-                                ["--request-l1-cycle", "--scope", "finra", "--verification-id", finra_id])
-            receipt["finra_rulebooks"].update(status="cycle_requested", exit_code=code)
-            code = self._worker("l0", "full_cycle_request",
-                                ["--request-l1-cycle", "--unchanged-repeat", "--verification-id", verification_id])
-            receipt.update(status="cycle_requested", exit_code=code)
+            code = self._worker("l0", "demo_import_request",
+                                ["--request-demo-import", "--verification-id", verification_id])
+            receipt.update(status="import_requested", exit_code=code)
         except Exception as error:  # noqa: BLE001 — recorded, never a deployment failure
             receipt.update(status="not_requested", **{k: v for k, v in _failure_details(error).items() if k != "status"})
         return receipt
@@ -1051,7 +1051,7 @@ class Deployer:
             self.report.update(status="review_ready" if result == 2 else "verified", recovery_required=False,
                                l0_relay_minimum=1, l1_worker_minimum=1,
                                traffic_policy="previous_capacity_restored", fleet_policy="new_code_l1_only")
-            self.report["full_cycle_request"] = self._request_full_cycle()
+            self.report["demo_import_request"] = self._request_demo_import()
             self._put("result.json", json.dumps(self.report, sort_keys=True).encode())
         except Exception as error:
             self.report.update(_failure_details(error))

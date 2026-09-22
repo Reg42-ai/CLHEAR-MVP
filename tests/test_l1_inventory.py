@@ -220,6 +220,49 @@ def test_legacy_unbound_manifest_and_unknown_publisher_checks_fail(small_scope):
     assert codes(result["sources"][0]) >= {"artifact_manifest_unverified", "parser_provenance_unverified", "publisher_check_unverified"}
 
 
+def test_live_discovery_is_paced_and_waits_out_publisher_throttling(monkeypatch):
+    """finra.org answered 429 to a burst of ~80 ms discovery requests on 19 Sep;
+    discovery must pace like document fetches and obey Retry-After."""
+    import httpx
+    from app.clhear.l1 import http as l1_http
+    monkeypatch.setenv("CLHEAR_HTTP_MODE", "live")
+    monkeypatch.setattr(l1_http, "HOST_PACING_S", {"www.finra.org": 0.05})
+    naps, calls = [], []
+    monkeypatch.setattr(inv.time, "sleep", lambda s: naps.append(s))  # inventory and http share the time module
+
+    class Stream:
+        def __init__(self, status, body=b""):
+            self.status_code, self._body, self.is_redirect = status, body, False
+            self.headers = {"retry-after": "7"} if status == 429 else {}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError(str(self.status_code), request=httpx.Request("GET", "https://www.finra.org/x"), response=httpx.Response(self.status_code))
+        def iter_bytes(self): yield self._body
+
+    responses = [Stream(429), Stream(200, b"<main><a href='/rules-guidance/rulebooks/finra-rules/3110'>3110</a></main>")]
+    def stream(method, url, **kwargs):
+        calls.append(url)
+        return responses.pop(0)
+    monkeypatch.setattr(httpx, "stream", stream)
+    body, origin = inv._fetch_discovery("https://www.finra.org/rules-guidance/rulebooks/finra-rules")
+    assert origin == "live" and b"3110" in body and len(calls) == 2
+    assert 30.0 in naps  # a 429 waits at least 30 s (Retry-After 7 s is shorter)
+    assert any(0 < n < 1 for n in naps)  # and the retry itself is host-paced
+    # The waits are bounded so one page's discovery lease outlives them: the
+    # 19 Sep full cycle died with "checkpoint lease lost" after 30+60+90 s.
+    from app.clhear.l1 import discovery
+    assert sum(inv.THROTTLE_WAITS_S) + 60 < discovery.PAGE_LEASE.total_seconds()
+    naps.clear(); calls.clear()
+    responses[:] = [Stream(429), Stream(429), Stream(429), Stream(429)]
+    for r in responses:
+        r.headers = {"retry-after": "900"}  # a publisher asking for 15 min is still capped
+    with pytest.raises(httpx.HTTPStatusError):  # the last 429 surfaces; run_batch keeps the page pending
+        inv._fetch_discovery("https://www.finra.org/rules-guidance/rulebooks/finra-rules")
+    assert len(calls) == 4 and max(n for n in naps if n >= 1) <= max(inv.THROTTLE_WAITS_S)
+
+
 def test_discovery_requires_each_exact_permission_before_fetch(engine, tmp_path, monkeypatch):
     store = LocalStore(tmp_path / "discovery")
     monkeypatch.setattr(inv, "_fetch_discovery", lambda url: pytest.fail("unauthorized discovery network fetch"))
@@ -248,10 +291,319 @@ def test_discovery_pagination_limits_and_attachment_gaps_are_preserved(engine, t
         return bodies[url], "live"
     monkeypatch.setattr(inv, "_fetch_discovery", fetch)
     entries, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
-    assert KEY in entries and inv._source_key(attachment) in entries
-    assert URL not in fetched  # new document has no permission yet
+    assert KEY in entries and inv._source_key(attachment) not in entries
+    assert URL not in fetched  # a rule leaf is enumerated, not fetched
+    assert attachment not in fetched  # off-book PDFs stay off the rulebook frontier
     assert not result["complete"] and "discovery_limit" in codes(result)
     assert "Test firms" not in str(result)
+
+
+def test_throttled_seed_page_stays_pending_instead_of_planning_from_a_gap(engine, tmp_path, monkeypatch):
+    """19 Sep: every rulebook seed 429'd, was marked failed, and the cycle planned
+    with no FINRA Rules. A throttled catalog page must remain pending in the cycle."""
+    import httpx
+    from app.clhear.l1 import discovery
+    index = "https://www.finra.org/rules-guidance/rulebooks/finra-rules"
+    monkeypatch.setattr(inv, "FINRA_CATEGORIES", (("rules", "Rules", index),))
+    monkeypatch.setenv("CLHEAR_L1_DISCOVERY_MAX_PAGES", "1")
+    grant(engine, "finra/catalog/rules")
+    def throttled(url):
+        response = httpx.Response(429, request=httpx.Request("GET", url))
+        raise httpx.HTTPStatusError("429", request=response.request, response=response)
+    monkeypatch.setattr(inv, "_fetch_discovery", throttled)
+    _, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert result["pending_pages"] == 1 and "discovery_throttled" in codes(result) and not result["complete"]
+    with engine.connect() as conn:
+        row = conn.execute(sa.select(discovery.pages.c.status, discovery.pages.c.attempts)).one()
+    assert (row.status, row.attempts) == ("pending", 1)
+    monkeypatch.setattr(inv, "_fetch_discovery", lambda url: (_ for _ in ()).throw(ValueError("not a catalog")))
+    _, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert result["pending_pages"] == 0 and "discovery_failed" in codes(result)  # a real failure still fails
+
+
+def test_rulebook_discovery_ignores_notice_links_and_settles_leftover_frontier(engine, tmp_path, monkeypatch):
+    """19 Sep: the same-day frontier already held pending rule leaves and notices.
+    Discovery fetched both, 429'd, and the queued rulebook cycle never started."""
+    from app.clhear.l1 import discovery
+    index = "https://www.finra.org/rules-guidance/rulebooks/finra-rules"
+    notice = "https://www.finra.org/rules-guidance/notices/00-10"
+    leftover = index + "/7630"
+    monkeypatch.setattr(inv, "FINRA_CATEGORIES", (("rules", "Rules", index),))
+    grant(engine, "finra/catalog/rules")
+    grant(engine, KEY)
+    grant(engine, "finra/rule/7630")
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        return (f'<main><a href="{URL}">2210</a><a href="{notice}">Notice</a></main>'.encode(), "live")
+    monkeypatch.setattr(inv, "_fetch_discovery", fetch)
+    entries, first = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert fetched == [index] and KEY in entries
+    assert inv._source_key(notice) not in entries
+    with engine.begin() as conn:
+        cycle_id = conn.execute(sa.select(discovery.cycles.c.id)).scalar_one()
+        conn.execute(discovery.pages.insert(), [
+            discovery._page(cycle_id, notice, inv._source_key(notice), "notices", "document"),
+            discovery._page(cycle_id, leftover, "finra/rule/7630", "rules", "document"),
+        ])
+    entries, second = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert fetched == [index]
+    assert second["pending_pages"] == 0 and KEY in entries
+    with engine.connect() as conn:
+        rows = {row["url"]: row for row in conn.execute(sa.select(discovery.pages)).mappings()}
+    assert rows[notice]["status"] == "checked" and rows[notice]["result"]["out_of_scope"] is True
+    assert rows[leftover]["status"] == "checked" and rows[leftover]["result"]["terminal"] is True
+    assert rows[leftover]["attempts"] == 0
+
+
+def test_source_key_keeps_lettered_and_drupal_alias_finra_rules():
+    """20 Sep live index: 664 finra-rules child paths, but only 606 matched
+    \\d{4,5}[A-Z]?. Lettered TRF/ADF series and 12407-0 aliases were hashed."""
+    assert inv._source_key(URL) == KEY
+    assert inv._source_key("https://www.finra.org/rules-guidance/rulebooks/finra-rules/6300a") == "finra/rule/6300A"
+    assert inv._source_key("https://www.finra.org/rules-guidance/rulebooks/finra-rules/6340B") == "finra/rule/6340B"
+    assert inv._source_key("https://www.finra.org/rules-guidance/rulebooks/finra-rules/12407-0") == "finra/rule/12407"
+    assert inv._source_key("https://www.finra.org/rules-guidance/rulebooks/finra-rules/part-iv").startswith("finra/document/")
+    nyse = inv._discovered_entry(
+        "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409", "nyse_archive")
+    assert nyse["key"] == "finra/nyse/409" and inv.rulebook_import(nyse)
+    assert inv._source_key(
+        "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-299c") == "finra/nyse/299C"
+    assert inv.official_nyse_leaf(
+        "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-1")
+
+
+def test_rulebook_index_enumerates_lettered_rules_without_fetching_them(engine, tmp_path, monkeypatch):
+    index = "https://www.finra.org/rules-guidance/rulebooks/finra-rules"
+    lettered = index + "/6300a"
+    alias = index + "/12407-0"
+    monkeypatch.setattr(inv, "FINRA_CATEGORIES", (("rules", "Rules", index),))
+    grant(engine, "finra/catalog/rules")
+    grant(engine, "finra/rule/6300A")
+    grant(engine, "finra/rule/12407")
+    fetched = []
+    def fetch(url):
+        fetched.append(url)
+        return (f'<main><a href="{lettered}">6300A</a><a href="{alias}">12407</a></main>'.encode(), "live")
+    monkeypatch.setattr(inv, "_fetch_discovery", fetch)
+    entries, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert fetched == [index]
+    assert "finra/rule/6300A" in entries and "finra/rule/12407" in entries
+    assert lettered not in fetched and alias not in fetched
+    assert result["pending_pages"] == 0
+
+
+def test_official_nyse_titles_name_published_rule_paths():
+    from app.clhear.l1.finra_catalog import official_nyse_leaf_urls, official_nyse_rule_numbers
+    from bs4 import BeautifulSoup
+    numbers = official_nyse_rule_numbers("Dealings and Settlements (Rules 45–299C)")
+    assert numbers[0] == "45" and "299" in numbers and "299C" in numbers
+    assert len(numbers) == 256  # 45..299 plus 299C
+    assert official_nyse_rule_numbers("Rules 1–10000") == []  # unbounded range is not enumerated
+    soup = BeautifulSoup(
+        "<main><h1>Incorporated NYSE Rules</h1>"
+        "<a href='/rules-guidance/rulebooks/incorporated-nyse-rules-1'>Definitions (Rules 1–2)</a>"
+        "<a href='/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409'>Rule 409. Statements</a>"
+        "</main>", "html.parser")
+    urls = official_nyse_leaf_urls(soup)
+    assert "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-1" in urls
+    assert "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-2" in urls
+    assert "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409" in urls
+
+
+def test_nyse_index_enumerates_official_rule_paths_without_fetching_them(engine, tmp_path, monkeypatch):
+    index = "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules"
+    monkeypatch.setattr(inv, "FINRA_CATEGORIES", (("nyse_archive", "NYSE", index),))
+    grant(engine, "finra/catalog/nyse_archive")
+    grant(engine, "finra/nyse/1")
+    grant(engine, "finra/nyse/2")
+    grant(engine, "finra/nyse/409")
+    fetched = []
+    html = (
+        "<main><h1>Incorporated NYSE Rules</h1>"
+        "<a href='/rules-guidance/rulebooks/incorporated-nyse-rules-1'>Definitions (Rules 1–2)</a>"
+        "<a href='/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409'>Rule 409. Statements</a>"
+        "</main>"
+    ).encode()
+    def fetch(url):
+        fetched.append(url)
+        return (html, "live")
+    monkeypatch.setattr(inv, "_fetch_discovery", fetch)
+    entries, result = inv._discover(engine, LocalStore(tmp_path / "discovery"))
+    assert {"finra/nyse/1", "finra/nyse/2", "finra/nyse/409"} <= set(entries)
+    assert all("/rule-" not in url for url in fetched)
+    assert result["pending_pages"] == 0
+
+
+def test_finra_series_heading_ingest_is_catalog_page_residue(engine, tmp_path, monkeypatch):
+    from app.clhear.l1.adapters.sec_edgar import SecEdgarAdapter
+    from app.clhear.l1.pipeline import ingest
+    url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/11300"
+    grant(engine, "finra/rule/11300")
+    html = (
+        b'<html><body><div id="the-rule"><h1>11300. DELIVERY OF SECURITIES</h1>'
+        b'<div class="book-navigation"><ul>'
+        b'<li><a href="/rules-guidance/rulebooks/finra-rules/11310">11310</a></li>'
+        b'<li><a href="/rules-guidance/rulebooks/finra-rules/11320">11320</a></li>'
+        b'</ul></div></div></body></html>'
+    )
+    adapter = SecEdgarAdapter(channel="finra", source_key="finra/rule/11300",
+                              title="FINRA 11300", url=url)
+    adapter.key = "finra"
+    monkeypatch.setattr(adapter, "fetch_bytes", lambda: [("page.html", html)])
+    summary = ingest(engine, adapter, LocalStore(tmp_path / "originals"), index_embeddings=False)
+    assert summary["status"] == "catalog-page"
+
+
+def test_rulebook_collection_landings_are_not_imported():
+    expanded = {"key": "finra/document/expandedhash",
+                "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/finra-rules-expanded"}
+    pending = {"key": "finra/document/pendinghash",
+               "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/immediately-effective-rule-changes-pending-sec-notification"}
+    agreements = {"key": "finra/document/trfhash",
+                  "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/corporate-organization/trf-llc-agreements"}
+    article = {"key": "finra/document/bylawhash",
+               "canonical_url": "https://www.finra.org/rules-guidance/rulebooks/corporate-organization/article-iv-board-directors"}
+    assert not inv.rulebook_import(expanded)
+    assert not inv.rulebook_import(pending)
+    assert not inv.rulebook_import(agreements)
+    assert inv.rulebook_import(article)
+    assert inv.rulebook_collection_url(expanded["canonical_url"])
+    assert not inv.rulebook_collection_url(article["canonical_url"])
+
+
+def test_unpublished_official_finra_rule_and_notice_are_listed_residue(engine, tmp_path, monkeypatch):
+    import httpx
+    from app.clhear.l1.adapters.finra_document import FinraDocumentAdapter
+    from app.clhear.l1.pipeline import ingest
+
+    rule_url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/4554"
+    grant(engine, "finra/rule/4554")
+    rule = FinraDocumentAdapter("finra/rule/4554", "FINRA 4554", rule_url)
+
+    def missing_rule(_since=None):
+        request = httpx.Request("GET", rule_url)
+        raise httpx.HTTPStatusError("404", request=request, response=httpx.Response(404, request=request))
+
+    monkeypatch.setattr(rule, "fetch", missing_rule)
+    assert ingest(engine, rule, LocalStore(tmp_path / "originals"), index_embeddings=False)["status"] == "not-published"
+
+    notice_url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/rules-guidance/notices/26-10"
+    grant(engine, "finra/document/daba56f08d3d0360")
+    notice = FinraDocumentAdapter("finra/document/daba56f08d3d0360", "Notice 26-10", notice_url)
+
+    def missing_notice(_since=None):
+        request = httpx.Request("GET", notice_url)
+        raise httpx.HTTPStatusError("404", request=request, response=httpx.Response(404, request=request))
+
+    monkeypatch.setattr(notice, "fetch", missing_notice)
+    assert ingest(engine, notice, LocalStore(tmp_path / "notice"), index_embeddings=False)["status"] == "not-published"
+    assert inv.official_finra_rule_leaf(rule_url)
+    assert inv.unpublished_finra_path(notice_url)
+    assert not inv.unpublished_finra_path("https://example.com/rules-guidance/notices/26-10")
+
+
+def _official_rule_html(rule: str, body: str) -> bytes:
+    return (
+        f'<html><body><div id="the-rule"><h1>{rule}. Synthetic Rule</h1>'
+        f'<div id="block-body"><div class="field--name-body">{body}</div></div>'
+        f'</div></body></html>'
+    ).encode()
+
+
+def test_duplicate_paragraph_ingest_is_listed_not_fully_successful(engine, tmp_path, monkeypatch):
+    from app.clhear.l1.adapters.sec_edgar import SecEdgarAdapter
+    from app.clhear.l1.pipeline import ingest
+
+    url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/4210"
+    grant(engine, "finra/rule/4210")
+    html = _official_rule_html("4210", "<div>(a) One.</div><div>(a) Duplicate.</div>")
+    adapter = SecEdgarAdapter(channel="finra", source_key="finra/rule/4210",
+                              title="FINRA 4210", url=url)
+    adapter.key = "finra"
+    monkeypatch.setattr(adapter, "fetch_bytes", lambda: [("page.html", html)])
+    summary = ingest(engine, adapter, LocalStore(tmp_path / "originals"), index_embeddings=False)
+    assert summary["status"] == "not-fully-successful"
+
+
+def test_empty_rule_body_ingest_is_catalog_page_residue(engine, tmp_path, monkeypatch):
+    from app.clhear.l1.adapters.sec_edgar import SecEdgarAdapter
+    from app.clhear.l1.pipeline import ingest
+
+    url = "https://www.finra.org/rules-guidance/rulebooks/finra-rules/9130"
+    grant(engine, "finra/rule/9130")
+    adapter = SecEdgarAdapter(channel="finra", source_key="finra/rule/9130",
+                              title="FINRA 9130", url=url)
+    adapter.key = "finra"
+    monkeypatch.setattr(adapter, "fetch_bytes", lambda: [("page.html", _official_rule_html("9130", ""))])
+    summary = ingest(engine, adapter, LocalStore(tmp_path / "originals"), index_embeddings=False)
+    assert summary["status"] == "catalog-page"
+
+
+def test_unpublished_official_nyse_leaf_is_listed_residue(engine, tmp_path, monkeypatch):
+    import httpx
+    from app.clhear.l1.adapters.finra_document import FinraDocumentAdapter
+    url = "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-46"
+    grant(engine, "finra/nyse/46")
+    adapter = FinraDocumentAdapter("finra/nyse/46", "Incorporated NYSE Rule 46", url)
+    def boom(_since=None):
+        request = httpx.Request("GET", url)
+        raise httpx.HTTPStatusError("404", request=request, response=httpx.Response(404, request=request))
+    monkeypatch.setattr(adapter, "fetch", boom)
+    from app.clhear.l1.pipeline import ingest
+    summary = ingest(engine, adapter, LocalStore(tmp_path / "originals"), index_embeddings=False)
+    assert summary["status"] == "not-published"
+
+
+def test_finra_audit_drops_leaked_notice_documents_from_the_rulebook_plan(engine, tmp_path, monkeypatch):
+    engine, store = engine, LocalStore(tmp_path / "originals")
+    notice = inv._discovered_entry("https://www.finra.org/rules-guidance/notices/00-10", "notices")
+    extra = inv._discovered_entry(URL.replace("2210", "9999"), "rules")
+    monkeypatch.setattr(inv, "_discover", lambda engine, store: ({notice["key"]: notice, extra["key"]: extra}, {
+        "complete": False, "checked_at": None, "categories": [], "pages": [], "findings": []}))
+    first = inv.run_inventory_audit(engine, store, job_id="leaked-notices", scope="finra", discover=True)
+    assert extra["key"] in {e["source_key"] for e in first["sources"]}
+    assert notice["key"] not in {e["source_key"] for e in first["sources"]}
+    assert extra["key"] in {e["key"] for e in inv.planned_entries(engine, scope="finra")}
+    assert notice["key"] not in {e["key"] for e in inv.planned_entries(engine, scope="finra")}
+
+
+def test_registered_audit_drops_leaked_finra_notices_from_the_import_plan(engine, tmp_path, monkeypatch):
+    """20 Sep nightly: all_publishers reused the 19 Sep snapshot and imported
+    leftover finra/document notices, 429'd 4511, and never reached GovInfo/NIST."""
+    notice = inv._discovered_entry("https://www.finra.org/rules-guidance/notices/07-57", "notices")
+    filing = inv._discovered_entry("https://www.finra.org/rules-guidance/rule-filings/sr-finra-2016-043", "filings")
+    extra = inv._discovered_entry(URL.replace("2210", "9999"), "rules")
+    bylaw = inv._discovered_entry(
+        "https://www.finra.org/rules-guidance/rulebooks/corporate-organization/article-iv-board-directors",
+        "governing")
+    cab = inv._discovered_entry(
+        "https://www.finra.org/rules-guidance/rulebooks/capital-acquisition-broker-rules/121",
+        "cab_rules")
+    funding = inv._discovered_entry(
+        "https://www.finra.org/rules-guidance/rulebooks/funding-portal-rules/100",
+        "funding_portal_rules")
+    nyse = inv._discovered_entry(
+        "https://www.finra.org/rules-guidance/rulebooks/incorporated-nyse-rules/rule-409",
+        "nyse_archive")
+    report = {"complete": False, "checked_at": None, "categories": [], "pages": [], "findings": []}
+    monkeypatch.setattr(inv, "_discover_publishers", lambda engine, store, job_id: (
+        {row["key"]: row for row in (notice, filing, extra, bylaw, cab, funding, nyse)}, report))
+    audit = inv.run_inventory_audit(engine, LocalStore(tmp_path / "originals"),
+                                    job_id="registered-leaked-notices", scope="registered", discover=True)
+    keys = {e["source_key"] for e in audit["sources"]}
+    assert extra["key"] in keys
+    assert notice["key"] not in keys and filing["key"] not in keys
+    assert {bylaw["key"], cab["key"], funding["key"], nyse["key"]} <= keys
+    planned = {e["key"] for e in inv.planned_entries(engine, scope="registered")}
+    assert extra["key"] in planned
+    assert notice["key"] not in planned and filing["key"] not in planned
+    assert {bylaw["key"], cab["key"], funding["key"], nyse["key"]} <= planned
+    assert notice["key"] not in {e["key"] for e in inv.planned_entries(engine, scope="all_publishers")}
+    assert all(inv.rulebook_import(row) for row in (extra, bylaw, cab, funding, nyse))
+    assert not inv.rulebook_import(notice) and not inv.rulebook_import(filing)
+    # Cycle stubs use finra/<lane>/doc, not leftover document hashes.
+    assert inv.rulebook_import({"key": "finra/doc"})
 
 
 def test_failed_discovery_keeps_previously_expected_documents(small_scope, monkeypatch):

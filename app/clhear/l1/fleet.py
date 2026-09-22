@@ -211,7 +211,9 @@ def _govinfo_for(entry: dict, meta: SourceMeta, fetch: dict):
             meta=meta,
         )
     if fetch.get("ecfr_sections"):
-        return GovInfoEcfrAdapter(
+        # Absent subchapter keeps the FATCA default (A). An explicit empty
+        # subchapter (17 CFR part 275) must not be rewritten to A.
+        pinned = dict(
             title=str(fetch.get("ecfr_title", "17")),
             sections=tuple(fetch["ecfr_sections"]),
             as_of=str(fetch.get("as_of", "2025-12-31")),
@@ -219,6 +221,9 @@ def _govinfo_for(entry: dict, meta: SourceMeta, fetch: dict):
             part=fetch.get("part", ""),
             meta=meta,
         )
+        if "subchapter" in fetch:
+            pinned["subchapter"] = str(fetch.get("subchapter") or "")
+        return GovInfoEcfrAdapter(**pinned)
     return OfficialHtmlAdapter(
         source_key=entry["key"],
         title=entry["name"],

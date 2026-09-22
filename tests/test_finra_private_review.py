@@ -74,11 +74,15 @@ def test_new_frontier_waits_for_l0_then_resumes_and_retains_exact_evidence(engin
     assert workers.handle_envelope(engine, None, envelope.model_dump_json()) is None
     monkeypatch.setenv("CLHEAR_FLEET", "l1")
     entries, second = inventory._discover(engine, LocalStore(tmp_path))
-    assert fetched == [INDEX, NEW_RULE]
+    # A FINRA Rule is enumerated from its index and bound, but discovery never
+    # fetches it: finra.org's request budget is spent once, by the import.
+    assert fetched == [INDEX]
     assert second["pending_pages"] == 0 and "finra/rule/9999" in entries
-    evidence = next(p for p in second["pages"] if p["source_key"] == "finra/rule/9999")
-    assert evidence["permissions"]["acquire"]["authority_type"] == "operator_exception"
-    assert evidence["permissions"]["acquire"]["release_eligible"] is False
+    with engine.connect() as conn:
+        page = conn.execute(sa.select(discovery.pages).where(discovery.pages.c.source_key == "finra/rule/9999")).mappings().one()
+        assert page["status"] == "checked" and page["result"]["terminal"] is True and page["attempts"] == 0
+        decision = permissions.candidate_decision(conn, "finra/rule/9999", "acquire", canonical_url=NEW_RULE)
+        assert decision["allowed"] and decision["authority_type"] == "operator_exception" and decision["release_eligible"] is False
 
 
 def test_revoke_while_frontier_waits_leaves_a_gap_not_an_endless_pending_page(engine, monkeypatch, tmp_path):
@@ -230,5 +234,6 @@ def test_repeated_frontier_batches_request_one_binding_and_binding_twice_is_idem
     with engine.connect() as conn:
         bindings = conn.execute(sa.select(sa.func.count()).select_from(exceptions.source_bindings)
                                 .where(exceptions.source_bindings.c.source_key.in_(["finra/rule/9999", "finra/rule/9998"]))).scalar_one()
-        pending = conn.execute(sa.select(sa.func.count()).select_from(discovery.pages).where(discovery.pages.c.status == "pending")).scalar_one()
-    assert bindings == 2 and pending == 2  # one binding per document; both pages resumed for L1
+        checked = conn.execute(sa.select(sa.func.count()).select_from(discovery.pages).where(
+            discovery.pages.c.status == "checked", discovery.pages.c.role == "document")).scalar_one()
+    assert bindings == 2 and checked == 2  # one binding per rule; enumerated leaves need no discovery fetch

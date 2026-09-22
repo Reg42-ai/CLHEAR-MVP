@@ -18,7 +18,7 @@ from app.clhear.platform.router import complete
 
 log = logging.getLogger("clhear.l6.explain")
 
-_ID_RE = re.compile(r"\b(?:OBL|BLK|ACT|PRF|ITM|BLU|CON)[:-][A-Za-z0-9_./#:-]+")
+_ID_RE = re.compile(r"\b(?:OBL|BLK|ACT|PRF|ITM|BLU|CON)[:-][A-Za-z0-9_./#():-]+")
 _TRAIL = ".,;:)]}"
 
 
