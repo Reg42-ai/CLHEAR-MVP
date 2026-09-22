@@ -8,6 +8,7 @@ v1 charter (HLD §7.3).
 import re
 import xml.etree.ElementTree as ET
 from datetime import date
+from urllib.parse import quote
 
 from bs4 import BeautifulSoup, Tag
 
@@ -179,6 +180,22 @@ class GovInfoEcfrAdapter:
             version_policy="consolidated",
         )
 
+    def section_url(self, section: str) -> str:
+        """Versioner URL for one section. Parentheses are encoded. An empty
+        subchapter is omitted so title 17 part 275 is not queried as subchapter A."""
+        template = self._url_template
+        if not self.subchapter:
+            template = template.replace("&subchapter={subchapter}", "").replace(
+                "subchapter={subchapter}&", "").replace("?subchapter={subchapter}", "?")
+        return template.format(
+            date=self.as_of,
+            section=quote(str(section), safe=""),
+            title=self.title,
+            chapter=self.chapter,
+            part=self.part,
+            subchapter=self.subchapter,
+        )
+
     def fetch(self, since_version: str | None = None) -> FetchResult | None:
         version_label = f"consolidated:{self.as_of}"
         if since_version == version_label:
@@ -186,16 +203,7 @@ class GovInfoEcfrAdapter:
         tree: list[DocNode] = []
         artifacts: list[Artifact] = []
         for section in self.sections:
-            content = http.get(
-                self._url_template.format(
-                    date=self.as_of,
-                    section=section,
-                    title=self.title,
-                    chapter=self.chapter,
-                    part=self.part,
-                    subchapter=self.subchapter,
-                )
-            )
+            content = http.get(self.section_url(section))
             artifacts.append(Artifact(name=f"{section}.xml", content=content, content_type="application/xml"))
             from app.clhear.l1.adapters.xml_document import parse
             tree.extend(parse(content, self.meta().source_key, "govinfo_us", len(artifacts)))

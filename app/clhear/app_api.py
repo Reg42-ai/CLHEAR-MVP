@@ -364,6 +364,9 @@ async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dic
             jurs = list(entity["attributes"].get("jurisdictions", []))
             union_jurisdictions.update(jurs)
             all_sources.update(c["source_key"] for c in bp["coverage"])
+            from app.clhear.observations import attach_performance
+
+            attach_performance(engine, bp)
             entity_results.append(
                 {
                     "name": entity.get("name", "entity"),
@@ -414,7 +417,25 @@ async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dic
     ]
     result["layer_status"] = {"L2": "derived", "L3": "curated", "L5": "curated", "L6": "computed"}
     result["legal"] = legal.api_legal_block(sorted({c["source_key"] for c in result["coverage"]}))
+    from app.clhear.observations import attach_performance
+
+    attach_performance(engine, result)
     return result
+
+
+@router.post("/observations")
+def post_observation(body: dict, app: dict = Depends(require_app)) -> dict:
+    """One observation. MCP structuredContent and A2A DataPart both arrive as this JSON.
+
+    Unmapped vendor words are stored. They do not change the compliance score.
+    """
+    require_scope(app, "read:l1")
+    from app.clhear.observations import ObservationRejected, accept_observation
+
+    try:
+        return accept_observation(_engine(), body)
+    except ObservationRejected as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/releases/{release_id}/{layer}/{resource}")
@@ -449,5 +470,8 @@ def reserved_layer_resource(
             body["registry"] = layer_service.obligation_items(_engine())
         else:
             body["items"] = layer_service.layer_items(_engine(), code)
+        if code == "L7":
+            body["view"] = "enforcement exposure"
+            body["moves_with_observations"] = False
         return body
     raise HTTPException(status_code=501, detail=not_published_body(code))

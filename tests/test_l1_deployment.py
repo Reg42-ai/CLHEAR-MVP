@@ -430,13 +430,11 @@ def test_split_worker_entrypoint_is_canonicalized_before_phase_command_overrides
             "python", "-m", "app.clhear.workers", "--verify-deployment", action,
             "--verification-id", inputs().deployment_id,
         ]
-    # after capacity is restored the deployment asks deployed L0 for the FINRA
-    # rulebook cycle, then the full cycle + unchanged repeat
-    finra, request = cycle_request
-    assert finra["overrides"]["containerOverrides"][0]["command"] == [
-        "--request-l1-cycle", "--scope", "finra", "--verification-id", "l1-finra-" + inputs().deployment_id.removeprefix("l1-")]
+    # after capacity is restored the deployment asks deployed L0 for the four
+    # demo sources only. It does not queue a FINRA or all-publisher cycle.
+    request, = cycle_request
     assert request["overrides"]["containerOverrides"][0]["command"] == [
-        "--request-l1-cycle", "--unchanged-repeat", "--verification-id", "l1-cycle-" + inputs().deployment_id.removeprefix("l1-")]
+        "--request-demo-import", "--verification-id", "l1-demo-" + inputs().deployment_id.removeprefix("l1-")]
     assert all(cloud.definitions[arn] == definition for arn, definition in original.items())
 
 
@@ -509,12 +507,14 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
     operations = [op for _, op, _ in cloud.calls]
     launches = [(index, args) for index, (_, op, args) in enumerate(cloud.calls) if op == "run_task"]
     assert [args["overrides"]["containerOverrides"][0]["command"][1] for _, args in launches][:3] == ["bootstrap", "verify", "publish"]
-    assert launches[3][1]["overrides"]["containerOverrides"][0]["command"][:3] == ["--request-l1-cycle", "--scope", "finra"]
-    assert launches[4][1]["overrides"]["containerOverrides"][0]["command"][0] == "--request-l1-cycle"
-    assert result["full_cycle_request"]["finra_rulebooks"]["status"] == "cycle_requested"
-    assert result["full_cycle_request"]["status"] == "cycle_requested" and result["full_cycle_request"]["unchanged_repeat"] is True
-    assert result["full_cycle_request"]["publishers"] == 45 and result["full_cycle_request"]["lanes"] == 32
-    assert result["full_cycle_request"]["corpus_acceptance"] == "pending" and result["full_cycle_request"]["transport_health"] == "established"
+    assert launches[3][1]["overrides"]["containerOverrides"][0]["command"] == [
+        "--request-demo-import", "--verification-id", "l1-demo-" + inputs().deployment_id.removeprefix("l1-")]
+    assert len(launches) == 4
+    demo = result["demo_import_request"]
+    assert demo["status"] == "import_requested" and demo["discover"] is False
+    assert demo["source_keys"] == ["usc/15/ftc-act-45", "cfr/16/255", "cfr/17/ia-marketing", "nist/csf-2.0"]
+    assert demo["scope"] == "demo" and demo["transport_health"] == "established"
+    assert "finra" not in demo and "all_publishers" not in demo.values()
     assert operations.index("put_function_concurrency") < operations.index("stop_task") < launches[0][0] < operations.index("update_function_code") < launches[1][0]
     assert len([op for op in operations[:launches[0][0]] if op == "register_task_definition"]) == 9
     assert all(args["networkConfiguration"] == cloud.services["l0"]["networkConfiguration"] for _, args in launches)
@@ -525,7 +525,7 @@ def test_success_preserves_configuration_and_orders_hold_bootstrap_cutover_verif
     assert all(cloud.definitions[cloud.services[fleet]["taskDefinition"]]["memory"] == "512" for fleet in FLEETS if fleet != "l0")
     for _, args in launches:
         command = args["overrides"]["containerOverrides"][0]["command"]
-        if command[0] == "--request-l1-cycle" or (len(command) > 1 and command[1] in {"bootstrap", "publish"}):
+        if command[0] == "--request-demo-import" or (len(command) > 1 and command[1] in {"bootstrap", "publish"}):
             assert args["overrides"]["cpu"] == "1024" and args["overrides"]["memory"] == "8192"
             assert args["overrides"]["containerOverrides"][0]["cpu"] == 1024
             assert args["overrides"]["containerOverrides"][0]["memory"] == 8192
@@ -608,7 +608,7 @@ def test_review_ready_runs_final_snapshot_without_claiming_acceptance():
     result = cloud.deployer().deploy()
     assert result["status"] == "review_ready" and result["accepted_release_changed"] is False
     phases = [step for step in result["steps"] if step["action"] in {"bootstrap", "verify", "publish"}]
-    assert phases[-1]["action"] == "publish" and result["steps"][-1]["action"] == "full_cycle_request"
+    assert phases[-1]["action"] == "publish" and result["steps"][-1]["action"] == "demo_import_request"
 
 
 def test_full_cycle_request_failure_is_recorded_and_never_undoes_a_verified_deployment(monkeypatch):
@@ -616,15 +616,15 @@ def test_full_cycle_request_failure_is_recorded_and_never_undoes_a_verified_depl
     original_call = cloud.call
 
     def call(service, operation, args):
-        if operation == "run_task" and args["overrides"]["containerOverrides"][0]["command"][0] == "--request-l1-cycle":
+        if operation == "run_task" and args["overrides"]["containerOverrides"][0]["command"][0] == "--request-demo-import":
             return {"tasks": [], "failures": [{"reason": "capacity"}]}
         return original_call(service, operation, args)
     monkeypatch.setattr(cloud, "call", call)
     result = cloud.deployer().deploy()
     assert result["status"] == "verified" and result["recovery_required"] is False and cloud.concurrency is None
-    assert result["full_cycle_request"]["status"] == "not_requested" and result["full_cycle_request"]["failure_type"] == "DeploymentError"
+    assert result["demo_import_request"]["status"] == "not_requested" and result["demo_import_request"]["failure_type"] == "DeploymentError"
     written = next(args for _, op, args in cloud.calls if op == "put_object" and args["Key"].endswith("/result.json"))
-    assert json.loads(written["Body"])["full_cycle_request"]["status"] == "not_requested"
+    assert json.loads(written["Body"])["demo_import_request"]["status"] == "not_requested"
 
 
 def test_unreserved_viewer_resumes_without_requesting_a_positive_reservation():
