@@ -1,0 +1,160 @@
+{
+  "account": "730649732189",
+  "cluster": "clhear-cluster",
+  "fleets": {
+    "l0": {
+      "desired_count": 1,
+      "max_capacity": 1,
+      "min_capacity": 1,
+      "scalable_resource_id": "service/clhear-cluster/clhear-fleet-l0",
+      "scalable_target_arn": "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec59175e73f66a64a27955c59e834cfbde6",
+      "service_arn": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l0",
+      "suspended_state": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      },
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l0:32"
+    },
+    "l1": {
+      "desired_count": 1,
+      "max_capacity": 1,
+      "min_capacity": 1,
+      "scalable_resource_id": "service/clhear-cluster/clhear-fleet-l1",
+      "scalable_target_arn": "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec5653b3b25b85240a6b852b21265dabff2",
+      "service_arn": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l1",
+      "suspended_state": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      },
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l1:32"
+    },
+    "l2": {
+      "desired_count": 1,
+      "max_capacity": 2,
+      "min_capacity": 0,
+      "scalable_resource_id": "service/clhear-cluster/clhear-fleet-l2",
+      "scalable_target_arn": "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec53ef2b8464f2647939deb4c4fd2580150",
+      "service_arn": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l2",
+      "suspended_state": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      },
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l2:32"
+    },
+    "l3": {
+      "desired_count": 0,
+      "max_capacity": 2,
+      "min_capacity": 0,
+      "scalable_resource_id": "service/clhear-cluster/clhear-fleet-l3",
+      "scalable_target_arn": "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec50cb4b6c52acf4aa38cd508aa9f8c33fa",
+      "service_arn": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l3",
+      "suspended_state": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      },
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l3:32"
+    },
+    "l4": {
+      "desired_count": 0,
+      "max_capacity": 1,
+      "min_capacity": 0,
+      "scalable_resource_id": "service/clhear-cluster/clhear-fleet-l4",
+      "scalable_target_arn": "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec53fb5c72e2e334d9abe29df9fc49e0233",
+      "service_arn": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l4",
+      "suspended_state": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      },
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l4:32"
+    },
+    "l5": {
+      "desired_count": 0,
+      "max_capacity": 1,
+      "min_capacity": 0,
+      "scalable_resource_id": "service/clhear-cluster/clhear-fleet-l5",
+      "scalable_target_arn": "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec586a2bec7ee894c4a9d97f9d98fc56b97",
+      "service_arn": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l5",
+      "suspended_state": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      },
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l5:32"
+    },
+    "l6": {
+      "desired_count": 0,
+      "max_capacity": 1,
+      "min_capacity": 0,
+      "scalable_resource_id": "service/clhear-cluster/clhear-fleet-l6",
+      "scalable_target_arn": "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec522c7f8af49364fc7a6f685a184ad405d",
+      "service_arn": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l6",
+      "suspended_state": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      },
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l6:32"
+    },
+    "l7": {
+      "desired_count": 1,
+      "max_capacity": 1,
+      "min_capacity": 0,
+      "scalable_resource_id": "service/clhear-cluster/clhear-fleet-l7",
+      "scalable_target_arn": "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec508d4e333458c44aaafbaddb8e7e7f409",
+      "service_arn": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l7",
+      "suspended_state": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      },
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l7:32"
+    },
+    "l8": {
+      "desired_count": 0,
+      "max_capacity": 1,
+      "min_capacity": 0,
+      "scalable_resource_id": "service/clhear-cluster/clhear-fleet-l8",
+      "scalable_target_arn": "arn:aws:application-autoscaling:us-east-1:730649732189:scalable-target/0ec5cc0ea3fa9a9d43d1a0f854014b2175b9",
+      "service_arn": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-fleet-l8",
+      "suspended_state": {
+        "DynamicScalingInSuspended": false,
+        "DynamicScalingOutSuspended": false,
+        "ScheduledScalingSuspended": false
+      },
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l8:32"
+    }
+  },
+  "plan_id": "l1-35684824357-1",
+  "region": "us-east-1",
+  "review_requirement": "owner-reviewed-main-and-protected-environment",
+  "root_source": {
+    "bucket": "clhear-deploy-730649732189",
+    "deployment_id": "l1-35427436860-1",
+    "key": "deployments/l1/l1-35427436860-1/rollback.json",
+    "sha": "d1a438a944fb11378cde23948c267b3aa07342ea",
+    "sha256": "0559fb7dd49cc00199d5cb4ae554d5592346f4c9c574508ca695381cedafb0d7",
+    "verification": "controller_emitted",
+    "version_id": "i9CyDc6qUd1SiJLWgLSNvh5PlL8J9ZzI"
+  },
+  "runtime_source_read": false,
+  "schema_version": 1,
+  "source": {
+    "bucket": "clhear-deploy-730649732189",
+    "deployment_id": "l1-35684824357-1",
+    "key": "deployments/l1/l1-35684824357-1/rollback.json",
+    "sha": "5e383e8fb506bc17894d0125855ff0b8329f916b",
+    "sha256": "435041656ab30a242f757a12c4c6e66155be07f93cfaa8609bd5d6ebc46fefef",
+    "verification": "operator_verified",
+    "version_id": "LY05YtcqDGGgUHxD.TzhgILbuN3HGQ8p"
+  },
+  "viewer": {
+    "code_sha256_base64": "0FReuWJYmavOM6fq/etJ08bNJYNYFz9D6sXp6gNDjpk=",
+    "function_arn": "arn:aws:lambda:us-east-1:730649732189:function:clhear-webui",
+    "reserved_concurrency": null
+  }
+}
