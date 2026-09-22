@@ -84,6 +84,22 @@ def test_demo_keys_resolve_to_pinned_text_and_stay_out_of_finra_discovery():
     assert cited_ids(f"See {marketing_id}.") == {marketing_id}
 
 
+def test_deploy_runner_names_demo_keys_without_importing_the_app():
+    """`python scripts/deploy_l1.py` does not put the repo root on sys.path.
+
+    Importing the application there raised ModuleNotFoundError outside the
+    handler and rolled a verified deployment back to failed_maintenance.
+    """
+    import inspect
+
+    from scripts.deploy_l1 import Deployer, _DEMO_SOURCE_KEYS
+
+    assert _DEMO_SOURCE_KEYS == DEMO_SOURCE_KEYS
+    source = inspect.getsource(Deployer._request_demo_import)
+    assert "demo_corpus" not in source
+    assert "import app" not in source
+
+
 def test_demo_import_request_is_one_fixed_run(engine, monkeypatch):
     from app.clhear import workers
 

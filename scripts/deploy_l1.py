@@ -58,6 +58,16 @@ TASK_FIELDS = {
 # cycle snapshots, so the registered service must use the same size.
 L0_TASK_CPU = "1024"
 L0_TASK_MEMORY_MIB = 8192
+# The deploy runner starts as `python scripts/deploy_l1.py`, so the repo root
+# is not on sys.path and `app` cannot be imported. These four keys must stay
+# equal to app.clhear.demo_corpus.DEMO_SOURCE_KEYS. The worker, not this
+# process, performs the import.
+_DEMO_SOURCE_KEYS = (
+    "usc/15/ftc-act-45",
+    "cfr/16/255",
+    "cfr/17/ia-marketing",
+    "nist/csf-2.0",
+)
 # Completeness snapshots include granted source text. The 512 MiB / 512 MiB
 # /tmp viewer OOM'd or 503'd the anonymous probe after bootstrap 35355899299
 # succeeded; at 3008 / 4096 the 3.4 GB candidate of 19 Sep (35433640762) no
@@ -746,11 +756,9 @@ class Deployer:
         be made is recorded and does not roll the deployment back. A direct
         adapter run waits until reconcile has failed any cycle whose worker
         revision no longer matches."""
-        from app.clhear.demo_corpus import DEMO_SOURCE_KEYS
-
         verification_id = "l1-demo-" + self.inputs.deployment_id.removeprefix("l1-")
         receipt = {"verification_id": verification_id, "adapter": "govinfo_us",
-                   "source_keys": list(DEMO_SOURCE_KEYS), "discover": False,
+                   "source_keys": list(_DEMO_SOURCE_KEYS), "discover": False,
                    "scope": "demo", "status": "not_requested"}
         try:
             for _ in range(self.TRANSPORT_HEALTH_ATTEMPTS):
