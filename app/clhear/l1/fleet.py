@@ -174,6 +174,9 @@ def _publisher_for(entry: dict, meta: SourceMeta, fetch: dict):
     if key == "finra" and fetch.get("document_type") in {"publication", "attachment"}:
         from app.clhear.l1.adapters.finra_document import FinraDocumentAdapter
         return FinraDocumentAdapter(**common, document_type=fetch["document_type"])
+    if key in {"sec_edgar", "sec_enforcement"} and fetch.get("document_type") == "sec_page":
+        from app.clhear.l1.adapters.sec_pages import SecPageAdapter
+        return SecPageAdapter(**common, adapter=key)
     if key in {"sec_edgar", "finra"}:
         adapter = SecEdgarAdapter(channel=fetch.get("channel", "finra" if key == "finra" else "sec"), **common)
         adapter.key = key
