@@ -37,6 +37,10 @@ def _kind(tag, attrs):
     if tag in {"h1", "h2", "h3"}:
         return "section"
     if tag in {"h4", "h5", "h6"}:
+        # GPO editorial notes (amendments, effective dates, codification) are
+        # headed by note-head / futureamend-note-head; they are not provisions.
+        if any(c.endswith("note-head") for c in attrs.get("class", "").split()):
+            return "note"
         return "subsection"
     return "note"
 

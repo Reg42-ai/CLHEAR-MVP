@@ -209,6 +209,7 @@ def _govinfo_for(entry: dict, meta: SourceMeta, fetch: dict):
             sections=tuple(fetch["usc_sections"]),
             edition=str(fetch.get("edition", "2023")),
             meta=meta,
+            url_template=fetch.get("url_template") or None,
         )
     if fetch.get("ecfr_sections"):
         # Absent subchapter keeps the FATCA default (A). An explicit empty

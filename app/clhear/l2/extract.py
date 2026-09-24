@@ -128,7 +128,10 @@ def container_clause_ids(conn, source_version_id: int) -> set[int]:
 def extract_source(engine: Engine, source_row, version_row) -> list[Candidate]:
     """Candidates for one in-force source version. Binding tier only; atomic
     (leaf) clauses only — see :func:`container_clause_ids`."""
+    from app.clhear.l1.source_registry import DUTY_CLAUSES
+
     open_source = source_row.license == "open"
+    scope = DUTY_CLAUSES.get(source_row.key)
     out: list[Candidate] = []
     with engine.connect() as conn:
         rows = conn.execute(
@@ -140,6 +143,8 @@ def extract_source(engine: Engine, source_row, version_row) -> list[Candidate]:
     for row in rows:
         text = row.text or ""
         if row.id in containers:
+            continue
+        if scope is not None and (row.ref or "") not in scope:
             continue
         if not open_source or not row.public_ok:
             # Restricted: we cannot inspect text; no machine derivation.
