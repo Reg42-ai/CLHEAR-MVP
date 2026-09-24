@@ -372,6 +372,7 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
     if source_keys is not None and not (isinstance(source_keys, list) and source_keys
                                         and all(isinstance(k, str) and k for k in source_keys)):
         raise ValueError("AdapterRunRequested.source_keys must be a non-empty list of source keys")
+    demo_job = payload.get("job_id") if envelope.producer == "l0.demo" and not cycle_id else None
     try:
         result = run_adapter_fleet(
             engine, payload.get("adapter", envelope.subject_ref), gateway,
@@ -385,10 +386,15 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
     except Exception as exc:
         if context:
             cycles.unhandled_child_error(engine, context, envelope, exc)
+        # A fixed-scope job with unresolved acceptance still leaves its imported
+        # sources in force; derive what is there, once per job.
+        if demo_job and isinstance(exc, AdapterRunIncomplete):
+            from app.clhear.demo_corpus import request_demo_derive
+            request_demo_derive(engine, job_id=demo_job)
         raise
-    if envelope.producer == "l0.demo" and not cycle_id and payload.get("job_id"):
+    if demo_job:
         from app.clhear.demo_corpus import request_demo_derive
-        result["demo_derive_event_id"] = request_demo_derive(engine, job_id=payload["job_id"])
+        result["demo_derive_event_id"] = request_demo_derive(engine, job_id=demo_job)
     return result
 
 

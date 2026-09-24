@@ -357,6 +357,32 @@ def test_finished_demo_import_queues_one_l0_derivation(engine, monkeypatch):
     assert len(_derive_events(engine)) == 1
 
 
+def test_incomplete_demo_import_still_derives_what_is_in_force(engine, monkeypatch):
+    """Production: the fixed-scope demo job raised AdapterRunIncomplete on
+    unresolved scope acceptance while its sources were in force."""
+    import pytest
+
+    from app.clhear import workers
+
+    def incomplete(*args, **kwargs):
+        raise workers.AdapterRunIncomplete(f"{kwargs['job_id']}: 3 unresolved source tasks; inspect workflow evidence")
+
+    monkeypatch.setattr(workers, "run_adapter_fleet", incomplete)
+    for attempt in ("first", "redelivered"):
+        with pytest.raises(workers.AdapterRunIncomplete):
+            workers.handle_adapter_run(engine, None, _demo_envelope(event_id=f"demo-import-{attempt}"))
+    assert [row["payload"] for row in _derive_events(engine)] == [{"job_id": "job-l1-demo"}]
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(workers, "run_adapter_fleet", broken)
+    with pytest.raises(RuntimeError):
+        workers.handle_adapter_run(engine, None, _demo_envelope(payload={
+            "adapter": "govinfo_us", "source_keys": list(DEMO_SOURCE_KEYS), "discover": False, "job_id": "job-l1-broken"}))
+    assert len(_derive_events(engine)) == 1
+
+
 def test_demo_derive_handler_publishes_every_layer(engine, monkeypatch):
     import json
 
