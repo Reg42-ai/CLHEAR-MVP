@@ -1,0 +1,66 @@
+[
+  {
+    "id": "REF-SEC-EXAMS-2024-01",
+    "source_key": "sec/exams/risk-alert-041724",
+    "quote": "untrue statements of material fact and unsubstantiated statements of material fact",
+    "finding": "Examined advisers published untrue or unsubstantiated statements of material fact.",
+    "practice": "Substantiate every material claim before publication and keep the substantiation with the approved advertisement.",
+    "block_id": "BLK-MKT-CLAIMS-REVIEW"
+  },
+  {
+    "id": "REF-SEC-EXAMS-2024-02",
+    "source_key": "sec/exams/risk-alert-041724",
+    "quote": "omission of material facts or misleading inference",
+    "finding": "Examined advisers omitted material facts or let an advertisement imply something misleading.",
+    "practice": "Review what the post implies as well as what it states, including an endorser's claim about returns.",
+    "block_id": "BLK-MKT-CLAIMS-REVIEW"
+  },
+  {
+    "id": "REF-SEC-EXAMS-2024-03",
+    "source_key": "sec/exams/risk-alert-041724",
+    "quote": "fair and balanced treatment of material risks or limitations",
+    "finding": "Examined advisers presented benefits without fair and balanced treatment of material risks or limitations.",
+    "practice": "Pair every stated benefit with its material risks in the same medium as the claim.",
+    "block_id": "BLK-MKT-CLAIMS-REVIEW"
+  },
+  {
+    "id": "REF-SEC-EXAMS-2024-04",
+    "source_key": "sec/exams/risk-alert-041724",
+    "quote": "references to specific investment advice that were not presented in a fair and balanced manner",
+    "finding": "Examined advisers referenced specific investment advice in a way that was not fair and balanced.",
+    "practice": "Do not let an endorser single out winning recommendations without the context the rule requires.",
+    "block_id": "BLK-MKT-CLAIMS-REVIEW"
+  },
+  {
+    "id": "REF-SEC-EXAMS-2024-05",
+    "source_key": "sec/exams/risk-alert-041724",
+    "quote": "inclusion or exclusion of performance results or time period in matters that were not fair and balanced",
+    "finding": "Examined advisers chose performance results or time periods in a way that was not fair and balanced.",
+    "practice": "Show performance over the periods the rule requires and never let an endorser quote a cherry-picked result.",
+    "block_id": "BLK-MKT-CLAIMS-REVIEW"
+  },
+  {
+    "id": "REF-SEC-EXAMS-2024-06",
+    "source_key": "sec/exams/risk-alert-041724",
+    "quote": "the Compliance Rule",
+    "finding": "Examined advisers' written marketing policies and procedures were not reasonably designed or implemented.",
+    "practice": "Keep a written standard that covers every channel you use, social media included, and test that it is followed.",
+    "block_id": "BLK-MKT-CONNECTION-DISCLOSURE"
+  },
+  {
+    "id": "REF-SEC-EXAMS-2024-07",
+    "source_key": "sec/exams/risk-alert-041724",
+    "quote": "the Books and Records Rule",
+    "finding": "Examined advisers did not keep the marketing records the Books and Records Rule requires.",
+    "practice": "Retain every advertisement and its approval, including posts on social media.",
+    "block_id": null
+  },
+  {
+    "id": "REF-SEC-EXAMS-2024-08",
+    "source_key": "sec/exams/risk-alert-041724",
+    "quote": "Marketing Rule items contained in Form ADV",
+    "finding": "Examined advisers completed the Marketing Rule items in Form ADV inaccurately.",
+    "practice": "Report testimonials, endorsements and paid promoters accurately in Form ADV.",
+    "block_id": "BLK-MKT-PROMOTER-AGREEMENT"
+  }
+]

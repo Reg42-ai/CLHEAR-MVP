@@ -194,6 +194,31 @@ _src("us-marketing", "usc/15/ftc-act-45", "FTC Act §5",
 # Clauses of a source that bind regulated persons. §45(b)–(n) set out Commission
 # and court procedure; L1 keeps their text, L2 derives no obligation from them.
 DUTY_CLAUSES = {"usc/15/ftc-act-45": frozenset({"sec45(a)"})}
+# Evidence for the demo's upper layers, on the existing SEC lanes. L7 reads the
+# Marketing Rule sweep releases as enforcement outcomes; L8 reads the Division of
+# Examinations risk alert as its reference benchmark. Neither tier is binding, so
+# L2 derives no obligation from them.
+_SEC_GOV = "U.S. Securities and Exchange Commission"
+for _key, _short, _name, _url in (
+    ("sec/enforcement/2023-173", "SEC 2023-173",
+     "SEC sweep: nine investment advisers charged over hypothetical performance under the Marketing Rule (Sept. 11, 2023)",
+     "https://www.sec.gov/newsroom/press-releases/2023-173-sec-sweep-marketing-rule-violations-results-charges-against-nine-investment-advisers"),
+    ("sec/enforcement/2024-46", "SEC 2024-46",
+     "SEC charges five investment advisers for Marketing Rule violations (Apr. 12, 2024)",
+     "https://www.sec.gov/newsroom/press-releases/2024-46"),
+    ("sec/enforcement/2024-121", "SEC 2024-121",
+     "SEC sweep: nine investment advisers charged over untrue claims, testimonials and endorsements under the Marketing Rule (Sept. 9, 2024)",
+     "https://www.sec.gov/newsroom/press-releases/2024-121"),
+):
+    _src("us-marketing", _key, _short, _name, "enforcement", "US", _SEC_GOV, _url, "sec_enforcement", "supplements",
+         "guidance", ["marketing", "enforcement", "us"], ["US-MKT-ENF"], 2, rights_basis="public_domain",
+         publisher=_SEC_GOV, fetch={"url": _url, "document_type": "sec_page"})
+_RISK_ALERT = "https://www.sec.gov/compliance/risk-alerts/risk-alert-041724"
+_src("us-marketing", "sec/exams/risk-alert-041724", "SEC exams risk alert (Apr. 2024)",
+     "SEC Division of Examinations risk alert: initial observations regarding Advisers Act Marketing Rule compliance (Apr. 17, 2024)",
+     "guidance", "US", _SEC_GOV, _RISK_ALERT, "sec_edgar", "supplements", "guidance",
+     ["marketing", "examinations", "us"], ["US-MKT-EXAM"], 2, rights_basis="public_domain",
+     publisher=_SEC_GOV, fetch={"url": _RISK_ALERT, "document_type": "sec_page"})
 _src("us-marketing", "cfr/16/255", "Endorsement Guides",
      "16 CFR Part 255 — Guides Concerning the Use of Endorsements and Testimonials in Advertising",
      "guidance", "US", "FTC (eCFR)",

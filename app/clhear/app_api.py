@@ -14,7 +14,8 @@ from app.clhear.app_auth import require_app, require_scope
 from app.clhear.db import get_engine
 from app.clhear.l1.models import change_events, clauses, source_families, source_versions, sources
 from app.clhear.l1.public import clauses_public_select
-from app.clhear.layers import LAYER_CATALOG, layer_public_meta, normalize_layer, not_published_body, status_banner
+from app.clhear.layers import (LAYER_CATALOG, PREVIEW_STATUSES, layer_public_meta, normalize_layer, not_published_body,
+                               status_banner)
 
 router = APIRouter(prefix="/v1", tags=["app-api"])
 
@@ -116,7 +117,7 @@ def layer_status(release_id: str, layer: str, app: dict = Depends(require_app)) 
     meta = LAYER_CATALOG[code]
     included = code in manifest.get("layers", []) and (code != "L1" or (manifest.get("acceptance") or {}).get("passed") is True)
     published = included and bool(release_store.get_promotion(manifest["id"]))
-    status = "published" if published else "candidate" if included else meta["status"] if code != "L1" and meta["status"] in ("derived", "curated", "computed") else "not_published"
+    status = "published" if published else "candidate" if included else meta["status"] if code != "L1" and meta["status"] in PREVIEW_STATUSES else "not_published"
     body = {**layer_public_meta(code), "release_id": release_id, "layer": code,
             "layer_status": status, "status": status, "published": published}
     if status not in ("published", "not_published", "candidate"):
@@ -457,7 +458,7 @@ def reserved_layer_resource(
     meta = LAYER_CATALOG[code]
     if meta["published"]:
         raise HTTPException(404, f"Unknown {code} resource {resource}")
-    if meta["status"] in ("derived", "curated", "computed") and PREVIEW_RESOURCES.get(resource) == code:
+    if meta["status"] in PREVIEW_STATUSES and PREVIEW_RESOURCES.get(resource) == code:
         from app.clhear import layer_service
 
         body = {
@@ -468,10 +469,25 @@ def reserved_layer_resource(
         }
         if code == "L2":
             body["registry"] = layer_service.obligation_items(_engine())
+        elif code == "L8":
+            from app.clhear.l8.cohorts import K
+            from app.clhear.l8.reference import LABEL, reference_rows
+
+            body["view"] = LABEL
+            body["items"] = reference_rows(_engine())
+            body["peer_aggregates"] = {"status": "locked", "k_threshold": K}
         else:
             body["items"] = layer_service.layer_items(_engine(), code)
         if code == "L7":
+            from app.clhear.l7.enforcement import events_for_obligation
+            from app.clhear.l7.score import list_scores
+
             body["view"] = "enforcement exposure"
             body["moves_with_observations"] = False
+            with _engine().connect() as conn:
+                scores = list_scores(conn, kind="obligation", limit=200)
+                for row in scores:
+                    row["events"] = events_for_obligation(conn, row["subject_ref"])
+            body["obligation_scores"] = scores
         return body
     raise HTTPException(status_code=501, detail=not_published_body(code))

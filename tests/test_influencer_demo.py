@@ -198,16 +198,21 @@ def test_deploy_runner_names_demo_keys_without_importing_the_app():
 def test_demo_import_request_is_one_fixed_run(engine, monkeypatch):
     from app.clhear import workers
 
+    from app.clhear.demo_corpus import ENFORCEMENT_SOURCE_KEYS, REFERENCE_SOURCE_KEYS
+
     monkeypatch.setenv("CLHEAR_FLEET", "l0")
     assert workers.cli(["--request-demo-import", "--verification-id", "demo-1"]) == 0
     assert workers.cli(["--request-demo-import", "--verification-id", "demo-1"]) == 0
     with engine.connect() as conn:
-        rows = list(conn.execute(sa.select(events.c.kind, events.c.payload)).mappings())
-    assert [row["kind"] for row in rows] == ["AdapterRunRequested"]
-    payload = rows[0]["payload"]
-    assert payload["discover"] is False
-    assert payload["adapter"] == "govinfo_us"
-    assert payload["source_keys"] == list(DEMO_SOURCE_KEYS)
+        rows = list(conn.execute(sa.select(events.c.kind, events.c.payload, events.c.producer)).mappings())
+    assert [row["kind"] for row in rows] == ["AdapterRunRequested"] * 3
+    runs = {row["payload"]["adapter"]: row["payload"] for row in rows}
+    assert {row["producer"] for row in rows} == {"l0.demo"}
+    assert all(payload["discover"] is False for payload in runs.values())
+    assert runs["govinfo_us"]["source_keys"] == list(DEMO_SOURCE_KEYS)
+    assert runs["sec_enforcement"]["source_keys"] == list(ENFORCEMENT_SOURCE_KEYS)
+    assert runs["sec_edgar"]["source_keys"] == list(REFERENCE_SOURCE_KEYS)
+    assert len({payload["job_id"] for payload in runs.values()}) == 3
 
 
 def _add_clauses(engine, key, texts):
@@ -314,8 +319,11 @@ def test_posts_move_the_compliance_score_and_open_the_clause(client, engine):
     assert CLAUSE_GUIDES in response_text(layers["L2"])
     assert layers["L7"]["view"] == "enforcement exposure"
     assert layers["L7"]["moves_with_observations"] is False
-    locked = client.get("/v1/releases/clhear-vLIVE/L8/benchmarks", headers=AUTH)
-    assert locked.status_code == 501
+    scored = {row["subject_ref"] for row in layers["L7"]["obligation_scores"]}
+    assert obligation_id("cfr/17/ia-marketing", CLAUSE_MARKETING) in scored
+    reference = client.get("/v1/releases/clhear-vLIVE/L8/benchmarks", headers=AUTH)
+    assert reference.status_code == 200 and reference.json()["layer_status"] == "reference"
+    assert reference.json()["peer_aggregates"]["status"] == "locked"
 
 
 def response_text(body) -> str:

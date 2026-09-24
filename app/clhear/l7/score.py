@@ -381,12 +381,14 @@ def _write_score(conn: Connection, *, kind: str, subject_ref: str, blueprint_id:
     return rid
 
 
-def score_obligations(engine: Engine, *, as_of: date | None = None) -> dict:
-    """Score every live obligation; supersede scores whose inputs moved."""
+def score_obligations(engine: Engine, *, as_of: date | None = None, source_keys=None) -> dict:
+    """Score every live obligation, or those of ``source_keys``; supersede scores whose inputs moved."""
     stats = {"obligations": 0, "written": 0, "superseded": 0, "unchanged": 0, "with_events": 0, "calibration": ""}
     as_of = as_of or date.today()
     with engine.begin() as conn:
         obs = _live_obligations(conn)
+        if source_keys is not None:
+            obs = {oid: ob for oid, ob in obs.items() if ob["source_key"] in set(source_keys)}
         stats["obligations"] = len(obs)
         if not obs:
             return stats
