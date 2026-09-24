@@ -435,8 +435,10 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
         return risk_items(engine)
     if layer == "L8":
         from app.clhear.l8.cohorts import list_cohorts
+        from app.clhear.l8.reference import reference_rows
 
-        return {"definitions": load_curated("l8_benchmarks"), "cohorts": list_cohorts(engine)}
+        return {"definitions": load_curated("l8_benchmarks"), "cohorts": list_cohorts(engine),
+                "reference": reference_rows(engine)}
     raise KeyError(layer)
 
 

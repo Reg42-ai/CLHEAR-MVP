@@ -304,27 +304,32 @@ LAYER_CATALOG: dict[str, dict] = {
         "name": "Benchmarks",
         "schema": "l8_benchmarks",
         "published": False,
-        "status": "locked",
-        "purpose": "Closed peer benchmarks: how a program's coverage and risk posture "
-        "compare across anonymized peers in the same profile cluster.",
+        "status": "reference",
+        "purpose": "Benchmarks: how a program compares with what others were found doing. Today a "
+        "reference benchmark of public regulator examination findings, mapped to blueprint "
+        "blocks; closed peer benchmarks across anonymized organisations follow once k is met.",
         "derivation": {
-            "inputs": ["L7"],
-            "method": "Aggregates L7 scores across participating organisations within a "
-            "profile cluster. Closed by design: raw peer data never leaves the enclave; "
-            "only k-anonymous aggregates are computed, and none are published today.",
+            "inputs": ["L1", "L3", "L7"],
+            "method": "Reference rows quote an in-force L1 clause of a public examination report "
+            "(SEC Division of Examinations risk alerts) and name the L3 block the finding concerns; "
+            "a curated row whose quote is not in the current clause is not emitted. Peer aggregates "
+            "combine L7 scores across participating organisations within a profile cluster, stay "
+            "inside the enclave, and publish only as k-anonymous aggregates.",
             "generation": {
-                "nature": "pure computation, zero LLM",
-                "technique": "k≥5 cohort aggregates over accumulated blueprint requests",
-                "guarantee": "Real aggregates publish only when k is met; synthetic demo is clearly labeled until then",
-                "may": ["publish k-anonymous means"],
-                "must_not": ["use an LLM", "publish a cohort smaller than k"],
+                "nature": "curated mapping over verbatim L1 quotes; pure computation for peer aggregates; zero LLM",
+                "technique": "Literal-quote grounding for reference rows; k≥5 cohort aggregates over accumulated blueprint requests",
+                "guarantee": "Every reference row quotes the current clause it cites and is labeled not peer data; "
+                "real peer aggregates publish only when k is met",
+                "may": ["publish reference findings with their quote and block", "publish k-anonymous means"],
+                "must_not": ["use an LLM", "present a reference row as peer data", "publish a cohort smaller than k"],
                 "gates": ["l8_k_anonymity"],
             },
             "gates": [
-                "k-anonymity threshold before any aggregate exists",
+                "Reference rows are emitted only when their quote is in the in-force clause",
+                "k-anonymity threshold before any peer aggregate exists",
                 "Participation is opt-in and contractual",
             ],
-            "evidence": ["aggregate definitions (visible); data (locked)"],
+            "evidence": ["reference rows: quote, clause, block", "peer aggregate definitions (visible); data (locked)"],
         },
     },
 }
@@ -332,7 +337,8 @@ LAYER_CATALOG: dict[str, dict] = {
 PUBLISHED_LAYERS = tuple(k for k, v in LAYER_CATALOG.items() if v["published"])
 RESERVED_LAYERS = tuple(k for k, v in LAYER_CATALOG.items() if not v["published"])
 # Layers that answer with data but are not yet the /v1-published contract.
-PREVIEW_LAYERS = tuple(k for k, v in LAYER_CATALOG.items() if v["status"] in ("derived", "curated", "computed"))
+PREVIEW_STATUSES = ("derived", "curated", "computed", "reference")
+PREVIEW_LAYERS = tuple(k for k, v in LAYER_CATALOG.items() if v["status"] in PREVIEW_STATUSES)
 LAYER_ORDER = tuple(sorted(LAYER_CATALOG, key=lambda k: int(k[1:])))
 LAYER_SLUGS = {v["slug"]: k for k, v in LAYER_CATALOG.items()}
 
@@ -385,6 +391,9 @@ _STATUS_NOTICES = {
     "derived registry and curated catalog. Same inputs always produce the same output; "
     "every result publishes its formula and its inputs.",
     "locked": "{layer} ({name}) is LOCKED by design: definitions are public, data is not.",
+    "reference": "{layer} ({name}) is a REFERENCE benchmark: public regulator findings across examined "
+    "firms, quoted from in-force L1 clauses and mapped to blueprint blocks. It is not peer data; "
+    "k-anonymous peer aggregates publish only when k is met.",
 }
 
 

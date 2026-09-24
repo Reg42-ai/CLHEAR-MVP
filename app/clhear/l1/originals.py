@@ -32,6 +32,11 @@ class UnsupportedOriginal(ValueError):
     pass
 
 
+def _sec_page(content) -> bool:
+    from app.clhear.l1.adapters.sec_pages import is_sec_page
+    return not content.startswith(b"%PDF-") and is_sec_page(content)
+
+
 class _HTMLText(HTMLParser):
     """Independent stdlib text reader, distinct from BeautifulSoup adapters."""
     BLOCKS = {"p", "div", "li", "ul", "ol", "table", "tr", "td", "th", "section", "article", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "br"}
@@ -447,6 +452,11 @@ def original_view(source_key, adapter_key, artifacts, canonical_url=""):
             from app.clhear.l1.adapters.dom_document import original_records
             text = normalize(" ".join(row[7] for row in original_records(body, source_key)))
             item.update(method="independent-legal-html-dom-text-nodes", exclusions=sorted(_HTMLText.OMIT))
+        elif adapter_key in {"sec_edgar", "sec_enforcement"} and _sec_page(body):
+            from app.clhear.l1.adapters.sec_pages import original_text
+            text = normalize(original_text(body))
+            item.update(method="sec-publication-independent-html", scope="page-title-and-main-content",
+                        exclusions=sorted(_HTMLText.OMIT))
         elif b"<" in body[:1024]:
             text = html_text(body)
             item.update(method="stdlib-html-visible-text", exclusions=sorted(_HTMLText.OMIT))
@@ -599,6 +609,10 @@ def verify_original_projection(source_key, adapter_key, artifacts, nodes, clause
             from app.clhear.l1.adapters.dom_document import verify
             if not verify(artifacts, source_key, tree):
                 report["findings"].append({"code": "publisher_hierarchy_mismatch", "detail": "Complete legal HTML elements, source text, publisher identifiers or DOM ancestry disagree"})
+        elif adapter_key in {"sec_edgar", "sec_enforcement"} and artifacts and all(_sec_page(a.content) for a in artifacts):
+            from app.clhear.l1.adapters.sec_pages import verify as verify_sec_page
+            if not verify_sec_page(artifacts, source_key, tree):
+                report["findings"].append({"code": "publisher_hierarchy_mismatch", "detail": "SEC publication title, body or single-provision shape disagree"})
         elif artifacts and all(a.content.startswith(b"%PDF-") for a in artifacts) and any(n.source_locator.get("structure") in {"pdf-line", "publisher-pdf-line"} for r in tree for n in r.walk()):
             if not verify_pdf_structure(source_key, tree, evidence):
                 report["findings"].append({"code": "publisher_hierarchy_mismatch", "detail": "Independent PDF decoder, page evidence, section/control markers or nesting disagree"})

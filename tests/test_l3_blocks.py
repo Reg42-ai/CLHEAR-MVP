@@ -451,13 +451,13 @@ def test_l3_api_kinds_catalogue_detail_and_scorecard(client, engine, tmp_path):
     _seed(engine, tmp_path)
     l3_characterize.characterize(engine)
 
-    # The app seeds the curated catalogue (10 blocks) at startup; 4 derived blocks join it.
+    # The app seeds the curated catalogue (14 blocks) at startup; 4 derived blocks join it.
     kinds = client.get("/l3/kinds").json()
     assert kinds["count"] == 8 and {k["kind"] for k in kinds["items"]} == set(KINDS)
     assert next(k for k in kinds["items"] if k["kind"] == "Role")["blocks"] == 2  # curated AML governance + derived MLRO
 
     listing = client.get("/l3/blocks").json()
-    assert listing["total"] == 14 and set(listing["facets"]["kinds"]) == set(KINDS) and set(listing["facets"]["statuses"]) == {"curated", "derived"}
+    assert listing["total"] == 18 and set(listing["facets"]["kinds"]) == set(KINDS) and set(listing["facets"]["statuses"]) == {"curated", "derived"}
     derived = client.get("/l3/blocks", params={"status": "derived"}).json()
     assert derived["total"] == 4
     doc = next(i for i in derived["items"] if i["kind"] == "Document")
@@ -497,7 +497,7 @@ def test_l3_api_kinds_catalogue_detail_and_scorecard(client, engine, tmp_path):
 
     card = client.get("/l3/scorecard").json()
     assert card["gate"]["layer"] == "L3" and set(card["thresholds"]) == {"obligation_to_block", "characteristic_completeness", "expert_precision"}
-    assert card["blocks"]["canonical"] == 14 and card["blocks"]["by_status"] == {"curated": 10, "derived": 4}
+    assert card["blocks"]["canonical"] == 18 and card["blocks"]["by_status"] == {"curated": 14, "derived": 4}
     assert card["completeness"]["rate"] == 1.0 and card["characteristics"]["rate"] == 1.0
     assert card["reuse"]["live_edges"] == 5 and card["requires_by_method"] == {"deterministic": 5}
 

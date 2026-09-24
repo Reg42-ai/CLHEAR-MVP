@@ -67,6 +67,7 @@ _KIND_CUES: tuple[tuple[str, str], ...] = (
     (r"public censure|censure[sd]?\b|public statement", "censure"),
     (r"fine[sd]?\b|financial penalty|civil penalty|penalty of|monetary penalty|pay a penalty|ordered to pay", "fine"),
 )
+_CIVIL_PENALTY = re.compile(r"\bcivil (?:money )?penalt|\bcombined (?:civil )?penalties\b", re.I)
 _FIRM_SUFFIX = re.compile(
     r"\b(ltd|limited|llc|llp|plc|inc|incorporated|corp|corporation|gmbh|s\.?a\.?|bank|capital|securities|"
     r"partners|group|holdings|markets|advisors|advisers|management|services|trust|company|co\b|fund|"
@@ -98,6 +99,11 @@ STATIC_ALIASES: dict[str, tuple[str, ...]] = {
     "Regulation Best Interest": ("cfr/17/reg-bi-sp",), "Regulation S-P": ("cfr/17/reg-bi-sp",),
     "FINRA": ("finra/rule/", "finra/rulebook"), "FINRA Rule": ("finra/rule/", "finra/rulebook"),
     "31 CFR": ("cfr/31/chapter-x",), "Bank Secrecy Act": ("cfr/31/chapter-x",),
+}
+# Instruments a notice names without a provision number. Each is one rule whose
+# every live obligation the mention reaches, at instrument confidence.
+WHOLE_INSTRUMENT_ALIASES: dict[str, tuple[str, ...]] = {
+    "Marketing Rule": ("cfr/17/ia-marketing",),
 }
 _UNIT = r"(?:rule|rules|regulation|regulations|reg\.|article|articles|art\.|section|sections|s\.|§|paragraph|para\.|principle|principles)"
 _REF = r"(?P<ref>\d+[A-Za-z]?(?:[.\-]\d+[A-Za-z]?)*(?:\s*\([a-zA-Z0-9]+\))*\s?[RGED]?)"
@@ -138,13 +144,14 @@ def _alias_regex(aliases: list[tuple[str, tuple[str, ...]]]) -> re.Pattern:
 
 
 def extract_citations(text: str, aliases: list[tuple[str, tuple[str, ...]]]) -> list[dict]:
-    """Every '<alias> <ref>' / '<unit> <ref> of the <alias>' the notice prints."""
-    if not aliases or not text:
+    """Every '<alias> <ref>' / '<unit> <ref> of the <alias>' the notice prints,
+    then each whole instrument it names without a provision number."""
+    if not text:
         return []
-    lookup = {a.lower(): (a, keys) for a, keys in aliases}
+    lookup = {a.lower(): (a, keys) for a, keys in aliases or []}
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
-    for m in _alias_regex(aliases).finditer(text):
+    for m in (_alias_regex(aliases).finditer(text) if aliases else ()):
         alias = (m.group("alias1") or m.group("alias2") or "").strip()
         refs = m.group("refs") or m.group("refs2") or ""
         canon, keys = lookup.get(alias.lower(), (alias, ()))
@@ -157,6 +164,9 @@ def extract_citations(text: str, aliases: list[tuple[str, tuple[str, ...]]]) -> 
                 continue
             seen.add(key)
             out.append({"text": m.group(0).strip(), "instrument": canon, "ref": ref, "source_keys": list(keys)})
+    for name, keys in WHOLE_INSTRUMENT_ALIASES.items():
+        if re.search(rf"\b{re.escape(name)}\b", text) and not any(c["instrument"].lower() == name.lower() for c in out):
+            out.append({"text": name, "instrument": name, "ref": "", "source_keys": list(keys), "whole_instrument": True})
     return out
 
 
@@ -240,6 +250,8 @@ def parse_notice(label: str, text: str, *, regulator: str, url: str = "",
     kind = _parse_kind(body)
     if kind == "other" and amount:
         kind = "fine"
+    elif kind in ("undertaking", "restitution") and _CIVIL_PENALTY.search(body):
+        kind = "fine"  # a printed civil penalty is the sanction; undertakings ride along
     respondent, rtype = _respondent(label, text)
     ref_m = _NOTICE_REF.search(body)
     summary = " ".join(text.split())[:1000]
@@ -404,6 +416,10 @@ def _sources_for(prefixes: list[str], index: dict[str, Any]) -> list[str]:
 
 def resolve_citation(citation: dict, index: dict[str, list[tuple[tuple[str, ...], str, str]]]) -> list[dict]:
     """[(obligation id, method, confidence)] a printed citation resolves to."""
+    if citation.get("whole_instrument"):
+        return [{"obligation_id": oid, "method": "instrument", "confidence": 0.7, "clause_ref": clause_ref}
+                for skey in _sources_for(citation.get("source_keys") or [], index)
+                for _, oid, clause_ref in index.get(skey, [])]
     want = _norm_tokens(citation["ref"])
     if not want:
         return []

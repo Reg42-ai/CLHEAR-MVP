@@ -66,10 +66,11 @@ def test_l1_resources_and_reserved_layers(client, engine):
     assert wrong.status_code == 501
     assert wrong.json()["detail"]["layer_status"] == "not_published"
 
-    # L8 is locked by design: its data endpoint never opens.
+    # L8 opens as a labeled reference benchmark; peer aggregates stay locked until k is met.
     l8 = client.get("/v1/releases/latest/l8/benchmarks", headers=AUTH)
-    assert l8.status_code == 501
-    assert l8.json()["detail"]["layer"] == "L8"
+    assert l8.status_code == 200
+    assert l8.json()["layer"] == "L8" and l8.json()["layer_status"] == "reference"
+    assert "not peer data" in l8.json()["view"] and l8.json()["peer_aggregates"]["status"] == "locked"
 
 
 def test_pin_release(client, engine):

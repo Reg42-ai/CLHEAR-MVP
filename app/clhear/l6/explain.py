@@ -22,8 +22,18 @@ _ID_RE = re.compile(r"\b(?:OBL|BLK|ACT|PRF|ITM|BLU|CON)[:-][A-Za-z0-9_./#():-]+"
 _TRAIL = ".,;:)]}"
 
 
+def _strip_trail(match: str) -> str:
+    # A closing parenthesis is part of the id when it closes one the id opened,
+    # as in OBL:usc/15/ftc-act-45#sec45(a); otherwise it is prose punctuation.
+    while match and match[-1] in _TRAIL:
+        if match[-1] == ")" and match.count("(") >= match.count(")"):
+            break
+        match = match[:-1]
+    return match
+
+
 def cited_ids(text: str) -> set[str]:
-    return {m.rstrip(_TRAIL) for m in _ID_RE.findall(text or "")}
+    return {_strip_trail(m) for m in _ID_RE.findall(text or "")}
 
 
 def allowed_ids(blueprint: dict) -> set[str]:

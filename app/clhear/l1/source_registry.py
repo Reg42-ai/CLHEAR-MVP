@@ -178,15 +178,47 @@ _uk("uk-data-products", "uksi/2017/752", "PSRs 2017", "Payment Services Regulati
 # ---- F11 us-broker-dealer ----
 _src("us-broker-dealer", "usc/15/exchange-act", "Exchange Act 1934", "Securities Exchange Act of 1934 (15 USC ch. 2B)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm", "govinfo_us", "root", "binding", ["securities", "us"], ["US-001", "GRP-002", "GRP-005", "GRP-006"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm"})
 
-# Influencer demo corpus. One HTML page and two pinned eCFR sections. No finra.org.
+# Influencer demo corpus. One GPO section and two pinned eCFR sections. No finra.org.
 # 16 CFR 255 is guidance (it interprets FTC Act §5) and is still in the binding
 # derivation set: the procedure cites §255.5, so L2 has to extract that clause.
+# §45 goes through the GPO section reader: original verification for govinfo_us
+# HTML compares against that reader, not the generic HTML adapter.
 _FTC_ACT_45 = "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2-subchapI-sec45.htm"
+_USC_15_CH2_SUBCH_I = ("https://www.govinfo.gov/content/pkg/USCODE-{ed}-title{title}/html/"
+                       "USCODE-{ed}-title{title}-chap2-subchapI-sec{sec}.htm")
 _src("us-marketing", "usc/15/ftc-act-45", "FTC Act §5",
      "Federal Trade Commission Act §5 (15 USC §45) — unfair or deceptive acts or practices",
      "law", "US", "US Congress (GPO)", _FTC_ACT_45, "govinfo_us", "root", "binding",
      ["marketing", "consumer", "us"], ["US-MKT-001"], 2, rights_basis="public_domain",
-     fetch={"url": _FTC_ACT_45})
+     fetch={"usc_title": "15", "usc_sections": ["45"], "edition": "2023", "url_template": _USC_15_CH2_SUBCH_I})
+# Clauses of a source that bind regulated persons. §45(b)–(n) set out Commission
+# and court procedure; L1 keeps their text, L2 derives no obligation from them.
+DUTY_CLAUSES = {"usc/15/ftc-act-45": frozenset({"sec45(a)"})}
+# Evidence for the demo's upper layers, on the existing SEC lanes. L7 reads the
+# Marketing Rule sweep releases as enforcement outcomes; L8 reads the Division of
+# Examinations risk alert as its reference benchmark. Neither tier is binding, so
+# L2 derives no obligation from them.
+_SEC_GOV = "U.S. Securities and Exchange Commission"
+for _key, _short, _name, _url in (
+    ("sec/enforcement/2023-173", "SEC 2023-173",
+     "SEC sweep: nine investment advisers charged over hypothetical performance under the Marketing Rule (Sept. 11, 2023)",
+     "https://www.sec.gov/newsroom/press-releases/2023-173-sec-sweep-marketing-rule-violations-results-charges-against-nine-investment-advisers"),
+    ("sec/enforcement/2024-46", "SEC 2024-46",
+     "SEC charges five investment advisers for Marketing Rule violations (Apr. 12, 2024)",
+     "https://www.sec.gov/newsroom/press-releases/2024-46"),
+    ("sec/enforcement/2024-121", "SEC 2024-121",
+     "SEC sweep: nine investment advisers charged over untrue claims, testimonials and endorsements under the Marketing Rule (Sept. 9, 2024)",
+     "https://www.sec.gov/newsroom/press-releases/2024-121"),
+):
+    _src("us-marketing", _key, _short, _name, "enforcement", "US", _SEC_GOV, _url, "sec_enforcement", "supplements",
+         "guidance", ["marketing", "enforcement", "us"], ["US-MKT-ENF"], 2, rights_basis="public_domain",
+         publisher=_SEC_GOV, fetch={"url": _url, "document_type": "sec_page"})
+_RISK_ALERT = "https://www.sec.gov/compliance/risk-alerts/risk-alert-041724"
+_src("us-marketing", "sec/exams/risk-alert-041724", "SEC exams risk alert (Apr. 2024)",
+     "SEC Division of Examinations risk alert: initial observations regarding Advisers Act Marketing Rule compliance (Apr. 17, 2024)",
+     "guidance", "US", _SEC_GOV, _RISK_ALERT, "sec_edgar", "supplements", "guidance",
+     ["marketing", "examinations", "us"], ["US-MKT-EXAM"], 2, rights_basis="public_domain",
+     publisher=_SEC_GOV, fetch={"url": _RISK_ALERT, "document_type": "sec_page"})
 _src("us-marketing", "cfr/16/255", "Endorsement Guides",
      "16 CFR Part 255 — Guides Concerning the Use of Endorsements and Testimonials in Advertising",
      "guidance", "US", "FTC (eCFR)",

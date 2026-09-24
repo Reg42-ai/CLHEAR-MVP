@@ -322,5 +322,102 @@
     ],
     "kind": "Asset",
     "purpose": "Client assets held and segregated so they are safeguarded and returnable."
+  },
+  {
+    "id": "BLK-MKT-CLAIMS-REVIEW",
+    "name": "Promotional claims review",
+    "description": "Every promotional claim, including a paid endorser's post, is checked before publication: it reflects the endorser's honest experience, performance claims are substantiated and typical, and nothing in it is deceptive.",
+    "capability": "Marketing compliance review",
+    "evidence_artifacts": [
+      "pre-publication review record",
+      "claim substantiation file"
+    ],
+    "satisfies": [
+      {
+        "source_key": "usc/15/ftc-act-45",
+        "refs": [
+          "sec45(a)"
+        ]
+      },
+      {
+        "source_key": "cfr/16/255",
+        "refs": [
+          "255.1",
+          "255.2"
+        ]
+      }
+    ],
+    "implements_controls": [],
+    "kind": "Process",
+    "purpose": "Stop deceptive or unsubstantiated claims before an endorser publishes them."
+  },
+  {
+    "id": "BLK-MKT-CONNECTION-DISCLOSURE",
+    "name": "Material connection disclosure standard",
+    "description": "The written standard for how a paid or otherwise connected endorser states the relationship: clearly and conspicuously, in the same medium as the endorsement, including compensation for a promoter.",
+    "capability": "Marketing disclosure policy",
+    "evidence_artifacts": [
+      "disclosure standard",
+      "approved disclosure wording"
+    ],
+    "satisfies": [
+      {
+        "source_key": "cfr/16/255",
+        "refs": [
+          "255.5"
+        ]
+      },
+      {
+        "source_key": "cfr/17/ia-marketing",
+        "refs": [
+          "275.206(4)-1"
+        ]
+      }
+    ],
+    "implements_controls": [],
+    "kind": "Document",
+    "purpose": "Make every material connection and every paid endorsement visible to the audience."
+  },
+  {
+    "id": "BLK-MKT-PROMOTER-AGREEMENT",
+    "name": "Written promoter agreement and oversight",
+    "description": "A written agreement with each compensated promoter, approved by a compliance role, and the adviser's oversight of that promoter's testimonials and endorsements.",
+    "capability": "Promoter contracting and oversight",
+    "evidence_artifacts": [
+      "signed promoter agreement",
+      "compliance approval record"
+    ],
+    "satisfies": [
+      {
+        "source_key": "cfr/17/ia-marketing",
+        "refs": [
+          "275.206(4)-1"
+        ]
+      }
+    ],
+    "implements_controls": [],
+    "kind": "Document",
+    "purpose": "Bind each paid promoter to the adviser's marketing obligations and keep the approval on record."
+  },
+  {
+    "id": "BLK-MKT-EXPERT-ENDORSEMENT",
+    "name": "Expert and organisation endorsement qualification",
+    "description": "When an endorser is presented as an expert or as an organisation, the endorser's qualifications and the organisation's collective judgment are verified before use.",
+    "capability": "Endorser qualification",
+    "evidence_artifacts": [
+      "endorser qualification record"
+    ],
+    "satisfies": [
+      {
+        "source_key": "cfr/16/255",
+        "refs": [
+          "255.3",
+          "255.4"
+        ]
+      }
+    ],
+    "implements_controls": [],
+    "kind": "Process",
+    "purpose": "Use expert or organisation endorsements only when the claimed expertise or collective judgment is real."
   }
 ]
