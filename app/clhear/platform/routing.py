@@ -16,6 +16,7 @@ COMMAND_OWNERS: dict[str, str] = {
     "DummyChanged": "l0",
     "CommunityWrite": "l0",
     "AdapterRunRequested": "l1",
+    "DemoDeriveRequested": "l0",
     "L1CycleRequested": "l0",
     "L1CycleAdvanceRequested": "l0",
     "L1CycleDiscoveryRequested": "l1",

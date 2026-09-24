@@ -178,15 +178,22 @@ _uk("uk-data-products", "uksi/2017/752", "PSRs 2017", "Payment Services Regulati
 # ---- F11 us-broker-dealer ----
 _src("us-broker-dealer", "usc/15/exchange-act", "Exchange Act 1934", "Securities Exchange Act of 1934 (15 USC ch. 2B)", "law", "US", "US Congress (GPO)", "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm", "govinfo_us", "root", "binding", ["securities", "us"], ["US-001", "GRP-002", "GRP-005", "GRP-006"], 2, fetch={"url": "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2B.htm"})
 
-# Influencer demo corpus. One HTML page and two pinned eCFR sections. No finra.org.
+# Influencer demo corpus. One GPO section and two pinned eCFR sections. No finra.org.
 # 16 CFR 255 is guidance (it interprets FTC Act §5) and is still in the binding
 # derivation set: the procedure cites §255.5, so L2 has to extract that clause.
+# §45 goes through the GPO section reader: original verification for govinfo_us
+# HTML compares against that reader, not the generic HTML adapter.
 _FTC_ACT_45 = "https://www.govinfo.gov/content/pkg/USCODE-2023-title15/html/USCODE-2023-title15-chap2-subchapI-sec45.htm"
+_USC_15_CH2_SUBCH_I = ("https://www.govinfo.gov/content/pkg/USCODE-{ed}-title{title}/html/"
+                       "USCODE-{ed}-title{title}-chap2-subchapI-sec{sec}.htm")
 _src("us-marketing", "usc/15/ftc-act-45", "FTC Act §5",
      "Federal Trade Commission Act §5 (15 USC §45) — unfair or deceptive acts or practices",
      "law", "US", "US Congress (GPO)", _FTC_ACT_45, "govinfo_us", "root", "binding",
      ["marketing", "consumer", "us"], ["US-MKT-001"], 2, rights_basis="public_domain",
-     fetch={"url": _FTC_ACT_45})
+     fetch={"usc_title": "15", "usc_sections": ["45"], "edition": "2023", "url_template": _USC_15_CH2_SUBCH_I})
+# Clauses of a source that bind regulated persons. §45(b)–(n) set out Commission
+# and court procedure; L1 keeps their text, L2 derives no obligation from them.
+DUTY_CLAUSES = {"usc/15/ftc-act-45": frozenset({"sec45(a)"})}
 _src("us-marketing", "cfr/16/255", "Endorsement Guides",
      "16 CFR Part 255 — Guides Concerning the Use of Endorsements and Testimonials in Advertising",
      "guidance", "US", "FTC (eCFR)",
