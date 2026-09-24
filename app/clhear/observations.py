@@ -6,7 +6,9 @@ stored and shown. They do not enter the compliance score and they do not
 mint ontology terms.
 
 The score is the share of required blueprint items whose latest mapped
-result is ``pass``. A fail, a gap, or a missing observation lowers it.
+result is ``pass``. A fail, a gap, or a missing observation lowers it. A
+``not_applicable`` result leaves the denominator, as in the instance contract
+(present / (items − not_applicable)); the point and its reasoning stay visible.
 """
 from __future__ import annotations
 
@@ -305,12 +307,14 @@ def attach_performance(engine: Engine, blueprint: dict) -> dict:
                 "clauses": performance["clauses"],
                 "unmapped_labels": performance["unmapped_labels"],
             })
-    required = len(required_items)
+    excluded = sum(1 for point in points if point["result"] == "not_applicable")
+    required = len(required_items) - excluded
     blueprint["compliance_score"] = {
         "label": "compliance",
         "value": (passed / required) if required else None,
         "passed": passed,
         "required": required,
+        "not_applicable": excluded,
         "points": points,
     }
     blueprint["enforcement_risk"] = {

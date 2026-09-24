@@ -373,7 +373,7 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
                                         and all(isinstance(k, str) and k for k in source_keys)):
         raise ValueError("AdapterRunRequested.source_keys must be a non-empty list of source keys")
     try:
-        return run_adapter_fleet(
+        result = run_adapter_fleet(
             engine, payload.get("adapter", envelope.subject_ref), gateway,
             force_nightly=bool(payload.get("force_nightly") or payload.get("force")),
             nightly_only=bool(payload.get("nightly_only")),
@@ -386,6 +386,19 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
         if context:
             cycles.unhandled_child_error(engine, context, envelope, exc)
         raise
+    if envelope.producer == "l0.demo" and not cycle_id and payload.get("job_id"):
+        from app.clhear.demo_corpus import request_demo_derive
+        result["demo_derive_event_id"] = request_demo_derive(engine, job_id=payload["job_id"])
+    return result
+
+
+def handle_demo_derive(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
+    """L0: derive L2–L5 for the demo sources, then publish their per-layer status."""
+    from app.clhear.demo_corpus import derive_demo, publish_demo_status
+
+    result = derive_demo(engine)
+    result["status_uri"] = publish_demo_status(engine)
+    return result
 
 
 def handle_l1_cycle_requested(engine, gateway, envelope):
@@ -760,6 +773,7 @@ def l6_on_changed(engine: Engine, payload: dict, *, layer: str) -> dict:
 HANDLERS = {
     "DummyChanged": handle_dummy_changed,
     "AdapterRunRequested": handle_adapter_run,
+    "DemoDeriveRequested": handle_demo_derive,
     "L1CycleRequested": handle_l1_cycle_requested,
     "L1CycleAdvanceRequested": handle_l1_cycle_advance,
     "L1CycleDiscoveryRequested": handle_l1_cycle_discovery,
