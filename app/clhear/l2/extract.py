@@ -25,7 +25,7 @@ from app.clhear.platform.ids import next_id
 
 log = logging.getLogger("clhear.l2")
 
-EXTRACTOR_VERSION = "deterministic-v2"
+EXTRACTOR_VERSION = "deterministic-v3"
 
 # Duty modality patterns, strongest first. Case-insensitive, matched against
 # the clause text. Deliberately conservative: high precision over recall.
@@ -44,6 +44,26 @@ NON_DUTY_HEADINGS = re.compile(
     r"\b(?:interpretation|definitions?|citation|commencement|extent|title|scope|"
     r"subject[- ]matter|entry into force|transitional|amendments? to|repeals?|"
     r"short title|signature|annex|recital)\b",
+    re.I,
+)
+
+# Headings of enforcement machinery: an authority's proceedings, orders,
+# hearings and penalties, and the review of them. What they regulate is the
+# authority's procedure or the consequence of a breach, not a regulated
+# person's conduct ("(b) Proceeding by Commission", "(c) Review of order;
+# rehearing", "(l) Penalty for violation of order", "(k) Cease-and-desist
+# proceedings").
+PROCEDURAL_HEADINGS = re.compile(
+    r"\b(?:proceedings?|procedure for|review of (?:an? )?orders?|rehearing|judicial review|service of|"
+    r"jurisdiction of|penalt(?:y|ies)|civil actions?|temporary orders?|cease[- ]and[- ]desist|"
+    r"notice and (?:opportunity for )?hearing|hearings?|appeals?|investigations?|injunctions?)\b",
+    re.I,
+)
+
+# Any modal, strong or weak: the first of them says who the clause addresses.
+ANY_MODAL = re.compile(
+    r"\b(?:must|shall|may|should|ought to|is required to|are required to|is expected to|are expected to)\b"
+    r"|\b(?:is|are) (?:hereby )?(?:declared )?(?:unlawful|prohibited)\b",
     re.I,
 )
 
@@ -70,7 +90,8 @@ CONSTRUCTION_SUBJECT = re.compile(
 NON_DUTY_PREDICATE = re.compile(
     r"(?:must|shall|may)\s+(?:not\s+)?(?:apply\s+(?:to|only|in|with respect|where)|be deemed|be construed|be treated|"
     r"be considered|be subject to|"
-    r"include|mean|become final|have no authority|have jurisdiction|in anywise)\b",
+    r"include|mean|become final|have no authority|have jurisdiction|in anywise|"
+    r"forfeit|be liable (?:for|to)|be fined|be imprisoned|be punished)\b",
     re.I,
 )
 
@@ -107,13 +128,30 @@ def _title_from(text: str, ref: str) -> str:
     return first or ref
 
 
+def not_a_duty(text: str, ref: str = "", heading: str = "") -> bool:
+    """True for structure, enforcement procedure and construction: clauses whose
+    first modal (strong or weak) governs an authority, a court, the reading of the
+    text or the penalty for a breach, rather than a regulated person's conduct."""
+    probe = f"{heading} {ref}"
+    # The heading line, not a cross-reference in the body ("section 80b-3a of this title").
+    first_line = text.strip().split("\n", 1)[0][:120]
+    if NON_DUTY_HEADINGS.search(probe) or NON_DUTY_HEADINGS.search(first_line):
+        return True
+    if PROCEDURAL_HEADINGS.search(heading) or PROCEDURAL_HEADINGS.search(first_line):
+        return True
+    first = ANY_MODAL.search(text)
+    if first is None:
+        return False
+    subject = text[max(0, first.start() - 160):first.start()]
+    return bool(AUTHORITY_SUBJECT.search(subject) or CONSTRUCTION_SUBJECT.search(subject)
+                or NON_DUTY_PREDICATE.match(text, first.start()))
+
+
 def detect_duty(text: str, ref: str, heading: str = "") -> tuple[str, float] | None:
     """Return (modality, confidence) when the clause imposes a duty."""
     if not text or len(text.strip()) < 40:
         return None
-    probe = f"{heading} {ref}"
-    # The heading line, not a cross-reference in the body ("section 80b-3a of this title").
-    if NON_DUTY_HEADINGS.search(probe) or NON_DUTY_HEADINGS.search(text.strip().split("\n", 1)[0][:120]):
+    if not_a_duty(text, ref, heading):
         return None
     first = min((m for _, pattern in MODALITY_PATTERNS if (m := pattern.search(text))), key=lambda m: m.start(), default=None)
     if first is not None:

@@ -16,7 +16,7 @@ from sqlalchemy.engine import Engine
 from app.clhear.derived_models import obligations
 from app.clhear.l1.models import clauses, family_members, source_versions, sources
 from app.clhear.l2 import registry
-from app.clhear.l2.extract import ADDRESSEE, MAX_STATEMENT, NON_DUTY_HEADINGS, _title_from, detect_duty, obligation_id, why_id
+from app.clhear.l2.extract import ADDRESSEE, MAX_STATEMENT, _title_from, detect_duty, not_a_duty, obligation_id, why_id
 from app.clhear.platform import record
 from app.clhear.platform.gateway import parse_json_object
 from app.clhear.platform.ids import next_id
@@ -56,7 +56,9 @@ def _weak_candidates(engine: Engine, limit: int = MAX_PER_RUN) -> list[dict]:
                     continue
                 if detect_duty(text, row.ref or "", "") is not None:
                     continue
-                if NON_DUTY_HEADINGS.search(text[:120]):
+                # The rules' "not a duty" (procedure, construction, penalties) is final;
+                # a model is never asked to overrule it.
+                if not_a_duty(text, row.ref or "", ""):
                     continue
                 if not WEAK_MODAL.search(text):
                     continue
