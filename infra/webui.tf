@@ -185,6 +185,11 @@ resource "aws_apigatewayv2_route" "webui_default" {
   api_id    = aws_apigatewayv2_api.webui[0].id
   route_key = "$default"
   target    = "integrations/${aws_apigatewayv2_integration.webui[0].id}"
+  # scripts/web_service.py switches this between the Lambda and the web
+  # service integration (webui_service.tf); an apply must not undo that.
+  lifecycle {
+    ignore_changes = [target]
+  }
 }
 
 resource "aws_apigatewayv2_stage" "webui" {
