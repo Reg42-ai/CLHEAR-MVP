@@ -3,8 +3,9 @@
 The configured viewer snapshot is downloaded and checked before the process
 reports ready. A background thread then checks the S3 ETag every
 ``CLHEAR_SNAPSHOT_POLL_S`` seconds; a changed object is downloaded beside the
-live file, verified against its ``sha256`` metadata and renamed into place, so
-a request never waits for a download. Restricted access keeps the Lambda
+live file, verified against its ``sha256`` metadata, its slow answers are
+computed against it, and it is renamed into place, so a request never waits
+for a download or a cold answer. Restricted access keeps the Lambda
 contract: when no successful check has happened within ``REFRESH_TTL_S``, the
 app answers 503 instead of serving grants that may have been revoked.
 """
@@ -29,11 +30,11 @@ class SnapshotHolder:
     """One process-wide copy of the configured snapshot on local disk."""
 
     def __init__(self, uri: str, local_path: str, *, s3_client=None, poll_s: float = 60.0, clock=time.time,
-                 on_swap=None):
+                 on_swap=None, precompute=None):
         if not uri.startswith("s3://"):
             raise ValueError("CLHEAR_DB_S3_URI must be an s3:// URI")
         self.uri, self.local_path, self.poll_s, self.clock = uri, local_path, poll_s, clock
-        self.on_swap = on_swap
+        self.on_swap, self.precompute = on_swap, precompute
         self._s3 = s3_client
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -46,7 +47,7 @@ class SnapshotHolder:
             self._s3 = boto3.client("s3")
         return self._s3
 
-    def _download(self, head: dict) -> None:
+    def _download(self, head: dict) -> str:
         bucket, key = parse_uri(self.uri)
         staging = f"{self.local_path}.new"
         directory = os.path.dirname(self.local_path) or "."
@@ -69,7 +70,19 @@ class SnapshotHolder:
             if digest.hexdigest() != expected:
                 os.remove(staging)
                 raise RuntimeError("Downloaded snapshot does not match its published sha256")
-        os.replace(staging, self.local_path)
+        return staging
+
+    def _answers(self, staging: str) -> dict:
+        if self.precompute is None:
+            return {}
+        started = time.monotonic()
+        try:
+            answers = self.precompute(staging)
+        except Exception as exc:  # noqa: BLE001 — a cold answer is slow, not wrong; serve the snapshot anyway
+            log.warning("snapshot answers not precomputed: %s: %s", type(exc).__name__, str(exc)[:300])
+            return {}
+        log.info("precomputed %d snapshot answers in %.1fs", len(answers), time.monotonic() - started)
+        return answers
 
     def refresh(self, *, force: bool = False) -> bool:
         """Check S3 once; return True when a new snapshot was swapped in."""
@@ -78,13 +91,19 @@ class SnapshotHolder:
             head = self.s3().head_object(Bucket=bucket, Key=key)
             changed = force or head["ETag"] != self.state["etag"] or not os.path.exists(self.local_path)
             if changed:
-                self._download(head)
+                staging = self._download(head)
+                answers = self._answers(staging)
+                os.replace(staging, self.local_path)
                 if self.on_swap is not None:
                     self.on_swap()
                 else:
                     from app.clhear import db
 
                     db.dispose_engine()
+                    if answers:
+                        from app.clhear import snapshot_cache
+
+                        snapshot_cache.adopt(db.get_engine(), answers)
                 metadata = head.get("Metadata") or {}
                 self.state.update(etag=head["ETag"], revision=metadata.get("revision"), sha256=metadata.get("sha256"),
                                   loaded_at=datetime.now(timezone.utc).isoformat())
@@ -158,6 +177,24 @@ class SnapshotGate:
         return await self.app(scope, receive, stamped)
 
 
+def precompute_answers(path: str) -> dict:
+    """The slow viewer answers, computed against a staged snapshot before it goes live."""
+    from app.clhear import layer_service, snapshot_cache
+    from app.clhear.db import make_engine
+    from app.clhear.l1.routes import _sources_for_engine
+    from app.clhear.platform import metrics
+
+    engine = make_engine(f"sqlite:///{path}")
+    try:
+        layer_service.layer_index(engine)
+        _sources_for_engine(engine, None)
+        metrics.status(engine)
+        return snapshot_cache.answers_for(engine)
+    finally:
+        snapshot_cache.forget(engine)
+        engine.dispose()
+
+
 def _bind_database(local_path: str) -> None:
     from app.clhear import db
     from app.clhear.settings import get_settings
@@ -203,7 +240,8 @@ def main() -> None:
     hydrate_ssm_env()
     uri = os.environ.get("CLHEAR_DB_S3_URI", "")
     local_path = os.environ.get("CLHEAR_DB_LOCAL_PATH", "/data/clhear.db")
-    holder = SnapshotHolder(uri, local_path, poll_s=float(os.environ.get("CLHEAR_SNAPSHOT_POLL_S", "60")))
+    holder = SnapshotHolder(uri, local_path, poll_s=float(os.environ.get("CLHEAR_SNAPSHOT_POLL_S", "60")),
+                            precompute=precompute_answers)
     _bind_database(local_path)
     started = time.monotonic()
     holder.refresh(force=True)

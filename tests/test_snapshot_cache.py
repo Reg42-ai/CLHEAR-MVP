@@ -36,23 +36,47 @@ def test_unhashable_arguments_are_answered_without_caching(monkeypatch):
     assert calls == [["aml"], ["aml"]]
 
 
-def test_disposing_an_engine_forgets_its_answers(monkeypatch):
+def test_disposing_an_engine_forgets_only_its_own_answers(monkeypatch):
     from app.clhear import db, release_db
+    from app.clhear.db import make_engine
 
     calls = []
 
     @snapshot_cache.cached("probe-dispose")
     def answer(engine):
-        calls.append(1)
+        calls.append(engine)
         return "value"
 
     snapshot_cache.clear()
     monkeypatch.setenv("CLHEAR_DB_S3_URI", "s3://private/webui/l1/candidate.db")
-    engine = object()
-    answer(engine)
-    db.dispose_engine()
-    answer(engine)
+    viewer, release = make_engine("sqlite://"), make_engine("sqlite://")
+    monkeypatch.setattr(release_db, "_engine", release)
+    db.set_engine(viewer)
+    answer(viewer), answer(release)
     release_db.dispose()
-    answer(engine)
-    assert calls == [1, 1, 1]
+    answer(viewer), answer(release)
+    assert calls == [viewer, release, release]
+    db.dispose_engine()
+    answer(viewer)
+    assert calls == [viewer, release, release, viewer]
+    snapshot_cache.clear()
+
+
+def test_answers_move_from_a_staged_engine_to_the_live_one(monkeypatch):
+    calls = []
+
+    @snapshot_cache.cached("probe-adopt")
+    def answer(engine, kind):
+        calls.append(kind)
+        return kind.upper()
+
+    snapshot_cache.clear()
+    monkeypatch.setenv("CLHEAR_DB_S3_URI", "s3://private/webui/l1/candidate.db")
+    staged, live = object(), object()
+    answer(staged, "sources")
+    answers = snapshot_cache.answers_for(staged)
+    snapshot_cache.forget(staged)
+    snapshot_cache.adopt(live, answers)
+    assert answer(live, "sources") == "SOURCES" and calls == ["sources"]
+    assert snapshot_cache.answers_for(staged) == {}
     snapshot_cache.clear()

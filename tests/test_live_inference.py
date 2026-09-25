@@ -19,6 +19,14 @@ def test_hydrate_ssm_fills_changeme_and_skips_fake():
     assert fake_env["INFER_TOKEN"] == "CHANGEME"
 
 
+def test_app_keys_are_read_from_ssm_when_the_environment_has_none():
+    env = {"CLHEAR_APP_KEYS": "", "INFER_TOKEN": "set", "CLHEAR_LLM_PROVIDER": "infer"}
+    filled = hydrate_ssm_env(environ=env, getter=lambda name: "galaxy:rotated-key" if name.endswith("CLHEAR_APP_KEYS") else "")
+    assert env["CLHEAR_APP_KEYS"] == "galaxy:rotated-key" and filled == {"CLHEAR_APP_KEYS": "/clhear/web/CLHEAR_APP_KEYS"}
+    kept = {"CLHEAR_APP_KEYS": "galaxy:configured", "INFER_TOKEN": "set"}
+    assert hydrate_ssm_env(environ=kept, getter=lambda _n: "other") == {} and kept["CLHEAR_APP_KEYS"] == "galaxy:configured"
+
+
 def test_rehearsal_does_not_count_as_already_ran(engine):
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:

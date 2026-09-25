@@ -130,6 +130,10 @@ def create_app() -> FastAPI:
             for included in (router, l1_router, layers_router, ai_router, auth_router):
                 preview_routes.extend(included.routes)
         app.add_middleware(PreviewMiddleware, routes=preview_routes)
+    from starlette.middleware.gzip import GZipMiddleware
+
+    # Outermost, so middleware that rewrites a body (the preview banner) sees it uncompressed.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
     return app
 
 

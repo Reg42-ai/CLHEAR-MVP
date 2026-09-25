@@ -20,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
+from app.clhear import snapshot_cache
+
 SLOS = (
     {"name": "api_availability", "description": "API availability over 30 days", "target": 0.999, "unit": "ratio",
      "measured_by": "Upptime probe of /status.json every 5 minutes (status/.upptimerc.yml)"},
@@ -72,19 +74,24 @@ def _layer_latest(conn, layer: str) -> datetime | None:
     return latest
 
 
+@snapshot_cache.cached("layer_latest")
+def _latest_by_layer(engine: Engine) -> dict[str, datetime | None]:
+    with engine.connect() as conn:
+        return {layer: _layer_latest(conn, layer) for layer in LAYERS}
+
+
 def freshness(engine: Engine, now: datetime | None = None) -> dict[str, dict]:
     now = now or _now()
     out: dict[str, dict] = {}
-    with engine.connect() as conn:
-        for layer in LAYERS:
-            latest = _layer_latest(conn, layer)
-            slo = FRESHNESS_SLO_S if layer == "L1" else DERIVED_FRESHNESS_SLO_S
-            age = None if latest is None else max(0, int((now - latest).total_seconds()))
-            out[layer] = {"latest": latest.isoformat() if latest else None, "age_seconds": age, "slo_seconds": slo,
-                          "ok": age is not None and age <= slo, "empty": latest is None}
+    for layer, latest in _latest_by_layer(engine).items():
+        slo = FRESHNESS_SLO_S if layer == "L1" else DERIVED_FRESHNESS_SLO_S
+        age = None if latest is None else max(0, int((now - latest).total_seconds()))
+        out[layer] = {"latest": latest.isoformat() if latest else None, "age_seconds": age, "slo_seconds": slo,
+                      "ok": age is not None and age <= slo, "empty": latest is None}
     return out
 
 
+@snapshot_cache.cached("gates")
 def gates(engine: Engine, release: str | None = None) -> dict[str, dict]:
     from app.clhear.platform.gates import LAYER_GATES, gate_status
 
@@ -122,6 +129,16 @@ def _fleet_runs(engine: Engine, since: datetime) -> dict[str, int]:
         return {f: int(n) for f, n in rows}
 
 
+@snapshot_cache.cached("last_24h")
+def _last_24h(engine: Engine) -> dict:
+    """Audit entries and fleet runs in the 24 hours before ``counted_at``. A published
+    snapshot changes only on a swap, so its counts are taken once."""
+    counted_at = _now()
+    day_ago = counted_at - timedelta(days=1)
+    return {"audit": _audit_counts(engine, day_ago), "fleet_runs": _fleet_runs(engine, day_ago),
+            "counted_at": counted_at.isoformat()}
+
+
 def status(engine: Engine, *, release: str | None = None, now: datetime | None = None) -> dict:
     """What the /status page and the Upptime probe read."""
     from app.clhear.platform.dr import last_drill
@@ -150,11 +167,10 @@ def status(engine: Engine, *, release: str | None = None, now: datetime | None =
             current, met = gates_ratio, gates_ratio >= 1.0
         slos.append({**s, "current": current, "met": bool(met)})
     overall = "operational" if all(x["met"] for x in slos) else ("degraded" if l1_ok else "outage")
-    day_ago = now - timedelta(days=1)
     return {
         "status": overall, "generated_at": now.isoformat(), "release": _release(engine),
         "api": {"up": True}, "freshness": fresh, "gates": g, "slos": slos, "dr": drill,
-        "last_24h": {"audit": _audit_counts(engine, day_ago), "fleet_runs": _fleet_runs(engine, day_ago)},
+        "last_24h": _last_24h(engine),
         "links": {"evals": "/evals", "metrics": "/metrics", "upptime": "status/.upptimerc.yml", "dr_drill": ".github/workflows/dr_drill.yml"},
     }
 
