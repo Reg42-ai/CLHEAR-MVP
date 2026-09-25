@@ -52,7 +52,7 @@ def test_a_type_labelled_with_another_jurisdiction_than_its_anchor_is_retired(en
             issuing_regime="", clause_anchors=[ANCHOR], status="ai_generated", generated_by="test"))
     build_ontology(engine, check_registers=False)
     assert _live_licences(engine).get("LIC:UK:investment-adviser-registration") == "UK"
-    assert l4_licenses.retire_misgrounded(engine) == ["LIC:UK:investment-adviser-registration"]
+    assert l4_licenses.retire_unsound(engine) == ["LIC:UK:investment-adviser-registration"]
     assert "LIC:UK:investment-adviser-registration" not in _live_licences(engine)
     assert all(t["id"] != "LIC:UK:investment-adviser-registration" for t in l4_licenses.list_license_types(engine))
 
@@ -84,3 +84,48 @@ def test_a_duty_addressed_to_investment_advisers_reaches_the_derived_adviser_lic
     assert {"predicate": {"authorisations": "Investment Adviser Registration"}, "basis": "subject",
             "rationale": "subject: 'investment adviser'"} in edges
     assert _scan("any investment adviser", _SUBJECT_CUES, onto, "EU", "subject") == []
+
+
+def test_only_names_of_licences_become_licence_types(engine):
+    assert l4_licenses.names_a_licence("Investment Adviser Registration")
+    assert l4_licenses.names_a_licence("Payment institution authorisation")
+    for name in ("Registration", "Censure", "Suspension", "Revocation", "Withdrawal", "Exemption",
+                 "Authority to enter order requiring accounting and disgorgement"):
+        assert not l4_licenses.names_a_licence(name), name
+    assert (l4_licenses.licence_key("Registration of investment advisers")
+            == l4_licenses.licence_key("Investment Adviser Registration"))
+    _seeded(engine)
+    canned = json.dumps({"license_types": [
+        {"name": "Investment Adviser Registration", "source_key": "usc/15/80b-3", "ref": "sec80b-3(a)"},
+        {"name": "Registration of investment advisers", "source_key": "usc/15/80b-3", "ref": "sec80b-3(a)"},
+        {"name": "Censure", "source_key": "usc/15/80b-3", "ref": "sec80b-3(a)"},
+        {"name": "Registration", "source_key": "usc/15/80b-3", "ref": "sec80b-3(a)"},
+    ]})
+    l4_licenses.extract_licenses(engine, Router(engine, providers={"fake": FakeProvider(canned_text=canned)}))
+    assert [t["name"] for t in l4_licenses.list_license_types(engine)] == ["Investment Adviser Registration"]
+
+
+def test_stored_types_that_do_not_name_a_licence_are_retired(engine):
+    _seeded(engine)
+    with engine.begin() as conn:
+        conn.execute(license_types.insert().values(id="LIC:US:censure", jurisdiction="US", name="Censure",
+                                                   issuing_regime="", clause_anchors=[ANCHOR], status="ai_generated"))
+    assert l4_licenses.retire_unsound(engine) == ["LIC:US:censure"]
+
+
+def test_the_duty_text_names_the_bearer_when_the_addressee_does_not():
+    from app.clhear.l4.predicates import deterministic_predicates
+
+    onto = _Onto.__new__(_Onto)
+    onto.schema = {"authorisations": {}}
+    onto.view = SimpleNamespace(jurisdictions={"US"}, licences=SimpleNamespace(rows={
+        "LIC:US:investment-adviser-registration": {"id": "LIC:US:investment-adviser-registration", "jurisdiction": "US",
+                                                   "name": "Investment Adviser Registration"}}))
+    ob = {"jurisdiction": "US", "addressee": "advertisement",
+          "statement": "(a) It shall constitute a fraudulent act for any investment adviser registered or required to be "
+                       "registered under section 203 of the Act to disseminate any advertisement that violates this rule."}
+    predicates = [e["predicate"] for e in deterministic_predicates(ob, onto)]
+    assert {"authorisations": "Investment Adviser Registration"} in predicates
+    persons = {"jurisdiction": "US", "addressee": "", "statement": "Unfair methods of competition in or affecting "
+               "commerce, and unfair or deceptive acts or practices in or affecting commerce, are hereby declared unlawful."}
+    assert [e["predicate"] for e in deterministic_predicates(persons, onto)] == [{"jurisdictions": "US"}]

@@ -25,6 +25,10 @@ PROCEDURE = {
                          "the notice instituting proceedings is likely to result in significant dissipation of assets, "
                          "the Commission may enter a temporary order requiring the respondent to cease and desist. "
                          "Such temporary order shall become effective upon service upon the respondent.",
+    "sec80b-2(a)": "(a) In general\nWhen used in this subchapter, unless the context otherwise requires, the following definitions shall "
+                   "apply: (1) \"Assignment\" includes any direct or indirect transfer or hypothecation of an investment "
+                   "advisory contract by the assignor. (11) \"Investment adviser\" means any person who, for compensation, "
+                   "engages in the business of advising others, but does not include a bank that may not be registered.",
     "sec80b-3(c)": "(c) Procedure for registration; filing of application\n(1) An investment adviser may be registered "
                    "by filing with the Commission an application for registration. (2) Within forty-five days of the "
                    "date of the filing of such application the Commission shall by order grant such registration.",
