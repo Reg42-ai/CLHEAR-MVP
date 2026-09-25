@@ -35,8 +35,11 @@ def engine() -> Engine | None:
 
 
 def dispose() -> None:
+    from app.clhear import snapshot_cache
+
     global _engine
     with _lock:
         if _engine is not None:
             _engine.dispose()
         _engine = None
+    snapshot_cache.clear()

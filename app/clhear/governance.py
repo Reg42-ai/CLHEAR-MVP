@@ -289,16 +289,17 @@ def admin_override(engine: Engine, correction_id: str, admin: str, accept: bool 
 
 def audit_coverage(engine: Engine, layer: str | None = None) -> dict:
     """% of AI-generated items that have been human-sampled."""
-    stmt = sa.select(item_lifecycle)
+    reviewed = sa.or_(item_lifecycle.c.audit_sampled.is_(True),
+                      item_lifecycle.c.status.in_((HUMAN_AUDITED, AI_ACCEPTED, ADMIN_OVERRIDE)))
+    stmt = sa.select(item_lifecycle.c.status, sa.func.count().label("n"),
+                     sa.func.sum(sa.case((reviewed, 1), else_=0)).label("sampled")).group_by(item_lifecycle.c.status)
     if layer:
         stmt = stmt.where(item_lifecycle.c.layer == layer)
     with engine.connect() as conn:
         rows = conn.execute(stmt).all()
-    total = len(rows)
-    sampled = sum(1 for r in rows if r.audit_sampled or r.status in (HUMAN_AUDITED, AI_ACCEPTED, ADMIN_OVERRIDE))
-    by_status: dict[str, int] = {}
-    for r in rows:
-        by_status[r.status] = by_status.get(r.status, 0) + 1
+    total = sum(int(r.n) for r in rows)
+    sampled = sum(int(r.sampled or 0) for r in rows)
+    by_status: dict[str, int] = {r.status: int(r.n) for r in rows}
     return {
         "layer": layer,
         "items": total,

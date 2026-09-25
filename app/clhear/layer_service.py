@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
+from app.clhear import snapshot_cache
 from app.clhear.curated import load as load_curated
 from app.clhear.derived_models import activities as activities_t
 from app.clhear.derived_models import attribute_schema as attribute_schema_t
@@ -139,6 +140,7 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
     return out
 
 
+@snapshot_cache.cached("layer_index")
 def layer_index(engine: Engine) -> list[dict]:
     from app.clhear.l1.inventory import inventory_summary
     from app.clhear.l1.workflow import workflow_summary
@@ -353,15 +355,23 @@ def obligation_items(
 
 
 def _profile_blueprint(engine: Engine, profile_row) -> dict:
-    from app.clhear.l6.composer import compose
+    """The profile's current stored blueprint from this engine version; composed only when none is stored."""
+    from app.clhear.l6.composer import _current_for, compose
+    from app.clhear.l6.models import ENGINE_VERSION, fingerprint
 
     profile = {
         "attributes": profile_row.attributes if isinstance(profile_row.attributes, dict) else json.loads(profile_row.attributes),
         "activities": profile_row.activities if isinstance(profile_row.activities, list) else json.loads(profile_row.activities),
     }
+    with engine.connect() as conn:
+        current = _current_for(conn, fingerprint(profile["attributes"], profile["activities"]))
+    if current and current["engine_version"] == ENGINE_VERSION and current["composition"]:
+        stored = current["composition"]
+        return json.loads(stored) if isinstance(stored, str) else stored
     return compose(engine, profile, requested_by="stack-ui-sample", log_request=False)
 
 
+@snapshot_cache.cached("layer_items")
 def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
     if layer == "L2":
         return obligation_items(engine, **filters)
@@ -442,6 +452,7 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
     raise KeyError(layer)
 
 
+@snapshot_cache.cached("risk_items")
 def risk_items(engine: Engine) -> list[dict]:
     """Computed risk per sample profile x theme, from live coverage + churn."""
     with engine.connect() as conn:
