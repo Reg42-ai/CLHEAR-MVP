@@ -74,4 +74,9 @@ resource "aws_route53_record" "clhear" {
     zone_id                = aws_apigatewayv2_domain_name.webui[0].domain_name_configuration[0].hosted_zone_id
     evaluate_target_health = false
   }
+  # scripts/edge_cutover.py points this record at the CloudFront edge (edge.tf)
+  # once the distribution is verified; an apply must not move it back.
+  lifecycle {
+    ignore_changes = [alias]
+  }
 }
