@@ -156,7 +156,7 @@ def main() -> int:
                 continue
             bp = layer_service._profile_blueprint(engine, prow)
             rationales.append(narrate_blueprint(engine, llm, bp))
-        narratives = [narrate_risk(engine, llm, it) for it in layer_service.risk_items(engine)[:4]]
+        narratives = [narrate_risk(engine, llm, it) for it in layer_service.risk_score_items(engine)[:4]]
         outputs = {
             "extraction": extraction,
             "curated": seeded,

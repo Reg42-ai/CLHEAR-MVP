@@ -74,7 +74,7 @@ def narrate_risk(engine, llm, item: dict) -> dict:
         "input vector below (copy the number exactly). External context only from the "
         "facts list (cite FACT: ids). JSON: {\"narrative\": \"\", \"facts_used\": [\"FACT:...\"]}\n\n"
         f"INPUT VECTOR: {json.dumps(inputs, default=str)}\n\nFACTS:\n{fact_lines}\n"
-        f"AREA: {item.get('name') or item.get('area')}"
+        f"AREA: {item.get('title') or item.get('name') or item.get('area')}"
     )
     try:
         result = complete(

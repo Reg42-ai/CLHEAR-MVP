@@ -117,8 +117,13 @@ def derive_l7(engine: Engine, llm) -> dict:
 
     return {"events": enforcement.ingest_events(engine), "links": enforcement.link_events(engine, llm),
             "calibration": {k: v for k, v in score.calibrate(engine).items() if k in ("status", "id", "held_out_year")},
-            "obligation_scores": {k: v for k, v in score.score_obligations(engine).items() if k != "bands"},
-            "item_scores": score.score_items(engine)}
+            "obligation_scores": {k: v for k, v in score.score_obligations(engine).items() if k != "bands"}}
+
+
+def item_priority(engine: Engine) -> dict:
+    from app.clhear.l7 import score
+
+    return score.score_items(engine)
 
 
 def derive_l8(engine: Engine, llm) -> dict:
@@ -161,6 +166,11 @@ def build(engine: Engine, llm, *, skip_import: bool = False, profiles: list[dict
                                     steps=detail, started_at=started)
         report["layers"][layer] = {"revision": built["revision"], "inputs": inputs, "counts": built["counts"]}
         log.info("built %s %s from %s", layer, built["revision"][:12], {k: v[:12] for k, v in inputs.items()})
+    if "L7" in report["layers"]:
+        view = "L7 item priority"
+        with engine.connect() as conn:
+            inputs = layer_builds.check_inputs(conn, view, name)
+        report["views"] = {view: {"inputs": inputs, "item_scores": item_priority(engine)}}
     return report
 
 

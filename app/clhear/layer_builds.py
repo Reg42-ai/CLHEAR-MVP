@@ -33,8 +33,8 @@ layer_builds = sa.Table(
     schema=L0_SCHEMA,
 )
 
-# The layers each layer reads (L7 reads L1 enforcement sources, L2 links and
-# L3/L5 operational impact; its per-item priority is a view over L6).
+# The layers each layer reads. L7 reads L1 enforcement sources, L2 links and
+# L3/L5 operational impact, never a blueprint.
 INPUTS = {
     "L1": (),
     "L2": ("L1",),
@@ -42,10 +42,13 @@ INPUTS = {
     "L4": ("L1", "L2"),
     "L5": ("L2", "L3", "L4"),
     "L6": ("L2", "L3", "L4", "L5"),
-    "L7": ("L1", "L2", "L3", "L5", "L6"),
+    "L7": ("L1", "L2", "L3", "L5"),
     "L8": ("L1", "L3", "L7"),
 }
 ORDER = tuple(INPUTS)
+# Views read built layers but no layer reads them: item priority lays L7
+# obligation scores onto each current L6 blueprint's items.
+VIEWS = {"L7 item priority": ("L6", "L7")}
 _VOLATILE = {"created_at", "updated_at", "derived_at", "why_trail_id", "valid_from", "valid_to", "version", "ran_at",
              "retrieved_at", "last_used_at", "last_login_at", "heartbeat_at", "detected_at", "checked_at"}
 
@@ -77,6 +80,8 @@ def _rows(conn: Connection, table) -> list[dict]:
         query = query.where(table.c.valid_to.is_(None))
     if table.name == "source_versions":
         query = query.where(table.c.status == "in_force")
+    if table.name == "risk_scores":
+        query = query.where(table.c.subject_kind == "obligation")
     cols = [c.name for c in table.c if c.name not in _VOLATILE]
     rows = [{c: row[c] for c in cols} for row in conn.execute(query).mappings()]
     return sorted(rows, key=lambda r: json.dumps(r, sort_keys=True, default=str))
@@ -102,9 +107,9 @@ def latest(conn: Connection, layer: str, scope: str = "") -> dict | None:
 
 
 def check_inputs(conn: Connection, layer: str, scope: str = "") -> dict:
-    """Current input revisions, provided each equals its latest build's output."""
+    """Current input revisions of a layer or view, provided each equals its latest build's output."""
     inputs = {}
-    for name in INPUTS[layer]:
+    for name in INPUTS[layer] if layer in INPUTS else VIEWS[layer]:
         build = latest(conn, name, scope)
         current = revision(conn, name)
         if build is None:

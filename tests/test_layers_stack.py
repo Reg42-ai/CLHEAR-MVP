@@ -254,15 +254,25 @@ def test_program_lineage_walks_to_clauses(client, engine):
     assert any(n["kind"] == "clause" and (n["meta"].get("text") or "") for n in nodes)
 
 
-def test_risk_items_computed_with_live_churn(client, engine):
+def test_l7_items_are_the_published_obligation_scores(client, engine):
+    from app.clhear.l7.models import METHOD_VERSION
+    from app.clhear.l7.score import score_obligations
+
     _seed_corpus(engine)
     run_extraction(engine)
+    assert client.get("/api/clhear/layers/l7").json()["items"] == []
+    score_obligations(engine)
     items = client.get("/api/clhear/layers/l7").json()["items"]
-    assert items, "risk areas should be computed for sample profiles"
-    uk = next(i for i in items if i["profile_id"] == "PRF-UK-EMI" and i["area"] == "financial-crime")
-    assert uk["live_inputs"]["computed_live"] is True
-    assert uk["live_inputs"]["change_events"] == 1
-    assert uk["result"]["formula_version"] == "risk-v1"
+    with engine.connect() as conn:
+        titles = dict(conn.execute(sa.select(obligations.c.id, obligations.c.title)).all())
+    assert items and {i["subject_ref"] for i in items} <= set(titles)
+    for item in items:
+        assert item["subject_kind"] == "obligation" and item["method_version"] == METHOD_VERSION
+        assert item["title"] == titles[item["subject_ref"]]
+        assert item["result"] == {"score": item["composite"], "band": item["band"], "components": item["dimensions"]}
+    lineage = client.get(f"/api/clhear/layers/l7/items/{items[0]['id']}/lineage").json()["lineage"]
+    assert lineage["kind"] == "risk_score" and lineage["children"][0]["layer"] == "L2"
+    assert lineage["children"][0]["children"][0]["layer"] == "L1"
 
 
 # --------------------------------------------------------------------- evals
