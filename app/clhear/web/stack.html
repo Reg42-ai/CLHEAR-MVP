@@ -192,7 +192,8 @@
 
   /* risk */
   .score { font-family: var(--mono); font-size: 34px; font-weight: 800; }
-  .score.low { color: var(--mint-400); } .score.elevated { color: var(--amber-400); } .score.high { color: var(--rose-400); }
+  .score.low { color: var(--mint-400); } .score.medium, .score.elevated { color: var(--amber-400); }
+  .score.high, .score.critical { color: var(--rose-400); }
   .bar { height: 6px; border-radius: 4px; background: var(--panel-strong); overflow: hidden; margin: 4px 0 10px; }
   .bar i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--ind-500), var(--mint-400)); }
   .comprow { font-size: 12px; color: var(--muted); font-family: var(--mono); display: flex; justify-content: space-between; }
@@ -258,9 +259,9 @@
 
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
-import React, { useState, useEffect, useMemo } from "https://esm.sh/react@18.3.1";
-import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
-import htm from "https://esm.sh/htm@3.1.1";
+import React, { useState, useEffect, useMemo } from "/static/vendor/react-18.3.1.2f6da27083.mjs";
+import { createRoot } from "/static/vendor/react-dom-client-18.3.1.8a9d10e816.mjs";
+import htm from "/static/vendor/htm-3.1.1.81a9a8dee7.mjs";
 
 const html = htm.bind(React.createElement);
 const jget = (url) => fetch(url).then((r) => { if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); });
@@ -484,16 +485,15 @@ function ItemCard({ layer, item, onOpen }) {
         <div style=${{ marginTop: "8px" }}>
           <span class="score ${item.result.band}">${item.result.score}</span>
           <span class="chip" style=${{ marginLeft: "10px" }}>${item.result.band.toUpperCase()}</span>
-          <span class="chip">${item.inputs.obligation_count} obligations · ${item.inputs.derived_unreviewed} unreviewed</span>
+          <span class="chip">${item.inputs.event_count} enforcement outcome${item.inputs.event_count === 1 ? "" : "s"}</span>
+          <span class="chip">${item.method_version}</span>
           <div style=${{ marginTop: "8px" }}>
             ${Object.entries(item.result.components).map(([k, v]) => html`
               <div key=${k}>
-                <div class="comprow"><span>${k}</span><span>${v}</span></div>
+                <div class="comprow"><span>${k.replaceAll("_", " ")}</span><span>${v}</span></div>
                 <div class="bar"><i style=${{ width: `${Math.min(100, v * 100)}%` }}></i></div>
               </div>`)}
           </div>
-          <div class="comprow"><span>live churn (${item.live_inputs.window_days}d)</span>
-            <span>${item.live_inputs.change_events} events · ${item.live_inputs.changed_clauses} clauses</span></div>
         </div>`}
       ${layer === "L8" && html`
         <div style=${{ marginTop: "8px" }}>

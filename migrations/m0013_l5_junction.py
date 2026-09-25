@@ -80,8 +80,10 @@ def upgrade(conn: Connection) -> None:
         ensure_shared_columns(conn, table)
 
     from app.clhear import curated
+    from app.clhear.l1.scopes import active
 
-    curated_rows = {c["id"]: c for c in curated.load("l5_activities")}
+    # A scoped corpus derives its activities from its own obligations.
+    curated_rows = {} if active() else {c["id"]: c for c in curated.load("l5_activities")}
     for item in curated_rows.values():
         exists = conn.execute(sa.select(activities.c.id).where(activities.c.id == item["id"])).first()
         values = dict(

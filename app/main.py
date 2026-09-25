@@ -41,6 +41,17 @@ def create_app() -> FastAPI:
     from app.clhear.review_access import RestrictedAccessMiddleware, router as review_access_router
 
     app.add_middleware(RestrictedAccessMiddleware)
+    origins = [o.strip() for o in get_settings().clhear_cors_origins.split(",") if o.strip()]
+    if origins:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        # Explicit origins only: credentials are never shared with a wildcard.
+        app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
+                           allow_methods=["GET", "POST", "OPTIONS"],
+                           allow_headers=["Authorization", "Content-Type", "X-App-Id"], max_age=600)
+    from app.clhear.web_guard import WebGuardMiddleware
+
+    app.add_middleware(WebGuardMiddleware)
     app.include_router(review_access_router)
     if get_settings().reg42_clhear_enabled:
         from app.clhear.platform import errors
@@ -52,6 +63,7 @@ def create_app() -> FastAPI:
         if not get_settings().clhear_preview_mode:
             app.add_middleware(AuditMiddleware)  # HLD v2 §7.1: actor binding + every mutating request audited
 
+        from app.clhear.account_routes import router as account_router
         from app.clhear.accounts import router as auth_router
         from app.clhear.app_api import router as app_api_router
         from app.clhear.community import router as community_router
@@ -99,6 +111,7 @@ def create_app() -> FastAPI:
         app.include_router(instance_router)  # item 18: contract (open) + overlay endpoints (instance deployments only)
         app.include_router(app_api_router)
         app.include_router(auth_router)
+        app.include_router(account_router)
         app.include_router(community_router)
         app.include_router(ai_router)
         app.include_router(solon_router)  # serves "/" — the Solon front door

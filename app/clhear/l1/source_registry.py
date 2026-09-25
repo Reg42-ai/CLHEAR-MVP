@@ -27,6 +27,7 @@ FAMILIES = [
     ("uk-data-products", "UK data, e-money & wrappers", "UK GDPR/DPA/PECR, ISA regs, EMRs/PSRs, safeguarding (F10: GRP-031, UK-040..052)"),
     ("us-broker-dealer", "US broker-dealer & listed company", "Exchange Act BD rules, Reg BI/S-P/S-ID, FINRA, CAT, Securities Act/SOX/Nasdaq (F11: US-001..010, GRP-001..008)"),
     ("us-marketing", "US advertising & adviser marketing", "FTC Act §5, 16 CFR Part 255 Endorsement Guides, Advisers Act marketing rule"),
+    ("us-advisers-act", "US Investment Advisers Act & SEC adviser rules", "Advisers Act §§202, 203, 206; Compliance, books-and-records and Reg S-P rules; SEC adopting releases"),
     ("us-crypto-msb", "US crypto MSB & state", "BSA/31 CFR X, MTLs, NYDFS 200/500, GENIUS radar (F12: US-020..025)"),
     ("au-afsl", "Australia (ASIC/AUSTRAC)", "Corporations Act Ch 7, DDO, CFD PIO, DTR 2024, AML/CTF reform, RE stack (F13: AU-001..010, GRP-034)"),
     ("me-adgm", "ADGM / UAE (FSRA)", "FSMR + rulebooks, VA framework, UAE AML, ADGM DPR (F14: ME-001..005)"),
@@ -191,9 +192,6 @@ _src("us-marketing", "usc/15/ftc-act-45", "FTC Act §5",
      "law", "US", "US Congress (GPO)", _FTC_ACT_45, "govinfo_us", "root", "binding",
      ["marketing", "consumer", "us"], ["US-MKT-001"], 2, rights_basis="public_domain",
      fetch={"usc_title": "15", "usc_sections": ["45"], "edition": "2023", "url_template": _USC_15_CH2_SUBCH_I})
-# Clauses of a source that bind regulated persons. §45(b)–(n) set out Commission
-# and court procedure; L1 keeps their text, L2 derives no obligation from them.
-DUTY_CLAUSES = {"usc/15/ftc-act-45": frozenset({"sec45(a)"})}
 # Evidence for the demo's upper layers, on the existing SEC lanes. L7 reads the
 # Marketing Rule sweep releases as enforcement outcomes; L8 reads the Division of
 # Examinations risk alert as its reference benchmark. Neither tier is binding, so
@@ -219,6 +217,52 @@ _src("us-marketing", "sec/exams/risk-alert-041724", "SEC exams risk alert (Apr. 
      "guidance", "US", _SEC_GOV, _RISK_ALERT, "sec_edgar", "supplements", "guidance",
      ["marketing", "examinations", "us"], ["US-MKT-EXAM"], 2, rights_basis="public_domain",
      publisher=_SEC_GOV, fetch={"url": _RISK_ALERT, "document_type": "sec_page"})
+# Investment Advisers Act of 1940: who is an adviser (§202), registration and the
+# Commission's sanctions, including failure reasonably to supervise (§203), and
+# the anti-fraud provision the Marketing and Compliance Rules implement (§206).
+_USC_15_CH2D_SUBCH_II = ("https://www.govinfo.gov/content/pkg/USCODE-{ed}-title{title}/html/"
+                         "USCODE-{ed}-title{title}-chap2D-subchapII-sec{sec}.htm")
+for _sec, _short, _name, _relation in (
+    ("80b-2", "Advisers Act §202", "Investment Advisers Act of 1940 §202 (15 USC §80b-2) — definitions", "supplements"),
+    ("80b-3", "Advisers Act §203", "Investment Advisers Act of 1940 §203 (15 USC §80b-3) — registration of investment advisers", "supplements"),
+    ("80b-6", "Advisers Act §206", "Investment Advisers Act of 1940 §206 (15 USC §80b-6) — prohibited transactions by investment advisers", "root"),
+):
+    _src("us-advisers-act", f"usc/15/{_sec}", _short, _name, "law", "US", "US Congress (GPO)",
+         _USC_15_CH2D_SUBCH_II.format(ed="2023", title="15", sec=_sec), "govinfo_us", _relation, "binding",
+         ["advisers", "us"], ["US-IA-ACT"], 2, rights_basis="public_domain",
+         fetch={"usc_title": "15", "usc_sections": [_sec], "edition": "2023", "url_template": _USC_15_CH2D_SUBCH_II})
+for _key, _short, _name, _part, _section, _topics in (
+    ("cfr/17/ia-compliance", "Compliance Rule", "17 CFR 275.206(4)-7 — compliance procedures and practices",
+     "275", "275.206(4)-7", ["advisers", "compliance-program", "us"]),
+    ("cfr/17/ia-books-records", "Books and records rule", "17 CFR 275.204-2 — books and records to be maintained by investment advisers",
+     "275", "275.204-2", ["advisers", "records", "us"]),
+    ("cfr/17/reg-sp-safeguards", "Regulation S-P safeguards", "17 CFR 248.30 — procedures to safeguard customer information",
+     "248", "248.30", ["privacy", "security", "us"]),
+):
+    _src("us-advisers-act", _key, _short, _name, "regulation", "US", "SEC (eCFR)",
+         f"https://www.ecfr.gov/current/title-17/chapter-II/part-{_part}/section-{_section}",
+         "govinfo_us", "implements", "binding", _topics, ["US-IA-RULES"], 2, rights_basis="public_domain",
+         fetch={"ecfr_title": "17", "ecfr_sections": [_section], "chapter": "II", "subchapter": "", "part": _part})
+# Interpretation and practice. Guidance tier: L2 derives no obligation from them.
+_IA_2204 = "https://www.sec.gov/rules-regulations/2003/12/compliance-programs-investment-companies-investment-advisers"
+_src("us-advisers-act", "sec/releases/ia-2204", "SEC Release IA-2204",
+     "SEC Release IA-2204: Compliance Programs of Investment Companies and Investment Advisers (Dec. 17, 2003)",
+     "guidance", "US", _SEC_GOV, _IA_2204, "sec_edgar", "interprets", "guidance",
+     ["advisers", "compliance-program", "us"], ["US-IA-RULES"], 2, rights_basis="public_domain",
+     publisher=_SEC_GOV, fetch={"url": _IA_2204, "document_type": "sec_page"})
+_MARKETING_FAQ = ("https://www.sec.gov/rules-regulations/staff-guidance/division-investment-management-frequently-asked-questions/"
+                  "marketing-compliance-frequently-asked-questions")
+_src("us-marketing", "sec/staff/marketing-faq", "SEC Marketing Compliance FAQ",
+     "SEC Division of Investment Management: Marketing Compliance Frequently Asked Questions",
+     "guidance", "US", _SEC_GOV, _MARKETING_FAQ, "sec_edgar", "interprets", "guidance",
+     ["marketing", "advisers", "us"], ["US-MKT-FAQ"], 2, rights_basis="public_domain",
+     publisher=_SEC_GOV, fetch={"url": _MARKETING_FAQ, "document_type": "sec_page"})
+_FTC_DISCLOSURES_101 = "https://www.ftc.gov/business-guidance/resources/disclosures-101-social-media-influencers"
+_src("us-marketing", "ftc/guidance/disclosures-101", "FTC Disclosures 101 for Social Media Influencers",
+     "FTC business guidance: Disclosures 101 for Social Media Influencers",
+     "guidance", "US", "Federal Trade Commission", _FTC_DISCLOSURES_101, "govinfo_us", "interprets", "guidance",
+     ["marketing", "endorsement", "influencer", "us"], ["US-MKT-FTC-GUIDE"], 2, rights_basis="public_domain",
+     publisher="Federal Trade Commission", fetch={"url": _FTC_DISCLOSURES_101, "document_type": "ftc_page"})
 _src("us-marketing", "cfr/16/255", "Endorsement Guides",
      "16 CFR Part 255 — Guides Concerning the Use of Endorsements and Testimonials in Advertising",
      "guidance", "US", "FTC (eCFR)",
@@ -560,3 +604,23 @@ def seed(engine: Engine) -> dict:
     from app.clhear.l1.origin import reconcile_origins
     reconcile_origins(engine)
     return {"families_created": created_f, "sources_created": created_s, "skipped_existing": skipped}
+
+
+def apply_scope() -> None:
+    """Narrow the registry to ``CLHEAR_SOURCE_SCOPE`` (see ``scopes.json``)."""
+    from app.clhear.l1 import scopes
+
+    keys = set(scopes.source_keys())
+    if not keys:
+        return
+    declared = {s["key"] for s in S}
+    starters = {"nist/csf-2.0"}  # scoped starters live outside S (fleet.STARTERS)
+    missing = keys - declared - starters
+    if missing:
+        raise ValueError(f"Scope {scopes.active_name()} names undeclared sources: {', '.join(sorted(missing))}")
+    S[:] = [s for s in S if s["key"] in keys]
+    used = {s["family"] for s in S}
+    FAMILIES[:] = [f for f in FAMILIES if f[0] in used]
+
+
+apply_scope()

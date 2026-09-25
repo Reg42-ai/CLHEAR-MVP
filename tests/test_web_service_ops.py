@@ -73,3 +73,14 @@ def test_deploy_requests_the_roll_without_waiting(monkeypatch):
     receipt = _deployer({"ecs": object(), "lambda": object()})._roll_web_service()
     assert receipt["status"] == "roll_requested" and receipt["task_definition"] == "arn:new"
     assert calls == [{"image": IMAGE, "sha": SHA, "wait": False}]
+
+
+def test_service_owned_settings_and_the_edge_requirement_survive_a_roll():
+    first = web_service.task_definition(BASE, LAMBDA_ENV, image=IMAGE, sha=SHA,
+                                        overrides={"CLHEAR_ACCESS_MODE": "accounts"}, require_edge=True)
+    second = web_service.task_definition(first, {**LAMBDA_ENV, "CLHEAR_ACCESS_MODE": "reviewers"}, image=IMAGE, sha="b" * 40)
+    env = {e["name"]: e["value"] for e in second["containerDefinitions"][0]["environment"]}
+    assert env["CLHEAR_ACCESS_MODE"] == "accounts"
+    assert "CLHEAR_ORIGIN_VERIFY_SECRET" in {s["name"] for s in second["containerDefinitions"][0]["secrets"]}
+    third = web_service.task_definition(second, LAMBDA_ENV, image=IMAGE, sha=SHA, require_edge=False)
+    assert "CLHEAR_ORIGIN_VERIFY_SECRET" not in {s["name"] for s in third["containerDefinitions"][0]["secrets"]}

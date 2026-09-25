@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import sqlalchemy as sa
+
+from app.clhear import snapshot_cache
 from fastapi import APIRouter, HTTPException, Query, Request
 from urllib.parse import urlencode
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -150,9 +152,15 @@ def _text_access(conn, source, request: Request) -> dict:
         return {"allowed": allowed, "internal": False,
                 "reason": "Public text" if allowed else "Text access requires recorded permission."}
     public = permissions.decision(conn, source.key, "display_public")
-    if public["allowed"]:
-        return {**public, "internal": False}
     user = reviewer(request)
+    from app.clhear.access import accounts_mode
+    if public["allowed"] and not (accounts_mode() and user is None):
+        return {**public, "internal": False}
+    if accounts_mode() and user is None:
+        # Open accounts see licensed text only through a publisher licence, never
+        # through an operator's private review grant.
+        return {"allowed": False, "internal": False,
+                "reason": "This source's licence limits verbatim text to approved reviewers."}
     internal = permissions.decision(conn, source.key, "display_internal")
     if user and not internal["allowed"]:
         candidate = permissions.candidate_decision(conn, source.key, "display_internal", canonical_url=source.canonical_url)
@@ -191,7 +199,11 @@ def _audit_text_read(conn, request, source, version, access, route, ids):
 @router.get("/api/clhear/sources")
 def list_sources(publisher: str | None = None) -> list[dict]:
     """Library view: families -> members -> latest-version summary."""
-    engine = get_engine()
+    return _sources_for_engine(get_engine(), publisher)
+
+
+@snapshot_cache.cached("sources")
+def _sources_for_engine(engine, publisher: str | None) -> list[dict]:
     from app.clhear.l1.origin import corpus_sources_predicate, production_worker
     from app.clhear.l1.source_registry import FAMILIES
     from app.clhear.l1.publishers import publisher_ids
@@ -244,7 +256,11 @@ def list_sources(publisher: str | None = None) -> list[dict]:
         today = datetime.now(timezone.utc).date().isoformat()
         failed_today: set[str] = set()
         last_status: dict[str, str] = {}
-        for row in conn.execute(sa.select(runs).where(runs.c.fleet.like("l1.%")).order_by(runs.c.id.desc())):
+        # Latest status per source and today's failures only need recent runs.
+        run_query = sa.select(runs).where(runs.c.fleet.like("l1.%"))
+        if conn.dialect.name == "postgresql":
+            run_query = run_query.where(runs.c.created_at >= datetime.now(timezone.utc) - timedelta(days=14))
+        for row in conn.execute(run_query.order_by(runs.c.id.desc()).limit(RUN_SCAN_LIMIT)):
             inputs = row.inputs if isinstance(row.inputs, dict) else json.loads(row.inputs or "{}")
             outputs = row.outputs if isinstance(row.outputs, dict) else json.loads(row.outputs or "{}")
             key = inputs.get("source")
@@ -388,7 +404,9 @@ def source_document(key: str, request: Request, version_label: str | None = None
 
         access = _text_access(conn, source, request)
         from app.clhear.l1.poc_review import enabled
-        if enabled():
+        from app.clhear.access import accounts_mode
+        from app.clhear.review_access import reviewer as _reviewer
+        if enabled() and (not accounts_mode() or _reviewer(request) is not None):
             access = {**access, "allowed": True, "internal": True,
                       "reason": "Live demo: stored text is shown"}
         locked = not access["allowed"]
@@ -1191,8 +1209,11 @@ def fleet_board() -> list[dict]:
 
 # ------------------------------------------------------------ fleet job graph
 
+RUN_SCAN_LIMIT = 20_000
+
+
 def _job_tasks(conn, job_id: str) -> list[dict]:
-    rows = conn.execute(sa.select(runs).order_by(runs.c.id)).all()
+    rows = conn.execute(sa.select(runs).order_by(runs.c.id.desc()).limit(RUN_SCAN_LIMIT)).all()[::-1]
     short_names = dict(conn.execute(sa.select(sources.c.key, sources.c.short_name)).all())
     tasks = []
     for row in rows:

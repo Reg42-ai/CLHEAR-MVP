@@ -7,7 +7,7 @@ clauses.
 """
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
 from app.clhear import layer_service
@@ -168,11 +168,29 @@ def terms_page() -> HTMLResponse:
 
 
 @router.get("/static/theme.css", include_in_schema=False)
-def theme_css():
+def theme_css(request: Request):
+    import hashlib
+
     from fastapi.responses import Response
 
-    return Response(
-        (WEB_DIR / "theme.css").read_text(),
-        media_type="text/css",
-        headers={"Cache-Control": "no-cache, must-revalidate"},
-    )
+    body = (WEB_DIR / "theme.css").read_bytes()
+    etag = '"' + hashlib.sha256(body).hexdigest()[:16] + '"'
+    headers = {"Cache-Control": "public, max-age=3600, stale-while-revalidate=86400", "ETag": etag}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(body, media_type="text/css", headers=headers)
+
+
+# Pinned, content-addressed module files (name = package-version.sha): never change in place.
+VENDOR_DIR = WEB_DIR / "vendor"
+
+
+@router.get("/static/vendor/{name}", include_in_schema=False)
+def vendor_module(name: str):
+    from fastapi.responses import Response
+
+    allowed = {p.name for p in VENDOR_DIR.glob("*.mjs")}
+    if name not in allowed:
+        raise HTTPException(status_code=404, detail="Unknown static module")
+    return Response((VENDOR_DIR / name).read_bytes(), media_type="text/javascript",
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})

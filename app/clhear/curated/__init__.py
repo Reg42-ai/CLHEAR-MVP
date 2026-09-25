@@ -116,6 +116,35 @@ def seed(engine: Engine) -> dict:
     return counts
 
 
+def seed_data_model(engine: Engine) -> dict:
+    """Only the product's data model: the L3 block kinds and the L4 profile
+    attributes. No curated blocks, activities, profiles or concepts — a scoped
+    corpus derives those from its own sources."""
+    from app.clhear.derived_models import l3_kinds
+    from app.clhear.l3.kinds import kinds_catalog
+
+    counts = {"kinds": 0, "attributes": 0}
+    with engine.begin() as conn:
+        for entry in kinds_catalog():
+            exists = conn.execute(sa.select(l3_kinds.c.kind).where(l3_kinds.c.kind == entry["kind"])).first()
+            values = dict(description=entry["description"], fields=entry["fields"])
+            if exists:
+                conn.execute(l3_kinds.update().where(l3_kinds.c.kind == entry["kind"]).values(**values))
+            else:
+                conn.execute(l3_kinds.insert().values(kind=entry["kind"], **values))
+            counts["kinds"] += 1
+        for item in load("l4_attribute_schema"):
+            exists = conn.execute(sa.select(attribute_schema.c.key).where(attribute_schema.c.key == item["key"])).first()
+            values = dict(type=item["type"], description=item.get("description", ""), read_by=[])
+            if exists:
+                conn.execute(attribute_schema.update().where(attribute_schema.c.key == item["key"]).values(**values))
+            else:
+                conn.execute(attribute_schema.insert().values(key=item["key"], **values))
+            _audited(conn, attribute_schema, item["key"], created=not exists)
+            counts["attributes"] += 1
+    return counts
+
+
 def seed_concepts(engine: Engine) -> dict:
     """Seed the starter concept set AFTER extraction has run.
 

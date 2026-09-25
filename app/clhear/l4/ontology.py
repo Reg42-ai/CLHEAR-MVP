@@ -91,8 +91,27 @@ def slug(text: str) -> str:
 # ----------------------------------------------------------------- snapshot access
 
 
+# A scoped corpus builds its ontology only from what its own L1 sources grant:
+# the grounded licence registry (``license_types``), merged below. The reviewed
+# register snapshot is the full corpus's starting set, not evidence in scope.
+EMPTY_SNAPSHOT = {"version": "derived-only", "registers": [], "jurisdictions": [], "licences": [],
+                  "products_services": [], "client_types": [], "channels": [], "permits": [], "validity_rules": []}
+
+
 def snapshot() -> dict:
-    return l4_registers.ontology_snapshot()
+    from app.clhear.l1.scopes import active
+
+    if not active():
+        return l4_registers.ontology_snapshot()
+    # Jurisdictions and their regulators are the ones the scope's own sources name.
+    from app.clhear.l1.source_registry import S
+
+    by_code: dict[str, set] = {}
+    for entry in S:
+        if entry.get("jurisdiction"):
+            by_code.setdefault(entry["jurisdiction"].upper(), set()).add(entry.get("publisher") or entry["issuer"])
+    jurisdictions = [{"code": code, "name": code, "regulators": sorted(regs)} for code, regs in sorted(by_code.items())]
+    return {**EMPTY_SNAPSHOT, "jurisdictions": jurisdictions}
 
 
 def snapshot_version(snap: dict | None = None) -> str:

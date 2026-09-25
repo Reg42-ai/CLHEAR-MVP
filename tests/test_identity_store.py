@@ -65,3 +65,18 @@ def test_sign_in_writes_the_account_directly_when_the_store_is_configured(engine
         row = conn.execute(sa.select(users).where(users.c.email == "new.person@example.org")).mappings().one()
     assert row["provider"] == "google"
     identity.reset()
+
+
+def test_observations_from_the_snapshot_tier_are_kept_in_the_identity_store(engine, tmp_path, monkeypatch):
+    from app.clhear.observations import accept_observation, list_observations, observations
+
+    store = _identity_db(tmp_path, monkeypatch)
+    body = {"subject": ["OBL:cfr/17/ia-marketing#b", "galaxy-post-a"], "result": "fail",
+            "performer": {"kind": "app", "protocol": "https", "id": "galaxy"}, "evidence": {"pointer": "galaxy:posts/a"}}
+    stored = accept_observation(engine, body)
+    with store.connect() as conn:
+        assert conn.execute(sa.select(observations.c.id)).scalars().all() == [stored["id"]]
+    with engine.connect() as conn:
+        assert conn.execute(sa.select(sa.func.count()).select_from(observations)).scalar_one() == 0
+    assert [row["id"] for row in list_observations(engine)] == [stored["id"]]
+    identity.reset()

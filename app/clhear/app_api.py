@@ -32,7 +32,9 @@ PREVIEW_RESOURCES = {
 
 
 def _engine():
-    return get_engine()
+    from app.clhear import release_db
+
+    return release_db.engine() or get_engine()
 
 
 @router.get("/layers")

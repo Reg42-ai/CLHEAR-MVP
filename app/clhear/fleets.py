@@ -146,8 +146,7 @@ def run_nightly_stack(engine: Engine, llm, *, force: bool = False) -> dict:
     l7["calibration"] = l7_score.calibrate(engine)
     l7["obligation_scores"] = l7_score.score_obligations(engine)
     l7["item_scores"] = l7_score.score_items(engine)
-    risk_items = layer_service.risk_items(engine)[:4]
-    narratives = [narrate_risk(engine, llm, it) for it in risk_items]
+    narratives = [narrate_risk(engine, llm, it) for it in layer_service.risk_score_items(engine)[:4]]
     cohorts = refresh_cohorts(engine)
     # L8 (HLD v2 §4.8): drift first so a changed block re-derives its fills before new
     # slots are drafted; then the member aggregates (k ≥ 5, DP noise) — nothing here

@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.engine import Engine
 
 from app.clhear.accounts import current_user, require_user
@@ -85,9 +85,10 @@ async def create_submission(request: Request, user: dict = Depends(require_user)
 
 
 @router.get("/submissions")
-def list_submissions(request: Request, mine: bool = False, status: str | None = None, limit: int = 100) -> list[dict]:
+def list_submissions(request: Request, mine: bool = False, status: str | None = None,
+                     limit: int = Query(default=100, ge=1, le=300)) -> list[dict]:
     engine = get_engine()
-    query = sa.select(submissions).order_by(submissions.c.created_at.desc()).limit(min(limit, 300))
+    query = sa.select(submissions).order_by(submissions.c.created_at.desc()).limit(limit)
     if mine:
         user = require_user(request)
         query = query.where(submissions.c.submitter_id == user["id"])

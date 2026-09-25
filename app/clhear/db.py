@@ -68,10 +68,13 @@ def set_engine(engine: Engine) -> None:
 
 def dispose_engine() -> None:
     """Drop pooled connections and rebuild on next use (snapshot refresh)."""
+    from app.clhear import snapshot_cache
+
     global _engine
     if _engine is not None:
         _engine.dispose()
     _engine = None
+    snapshot_cache.clear()
 
 
 def run_migrations(engine: Engine) -> list[int]:

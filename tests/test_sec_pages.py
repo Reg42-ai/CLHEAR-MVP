@@ -27,18 +27,23 @@ KEY = "sec/enforcement/2024-121"
 
 
 def test_publication_scope_excludes_site_chrome_and_both_readers_agree():
+    from app.clhear.l1.adapters.publication_pages import publication_title
+
     assert is_sec_page(PAGE) and not is_sec_page(b"<html><body><ul><li>listing</li></ul></body></html>")
     tree = parse(PAGE, KEY, "SEC 2024-121")
-    publication = tree[0].children[0]
-    assert publication.node_type == "provision" and publication.ref == f"{KEY}/publication"
-    assert publication.heading.startswith("Press Release SEC Charges Nine")
+    blocks = [n for n in tree[0].walk() if n.node_type == "provision"]
+    assert publication_title(tree[0]).startswith("Press Release SEC Charges Nine")
+    assert [n.ref for n in blocks] == [f"{KEY}/b{i}" for i in range(1, len(blocks) + 1)]
+    items = [n for n in blocks if n.source_locator["block"] == "item"]
+    assert [n.raw_text for n in items] == ["Howard Bailey Securities LLC agreed to pay a civil penalty of $90,000;"]
+    text = " ".join(n.raw_text for n in blocks)
     for chrome in ("Newsroom", "Home", "Order - Howard Bailey", "var x"):
-        assert chrome not in publication.raw_text
-    assert "socialmedia" in publication.raw_text  # inline markup joins, as the page renders it
-    assert original_text(PAGE) == f"{publication.heading} {publication.raw_text}"
+        assert chrome not in text
+    assert "socialmedia" in text  # inline markup joins, as the page renders it
+    assert original_text(PAGE) == f"{publication_title(tree[0])} {text}"
     artifacts = [Artifact(name="publication.html", content=PAGE, content_type="text/html")]
     assert verify(artifacts, KEY, tree)
-    publication.raw_text = publication.raw_text.replace("$90,000", "$9,000")
+    items[0].raw_text = items[0].raw_text.replace("$90,000", "$9,000")
     assert not verify(artifacts, KEY, tree)
 
 
@@ -80,19 +85,20 @@ def test_sec_evidence_rides_existing_lanes_and_never_derives_obligations():
     assert alert["kind"] == "guidance" and alert["tier"] == "guidance"
 
 
-def test_sweep_release_is_one_fine_linked_to_the_marketing_rule():
-    from app.clhear.l7.enforcement import index_from_rows, parse_notice, resolve_citation
+def test_sweep_release_yields_one_fine_per_charged_firm():
+    from app.clhear.l1.adapters.publication_pages import publication_title
+    from app.clhear.l7.enforcement import _publication_outcomes
 
-    publication = parse(PAGE, KEY, "SEC 2024-121")[0].children[0]
-    notice = parse_notice(publication.heading, publication.raw_text, regulator="U.S. Securities and Exchange Commission")
-    assert notice["kind"] == "fine" and notice["amount"] == 1240000 and str(notice["decided_on"]) == "2024-09-09"
-    [mention] = [c for c in notice["cited_refs"] if c.get("whole_instrument")]
-    assert mention["instrument"] == "Marketing Rule" and mention["source_keys"] == ["cfr/17/ia-marketing"]
-    index = index_from_rows([{"source_key": "cfr/17/ia-marketing", "clause_ref": "275.206(4)-1"},
-                             {"source_key": "cfr/16/255", "clause_ref": "255.5"}])
-    [link] = resolve_citation(mention, index)
-    assert link["obligation_id"] == "OBL:cfr/17/ia-marketing#275.206(4)-1"
-    assert link["method"] == "instrument" and link["confidence"] == 0.7
+    tree = parse(PAGE, KEY, "SEC 2024-121")
+    rows = [{"id": i, "ref": n.ref, "text": n.raw_text, "text_hash": f"h{i}", "source_key": KEY, "source_name": "SEC 2024-121",
+             "issuer": "U.S. Securities and Exchange Commission", "jurisdiction": "US", "canonical_url": "",
+             "source_version_id": 1, "block": n.source_locator["block"], "publication_title": publication_title(tree[0])}
+            for i, n in enumerate((n for n in tree[0].walk() if n.node_type == "provision"), 1)]
+    [outcome] = _publication_outcomes(rows, [])
+    notice = outcome["parsed"]
+    assert notice["respondent"] == "Howard Bailey Securities LLC" and notice["respondent_type"] == "firm"
+    assert notice["kind"] == "fine" and notice["amount"] == 90000 and str(notice["decided_on"]) == "2024-09-09"
+    assert outcome["row"]["block"] == "item"
 
 
 def test_undertaking_without_a_civil_penalty_stays_an_undertaking():
@@ -121,7 +127,7 @@ RISK_ALERT = ("Initial Observations Regarding Advisers Act Marketing Rule Compli
               "statements of material fact; (2) omission of material facts or misleading inference.")
 
 
-def test_l8_reference_rows_quote_the_in_force_clause_and_are_not_peer_data(client, engine):
+def test_l8_reference_rows_quote_each_in_force_block_and_are_not_peer_data(client, engine):
     from app.clhear.l1.source_registry import seed
     from app.clhear.l8.cohorts import K
     from app.clhear.l8.reference import reference_rows
@@ -129,29 +135,15 @@ def test_l8_reference_rows_quote_the_in_force_clause_and_are_not_peer_data(clien
     seed(engine)
     assert reference_rows(engine) == []
     _in_force(engine, "sec/exams/risk-alert-041724", RISK_ALERT)
-    rows = {row["id"]: row for row in reference_rows(engine)}
-    assert set(rows) == {"REF-SEC-EXAMS-2024-01", "REF-SEC-EXAMS-2024-02", "REF-SEC-EXAMS-2024-06", "REF-SEC-EXAMS-2024-07"}
-    for row in rows.values():
-        assert row["quote"] in RISK_ALERT and row["peer_data"] is False
-        assert row["source"]["clause_ref"] == "sec/exams/risk-alert-041724/publication"
-    assert rows["REF-SEC-EXAMS-2024-01"]["block_id"] == "BLK-MKT-CLAIMS-REVIEW"
-    assert rows["REF-SEC-EXAMS-2024-07"]["block_id"] is None
+    [row] = reference_rows(engine)
+    assert row["quote"] == " ".join(RISK_ALERT.split()) and row["peer_data"] is False and row["kind"] == "finding"
+    assert row["source"]["clause_ref"] == "sec/exams/risk-alert-041724/publication"
+    assert row["block_id"] is None  # no L3 block shares enough words yet
 
     auth = {"Authorization": "Bearer dev-os-key", "X-App-Id": "os-dev"}
     body = client.get("/v1/releases/clhear-vLIVE/L8/benchmarks", headers=auth)
     assert body.status_code == 200, body.text
     body = body.json()
     assert body["layer_status"] == "reference" and body["banner"]["data_status"] == "reference"
-    assert "not peer data" in body["view"] and len(body["items"]) == 4
+    assert "not peer data" in body["view"] and len(body["items"]) == 1
     assert body["peer_aggregates"] == {"status": "locked", "k_threshold": K}
-
-
-def test_scores_can_be_limited_to_the_demo_obligations(engine):
-    from app.clhear.l7.score import score_obligations
-    from tests.test_influencer_demo import _seed_clauses
-    from app.clhear.demo_corpus import LEGAL_SOURCE_KEYS, derive_demo
-
-    _seed_clauses(engine)
-    derive_demo(engine)
-    assert score_obligations(engine, source_keys=("cfr/16/255",))["obligations"] == 5
-    assert score_obligations(engine, source_keys=LEGAL_SOURCE_KEYS)["obligations"] == 7

@@ -279,14 +279,19 @@ LAYER_CATALOG: dict[str, dict] = {
         "schema": "l7_risk",
         "published": False,
         "status": "computed",
-        "purpose": "Quantifies exposure per program area: where coverage is thin, where "
-        "the underlying law is changing fastest, where evidence is weakest.",
+        "purpose": "Quantifies enforcement exposure per obligation: how often and how hard "
+        "regulators have acted on it, how fast its law is changing, and how much of a "
+        "program it touches.",
         "derivation": {
-            "inputs": ["L1", "L6"],
-            "method": "Scores are computed, not judged: inputs are the L6 coverage ratio, "
-            "the count of open obligations, and the live L1 change velocity of the "
-            "underlying sources (regulatory churn measured from clause-level change "
-            "events). Every score publishes its formula and its inputs.",
+            "inputs": ["L1", "L2", "L3", "L5"],
+            "method": "Scores are computed, not judged. Enforcement outcomes are read from L1 "
+            "enforcement sources (one event per charged firm, each quoting its in-force clause) "
+            "and linked to the L2 obligations they cite. Each obligation's score weighs "
+            "published dimensions: recency-weighted enforcement history, a likelihood calibrated "
+            "on past years and scored on a held-out year, financial and reputational impact of "
+            "the linked outcomes, L2 change velocity, and L3/L5 operational reach. A company's "
+            "item priority is a view that lays these scores onto its L6 blueprint items; no "
+            "score reads a blueprint. Every score publishes its weights, dimensions and evidence.",
             "generation": {
                 "nature": "quantitative + grounded commentary",
                 "technique": "Formula-deterministic scores; number-echo narratives over a versioned facts file",
@@ -310,14 +315,15 @@ LAYER_CATALOG: dict[str, dict] = {
         "blocks; closed peer benchmarks across anonymized organisations follow once k is met.",
         "derivation": {
             "inputs": ["L1", "L3", "L7"],
-            "method": "Reference rows quote an in-force L1 clause of a public examination report "
-            "(SEC Division of Examinations risk alerts) and name the L3 block the finding concerns; "
-            "a curated row whose quote is not in the current clause is not emitted. Peer aggregates "
-            "combine L7 scores across participating organisations within a profile cluster, stay "
-            "inside the enclave, and publish only as k-anonymous aggregates.",
+            "method": "Each reference row is one in-force block of a public examination report or "
+            "guidance publication in L1 (for example SEC Division of Examinations risk alerts), "
+            "quoted exactly, and names the L3 block whose name, purpose and required obligations "
+            "share the most words with it; a row that shares too little names no block. Peer "
+            "aggregates combine L7 scores across participating organisations within a profile "
+            "cluster, stay inside the enclave, and publish only as k-anonymous aggregates.",
             "generation": {
-                "nature": "curated mapping over verbatim L1 quotes; pure computation for peer aggregates; zero LLM",
-                "technique": "Literal-quote grounding for reference rows; k≥5 cohort aggregates over accumulated blueprint requests",
+                "nature": "derived from verbatim L1 blocks; pure computation for peer aggregates; zero LLM",
+                "technique": "Word-overlap mapping of quoted blocks to L3; k≥5 cohort aggregates over accumulated blueprint requests",
                 "guarantee": "Every reference row quotes the current clause it cites and is labeled not peer data; "
                 "real peer aggregates publish only when k is met",
                 "may": ["publish reference findings with their quote and block", "publish k-anonymous means"],

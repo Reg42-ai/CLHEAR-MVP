@@ -32,6 +32,10 @@ SECRET_PREFIX = "/clhear/web/"
 SECRET_ENV = ("CLHEAR_APP_KEYS", "CLHEAR_SESSION_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET",
               "CLHEAR_BEEHIIV_API_KEY", "SENTRY_DSN")
 IDENTITY_ENV = "CLHEAR_IDENTITY_DATABASE_URL"
+ORIGIN_ENV = "CLHEAR_ORIGIN_VERIFY_SECRET"
+# Settings the service owns (not copied from the Lambda); a roll keeps them.
+SERVICE_OWNED = ("CLHEAR_ACCESS_MODE", "CLHEAR_CORS_ORIGINS", "CLHEAR_RELEASE_DB_S3_URI", "CLHEAR_RELEASES_S3_PREFIX",
+                 "CLHEAR_PRIVATE_COMPLETENESS")
 # The Lambda keeps its snapshot in /tmp; the service keeps it on ephemeral storage.
 SERVICE_ENV = {"CLHEAR_DB_LOCAL_PATH": "/tmp/clhear.db", "CLHEAR_SNAPSHOT_POLL_S": "60", "PORT": "8080"}
 TASK_FIELDS = {
@@ -50,22 +54,32 @@ def secret_arn(name: str) -> str:
     return f"arn:aws:ssm:{REGION}:{ACCOUNT}:parameter{secret_parameter(name)}"
 
 
-def task_definition(base: dict, lambda_env: dict, *, image: str, sha: str) -> dict:
-    """The next served revision: base task shape, Lambda environment, new code."""
+def task_definition(base: dict, lambda_env: dict, *, image: str, sha: str, overrides: dict | None = None,
+                    require_edge: bool | None = None) -> dict:
+    """The next served revision: base task shape, Lambda environment, new code.
+
+    Service-owned settings and the edge requirement carry over from ``base``
+    unless ``overrides`` / ``require_edge`` change them."""
     if not IMAGE_RE.match(image or ""):
         raise ValueError("image must be a clhear-workers digest reference")
     if not re.fullmatch(r"[0-9a-f]{40}", sha or ""):
         raise ValueError("sha must be a 40-character commit id")
     task = {k: copy.deepcopy(v) for k, v in base.items() if k in TASK_FIELDS}
     web = next(c for c in task["containerDefinitions"] if c["name"] == "web")
+    previous = {e["name"]: e["value"] for e in web.get("environment", [])}
+    had_edge = any(item["name"] == ORIGIN_ENV for item in web.get("secrets", []))
     web["image"] = image
     env = {k: v for k, v in lambda_env.items() if k not in SECRET_ENV}
     env.update(SERVICE_ENV, AWS_REGION=REGION, CLHEAR_CODE_REVISION=sha,
                CLHEAR_WORKER_IMAGE_DIGEST=image.split("@", 1)[1])
+    env.update({k: previous[k] for k in SERVICE_OWNED if k in previous})
+    env.update({k: v for k, v in (overrides or {}).items() if k in SERVICE_OWNED})
     web["environment"] = [{"name": k, "value": v} for k, v in sorted(env.items())]
     web["secrets"] = [{"name": name, "valueFrom": secret_arn(name)} for name in SECRET_ENV if lambda_env.get(name)]
     # The service, unlike the Lambda, writes accounts and keys to Aurora as clhear_web.
     web["secrets"].append({"name": IDENTITY_ENV, "valueFrom": secret_arn(IDENTITY_ENV)})
+    if had_edge if require_edge is None else require_edge:
+        web["secrets"].append({"name": ORIGIN_ENV, "valueFrom": secret_arn(ORIGIN_ENV)})
     task["tags"] = [t for t in task.get("tags", []) if t.get("key") != "clhear:git-sha"] + [{"key": "clhear:git-sha", "value": sha}]
     return task
 
@@ -100,10 +114,12 @@ def current_task_definition(clients) -> dict:
     return clients["ecs"].describe_task_definition(taskDefinition=service["taskDefinition"], include=["TAGS"])
 
 
-def roll(clients, *, image: str, sha: str, desired: int | None = None, wait: bool = True) -> dict:
+def roll(clients, *, image: str, sha: str, desired: int | None = None, wait: bool = True,
+         overrides: dict | None = None, require_edge: bool | None = None) -> dict:
     described = current_task_definition(clients)
     base = {**described["taskDefinition"], "tags": described.get("tags", [])}
-    task = task_definition(base, lambda_environment(clients), image=image, sha=sha)
+    task = task_definition(base, lambda_environment(clients), image=image, sha=sha, overrides=overrides,
+                           require_edge=require_edge)
     arn = clients["ecs"].register_task_definition(**task)["taskDefinition"]["taskDefinitionArn"]
     service = clients["ecs"].describe_services(cluster=CLUSTER, services=[SERVICE])["services"][0]
     count = service["desiredCount"] if desired is None else desired
@@ -185,6 +201,9 @@ def main(argv=None) -> int:
     r.add_argument("--image", required=True)
     r.add_argument("--sha", required=True)
     r.add_argument("--desired", type=int)
+    r.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                   help=f"service-owned setting ({', '.join(SERVICE_OWNED)})")
+    r.add_argument("--require-edge", choices=("yes", "no"))
     c = sub.add_parser("cutover")
     c.add_argument("--to", choices=("service", "lambda"), required=True)
     args = parser.parse_args(argv)
@@ -192,7 +211,12 @@ def main(argv=None) -> int:
     if args.command == "sync-secrets":
         result = sync_secrets(clients)
     elif args.command == "roll":
-        result = roll(clients, image=args.image, sha=args.sha, desired=args.desired)
+        overrides = dict(item.split("=", 1) for item in args.set)
+        unknown = set(overrides) - set(SERVICE_OWNED)
+        if unknown:
+            parser.error(f"not a service-owned setting: {', '.join(sorted(unknown))}")
+        result = roll(clients, image=args.image, sha=args.sha, desired=args.desired, overrides=overrides,
+                      require_edge=None if args.require_edge is None else args.require_edge == "yes")
     else:
         result = cutover(clients, to=args.to)
     print(json.dumps(result, indent=2, sort_keys=True))

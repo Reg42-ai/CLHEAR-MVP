@@ -141,6 +141,59 @@ def _set_session(response, user: dict):
 
 # ------------------------------------------------------------- email links
 
+NEUTRAL_SENT = "If this address can sign in, a link is on its way."
+SIGNUP_FIELDS = {"name": 120, "organization": 160, "intended_use": 600}
+
+
+def _admits(email: str, verified) -> bool:
+    """Accounts mode admits any verified address; reviewer mode only its allowlist."""
+    from app.clhear.access import accounts_mode
+
+    settings = get_settings()
+    if verified is not True:
+        return not (accounts_mode() or settings.clhear_restricted_access)
+    if accounts_mode() or not settings.clhear_restricted_access:
+        return True
+    return (email or "").lower() in settings.reviewer_set
+
+
+def _landing() -> str:
+    from app.clhear.access import accounts_mode
+
+    return "/" if (accounts_mode() or get_settings().clhear_restricted_access) else "/stack#/contribute"
+
+
+def _signup_fields(raw: dict) -> dict:
+    fields = {key: " ".join(str(raw.get(key) or "").split())[:limit] for key, limit in SIGNUP_FIELDS.items()}
+    if raw.get("accept_terms") is not True:
+        raise HTTPException(status_code=400, detail="Accept the terms to create an account")
+    fields["terms_version"] = get_settings().clhear_terms_version
+    return fields
+
+
+def record_account(user: dict, *, provider: str, email_verified: bool, signup: dict | None = None) -> None:
+    """The account's profile row in the identity store; sign-up details when the link carried them."""
+    from app.clhear import identity
+    from app.clhear.identity_models import account_profiles
+
+    if not identity.writable():
+        return
+    now = datetime.now(timezone.utc)
+    values = {"email": user["email"], "provider": provider, "email_verified": email_verified, "last_seen_at": now}
+    if signup:
+        values.update(name=signup.get("name", ""), organization=signup.get("organization", ""),
+                      intended_use=signup.get("intended_use", ""), terms_version=signup.get("terms_version", ""),
+                      terms_accepted_at=now)
+    try:
+        with identity.engine().begin() as conn:
+            exists = conn.execute(sa.select(account_profiles.c.user_id).where(account_profiles.c.user_id == user["id"])).first()
+            if exists:
+                conn.execute(account_profiles.update().where(account_profiles.c.user_id == user["id"]).values(**values))
+            else:
+                conn.execute(account_profiles.insert().values(user_id=user["id"], status="active", **values))
+    except Exception:
+        log.exception("account profile not recorded (sign-in still proceeds)")
+
 
 @router.post("/email")
 async def email_magic_link(request: Request) -> dict:
@@ -151,10 +204,25 @@ async def email_magic_link(request: Request) -> dict:
     if body.get("website"):  # honeypot field: bots fill it, humans never see it
         return {"sent": True}
     settings = get_settings()
-    if settings.clhear_restricted_access and email not in settings.reviewer_set:
-        # Do not send mail to users this restricted deployment cannot admit.
-        raise HTTPException(status_code=403, detail="This workspace is limited to approved reviewers")
-    token = _sign({"email": email, "exp": time.time() + MAGIC_TTL_S}, "magic")
+    from app.clhear import ratelimit
+    from app.clhear.access import accounts_mode
+    from app.clhear.usage import ip_hash
+
+    client = request.client.host if request.client else ""
+    try:
+        ratelimit.hit(f"magic-ip:{ip_hash(client)}", limit=settings.clhear_rate_signup_per_ip_15m, window_s=900)
+        ratelimit.hit(f"magic-email:{ip_hash(email)}", limit=settings.clhear_rate_magic_link_per_email_15m, window_s=900)
+    except ratelimit.RateLimited as exc:
+        raise HTTPException(status_code=429, detail="Too many sign-in requests; try again later",
+                            headers={"Retry-After": str(exc.retry_after)}) from exc
+    if not accounts_mode() and settings.clhear_restricted_access and email not in settings.reviewer_set:
+        # Do not send mail to users this restricted deployment cannot admit, and
+        # answer exactly as for an admitted address.
+        return {"sent": True, "detail": NEUTRAL_SENT}
+    claims = {"email": email, "exp": time.time() + MAGIC_TTL_S}
+    if isinstance(body.get("signup"), dict):
+        claims["signup"] = _signup_fields(body["signup"])
+    token = _sign(claims, "magic")
     link = f"{settings.clhear_public_base_url}/auth/email/verify?token={token}"
     if settings.clhear_auth_debug:
         return {"sent": False, "debug_link": link}  # dev: no SES in the loop
@@ -180,7 +248,7 @@ async def email_magic_link(request: Request) -> dict:
         sent = True
     except Exception:
         log.exception("SES send failed for %s", email)
-    out: dict = {"sent": sent}
+    out: dict = {"sent": sent, "detail": NEUTRAL_SENT}
     if settings.clhear_auth_debug and not sent:
         out["debug_link"] = link  # dev only: no SES in the loop
     if not sent and not settings.clhear_auth_debug:
@@ -194,7 +262,8 @@ def email_verify(token: str):
     if payload is None:
         raise HTTPException(status_code=400, detail="This sign-in link is invalid or expired")
     user = upsert_user(get_engine(), payload["email"], provider="email")
-    return _set_session(RedirectResponse("/" if get_settings().clhear_restricted_access else "/stack#/contribute"), user)
+    record_account(user, provider="email", email_verified=True, signup=payload.get("signup"))
+    return _set_session(RedirectResponse(_landing()), user)
 
 
 # ------------------------------------------------------------ Google OAuth
@@ -247,13 +316,13 @@ def google_callback(code: str = "", state: str = ""):
         headers={"Authorization": f"Bearer {access}"},
         timeout=20,
     ).json()
-    if settings.clhear_restricted_access and (info.get("email_verified") is not True or
-                                             info.get("email", "").lower() not in settings.reviewer_set):
-        raise HTTPException(status_code=403, detail="An approved, verified reviewer account is required")
+    if not _admits(info.get("email", ""), info.get("email_verified")):
+        raise HTTPException(status_code=403, detail="A verified account is required")
     user = upsert_user(
         get_engine(), info["email"], display_name=info.get("name", ""), provider="google", provider_sub=info.get("sub", "")
     )
-    return _set_session(RedirectResponse("/" if settings.clhear_restricted_access else "/stack#/contribute"), user)
+    record_account(user, provider="google", email_verified=True)
+    return _set_session(RedirectResponse(_landing()), user)
 
 
 # ------------------------------------------------------------ Cognito hosted UI (HLD v2 §5)
@@ -342,9 +411,8 @@ def cognito_callback(code: str = "", state: str = ""):
     claims = verify_cognito_token(token_resp.json().get("id_token", ""))
     if claims is None:
         raise HTTPException(status_code=401, detail="Cognito token could not be verified")
-    if settings.clhear_restricted_access and (claims.get("email_verified") is not True or
-                                             claims.get("email", "").lower() not in settings.reviewer_set):
-        raise HTTPException(status_code=403, detail="An approved, verified reviewer account is required")
+    if not _admits(claims.get("email", ""), claims.get("email_verified")):
+        raise HTTPException(status_code=403, detail="A verified account is required")
     # federated users carry the IdP in `identities`; keep it so the audit log can tell SAML from Google
     provider = "cognito"
     for ident in claims.get("identities") or []:
@@ -354,7 +422,8 @@ def cognito_callback(code: str = "", state: str = ""):
             provider = f"cognito:{ident['providerName']}"
     user = upsert_user(get_engine(), claims["email"], display_name=claims.get("name", ""), provider=provider,
                        provider_sub=claims.get("sub", ""))
-    return _set_session(RedirectResponse("/" if settings.clhear_restricted_access else "/stack#/contribute"), user)
+    record_account(user, provider=provider, email_verified=True)
+    return _set_session(RedirectResponse(_landing()), user)
 
 
 @router.get("/apple")

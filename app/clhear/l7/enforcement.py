@@ -24,6 +24,7 @@ Linker precision is gated (:func:`app.clhear.platform.evals.l7_linker`).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -100,11 +101,64 @@ STATIC_ALIASES: dict[str, tuple[str, ...]] = {
     "FINRA": ("finra/rule/", "finra/rulebook"), "FINRA Rule": ("finra/rule/", "finra/rulebook"),
     "31 CFR": ("cfr/31/chapter-x",), "Bank Secrecy Act": ("cfr/31/chapter-x",),
 }
-# Instruments a notice names without a provision number. Each is one rule whose
-# every live obligation the mention reaches, at instrument confidence.
-WHOLE_INSTRUMENT_ALIASES: dict[str, tuple[str, ...]] = {
-    "Marketing Rule": ("cfr/17/ia-marketing",),
-}
+class AliasIndex(list):
+    """(alias, source keys) pairs, longest first. ``whole`` maps the names a
+    notice uses for an entire instrument ("the Marketing Rule") to its source,
+    mined from the interpretation sources in L1 (:func:`mine_instrument_names`)."""
+
+    def __init__(self, items=(), whole=None):
+        super().__init__(items)
+        self.whole = dict(whole or {})
+
+
+_RULE_CITE = re.compile(r"\brule\s+(\d+[a-z]?(?:\(\d+\))*-\d+)", re.I)
+_NAMED_RULE = re.compile(r"\b([a-z]+)\s+rule\b", re.I)
+_NOT_A_NAME = frozenset({"the", "this", "that", "a", "an", "final", "amended", "proposed", "new", "same", "such",
+                         "each", "any", "our", "its", "their", "of", "under", "and", "or", "former", "current", "exchange",
+                         "commission", "sec", "general", "applicable"})
+MIN_NAME_EVIDENCE = 3
+
+
+def mine_instrument_names(conn: Connection) -> dict[str, dict]:
+    """Names for whole instruments, read from interpretation documents in L1.
+
+    A staff FAQ that says "marketing rule" 21 times and cites "rule 206(4)-1"
+    28 times, more than every other rule together, names that rule. The
+    rule number must resolve to exactly one in-force source clause."""
+    texts: dict[str, list[str]] = {}
+    for r in conn.execute(sa.select(sources.c.key, clauses.c.text)
+                          .join(source_versions, source_versions.c.source_id == sources.c.id)
+                          .join(clauses, clauses.c.source_version_id == source_versions.c.id)
+                          .where(sources.c.kind == "guidance", source_versions.c.status == "in_force")):
+        texts.setdefault(r.key, []).append(r.text or "")
+    refs = [(r.key, r.ref) for r in conn.execute(
+        sa.select(sources.c.key, clauses.c.ref)
+        .join(source_versions, source_versions.c.source_id == sources.c.id)
+        .join(clauses, clauses.c.source_version_id == source_versions.c.id)
+        .where(sources.c.kind != "enforcement", sources.c.kind != "guidance", source_versions.c.status == "in_force"))]
+    out: dict[str, dict] = {}
+    for key, parts in texts.items():
+        text = " ".join(parts)
+        cites: dict[str, int] = {}
+        for m in _RULE_CITE.finditer(text):
+            cites[m.group(1)] = cites.get(m.group(1), 0) + 1
+        names: dict[str, int] = {}
+        for m in _NAMED_RULE.finditer(text):
+            word = m.group(1).lower()
+            if word not in _NOT_A_NAME:
+                names[word] = names.get(word, 0) + 1
+        if not cites or not names:
+            continue
+        rule, rule_n = max(cites.items(), key=lambda kv: kv[1])
+        word, word_n = max(names.items(), key=lambda kv: kv[1])
+        if rule_n < MIN_NAME_EVIDENCE or word_n < MIN_NAME_EVIDENCE or rule_n * 2 < sum(cites.values()):
+            continue
+        targets = sorted({src for src, ref in refs if (ref or "").endswith(rule)})
+        if len(targets) != 1:
+            continue
+        out[f"{word.title()} Rule"] = {"source_keys": (targets[0],), "evidence": key,
+                                      "name_mentions": word_n, "rule": rule, "rule_mentions": rule_n}
+    return out
 _UNIT = r"(?:rule|rules|regulation|regulations|reg\.|article|articles|art\.|section|sections|s\.|§|paragraph|para\.|principle|principles)"
 _REF = r"(?P<ref>\d+[A-Za-z]?(?:[.\-]\d+[A-Za-z]?)*(?:\s*\([a-zA-Z0-9]+\))*\s?[RGED]?)"
 _REF_LIST = r"(?P<refs>" + _REF.replace("(?P<ref>", "(?:") + r"(?:\s*(?:,|and|&)\s*" + _REF.replace("(?P<ref>", "(?:") + r")*)"
@@ -121,7 +175,10 @@ def _norm_tokens(ref: str) -> tuple[str, ...]:
 
 
 def _alias_index(conn: Connection) -> list[tuple[str, tuple[str, ...]]]:
-    aliases: dict[str, set[str]] = {k: set(v) for k, v in STATIC_ALIASES.items()}
+    from app.clhear.l1.scopes import active
+
+    # A scoped corpus names instruments only by what its own L1 sources print.
+    aliases: dict[str, set[str]] = {} if active() else {k: set(v) for k, v in STATIC_ALIASES.items()}
     for r in conn.execute(sa.select(sources.c.key, sources.c.short_name, sources.c.instrument, sources.c.name, sources.c.kind)):
         if r.kind == "enforcement":
             continue
@@ -131,7 +188,7 @@ def _alias_index(conn: Connection) -> list[tuple[str, tuple[str, ...]]]:
                 aliases.setdefault(name, set()).add(r.key)
     out = [(a, tuple(sorted(keys))) for a, keys in aliases.items() if keys]
     out.sort(key=lambda x: -len(x[0]))
-    return out
+    return AliasIndex(out, whole=mine_instrument_names(conn))
 
 
 def _alias_regex(aliases: list[tuple[str, tuple[str, ...]]]) -> re.Pattern:
@@ -164,9 +221,10 @@ def extract_citations(text: str, aliases: list[tuple[str, tuple[str, ...]]]) -> 
                 continue
             seen.add(key)
             out.append({"text": m.group(0).strip(), "instrument": canon, "ref": ref, "source_keys": list(keys)})
-    for name, keys in WHOLE_INSTRUMENT_ALIASES.items():
-        if re.search(rf"\b{re.escape(name)}\b", text) and not any(c["instrument"].lower() == name.lower() for c in out):
-            out.append({"text": name, "instrument": name, "ref": "", "source_keys": list(keys), "whole_instrument": True})
+    for name, named in getattr(aliases, "whole", {}).items():
+        if re.search(rf"\b{re.escape(name)}\b", text, re.I) and not any(c["instrument"].lower() == name.lower() for c in out):
+            out.append({"text": name, "instrument": name, "ref": "", "source_keys": list(named["source_keys"]),
+                        "whole_instrument": True, "named_by": named["evidence"]})
     return out
 
 
@@ -272,11 +330,12 @@ def parse_notice(label: str, text: str, *, regulator: str, url: str = "",
 
 
 def _enforcement_clauses(conn: Connection, source_key: str | None) -> list[dict]:
-    """One row per published outcome: the provision-level clauses of the in-force
-    version of every enforcement source (container sections are not notices)."""
+    """The provision-level clauses of the in-force version of every enforcement
+    source, in document order, with each block's kind (``item`` / ``text``)."""
     q = (
         sa.select(clauses.c.id, clauses.c.ref, clauses.c.text, clauses.c.text_hash, sources.c.key.label("source_key"),
-                  sources.c.issuer, sources.c.jurisdiction, sources.c.canonical_url)
+                  sources.c.issuer, sources.c.jurisdiction, sources.c.canonical_url, sources.c.name.label("source_name"),
+                  source_versions.c.id.label("source_version_id"), doc_nodes.c.source_locator)
         .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
         .join(sources, sources.c.id == source_versions.c.source_id)
         .join(doc_nodes, doc_nodes.c.id == clauses.c.doc_node_id)
@@ -286,7 +345,78 @@ def _enforcement_clauses(conn: Connection, source_key: str | None) -> list[dict]
     )
     if source_key:
         q = q.where(sources.c.key == source_key)
-    return [dict(r) for r in conn.execute(q).mappings()]
+    rows = [dict(r) for r in conn.execute(q).mappings()]
+    titles = _publication_titles(conn, {r["source_version_id"] for r in rows})
+    for row in rows:
+        locator = row.pop("source_locator") or {}
+        if isinstance(locator, str):
+            locator = json.loads(locator)
+        row["block"] = locator.get("block", "")
+        row["publication_title"] = titles.get(row["source_version_id"], "")
+    return rows
+
+
+def _publication_titles(conn: Connection, version_ids: set) -> dict:
+    if not version_ids:
+        return {}
+    out = {}
+    for r in conn.execute(sa.select(doc_nodes.c.source_version_id, doc_nodes.c.heading, doc_nodes.c.source_locator)
+                          .where(doc_nodes.c.source_version_id.in_(version_ids), doc_nodes.c.node_type == "group")):
+        locator = json.loads(r.source_locator) if isinstance(r.source_locator, str) else (r.source_locator or {})
+        if locator.get("block") == "title" and r.source_version_id not in out:
+            out[r.source_version_id] = r.heading
+    return out
+
+
+_RESPONDENT_LEAD = re.compile(r"^(?P<name>[A-Z0-9][\w&.,'’ /-]{2,120}?)\s+(?:agreed to pay|was ordered to pay|consented|"
+                              r"will pay|paid|agreed to settle)", re.I)
+
+
+def _respondent_item(text: str) -> str | None:
+    """A list item that names one charged party: 'Firm LLC' or 'Firm LLC agreed to pay ... $N'."""
+    text = " ".join(text.split()).rstrip(";,. ").removesuffix(" and").rstrip(";,. ")
+    lead = _RESPONDENT_LEAD.match(text)
+    if lead and _FIRM_SUFFIX.search(lead.group("name")):
+        return lead.group("name").strip(" ,")
+    if len(text) <= 120 and ":" not in text and _FIRM_SUFFIX.search(text) and not _parse_date(text):
+        return text
+    return None
+
+
+def _publication_outcomes(rows: list[dict], aliases) -> list[dict]:
+    """One outcome per charged party a publication lists; otherwise one for the publication.
+
+    A release that lists its respondents yields one event each. The release's
+    date, sanction and cited instruments frame every one of them; a party's
+    amount is the one printed next to its name, never the combined total."""
+    first = rows[0]
+    title = first["publication_title"] or first["source_name"] or first["source_key"]
+    whole = "\n".join(r["text"] for r in rows)
+    context = parse_notice(title, whole, regulator=first["issuer"] or "", url=first["canonical_url"] or "", aliases=aliases)
+    sentences = re.split(r"(?<=[.;])\s+", whole)
+    outcomes = []
+    for row in rows:
+        name = _respondent_item(row["text"]) if row["block"] == "item" else None
+        if not name:
+            continue
+        own = parse_notice("", row["text"], regulator=context["regulator"], url=context["url"], aliases=aliases)
+        amount, currency = own["amount"], own["currency"]
+        if amount is None:
+            stem = " ".join(name.split()[:2])
+            near = [s for s in sentences if stem in s and _AMOUNT.search(s)]
+            if len(near) == 1:
+                amount, currency = _parse_amount(near[0])
+        kind = own["kind"] if own["kind"] != "other" else context["kind"]
+        outcomes.append({"row": row, "text_hash": row["text_hash"], "parsed": {
+            **context, "respondent": name, "respondent_type": "firm", "amount": amount, "currency": currency,
+            "kind": "fine" if kind in ("undertaking", "restitution", "other") and amount else kind,
+            "decided_on": own["decided_on"] or context["decided_on"],
+            "cited_refs": own["cited_refs"] or context["cited_refs"],
+            "summary": " ".join(row["text"].split())[:1000]}})
+    if outcomes:
+        return outcomes
+    digest = hashlib.sha256("\0".join(r["text_hash"] for r in rows).encode()).hexdigest()
+    return [{"row": first, "text_hash": f"publication:{digest}", "parsed": {**context, "summary": " ".join(whole.split())[:1000]}}]
 
 
 def _live_event(event_id: str):
@@ -312,17 +442,30 @@ def ingest_events(engine: Engine, *, source_key: str | None = None) -> dict:
         live = {(r["source_key"], r["clause_ref"]): dict(r) for r in conn.execute(live_q).mappings()}
         seen: set[tuple[str, str]] = set()
         changed = False
+        by_source: dict[str, list[dict]] = {}
         for row in rows:
+            by_source.setdefault(row["source_key"], []).append(row)
+        outcomes = []
+        for group in by_source.values():
+            if all(r["block"] for r in group):
+                outcomes.extend(_publication_outcomes(group, aliases))
+                continue
+            for row in group:  # one outcome per provision (FCA final notices, SEC litigation listings)
+                label, _, text = row["text"].partition("\n") if "\n" in row["text"] else (row["ref"], "", row["text"])
+                # the clause text is "<label>\n<body>" when the adapter kept a title; a bare body keeps the ref as title
+                outcomes.append({"row": row, "text_hash": row["text_hash"], "parsed": parse_notice(
+                    label if text else row["ref"], text or row["text"], regulator=row["issuer"] or "",
+                    url=row["canonical_url"] or "", aliases=aliases)})
+        stats["outcomes"] = len(outcomes)
+        for outcome in outcomes:
+            row, parsed = outcome["row"], outcome["parsed"]
+            row = {**row, "text_hash": outcome["text_hash"]}
             key = (row["source_key"], row["ref"])
             seen.add(key)
             existing = live.get(key)
             if existing is not None and existing["text_hash"] == row["text_hash"]:
                 stats["unchanged"] += 1
                 continue
-            label, _, text = row["text"].partition("\n") if "\n" in row["text"] else (row["ref"], "", row["text"])
-            # the clause text is "<label>\n<body>" when the adapter kept a title; a bare body keeps the ref as title
-            parsed = parse_notice(label if text else row["ref"], text or row["text"], regulator=row["issuer"] or "",
-                                  url=row["canonical_url"] or "", aliases=aliases)
             why = _why(f"{row['source_key']}#{row['ref']}",
                        f"enforcement outcome read from {row['source_key']} {row['ref']}: {parsed['kind']}"
                        f"{' ' + parsed['currency'] + ' ' + format(parsed['amount'], ',.0f') if parsed['amount'] else ''}; "

@@ -113,12 +113,15 @@ def test_no_delete_anywhere():
             continue
         source = path.read_text(encoding="utf-8")
         disposable_lines = set()
-        if path.relative_to(REPO).as_posix() == "app/clhear/l1/viewer_snapshot.py":
-            # This helper rejects any pre-existing schema or non-SQLite engine
-            # before creating its disposable projection. Its guard and source
-            # preservation are exercised in test_l1_viewer_snapshot.py.
+        # viewer_snapshot._empty_schema rejects any pre-existing schema or
+        # non-SQLite engine before creating its disposable projection (see
+        # test_l1_viewer_snapshot.py). ratelimit.prune drops expired
+        # rate-limit counters, which are not records.
+        helper_name = {"app/clhear/l1/viewer_snapshot.py": "_empty_schema",
+                       "app/clhear/ratelimit.py": "prune"}.get(path.relative_to(REPO).as_posix())
+        if helper_name:
             helper = next(node for node in ast.parse(source).body
-                          if isinstance(node, ast.FunctionDef) and node.name == "_empty_schema")
+                          if isinstance(node, ast.FunctionDef) and node.name == helper_name)
             disposable_lines = set(range(helper.lineno, helper.end_lineno + 1))
         for lineno, line in enumerate(source.splitlines(), 1):
             if lineno in disposable_lines:

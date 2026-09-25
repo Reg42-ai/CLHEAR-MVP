@@ -267,9 +267,9 @@
 
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
-import React, { useState, useEffect, useRef } from "https://esm.sh/react@18.3.1";
-import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
-import htm from "https://esm.sh/htm@3.1.1";
+import React, { useState, useEffect, useRef } from "/static/vendor/react-18.3.1.2f6da27083.mjs";
+import { createRoot } from "/static/vendor/react-dom-client-18.3.1.8a9d10e816.mjs";
+import htm from "/static/vendor/htm-3.1.1.81a9a8dee7.mjs";
 
 const html = htm.bind(React.createElement);
 const api = async (p) => {
@@ -283,8 +283,19 @@ const api = async (p) => {
 const ws = (s) => (s || "").split(/\s+/).join(" ").trim();
 const sourcePath = (key) => `/api/clhear/sources/${key.split("/").map(encodeURIComponent).join("/")}`;
 // The hosted API caps one response near 6 MB, so long Acts arrive in node pages.
-// Each page is handed to onPage so the reader can render while the rest loads.
+// The first page renders at once; each later page is fetched only when the
+// reader scrolls near the end of what is already shown.
 const DOC_PAGE = 5000;
+function nearEnd(isCancelled) {
+  return new Promise((resolve) => {
+    const sentinel = document.getElementById("doc-end");
+    if (!sentinel || !("IntersectionObserver" in window)) return resolve();
+    const observer = new IntersectionObserver((entries) => {
+      if (isCancelled() || entries.some((entry) => entry.isIntersecting)) { observer.disconnect(); resolve(); }
+    }, { rootMargin: "1600px 0px" });
+    observer.observe(sentinel);
+  });
+}
 async function loadDocument(base, versionQuery, onPage, isCancelled) {
   const q = (offset) => `${base}/document?${versionQuery ? versionQuery + "&" : ""}offset=${offset}&limit=${DOC_PAGE}`;
   let doc = await api(q(0));
@@ -293,6 +304,8 @@ async function loadDocument(base, versionQuery, onPage, isCancelled) {
   let nodes = doc.nodes || [];
   onPage({ ...doc, nodes, loading: doc.has_more === true });
   while (doc.has_more && !isCancelled()) {
+    await nearEnd(isCancelled);
+    if (isCancelled()) break;
     const next = await api(q(nodes.length) + (version ? `&version_label=${encodeURIComponent(version)}` : ""));
     if (next.version !== version || (sourceVersionId != null && next.source_version_id !== sourceVersionId)) {
       throw new Error("The source changed while it was loading. Reload to read the current version.");
@@ -808,6 +821,7 @@ function SourceView({ sourceKey, back, openRef, openNodeId, initialVersion }) {
               onEnter=${() => inspect && setHoverId(n.id)}
               onLeave=${() => hoverId === n.id && setHoverId(null)}
               onClick=${() => pinNode(n.id)} />`)}
+          <div id="doc-end" aria-hidden="true"></div>
         </div>
         ${inspect && html`<${Inspector} info=${info} error=${infoError} loading=${!!activeId && !info && !infoError} pinned=${!!selectedId && activeId === selectedId} clearPin=${() => { setSelectedId(null); history.replaceState({}, "", sourceUrl(sourceKey, doc.version)); }} annotation=${selectedAnnotation} annotationFrom=${annotationFrom} contains=${containsPreview} />`}
       </div>

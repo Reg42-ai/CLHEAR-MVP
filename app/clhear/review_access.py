@@ -32,9 +32,64 @@ def app_key_request(request: Request) -> bool:
     return authorization.lower().startswith("bearer ") and bool(request.headers.get("x-app-id", "").strip())
 
 
+def _signin_required(request: Request, detail: str):
+    if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse("/signin", status_code=303, headers={"Cache-Control": "no-store"})
+    return JSONResponse({"detail": detail}, status_code=401, headers={"Cache-Control": "no-store"})
+
+
+def _accounts_gate(request: Request):
+    """Account-required mode; None admits the request."""
+    from app.clhear import access
+
+    kind = access.classify(request)
+    if kind == "public":
+        return None
+    if kind == "v1":
+        return None if app_key_request(request) else JSONResponse(
+            {"detail": "An API key is required: send Authorization: Bearer <key> and X-App-Id."},
+            status_code=401, headers={"Cache-Control": "no-store"})
+    user = access.signed_in_account(request)
+    if user is None:
+        return _signin_required(request, "Sign in or create a free account to use CLHEAR.")
+    status = access.account_status(user)
+    if status == "suspended":
+        return JSONResponse({"detail": "This account is suspended."}, status_code=403, headers={"Cache-Control": "no-store"})
+    if status == "unknown":
+        return JSONResponse({"detail": "Account status cannot be verified right now. Please retry shortly."},
+                            status_code=503, headers={"Cache-Control": "no-store", "Retry-After": "30"})
+    if kind == "maintainer" and not access.is_maintainer(user):
+        return JSONResponse({"detail": "Maintainer access is required."}, status_code=403, headers={"Cache-Control": "no-store"})
+    if kind == "reviewer" and reviewer(request) is None:
+        return JSONResponse({"detail": "Reviewer access is required for this action."}, status_code=403,
+                            headers={"Cache-Control": "no-store"})
+    from app.clhear import ratelimit
+
+    try:
+        ratelimit.hit(f"account:{user.get('id')}", limit=get_settings().clhear_rate_account_per_minute, window_s=60)
+    except ratelimit.RateLimited as exc:
+        return JSONResponse({"detail": "Too many requests"}, status_code=429,
+                            headers={"Cache-Control": "no-store", "Retry-After": str(exc.retry_after)})
+    return None
+
+
 class RestrictedAccessMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         settings = get_settings()
+        from app.clhear.access import accounts_mode
+
+        if accounts_mode():
+            if len(settings.clhear_session_secret.strip()) < 32 or settings.clhear_auth_debug:
+                return JSONResponse({"detail": "Account access requires a private session secret of at least 32 characters and production authentication."},
+                                    status_code=503, headers={"Cache-Control": "no-store"})
+            denied = _accounts_gate(request)
+            if denied is not None:
+                return denied
+            response = await call_next(request)
+            if getattr(request.state, "private_text", False) or not request.url.path.startswith("/static/"):
+                response.headers["Cache-Control"] = response.headers.get("Cache-Control") if request.url.path.startswith("/static/") else "private, no-store"
+                response.headers["Vary"] = "Cookie, Authorization"
+            return response
         if not settings.clhear_restricted_access:
             response = await call_next(request)
             if getattr(request.state, "private_text", False):

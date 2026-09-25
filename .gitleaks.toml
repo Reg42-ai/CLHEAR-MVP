@@ -1,0 +1,11 @@
+# Default gitleaks rules. Test fixtures carry deliberately fake credentials.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "test fixtures, recorded HTTP fixtures, and public download URLs"
+paths = ['''^tests/''', '''^clhear-evals/''']
+# The EU Financial Sanctions Files public download carries a fixed, published
+# query token (base64 of "token-2017"); it grants nothing.
+regexTarget = "line"
+regexes = ['''webgate\.ec\.europa\.eu/fsd/fsf/public/files/[A-Za-z0-9_]+/content\?token=dG9rZW4tMjAxNw''']

@@ -6,11 +6,11 @@ resolve to refs + hashes only, never text).
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.engine import Engine
 
+from app.clhear import snapshot_cache
 from app.clhear.curated import load as load_curated
 from app.clhear.derived_models import activities as activities_t
 from app.clhear.derived_models import attribute_schema as attribute_schema_t
@@ -139,6 +139,7 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
     return out
 
 
+@snapshot_cache.cached("layer_index")
 def layer_index(engine: Engine) -> list[dict]:
     from app.clhear.l1.inventory import inventory_summary
     from app.clhear.l1.workflow import workflow_summary
@@ -243,58 +244,6 @@ def resolve_clause(engine: Engine, source_key: str, ref: str) -> dict:
         }
 
 
-def churn_inputs(engine: Engine, source_keys: list[str], window_days: int = 365) -> dict:
-    """Live L1 change velocity for the given sources — an L7 scoring input."""
-    since = datetime.now(timezone.utc) - timedelta(days=window_days)
-    with engine.connect() as conn:
-        rows = conn.execute(
-            sa.select(sources.c.key, change_events.c.detected_at, change_events.c.clause_refs)
-            .join(sources, sources.c.id == change_events.c.source_id)
-            .where(sources.c.key.in_(source_keys))
-        ).all()
-    recent = 0
-    changed_clauses = 0
-    for row in rows:
-        detected = row.detected_at
-        if isinstance(detected, str):
-            try:
-                detected = datetime.fromisoformat(detected)
-            except ValueError:
-                detected = None
-        if detected is not None and detected.tzinfo is None:
-            detected = detected.replace(tzinfo=timezone.utc)
-        if detected is None or detected >= since:
-            recent += 1
-            refs = row.clause_refs if isinstance(row.clause_refs, list) else json.loads(row.clause_refs or "[]")
-            changed_clauses += len(refs)
-    return {
-        "watch_sources": source_keys,
-        "window_days": window_days,
-        "change_events": recent,
-        "changed_clauses": changed_clauses,
-        "computed_live": True,
-    }
-
-
-def risk_score(coverage_ratio: float, open_ratio: float, churn: dict) -> dict:
-    """Versioned formula: published with its inputs (L7 contract)."""
-    deficit = max(0.0, 1.0 - coverage_ratio)
-    churn_pressure = min(1.0, churn.get("change_events", 0) / 10.0)
-    score = round(100 * (deficit * 0.6 + churn_pressure * 0.3 + min(1.0, open_ratio) * 0.1), 1)
-    band = "low" if score < 15 else "elevated" if score < 40 else "high"
-    return {
-        "score": score,
-        "band": band,
-        "formula": "100 x (coverage_deficit x 0.6 + churn_pressure x 0.3 + open_ratio x 0.1)",
-        "formula_version": "risk-v1",
-        "components": {
-            "coverage_deficit": round(deficit, 3),
-            "churn_pressure": round(churn_pressure, 3),
-            "open_ratio": round(min(1.0, open_ratio), 3),
-        },
-    }
-
-
 # -------------------------------------------------------------------- items
 
 
@@ -353,15 +302,23 @@ def obligation_items(
 
 
 def _profile_blueprint(engine: Engine, profile_row) -> dict:
-    from app.clhear.l6.composer import compose
+    """The profile's current stored blueprint from this engine version; composed only when none is stored."""
+    from app.clhear.l6.composer import _current_for, compose
+    from app.clhear.l6.models import ENGINE_VERSION, fingerprint
 
     profile = {
         "attributes": profile_row.attributes if isinstance(profile_row.attributes, dict) else json.loads(profile_row.attributes),
         "activities": profile_row.activities if isinstance(profile_row.activities, list) else json.loads(profile_row.activities),
     }
+    with engine.connect() as conn:
+        current = _current_for(conn, fingerprint(profile["attributes"], profile["activities"]))
+    if current and current["engine_version"] == ENGINE_VERSION and current["composition"]:
+        stored = current["composition"]
+        return json.loads(stored) if isinstance(stored, str) else stored
     return compose(engine, profile, requested_by="stack-ui-sample", log_request=False)
 
 
+@snapshot_cache.cached("layer_items")
 def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
     if layer == "L2":
         return obligation_items(engine, **filters)
@@ -432,7 +389,7 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
             )
         return out
     if layer == "L7":
-        return risk_items(engine)
+        return risk_score_items(engine)
     if layer == "L8":
         from app.clhear.l8.cohorts import list_cohorts
         from app.clhear.l8.reference import reference_rows
@@ -442,43 +399,27 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
     raise KeyError(layer)
 
 
-def risk_items(engine: Engine) -> list[dict]:
-    """Computed risk per sample profile x theme, from live coverage + churn."""
+@snapshot_cache.cached("risk_scores")
+def risk_score_items(engine: Engine, limit: int = 200) -> list[dict]:
+    """Published L7 obligation scores, riskiest first, each named by its L2 obligation."""
+    from app.clhear.l7.score import list_scores
+
     with engine.connect() as conn:
-        profiles = conn.execute(sa.select(sample_profiles_t)).all()
+        scores = list_scores(conn, kind="obligation", limit=limit)
+        ids = [s["subject_ref"] for s in scores]
+        named = {r.id: r for r in conn.execute(
+            sa.select(obligations.c.id, obligations.c.title, obligations.c.source_key, obligations.c.clause_ref)
+            .where(obligations.c.id.in_(ids)))} if ids else {}
     out = []
-    for p in profiles:
-        bp = _profile_blueprint(engine, p)
-        by_theme: dict[str, list[dict]] = {}
-        for cov in bp["coverage"]:
-            with engine.connect() as conn:
-                row = conn.execute(
-                    sa.select(obligations.c.themes).where(obligations.c.id == cov["obligation_id"])
-                ).first()
-            themes = row.themes if row and isinstance(row.themes, list) else []
-            theme = themes[0] if themes else "general"
-            by_theme.setdefault(theme, []).append(cov)
-        for theme, covs in sorted(by_theme.items()):
-            covered = sum(1 for c in covs if c["state"] == "covered")
-            src_keys = sorted({c["source_key"] for c in covs})
-            churn = churn_inputs(engine, src_keys)
-            unreviewed = sum(1 for c in covs if c["status"] == "derived")
-            result = risk_score(covered / len(covs) if covs else 0.0, unreviewed / len(covs) if covs else 0.0, churn)
-            out.append(
-                {
-                    "id": f"RSK:{p.id}:{theme}",
-                    "profile_id": p.id,
-                    "area": theme,
-                    "name": f"{p.name} — {theme}",
-                    "obligations": [c["obligation_id"] for c in covs],
-                    "watch_sources": src_keys,
-                    "inputs": {"coverage_ratio": round(covered / len(covs), 3) if covs else 0.0,
-                               "obligation_count": len(covs), "derived_unreviewed": unreviewed},
-                    "live_inputs": churn,
-                    "result": result,
-                    "status": "computed",
-                }
-            )
+    for score in scores:
+        ob = named.get(score["subject_ref"])
+        evidence = score.get("evidence") or {}
+        out.append({**score,
+                    "title": ob.title if ob else score["subject_ref"],
+                    "summary": f"{ob.source_key} · {ob.clause_ref}" if ob else "",
+                    "result": {"score": score["composite"], "band": score["band"], "components": score["dimensions"]},
+                    "inputs": {"event_count": evidence.get("event_count", 0),
+                               "total_amount": evidence.get("total_amount", 0)}})
     return out
 
 
@@ -636,21 +577,29 @@ def lineage(engine: Engine, layer: str, item_id: str) -> dict:
         )
 
     if layer == "L7":
-        items = {i["id"]: i for i in risk_items(engine)}
-        item = items.get(item_id)
-        if item is None:
-            raise KeyError(item_id)
-        children = [
-            _node("L1", "live_input", "churn", "Live regulatory churn (L1 change events)",
-                  f"{item['live_inputs']['change_events']} change event(s), {item['live_inputs']['changed_clauses']} clause(s) in {item['live_inputs']['window_days']}d",
-                  meta=item["live_inputs"]),
-        ]
-        for oid in item["obligations"][:20]:
-            row = _obligation_row(engine, oid)
-            if row is not None:
-                children.append(_obligation_node(engine, row))
-        return _node("L7", "risk_score", item_id, f"{item['name']} — {item['result']['score']} ({item['result']['band']})",
-                     item["result"]["formula"], meta={"result": item["result"], "inputs": item["inputs"]},
+        from app.clhear.l7.models import enforcement_events
+        from app.clhear.l7.score import get_score
+
+        with engine.connect() as conn:
+            score = get_score(conn, item_id)
+            if score is None or score["subject_kind"] != "obligation":
+                raise KeyError(item_id)
+            event_ids = (score.get("evidence") or {}).get("events", [])[:20]
+            events_rows = conn.execute(sa.select(enforcement_events).where(
+                enforcement_events.c.id.in_(event_ids), enforcement_events.c.valid_to.is_(None))).mappings().all() if event_ids else []
+        children = []
+        row = _obligation_row(engine, score["subject_ref"])
+        if row is not None:
+            children.append(_obligation_node(engine, row))
+        for event in events_rows:
+            detail = " · ".join(str(v) for v in (event["respondent"], event["decided_on"], event["amount"]) if v)
+            children.append(_node("L7", "enforcement_event", event["id"], event["title"] or event["id"], detail,
+                                  children=[_clause_leaf(engine, event["source_key"], event["clause_ref"], "published outcome")]))
+        title = row.title if row is not None else score["subject_ref"]
+        return _node("L7", "risk_score", item_id, f"{title} — {score['composite']} ({score['band']})",
+                     f"{score['method_version']}: weighted sum of published dimensions",
+                     meta={"dimensions": score["dimensions"], "weights": score["weights"], "evidence": score["evidence"],
+                           "calibration": score["calibration_set_ref"]},
                      children=children)
 
     if layer == "L8":
