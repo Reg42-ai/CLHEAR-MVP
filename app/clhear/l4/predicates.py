@@ -184,9 +184,14 @@ def deterministic_predicates(ob: dict, onto: _Onto) -> list[dict]:
         out.append({"predicate": {"jurisdictions": jur.upper()}, "basis": "jurisdiction",
                     "rationale": f"jurisdiction: obligation derived from a {jur.upper()} source"})
     subject_text = " ".join(filter(None, [ob.get("subject"), ob.get("addressee")]))
-    if not subject_text.strip():
-        subject_text = (ob.get("determination") or ob.get("statement") or ob.get("title") or "")[:300]
-    out += _scan(subject_text, _SUBJECT_CUES, onto, jur, "subject")
+    subject = _scan(subject_text, _SUBJECT_CUES, onto, jur, "subject") if subject_text.strip() else []
+    if not subject:
+        # The extracted addressee can be the wrong noun ("advertisement" for "any
+        # investment adviser ... to disseminate any advertisement"); the duty's own
+        # words then name who bears it.
+        text = (ob.get("determination") or ob.get("statement") or ob.get("title") or "")[:300]
+        subject = _scan(text, _SUBJECT_CUES, onto, jur, "subject")
+    out += subject
     # Structured `condition` when L2 has split the duty; otherwise the duty sentence itself.
     condition_text = ob.get("condition") or ob.get("determination") or ob.get("statement") or ""
     out += _scan(condition_text, _CONDITION_CUES, onto, jur, "condition")

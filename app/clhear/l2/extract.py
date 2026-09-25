@@ -25,7 +25,7 @@ from app.clhear.platform.ids import next_id
 
 log = logging.getLogger("clhear.l2")
 
-EXTRACTOR_VERSION = "deterministic-v3"
+EXTRACTOR_VERSION = "deterministic-v4"
 
 # Duty modality patterns, strongest first. Case-insensitive, matched against
 # the clause text. Deliberately conservative: high precision over recall.
@@ -57,6 +57,14 @@ PROCEDURAL_HEADINGS = re.compile(
     r"\b(?:proceedings?|procedure for|review of (?:an? )?orders?|rehearing|judicial review|service of|"
     r"jurisdiction of|penalt(?:y|ies)|civil actions?|temporary orders?|cease[- ]and[- ]desist|"
     r"notice and (?:opportunity for )?hearing|hearings?|appeals?|investigations?|injunctions?)\b",
+    re.I,
+)
+
+# Definition openers: "When used in this subchapter, unless the context
+# otherwise requires—", "As used in this part", "For purposes of this section".
+DEFINITION_OPENER = re.compile(
+    r"\b(?:when|as) used in this (?:subchapter|chapter|title|part|section|act|regulation)\b"
+    r"|\bfor (?:the )?purposes? of this (?:subchapter|chapter|title|part|section|act|regulation)\b[^.;]{0,40}(?:term|means)",
     re.I,
 )
 
@@ -138,6 +146,8 @@ def not_a_duty(text: str, ref: str = "", heading: str = "") -> bool:
     if NON_DUTY_HEADINGS.search(probe) or NON_DUTY_HEADINGS.search(first_line):
         return True
     if PROCEDURAL_HEADINGS.search(heading) or PROCEDURAL_HEADINGS.search(first_line):
+        return True
+    if DEFINITION_OPENER.search(text[:240]):
         return True
     first = ANY_MODAL.search(text)
     if first is None:
