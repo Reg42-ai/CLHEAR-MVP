@@ -183,11 +183,13 @@ def precompute_answers(path: str) -> dict:
     from app.clhear.db import make_engine
     from app.clhear.l1.routes import _sources_for_engine
     from app.clhear.platform import metrics
+    from app.clhear.v1.l1 import _source_summaries
 
     engine = make_engine(f"sqlite:///{path}")
     try:
         layer_service.layer_index(engine)
-        _sources_for_engine(engine, None)
+        _sources_for_engine(engine)
+        _source_summaries(engine)
         metrics.status(engine)
         return snapshot_cache.answers_for(engine)
     finally:

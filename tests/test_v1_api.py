@@ -166,3 +166,18 @@ def test_l1_browser_page_is_served(client):
     assert client.get("/sources", follow_redirects=True).text == resp.text
     # The JSON API under the same prefix still answers.
     assert client.get("/l1/sources").json()["total"] == 0
+
+
+def test_source_filters_answer_the_same_from_the_snapshot_cache(engine, client, tmp_path, monkeypatch):
+    from app.clhear import snapshot_cache
+
+    _seed(engine, tmp_path)
+    queries = [{}, {"rights_basis": "derived_only"}, {"regulator": "synthetic"}, {"instrument": "principles"},
+               {"jurisdiction": "uk"}, {"family": "synthetic-family"}, {"q": "finra"}, {"ingested": "true"},
+               {"limit": 1, "offset": 1}]
+    plain = [client.get("/l1/sources", params=q).json() for q in queries]
+    monkeypatch.setenv("CLHEAR_DB_S3_URI", "s3://private/webui/l1/candidate.db")
+    snapshot_cache.clear()
+    assert [client.get("/l1/sources", params=q).json() for q in queries] == plain
+    assert [k[0] for k in snapshot_cache.answers_for(engine)] == ["l1_source_summaries"]
+    snapshot_cache.clear()

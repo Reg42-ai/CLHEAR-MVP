@@ -70,6 +70,8 @@ def probe(base_url: str, *, rounds: int = 5) -> dict:
     results = []
     for path, kind in routes:
         headers = _headers(kind)
+        # One unmeasured request first: connection setup is not serving time.
+        _get(base_url.rstrip("/") + path, headers)
         timings, statuses = [], []
         for _ in range(rounds):
             status, ms = _get(base_url.rstrip("/") + path, headers)

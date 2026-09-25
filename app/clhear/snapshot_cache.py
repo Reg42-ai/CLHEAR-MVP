@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import functools
 import threading
+from collections import OrderedDict
 
-_cache: dict[tuple, object] = {}
+_cache: "OrderedDict[tuple, object]" = OrderedDict()
 _lock = threading.Lock()
 MAX_ENTRIES = 256
 
@@ -37,12 +38,14 @@ def cached(name: str):
                 return fn(engine, *args, **kwargs)
             with _lock:
                 if key in _cache:
+                    _cache.move_to_end(key)
                     return _cache[key]
             value = fn(engine, *args, **kwargs)
             with _lock:
-                if len(_cache) >= MAX_ENTRIES:
-                    _cache.clear()
                 _cache[key] = value
+                _cache.move_to_end(key)
+                while len(_cache) > MAX_ENTRIES:
+                    _cache.popitem(last=False)
             return value
         inner.uncached = fn
         return inner
