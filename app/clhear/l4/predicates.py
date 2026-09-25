@@ -191,7 +191,7 @@ def deterministic_predicates(ob: dict, onto: _Onto) -> list[dict]:
         # words then name who bears it.
         # The structured duty sentence can drop the bearer ("unless you adopt ..."); the
         # statement it came from keeps it ("If you are an investment adviser ...").
-        for text in (ob.get("determination"), ob.get("statement"), ob.get("title")):
+        for text in (ob.get("determination"), ob.get("statement")):
             subject = _scan((text or "")[:300], _SUBJECT_CUES, onto, jur, "subject") if text else []
             if subject:
                 break
