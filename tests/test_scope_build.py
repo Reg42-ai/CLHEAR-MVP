@@ -231,3 +231,27 @@ def test_vendor_observations_move_the_derived_blueprint_score(scoped):
         second = after["compliance_score"]
         assert second["passed"] > first["passed"]
         assert any(point["result"] == "pass" for point in second["points"])
+
+
+def test_a_tenant_profile_is_read_from_a_file_or_s3(tmp_path, monkeypatch):
+    import io
+    import json
+
+    import boto3
+
+    from app.clhear.scope_build import _read_profile
+
+    profile = {"name": "Galaxy", "attributes": {"jurisdictions": ["US"]}}
+    path = tmp_path / "galaxy.json"
+    path.write_text(json.dumps(profile))
+    assert _read_profile(str(path)) == profile
+    requested = []
+
+    class S3:
+        def get_object(self, Bucket, Key):
+            requested.append((Bucket, Key))
+            return {"Body": io.BytesIO(json.dumps(profile).encode())}
+
+    monkeypatch.setattr(boto3, "client", lambda name: S3())
+    assert _read_profile("s3://demo-bucket/profiles/galaxy.json") == profile
+    assert requested == [("demo-bucket", "profiles/galaxy.json")]

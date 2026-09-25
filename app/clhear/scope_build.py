@@ -183,12 +183,23 @@ def _router(engine: Engine):
     return Router(engine, providers=providers)
 
 
+def _read_profile(location: str) -> dict:
+    if location.startswith("s3://"):
+        import boto3
+
+        bucket, _, key = location[len("s3://"):].partition("/")
+        return json.loads(boto3.client("s3").get_object(Bucket=bucket, Key=key)["Body"].read())
+    with open(location) as fh:
+        return json.load(fh)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.clhear.scope_build")
     parser.add_argument("--scope", required=True)
     parser.add_argument("--skip-import", action="store_true")
     parser.add_argument("--layers", default=",".join(layer_builds.ORDER))
-    parser.add_argument("--profile", action="append", default=[], help="JSON file of a tenant-submitted L4 profile")
+    parser.add_argument("--profile", action="append", default=[],
+                        help="JSON file or s3:// object of a tenant-submitted L4 profile")
     parser.add_argument("--publish-release", action="store_true")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     import os
@@ -200,7 +211,7 @@ def main(argv=None) -> int:
 
     engine = get_engine()
     run_migrations(engine)
-    profiles = [json.loads(open(path).read()) for path in args.profile]
+    profiles = [_read_profile(location) for location in args.profile]
     report = build(engine, _router(engine), skip_import=args.skip_import, profiles=profiles,
                    layers=tuple(x.strip() for x in args.layers.split(",") if x.strip()))
     if args.publish_release:
