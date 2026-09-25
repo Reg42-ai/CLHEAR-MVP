@@ -31,6 +31,7 @@ SECRET_PREFIX = "/clhear/web/"
 # Lambda environment names whose values are credentials.
 SECRET_ENV = ("CLHEAR_APP_KEYS", "CLHEAR_SESSION_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET",
               "CLHEAR_BEEHIIV_API_KEY", "SENTRY_DSN")
+IDENTITY_ENV = "CLHEAR_IDENTITY_DATABASE_URL"
 # The Lambda keeps its snapshot in /tmp; the service keeps it on ephemeral storage.
 SERVICE_ENV = {"CLHEAR_DB_LOCAL_PATH": "/tmp/clhear.db", "CLHEAR_SNAPSHOT_POLL_S": "60", "PORT": "8080"}
 TASK_FIELDS = {
@@ -63,6 +64,8 @@ def task_definition(base: dict, lambda_env: dict, *, image: str, sha: str) -> di
                CLHEAR_WORKER_IMAGE_DIGEST=image.split("@", 1)[1])
     web["environment"] = [{"name": k, "value": v} for k, v in sorted(env.items())]
     web["secrets"] = [{"name": name, "valueFrom": secret_arn(name)} for name in SECRET_ENV if lambda_env.get(name)]
+    # The service, unlike the Lambda, writes accounts and keys to Aurora as clhear_web.
+    web["secrets"].append({"name": IDENTITY_ENV, "valueFrom": secret_arn(IDENTITY_ENV)})
     task["tags"] = [t for t in task.get("tags", []) if t.get("key") != "clhear:git-sha"] + [{"key": "clhear:git-sha", "value": sha}]
     return task
 

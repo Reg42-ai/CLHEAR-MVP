@@ -32,7 +32,8 @@ def test_task_definition_moves_credentials_to_ssm_references_and_pins_the_image(
     assert env["CLHEAR_CODE_REVISION"] == SHA and env["CLHEAR_DB_LOCAL_PATH"] == "/tmp/clhear.db"
     assert not set(web_service.SECRET_ENV) & set(env)
     assert all("private" not in value for value in env.values())
-    assert {s["name"] for s in web["secrets"]} == {"CLHEAR_APP_KEYS", "CLHEAR_SESSION_SECRET", "SENTRY_DSN"}
+    assert {s["name"] for s in web["secrets"]} == {"CLHEAR_APP_KEYS", "CLHEAR_SESSION_SECRET", "SENTRY_DSN",
+                                                   "CLHEAR_IDENTITY_DATABASE_URL"}
     assert all(s["valueFrom"].startswith("arn:aws:ssm:us-east-1:730649732189:parameter/clhear/web/") for s in web["secrets"])
     assert {"revision", "status", "taskDefinitionArn"}.isdisjoint(task)
     assert {"key": "clhear:git-sha", "value": SHA} in task["tags"] and {"key": "owner", "value": "clhear"} in task["tags"]

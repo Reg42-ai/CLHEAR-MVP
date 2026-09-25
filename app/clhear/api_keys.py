@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.engine import Engine
 
+from app.clhear import identity
 from app.clhear.accounts import current_user, require_user
 from app.clhear.community_models import api_keys
 from app.clhear.db import get_engine
@@ -167,13 +168,16 @@ def overview(request: Request) -> dict:
 
 @router.get("/keys")
 def my_keys(user: dict = Depends(require_user)) -> dict:
-    return {"keys": list_for(get_engine(), user["id"]), "max_active_keys": MAX_ACTIVE_KEYS}
+    return {"keys": list_for(identity.engine(), user["id"]), "max_active_keys": MAX_ACTIVE_KEYS}
 
 
 @router.post("/keys", status_code=201)
 def create_key(body: KeyBody, user: dict = Depends(require_user)) -> dict:
+    if not identity.writable():
+        # A key written into the read-only snapshot copy would vanish with the task.
+        raise HTTPException(status_code=503, detail="Key issuance is unavailable until the identity store is configured")
     try:
-        return issue(get_engine(), user, body.label, body.scopes)
+        return issue(identity.engine(), user, body.label, body.scopes)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -181,7 +185,7 @@ def create_key(body: KeyBody, user: dict = Depends(require_user)) -> dict:
 @router.post("/keys/{key_id}/revoke")
 def revoke_key(key_id: str, user: dict = Depends(require_user)) -> dict:
     try:
-        return revoke(get_engine(), user["id"], key_id)
+        return revoke(identity.engine(), user["id"], key_id)
     except LookupError:
         raise HTTPException(status_code=404, detail=f"unknown key {key_id}")
 

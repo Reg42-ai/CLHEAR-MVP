@@ -39,10 +39,9 @@ def require_app(
         token = authorization[7:].strip()
     if x_app_id and x_app_id.startswith("key-"):
         # self-issued key (HLD v2 §5 "Build on it"): looked up in community.api_keys
-        from app.clhear import api_keys
-        from app.clhear.db import get_engine
+        from app.clhear import api_keys, identity
 
-        app = api_keys.verify(get_engine(), x_app_id, token)
+        app = api_keys.verify(identity.engine(), x_app_id, token)
         if app is None:
             raise HTTPException(status_code=401, detail="Unknown, revoked or invalid API key")
         return app

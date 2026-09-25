@@ -11,3 +11,4 @@ webui_db_key                = "webui/clhear-latest.db"
 webui_zip_key               = "webui/webui-20260831T111256Z.zip"
 webui_zip_sha256            = "17kvzHNwZRd8II0qDg9g6U7QnPPPsEpb//KJmPva6Po="
 web_service_enabled         = true
+aurora_security_group_id    = "sg-05598d595eb1bfb42"

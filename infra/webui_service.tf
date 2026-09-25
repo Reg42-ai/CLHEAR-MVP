@@ -239,6 +239,23 @@ resource "aws_apigatewayv2_integration" "web_service" {
   timeout_milliseconds   = 30000
 }
 
+# The web tier reaches Aurora only as clhear_web (identity tables); see
+# migrations/m0037_identity.py.
+variable "aurora_security_group_id" {
+  type    = string
+  default = ""
+}
+
+resource "aws_vpc_security_group_ingress_rule" "aurora_from_web_service" {
+  count                        = local.deploy_web_service && var.aurora_security_group_id != "" ? 1 : 0
+  security_group_id            = var.aurora_security_group_id
+  referenced_security_group_id = aws_security_group.web_service[0].id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  description                  = "CLHEAR web tier identity store"
+}
+
 output "web_service_integration_id" {
   value = local.deploy_web_service ? aws_apigatewayv2_integration.web_service[0].id : null
 }
