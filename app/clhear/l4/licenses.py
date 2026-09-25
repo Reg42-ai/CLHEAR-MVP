@@ -39,6 +39,30 @@ LICENSE_QUERIES = (
 )
 RETIRED = "retired"
 
+# A licence type names what it authorises. Bare words ("Registration") and the
+# authority's actions on a licence (censure, suspension, revocation, orders,
+# exemptions) are not licence types.
+_GENERIC = frozenset({"registration", "licence", "license", "authorisation", "authorization", "permission",
+                      "approval", "certificate", "certification"})
+_NOT_A_LICENCE = re.compile(r"\b(?:censure|suspensions?|suspend|revocations?|revoke|withdrawals?|denials?|deny|"
+                            r"cancellations?|disgorgement|penalt(?:y|ies)|orders?|exemptions?|exempt|bars?)\b", re.I)
+_STOP = frozenset({"of", "the", "a", "an", "for", "to", "and", "or", "as", "in", "under", "with", "by", "on"})
+
+
+def _content_words(name: str) -> list[str]:
+    return [w for w in re.findall(r"[a-z]+", name.lower()) if w not in _STOP]
+
+
+def names_a_licence(name: str) -> bool:
+    words = _content_words(name)
+    return bool(words) and not _NOT_A_LICENCE.search(name) and not set(words) <= _GENERIC
+
+
+def licence_key(name: str) -> str:
+    """Word-order and plural insensitive: "Registration of investment advisers" is
+    "Investment Adviser Registration"."""
+    return " ".join(sorted(w[:-1] if w.endswith("s") and len(w) > 3 else w for w in _content_words(name)))
+
 
 def _retrieve(engine: Engine, query: str, limit: int = 8) -> list[dict]:
     try:
@@ -103,9 +127,10 @@ def _jurisdictions(engine: Engine) -> dict[str, str]:
         return {r.key: (r.jurisdiction or "").strip().upper() for r in conn.execute(sa.select(sources.c.key, sources.c.jurisdiction))}
 
 
-def retire_misgrounded(engine: Engine, jurisdiction_of: dict[str, str] | None = None) -> list[str]:
-    """Retire licence types whose jurisdiction is not that of the source their anchor
-    quotes, and close their live licence row; nothing is deleted."""
+def retire_unsound(engine: Engine, jurisdiction_of: dict[str, str] | None = None) -> list[str]:
+    """Retire licence types that do not name a licence, or whose jurisdiction is not
+    that of the source their anchor quotes, and close their live licence row;
+    nothing is deleted."""
     from app.clhear.derived_models import licences
     from app.clhear.platform import record
 
@@ -114,18 +139,34 @@ def retire_misgrounded(engine: Engine, jurisdiction_of: dict[str, str] | None = 
     with engine.begin() as conn:
         for row in conn.execute(sa.select(license_types).where(license_types.c.status != RETIRED)).mappings():
             anchored = {jurisdiction_of.get(a.get("source_key"), "") for a in (row["clause_anchors"] or [])}
-            if not anchored or row["jurisdiction"].upper() in anchored:
+            if not names_a_licence(row["name"]):
+                reason = f"'{row['name']}' does not name a licence: retired"
+            elif anchored and row["jurisdiction"].upper() not in anchored:
+                reason = (f"{row['id']} is labelled {row['jurisdiction']} but its anchor quotes a "
+                          f"{'/'.join(sorted(anchored))} source: retired")
+            else:
                 continue
             conn.execute(license_types.update().where(license_types.c.id == row["id"]).values(status=RETIRED))
             why = record.WhyTrail(layer="L4", subject_ref=row["id"], agent_id="l4.licenses", skill_version="l4.licenses",
-                                  reasoning_summary=f"{row['id']} is labelled {row['jurisdiction']} but its anchor quotes a "
-                                                    f"{'/'.join(sorted(anchored))} source: retired",
+                                  reasoning_summary=reason,
                                   evidence_refs=list(row["clause_anchors"] or []), inputs=(row["id"],), input_layers=("L1",))
             trail = why.write(conn)
             record.invalidate(conn, licences, sa.and_(licences.c.id == row["id"], licences.c.valid_to.is_(None)),
-                              why=trail, reason="licence jurisdiction differs from its anchor source")
+                              why=trail, reason=reason)
             retired.append(row["id"])
     return retired
+
+
+def _same_licence(engine: Engine, jurisdiction: str, name: str) -> str | None:
+    """The live licence type of this jurisdiction that differs from ``name`` only
+    in word order or plural."""
+    key = licence_key(name)
+    with engine.connect() as conn:
+        for row in conn.execute(sa.select(license_types.c.id, license_types.c.name).where(
+                license_types.c.jurisdiction == jurisdiction, license_types.c.status != RETIRED)):
+            if licence_key(row.name) == key and row.id != f"LIC:{jurisdiction}:{_slug(name)}":
+                return row.id
+    return None
 
 
 def extract_licenses(engine: Engine, llm) -> dict:
@@ -143,8 +184,11 @@ def extract_licenses(engine: Engine, llm) -> dict:
             f"[{h['source_key']}#{h['ref']}]\n{h['text'][:800]}" for h in retrieved
         )
         prompt = (
-            "Extract authorization / license TYPES that this text creates. "
-            "You may ONLY use the clauses below. Every type MUST quote source_key and ref "
+            "Extract authorization / license TYPES that this text creates. A licence type is a registration, "
+            "licence, authorisation or permission that a person must hold, or may obtain, to lawfully carry on an "
+            "activity, named by what it authorises (for example 'Investment Adviser Registration'). The authority's "
+            "actions on a licence (censure, suspension, revocation, denial, withdrawal, orders) and exemptions are not "
+            "licence types. You may ONLY use the clauses below. Every type MUST quote source_key and ref "
             "from the brackets. Do not use general knowledge.\n"
             'JSON: {"license_types": [{"name": "", "issuing_regime": "", '
             '"source_key": "", "ref": ""}]}\n\n'
@@ -174,8 +218,12 @@ def extract_licenses(engine: Engine, llm) -> dict:
             hit = next(h for h in retrieved if h["source_key"] == key and h["ref"] == ref)
             name = str(item.get("name") or "").strip()
             jur = jurisdiction_of.get(key, "")
-            if not name or not jur:
+            if not names_a_licence(name) or not jur:
                 discarded += 1
+                continue
+            same = _same_licence(engine, jur, name)
+            if same is not None:
+                ids.append(same)
                 continue
             lid = f"LIC:{jur}:{_slug(name)}"
             anchors = [{"source_key": key, "ref": ref, "text_hash": hit["text_hash"]}]
@@ -211,7 +259,7 @@ def extract_licenses(engine: Engine, llm) -> dict:
     except Exception:
         log.exception("L4 ai_ops failed")
     return {"written": written, "discarded": discarded, "coverage_gaps": coverage_gaps, "ids": ids,
-            "retired": retire_misgrounded(engine, jurisdiction_of)}
+            "retired": retire_unsound(engine, jurisdiction_of)}
 
 
 def list_license_types(engine: Engine, jurisdiction: str | None = None) -> list[dict]:
