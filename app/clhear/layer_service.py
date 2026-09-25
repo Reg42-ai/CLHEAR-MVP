@@ -25,6 +25,13 @@ from app.clhear.models import events, llm_calls, proposals, runs
 # ------------------------------------------------------------------ registry
 
 
+def _has_table(conn, table) -> bool:
+    """A published release carries the derived layers only, not community or
+    curated sample tables."""
+    schema = table.schema if conn.dialect.name == "postgresql" else None
+    return sa.inspect(conn).has_table(table.name, schema=schema)
+
+
 def _count(conn, table, *where) -> int:
     stmt = sa.select(sa.func.count()).select_from(table)
     for clause in where:
@@ -288,8 +295,11 @@ def obligation_items(
         ]
     items = [_obligation_dict(r) for r in rows]
     from app.clhear.community import vote_tallies
+    from app.clhear.community_models import votes
 
-    tallies = vote_tallies(engine, [i["id"] for i in items])
+    with engine.connect() as conn:
+        has_votes = _has_table(conn, votes)
+    tallies = vote_tallies(engine, [i["id"] for i in items]) if has_votes else {}
     for item in items:
         item["community"] = tallies.get(item["id"], {"confirm": 0, "dispute": 0, "promotion_suggested": False})
     return {
@@ -299,6 +309,37 @@ def obligation_items(
         "per_source": per_source,
         "items": items,
     }
+
+
+def stored_programs(engine: Engine) -> list[dict]:
+    """The current blueprint of every stored L4 profile: a tenant's program."""
+    from app.clhear.derived_models import profiles as profiles_t
+
+    with engine.connect() as conn:
+        names = dict(conn.execute(sa.select(profiles_t.c.id, profiles_t.c.name).where(profiles_t.c.valid_to.is_(None))).all())
+        rows = conn.execute(sa.select(blueprints).where(blueprints.c.status == "current", blueprints.c.profile_id.isnot(None),
+                                                        blueprints.c.stable_id.isnot(None)).order_by(blueprints.c.id)).mappings().all()
+    out = []
+    for row in rows:
+        if row["profile_id"] not in names:
+            continue
+        comp = row["composition"] if isinstance(row["composition"], dict) else json.loads(row["composition"] or "{}")
+        out.append({
+            "id": f"PRG:{row['stable_id']}",
+            "name": f"Program — {names[row['profile_id']] or row['profile_id']}",
+            "profile_id": row["profile_id"],
+            "blueprint_id": row["stable_id"],
+            "status": "current",
+            "engine_version": row["engine_version"],
+            "coverage_summary": comp.get("coverage_summary"),
+            "obligations_triggered": comp.get("obligations_triggered"),
+            "blocks": comp.get("blocks", []),
+            "items": [{k: item.get(k) for k in ("block_id", "name", "kind", "basis", "obligations_satisfied", "load_bearing_for")}
+                      for item in comp.get("items", [])],
+            "coverage": comp.get("coverage", [])[:40],
+            "unmapped_obligations": (comp.get("unmapped_obligations") or {}).get("count", 0),
+        })
+    return out
 
 
 def _profile_blueprint(engine: Engine, profile_row) -> dict:
@@ -337,11 +378,19 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
     if layer == "L4":
         from app.clhear.l4.licenses import list_license_types
 
+        from app.clhear.derived_models import profiles as profiles_t
+
         with engine.connect() as conn:
             schema_rows = [dict(r) for r in conn.execute(sa.select(attribute_schema_t)).mappings()]
-            profile_rows = [dict(r) for r in conn.execute(sa.select(sample_profiles_t)).mappings()]
+            profile_rows = ([dict(r) for r in conn.execute(sa.select(sample_profiles_t)).mappings()]
+                            if _has_table(conn, sample_profiles_t) else [])
+            stored = [{k: (str(v) if k in ("valid_from", "valid_to", "created_at", "updated_at") and v is not None else v)
+                       for k, v in dict(r).items()}
+                      for r in conn.execute(sa.select(profiles_t).where(profiles_t.c.valid_to.is_(None))
+                                            .order_by(profiles_t.c.id)).mappings()]
         out = {
             "attribute_schema": schema_rows,
+            "profiles": stored,
             "sample_profiles": profile_rows,
             "license_types": list_license_types(engine),
             "authorisations_enum": sorted({r["name"] for r in list_license_types(engine)}),
@@ -368,9 +417,9 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
                 a["confidence"] = float(a["confidence"])
         return rows
     if layer == "L6":
+        out = stored_programs(engine)
         with engine.connect() as conn:
-            profiles = conn.execute(sa.select(sample_profiles_t)).all()
-        out = []
+            profiles = conn.execute(sa.select(sample_profiles_t)).all() if _has_table(conn, sample_profiles_t) else []
         for p in profiles:
             bp = _profile_blueprint(engine, p)
             out.append(
@@ -556,8 +605,23 @@ def lineage(engine: Engine, layer: str, item_id: str) -> dict:
 
     if layer == "L6":
         profile_id = item_id.split(":", 1)[1] if item_id.startswith("PRG:") else item_id
+        stored = next((prog for prog in stored_programs(engine) if prog["blueprint_id"] == profile_id), None)
+        if stored is not None:
+            with engine.connect() as conn:
+                block_ids = [b["id"] for b in stored["blocks"]
+                             if conn.execute(sa.select(blocks_t.c.id).where(blocks_t.c.id == b["id"])).first() is not None]
+            summary = stored["coverage_summary"] or {}
+            return _node(
+                "L6", "program", item_id, stored["name"],
+                f"{summary.get('covered')}/{summary.get('total')} obligations covered · engine {stored['engine_version']}",
+                meta={"coverage_summary": summary, "gaps": [c for c in stored["coverage"] if c.get("state") == "gap"][:15],
+                      "unmapped_obligations": stored["unmapped_obligations"], "status": "current",
+                      "blueprint_id": stored["blueprint_id"], "profile_id": stored["profile_id"]},
+                children=[lineage(engine, "L3", b) for b in block_ids],
+            )
         with engine.connect() as conn:
-            row = conn.execute(sa.select(sample_profiles_t).where(sample_profiles_t.c.id == profile_id)).first()
+            row = (conn.execute(sa.select(sample_profiles_t).where(sample_profiles_t.c.id == profile_id)).first()
+                   if _has_table(conn, sample_profiles_t) else None)
         if row is None:
             raise KeyError(item_id)
         bp = _profile_blueprint(engine, row)
