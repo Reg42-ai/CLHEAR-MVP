@@ -26,9 +26,11 @@ import boto3
 from botocore.exceptions import ClientError
 
 if __package__:
+    from . import web_service
     from .deployment_recovery import RecoveryPlanError, emit_plan, load_plan, validate_plan
     from .l1_recovery import load_active_plan_id
 else:
+    import web_service
     from deployment_recovery import RecoveryPlanError, emit_plan, load_plan, validate_plan
     from l1_recovery import load_active_plan_id
 
@@ -776,6 +778,24 @@ class Deployer:
             receipt.update(status="not_requested", **{k: v for k, v in _failure_details(error).items() if k != "status"})
         return receipt
 
+    def _roll_web_service(self):
+        """After a verified deployment: move the long-lived web service to the
+        verified image without waiting; ECS rolls it back on failed health
+        checks. A roll that cannot be requested (the service is absent or this
+        role is not yet allowed to) is recorded and never fails the deployment."""
+        receipt = {"service": web_service.SERVICE, "status": "not_requested"}
+        try:
+            evidence = web_service.roll({"ecs": self.clients["ecs"], "lambda": self.clients["lambda"]},
+                                        image=self.inputs.image, sha=self.inputs.sha, wait=False)
+            receipt.update(status="roll_requested", task_definition=evidence["task_definition"], desired=evidence["desired"])
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code", "")
+            receipt.update(status="not_permitted" if code in {"AccessDenied", "AccessDeniedException"} else "not_requested",
+                           error_code=code)
+        except Exception as error:  # noqa: BLE001 — recorded, never a deployment failure
+            receipt.update(error_type=type(error).__name__)
+        return receipt
+
     # Fields of a worker phase result that may enter a deployment artifact: statuses,
     # counts, codes and identities. Never messages, text or SQL.
     _EVIDENCE_FIELDS = ("verification_id", "phase", "job_id", "worker", "status", "exit_code", "error_type",
@@ -1052,6 +1072,7 @@ class Deployer:
                                l0_relay_minimum=1, l1_worker_minimum=1,
                                traffic_policy="previous_capacity_restored", fleet_policy="new_code_l1_only")
             self.report["demo_import_request"] = self._request_demo_import()
+            self.report["web_service_roll"] = self._roll_web_service()
             self._put("result.json", json.dumps(self.report, sort_keys=True).encode())
         except Exception as error:
             self.report.update(_failure_details(error))
