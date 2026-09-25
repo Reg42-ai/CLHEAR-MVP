@@ -334,11 +334,13 @@ async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dic
     is always explicit — never "global compliance".
     """
     require_scope(app, "read:l1")
-    from app.clhear import legal
+    from app.clhear import legal, release_db
     from app.clhear.l2.concepts import resolve_all
     from app.clhear.l6.composer import compose
 
     engine = _engine()
+    # A published release is read-only: compose against it, store nothing in it.
+    store = release_db.engine() is None
     latest = release_store.get_latest(engine) or {}
     release = latest.get("id", "")
 
@@ -362,7 +364,7 @@ async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dic
                 engine,
                 {"attributes": entity["attributes"], "activities": entity.get("activities")},
                 requested_by=f"{app['app_id']}:{entity.get('name', 'entity')}",
-                release=release,
+                release=release, log_request=store,
             )
             jurs = list(entity["attributes"].get("jurisdictions", []))
             union_jurisdictions.update(jurs)
@@ -413,12 +415,12 @@ async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dic
         engine,
         {"attributes": attributes, "activities": activities},
         requested_by=app["app_id"],
-        release=release,
+        release=release, log_request=store,
     )
     result["consolidated"] = [
         r for r in resolve_all(engine, list(attributes.get("jurisdictions", []))) if r.get("resolvable")
     ]
-    result["layer_status"] = {"L2": "derived", "L3": "curated", "L5": "curated", "L6": "computed"}
+    result["layer_status"] = {code: LAYER_CATALOG[code]["status"] for code in ("L2", "L3", "L5", "L6")}
     result["legal"] = legal.api_legal_block(sorted({c["source_key"] for c in result["coverage"]}))
     from app.clhear.observations import attach_performance
 
