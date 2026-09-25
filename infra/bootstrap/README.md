@@ -58,6 +58,20 @@ on 2026-09-15. Reconcile the template if these resources are recreated. Do not
 replace exact resources with broad wildcards to work around drift. If the
 platform requires a permissions boundary, supply its approved existing ARN.
 
+## Optional web service roll
+
+`clhear.reg42.ai` is served by the `clhear-webui-service` Fargate service.
+`deploy_l1` tries to move that service onto each verified worker image and
+records `not_permitted` until the owner opts in. Setting
+`IncludeWebServiceRollPolicy=true` creates the retained managed policy
+`clhear-web-service-roll`. It lets the role describe and update only that
+service, register and tag only its `clhear-webui-service` task definitions, and
+pass only `clhear-webui-service-task` to ECS. The execution role is the
+existing `clhear-worker-execution`, which the role can already pass. It grants
+no access to secrets or data. The service's secret references and settings are
+copied from the verified viewer configuration, as `scripts/web_service.py` does
+for a manual roll.
+
 ## One-time fast viewer and private preview setup
 
 Follow [PREVIEW.md](PREVIEW.md) for the combined setup after the single reviewed

@@ -21,6 +21,12 @@
       "AllowedValues": ["true", "false"],
       "Description": "Opt in only if this stack, rather than the preview bootstrap, will exclusively own clhear-viewer-code-metadata."
     },
+    "IncludeWebServiceRollPolicy": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": ["true", "false"],
+      "Description": "Opt in to let deploy_l1 roll the clhear-webui-service onto each verified worker image."
+    },
     "PermissionsBoundaryArn": {
       "Type": "String",
       "Default": "",
@@ -31,6 +37,7 @@
   },
   "Conditions": {
     "IncludeStableMetadata": {"Fn::Equals": [{"Ref": "IncludeStableCodeMetadataPolicy"}, "true"]},
+    "IncludeWebServiceRoll": {"Fn::Equals": [{"Ref": "IncludeWebServiceRollPolicy"}, "true"]},
     "HasPermissionsBoundary": {
       "Fn::Not": [
         {
@@ -60,6 +67,26 @@
             {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/viewer-release.json", "Condition": {"StringEquals": {"aws:RequestedRegion": "us-east-1"}}},
             {"Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::clhear-deploy-730649732189/deployments/l1/viewer-release.json", "Condition": {"StringEquals": {"aws:RequestedRegion": "us-east-1", "s3:x-amz-server-side-encryption": "AES256"}}},
             {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::clhear-deploy-730649732189", "Condition": {"StringEquals": {"aws:RequestedRegion": "us-east-1", "s3:prefix": "deployments/l1/viewer-release.json"}}}
+          ]
+        }
+      }
+    },
+    "WebServiceRollPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Condition": "IncludeWebServiceRoll",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "ManagedPolicyName": "clhear-web-service-roll",
+        "Description": "Roll the CLHEAR web service onto a verified worker image: its own service, task definition family and task role only.",
+        "Roles": [{"Ref": "DeploymentRole"}],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {"Effect": "Allow", "Action": ["ecs:DescribeServices", "ecs:UpdateService"], "Resource": "arn:aws:ecs:us-east-1:730649732189:service/clhear-cluster/clhear-webui-service", "Condition": {"ArnEquals": {"ecs:cluster": "arn:aws:ecs:us-east-1:730649732189:cluster/clhear-cluster"}}},
+            {"Effect": "Allow", "Action": ["ecs:RegisterTaskDefinition", "ecs:ListTagsForResource"], "Resource": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-webui-service:*"},
+            {"Effect": "Allow", "Action": "ecs:TagResource", "Resource": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-webui-service:*", "Condition": {"StringEquals": {"ecs:CreateAction": "RegisterTaskDefinition"}}},
+            {"Effect": "Allow", "Action": "iam:PassRole", "Resource": "arn:aws:iam::730649732189:role/clhear-webui-service-task", "Condition": {"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}}
           ]
         }
       }
@@ -441,6 +468,11 @@
       "Condition": "IncludeStableMetadata",
       "Description": "Optional retained exact code-pointer policy; enable fast deployment only after the owner has installed and verified it.",
       "Value": {"Ref": "StableViewerMetadataPolicy"}
+    },
+    "WebServiceRollPolicyArn": {
+      "Condition": "IncludeWebServiceRoll",
+      "Description": "Optional retained web service roll policy; deploy_l1 records not_permitted until it is installed.",
+      "Value": {"Ref": "WebServiceRollPolicy"}
     },
     "DeploymentRoleArn": {
       "Description": "Set as CLHEAR_DEPLOY_ROLE_ARN in the protected GitHub clhear-l1 environment.",

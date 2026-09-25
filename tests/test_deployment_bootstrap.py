@@ -10,7 +10,7 @@ ACCOUNT = "730649732189"
 
 def _role():
     template = json.loads(TEMPLATE.read_text())
-    assert set(template["Resources"]) == {"DeploymentRole", "StableViewerMetadataPolicy"}
+    assert set(template["Resources"]) == {"DeploymentRole", "StableViewerMetadataPolicy", "WebServiceRollPolicy"}
     resources = [r for r in template["Resources"].values() if r["Type"] == "AWS::IAM::Role"]
     assert len(resources) == 1, "Enrollment must not silently adopt runtime resources"
     assert resources[0]["Type"] == "AWS::IAM::Role"
@@ -97,4 +97,29 @@ def test_optional_metadata_policy_matches_preview_bootstrap_without_inline_quota
     assert policy["Properties"]["PolicyDocument"] == preview["Resources"]["StableViewerMetadataPolicy"]["Properties"]["PolicyDocument"]
     assert policy["Properties"]["ManagedPolicyName"] == "clhear-viewer-code-metadata"
     assert len(json.dumps(policy["Properties"]["PolicyDocument"], separators=(",", ":"))) <= 6144
+    assert not _role().get("ManagedPolicyArns"), "Only the optional policy resource attaches this grant"
+
+
+def test_optional_web_service_roll_policy_is_off_by_default_and_names_only_the_web_service():
+    template = json.loads(TEMPLATE.read_text())
+    policy = template["Resources"]["WebServiceRollPolicy"]
+    assert template["Parameters"]["IncludeWebServiceRollPolicy"]["Default"] == "false"
+    assert policy["Type"] == "AWS::IAM::ManagedPolicy" and policy["Condition"] == "IncludeWebServiceRoll"
+    assert policy["Properties"]["Roles"] == [{"Ref": "DeploymentRole"}]
+    assert policy["Properties"]["ManagedPolicyName"] == "clhear-web-service-roll"
+    statements = policy["Properties"]["PolicyDocument"]["Statement"]
+    actions = {a for st in statements for a in _items(st["Action"])}
+    assert actions == {"ecs:DescribeServices", "ecs:UpdateService", "ecs:RegisterTaskDefinition",
+                       "ecs:ListTagsForResource", "ecs:TagResource", "iam:PassRole"}
+    resources = {r for st in statements for r in _items(st["Resource"])}
+    assert resources == {
+        f"arn:aws:ecs:us-east-1:{ACCOUNT}:service/clhear-cluster/clhear-webui-service",
+        f"arn:aws:ecs:us-east-1:{ACCOUNT}:task-definition/clhear-webui-service:*",
+        f"arn:aws:iam::{ACCOUNT}:role/clhear-webui-service-task",
+    }
+    for statement in statements:
+        if "iam:PassRole" in _items(statement["Action"]):
+            assert statement["Condition"]["StringEquals"]["iam:PassedToService"] == "ecs-tasks.amazonaws.com"
+        if "ecs:TagResource" in _items(statement["Action"]):
+            assert statement["Condition"]["StringEquals"]["ecs:CreateAction"] == "RegisterTaskDefinition"
     assert not _role().get("ManagedPolicyArns"), "Only the optional policy resource attaches this grant"
