@@ -108,6 +108,19 @@ class _Onto:
         narrowed = [r for r in rows if not jurisdiction or r["jurisdiction"].upper() == jurisdiction.upper()]
         return sorted(r["name"] for r in (narrowed or rows))
 
+    def licences_naming(self, addressee: str, jurisdiction: str) -> list[str]:
+        """Licences of the obligation's jurisdiction whose name carries the addressee the
+        cue read: in a derived ontology "investment advisers" is "Investment Adviser
+        Registration", whatever id the licence extraction gave it."""
+        words = re.findall(r"[a-z0-9]+", addressee.lower())
+        if not words or not jurisdiction:
+            return []
+        words[-1] = words[-1][:-1] if words[-1].endswith("s") and len(words[-1]) > 3 else words[-1]
+        phrase = " ".join(words)
+        return sorted(r["name"] for r in self.view.licences.rows.values()
+                      if r["jurisdiction"].upper() == jurisdiction.upper()
+                      and phrase in " ".join(re.findall(r"[a-z0-9]+", r["name"].lower())))
+
     def resolve_values(self, attribute: str, values: list) -> list[str]:
         collection = l4_validate.LIST_KEYS_WITH_ONTOLOGY.get(attribute)
         if collection is None:
@@ -134,7 +147,7 @@ def _scan(text: str, cues: list, onto: _Onto, jurisdiction: str, basis: str) -> 
         if not m or attribute not in onto.schema:
             continue
         if isinstance(target, list) and target and str(target[0]).startswith("LIC:"):
-            values = onto.licence_names(target, jurisdiction)
+            values = onto.licence_names(target, jurisdiction) or onto.licences_naming(m.group(0), jurisdiction)
         elif isinstance(target, list):
             values = onto.resolve_values(attribute, target)
         else:

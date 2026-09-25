@@ -253,11 +253,13 @@ def build_ontology_in(conn: Connection, *, check_registers: bool = True, publish
 
 
 def _merge_license_types(conn: Connection, live_licences: dict, trail: str, today) -> int:
+    """Grounded licence types join the live licences, per jurisdiction: the same
+    name in two jurisdictions is two licences."""
     merged = 0
-    existing_names = {_fold(r["name"]) for r in live_licences.values()}
-    existing_names |= {_fold(a) for r in live_licences.values() for a in (r.get("aliases") or [])}
-    for row in conn.execute(sa.select(license_types)).mappings():
-        if _fold(row["name"]) in existing_names:
+    existing_names = {(r["jurisdiction"].upper(), _fold(r["name"])) for r in live_licences.values()}
+    existing_names |= {(r["jurisdiction"].upper(), _fold(a)) for r in live_licences.values() for a in (r.get("aliases") or [])}
+    for row in conn.execute(sa.select(license_types).where(license_types.c.status != "retired")).mappings():
+        if (row["jurisdiction"].upper(), _fold(row["name"])) in existing_names:
             continue
         lid = f"LIC:{row['jurisdiction']}:{slug(row['name'])}"
         if conn.execute(sa.select(licences.c.id).where(licences.c.id == lid)).first():
@@ -267,7 +269,7 @@ def _merge_license_types(conn: Connection, live_licences: dict, trail: str, toda
             "regime": row["issuing_regime"], "register": "", "register_url": "", "register_ref": "",
             "aliases": [], "clause_anchors": row["clause_anchors"] or [], "status": row["status"], "canonical_id": None,
         }, why=trail, valid_from=today)
-        existing_names.add(_fold(row["name"]))
+        existing_names.add((row["jurisdiction"].upper(), _fold(row["name"])))
         merged += 1
     return merged
 
