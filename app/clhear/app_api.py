@@ -428,6 +428,18 @@ async def blueprint(request_body: dict, app: dict = Depends(require_app)) -> dic
     return result
 
 
+def _scope_reference_keys(release_id: str) -> list[str] | None:
+    """A scope release's L8 rows read the scope's reference sources, as its build did;
+    the serving process has no scope of its own."""
+    from app.clhear.l1 import scopes
+
+    name = ((release_store.get_release(release_id, engine=_engine()) or {}).get("scope") or {}).get("name")
+    try:
+        return list(scopes.get(name).get("roles", {}).get("reference", ())) if name else None
+    except KeyError:
+        return None
+
+
 @router.post("/observations")
 def post_observation(body: dict, app: dict = Depends(require_app)) -> dict:
     """One observation. MCP structuredContent and A2A DataPart both arrive as this JSON.
@@ -478,7 +490,7 @@ def reserved_layer_resource(
             from app.clhear.l8.reference import LABEL, reference_rows
 
             body["view"] = LABEL
-            body["items"] = reference_rows(_engine())
+            body["items"] = reference_rows(_engine(), source_keys=_scope_reference_keys(release_id))
             body["peer_aggregates"] = {"status": "locked", "k_threshold": K}
         else:
             body["items"] = layer_service.layer_items(_engine(), code)
