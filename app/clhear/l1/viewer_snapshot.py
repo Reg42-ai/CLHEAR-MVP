@@ -420,13 +420,39 @@ def publish_viewer_snapshot(engine, uri, region, *, job_id=None, s3_client=None,
         with engine.connect() as conn:
             if _authorization_binding(conn) != manifest["authorization_binding"]:
                 raise PermissionError("Source permissions changed while compiling the viewer; rerun required")
-        with path.open("rb") as body:
-            s3_client.put_object(Bucket=parsed.netloc, Key=parsed.path.lstrip("/"), Body=body,
-                ContentType="application/vnd.sqlite3", CacheControl="private, no-store", ServerSideEncryption="AES256",
-                Metadata={"revision": manifest["revision"], "sha256": digest, "kind": "candidate-viewer",
-                          "source-environment": manifest["source_environment"],
-                          "compiled-from": started_at.isoformat()}, **condition)
+        put_conditionally(s3_client, parsed.netloc, parsed.path.lstrip("/"), path, condition=condition,
+            ContentType="application/vnd.sqlite3", CacheControl="private, no-store", ServerSideEncryption="AES256",
+            Metadata={"revision": manifest["revision"], "sha256": digest, "kind": "candidate-viewer",
+                      "source-environment": manifest["source_environment"],
+                      "compiled-from": started_at.isoformat()})
         return {**manifest, "snapshot_uri": uri, "sha256": digest, "byte_count": path.stat().st_size}
+
+
+# S3 rejects a single PutObject above 5 GiB. Larger snapshots go up in parts and
+# become visible only when the conditional CompleteMultipartUpload succeeds, so
+# a concurrent writer still cannot replace a newer viewer.
+SINGLE_PUT_LIMIT = 4 * 1024 ** 3
+PART_SIZE = 256 * 1024 ** 2
+
+
+def put_conditionally(s3_client, bucket: str, key: str, path: Path, *, condition: dict, **fields) -> None:
+    size = Path(path).stat().st_size
+    if size <= SINGLE_PUT_LIMIT:
+        with Path(path).open("rb") as body:
+            s3_client.put_object(Bucket=bucket, Key=key, Body=body, **fields, **condition)
+        return
+    upload = s3_client.create_multipart_upload(Bucket=bucket, Key=key, **fields)["UploadId"]
+    parts = []
+    try:
+        with Path(path).open("rb") as body:
+            for number, chunk in enumerate(iter(lambda: body.read(PART_SIZE), b""), 1):
+                etag = s3_client.upload_part(Bucket=bucket, Key=key, UploadId=upload, PartNumber=number, Body=chunk)["ETag"]
+                parts.append({"PartNumber": number, "ETag": etag})
+        s3_client.complete_multipart_upload(Bucket=bucket, Key=key, UploadId=upload,
+                                            MultipartUpload={"Parts": parts}, **condition)
+    except Exception:
+        s3_client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload)
+        raise
 
 
 def read_viewer_state(engine):

@@ -19,10 +19,11 @@ class FakeS3:
 
     def head_object(self, Bucket, Key):
         assert (Bucket, Key) == ("private-bucket", "webui/l1/candidate.db")
-        return {"ETag": self.etag, "Metadata": {"sha256": self.sha256, "revision": self.etag.strip('"')}}
+        return {"ETag": self.etag, "VersionId": "ver-" + self.etag.strip('"'),
+                "Metadata": {"sha256": self.sha256, "revision": self.etag.strip('"')}}
 
     def download_file(self, bucket, key, path, ExtraArgs=None):
-        assert ExtraArgs == {"IfMatch": self.etag}
+        assert ExtraArgs == {"VersionId": "ver-" + self.etag.strip('"')}
         self.downloads += 1
         with open(path, "wb") as fh:
             fh.write(self.body)
