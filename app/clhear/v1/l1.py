@@ -25,6 +25,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from app.clhear import snapshot_cache
 from app.clhear.db import get_engine
 from app.clhear.l1 import families as l1_families
 from app.clhear.l1 import rights as l1_rights
@@ -131,49 +132,43 @@ def list_sources(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
-    engine = get_engine()
+    items = _source_summaries(get_engine())
+    if jurisdiction:
+        items = [i for i in items if (i["jurisdiction"] or "").lower() == jurisdiction.lower()]
+    if regulator:
+        items = [i for i in items if regulator.lower() in (i["regulator"] or "").lower()]
+    if instrument:
+        needle = instrument.lower()
+        items = [i for i in items if needle in (i["instrument_field"] or "").lower() or needle in (i["short_name"] or "").lower()]
+    if family:
+        items = [i for i in items if i["family"] == family]
+    if rights_basis:
+        items = [i for i in items if i["rights"]["basis"] == rights_basis]
+    if q:
+        needle = q.lower()
+        items = [i for i in items if any(needle in (i[k] or "").lower() for k in ("name", "short_name", "key"))]
+    if ingested is not None:
+        items = [i for i in items if bool(i["latest_version"]) == ingested]
+    facets = {
+        "jurisdictions": sorted({i["jurisdiction"] for i in items if i["jurisdiction"]}),
+        "regulators": sorted({i["regulator"] for i in items if i["regulator"]}),
+        "families": sorted({i["family"] for i in items if i["family"]}),
+        "rights_bases": sorted({i["rights"]["basis"] for i in items}),
+    }
+    page = [{k: v for k, v in i.items() if k != "instrument_field"} for i in items[offset: offset + limit]]
+    return {"sources": page, "total": len(items), "facets": facets}
+
+
+@snapshot_cache.cached("l1_source_summaries")
+def _source_summaries(engine) -> list[dict]:
+    """Every source's summary, computed once per published snapshot; requests filter it."""
     with engine.connect() as conn:
-        stmt = (
+        rows = conn.execute(
             sa.select(sources, source_families.c.key.label("family_key"))
             .join(source_families, source_families.c.id == sources.c.family_id)
             .order_by(sources.c.jurisdiction, sources.c.key)
-        )
-        if jurisdiction:
-            stmt = stmt.where(sa.func.lower(sources.c.jurisdiction) == jurisdiction.lower())
-        if regulator:
-            stmt = stmt.where(sa.func.lower(sources.c.issuer).like(f"%{regulator.lower()}%"))
-        if instrument:
-            stmt = stmt.where(
-                sa.or_(
-                    sa.func.lower(sources.c.instrument).like(f"%{instrument.lower()}%"),
-                    sa.func.lower(sources.c.short_name).like(f"%{instrument.lower()}%"),
-                )
-            )
-        if family:
-            stmt = stmt.where(source_families.c.key == family)
-        if rights_basis:
-            stmt = stmt.where(sources.c.rights_basis == rights_basis)
-        if q:
-            needle = f"%{q.lower()}%"
-            stmt = stmt.where(
-                sa.or_(
-                    sa.func.lower(sources.c.name).like(needle),
-                    sa.func.lower(sources.c.short_name).like(needle),
-                    sa.func.lower(sources.c.key).like(needle),
-                )
-            )
-        rows = conn.execute(stmt).mappings().all()
-        items = [_source_summary(conn, r, family_key=r["family_key"]) for r in rows]
-        if ingested is not None:
-            items = [i for i in items if bool(i["latest_version"]) == ingested]
-        facets = {
-            "jurisdictions": sorted({i["jurisdiction"] for i in items if i["jurisdiction"]}),
-            "regulators": sorted({i["regulator"] for i in items if i["regulator"]}),
-            "families": sorted({i["family"] for i in items if i["family"]}),
-            "rights_bases": sorted({i["rights"]["basis"] for i in items}),
-        }
-        total = len(items)
-        return {"sources": items[offset: offset + limit], "total": total, "facets": facets}
+        ).mappings().all()
+        return [{**_source_summary(conn, r, family_key=r["family_key"]), "instrument_field": r["instrument"]} for r in rows]
 
 
 @router.get("/sources/{key:path}/versions")
