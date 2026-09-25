@@ -41,9 +41,9 @@ WEB_DIR = Path(__file__).parent.parent / "web"
 
 @router.get("/api/clhear/viewer-snapshot")
 def viewer_snapshot_state() -> dict:
-    from app.clhear.l1.viewer_snapshot import read_viewer_state
+    from app.clhear.l1.viewer_snapshot import public_viewer_state
 
-    return read_viewer_state(get_engine())
+    return public_viewer_state(get_engine())
 
 
 @router.get("/api/clhear/l1/inventory")

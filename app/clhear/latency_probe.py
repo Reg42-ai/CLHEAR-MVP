@@ -33,6 +33,7 @@ V1 = ("/v1/layers", "/v1/releases/latest")
 def _headers(kind: str) -> dict:
     from app.clhear.accounts import SESSION_COOKIE, session_token
     from app.clhear.app_auth import parse_app_keys
+    from app.clhear.community_writes import user_id_for
     from app.clhear.settings import get_settings
 
     settings = get_settings()
@@ -44,7 +45,7 @@ def _headers(kind: str) -> dict:
         headers.update({"X-App-Id": app_id, "Authorization": f"Bearer {entry['secrets'][0]}"})
     else:
         reviewer = sorted(settings.reviewer_set)[0]
-        token = session_token({"id": "latency-probe", "email": reviewer, "display_name": "Latency probe"})
+        token = session_token({"id": user_id_for(reviewer), "email": reviewer, "display_name": "Latency probe"})
         headers["Cookie"] = f"{SESSION_COOKIE}={token}"
     return headers
 

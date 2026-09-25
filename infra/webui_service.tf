@@ -57,8 +57,9 @@ resource "aws_iam_role_policy" "web_service_task" {
     Statement = [
       {
         # Viewer snapshots, operator-access control, releases and demo status.
+        # Snapshots are downloaded pinned to the version HeadObject returned.
         Effect = "Allow"
-        Action = ["s3:GetObject"]
+        Action = ["s3:GetObject", "s3:GetObjectVersion"]
         Resource = [
           "arn:aws:s3:::${local.deploy_bucket_name}/webui/*",
           "arn:aws:s3:::${local.deploy_bucket_name}/releases/*",

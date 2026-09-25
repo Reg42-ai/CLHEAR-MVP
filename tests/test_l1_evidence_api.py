@@ -121,6 +121,23 @@ def test_viewer_origin_marks_omitted_layers_unavailable(engine, client, monkeypa
         assert layers[layer]["overview"].get("available_in_projection") is not False
 
 
+def test_pages_get_the_authorization_binding_as_a_digest_not_the_full_list(engine, client, monkeypatch):
+    import hashlib
+
+    from app.clhear.l1 import viewer_snapshot
+
+    binding = [{"source_key": f"synthetic/rule/{n}", "protected": False, "decisions": {}} for n in range(3)]
+    state = {"status": "available", "viewer_snapshot": True, "revision": "test-only-revision",
+             "omitted_layers": [], "authorization_binding": binding}
+    monkeypatch.setattr(viewer_snapshot, "read_viewer_state", lambda engine: state)
+    digest = hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest()
+    summary = {"sources": 3, "sha256": digest}
+    assert client.get("/api/clhear/viewer-snapshot").json()["authorization_binding"] == summary
+    layers = {row["layer"]: row for row in client.get("/api/clhear/layers").json()["layers"]}
+    assert layers["L1"]["overview"]["viewer_snapshot"]["authorization_binding"] == summary
+    assert state["authorization_binding"] is binding
+
+
 def test_evidence_read_endpoints_keep_restricted_access(engine, client, monkeypatch):
     from app.clhear.settings import get_settings
 

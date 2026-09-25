@@ -39,6 +39,29 @@ def test_task_definition_moves_credentials_to_ssm_references_and_pins_the_image(
     assert {"key": "clhear:git-sha", "value": SHA} in task["tags"] and {"key": "owner", "value": "clhear"} in task["tags"]
 
 
+def test_app_keys_come_from_ssm_even_when_the_lambda_no_longer_carries_them():
+    lambda_env = {k: v for k, v in LAMBDA_ENV.items() if k != "CLHEAR_APP_KEYS"}
+    web = web_service.task_definition(BASE, lambda_env, image=IMAGE, sha=SHA)["containerDefinitions"][0]
+    assert {"name": "CLHEAR_APP_KEYS", "valueFrom": web_service.secret_arn("CLHEAR_APP_KEYS")} in web["secrets"]
+
+
+def test_secret_sync_never_overwrites_rotated_app_keys_with_the_lambda_copy():
+    written = {}
+
+    class Lambda:
+        def get_function_configuration(self, FunctionName):
+            return {"Environment": {"Variables": LAMBDA_ENV}}
+
+    class Ssm:
+        def put_parameter(self, Name, Value, **_):
+            written[Name] = Value
+
+    report = web_service.sync_secrets({"lambda": Lambda(), "ssm": Ssm()})
+    assert report["CLHEAR_APP_KEYS"] == "ssm_owned"
+    assert web_service.secret_parameter("CLHEAR_APP_KEYS") not in written
+    assert written[web_service.secret_parameter("CLHEAR_SESSION_SECRET")] == LAMBDA_ENV["CLHEAR_SESSION_SECRET"]
+
+
 @pytest.mark.parametrize("image,sha", [("legacy:latest", SHA), (IMAGE, "main"), ("", SHA)])
 def test_task_definition_rejects_unpinned_code(image, sha):
     with pytest.raises(ValueError):
@@ -84,3 +107,49 @@ def test_service_owned_settings_and_the_edge_requirement_survive_a_roll():
     assert "CLHEAR_ORIGIN_VERIFY_SECRET" in {s["name"] for s in second["containerDefinitions"][0]["secrets"]}
     third = web_service.task_definition(second, LAMBDA_ENV, image=IMAGE, sha=SHA, require_edge=False)
     assert "CLHEAR_ORIGIN_VERIFY_SECRET" not in {s["name"] for s in third["containerDefinitions"][0]["secrets"]}
+
+
+class _RollingEcs:
+    """Answers the way ECS does right after UpdateService: the old deployment first."""
+
+    def __init__(self, states):
+        self.states, self.calls = list(states), 0
+
+    def describe_services(self, cluster, services):
+        state = self.states[min(self.calls, len(self.states) - 1)]
+        self.calls += 1
+        return {"services": [{"taskDefinition": "arn:old", "desiredCount": 1, "runningCount": 1,
+                              "deployments": state}]}
+
+    def describe_task_definition(self, taskDefinition, include=None):
+        return {"taskDefinition": {**BASE, "taskDefinitionArn": "arn:old"}, "tags": BASE["tags"]}
+
+    def register_task_definition(self, **task):
+        return {"taskDefinition": {"taskDefinitionArn": "arn:new"}}
+
+    def update_service(self, **kwargs):
+        pass
+
+
+class _Lambda:
+    def get_function_configuration(self, FunctionName):
+        return {"Environment": {"Variables": LAMBDA_ENV}}
+
+
+OLD = {"taskDefinition": "arn:old", "status": "PRIMARY", "rolloutState": "COMPLETED", "runningCount": 1}
+
+
+@pytest.mark.parametrize("final,expected", [
+    ({"taskDefinition": "arn:new", "status": "PRIMARY", "rolloutState": "COMPLETED", "runningCount": 1}, "completed"),
+    ({"taskDefinition": "arn:new", "status": "ACTIVE", "rolloutState": "FAILED", "runningCount": 0}, None),
+])
+def test_a_roll_follows_its_own_deployment_not_the_one_before_it(final, expected):
+    rolling = {"taskDefinition": "arn:new", "status": "PRIMARY", "rolloutState": "IN_PROGRESS", "runningCount": 0}
+    ecs = _RollingEcs([[OLD], [rolling, {**OLD, "status": "ACTIVE"}], [final]])
+    clients = {"ecs": ecs, "lambda": _Lambda()}
+    if expected is None:
+        with pytest.raises(RuntimeError):
+            web_service.roll(clients, image=IMAGE, sha=SHA, desired=1, sleep=lambda s: None)
+    else:
+        assert web_service.roll(clients, image=IMAGE, sha=SHA, desired=1, sleep=lambda s: None)["rollout"] == expected
+    assert ecs.calls >= 3

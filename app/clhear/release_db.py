@@ -40,6 +40,6 @@ def dispose() -> None:
     global _engine
     with _lock:
         if _engine is not None:
+            snapshot_cache.forget(_engine)
             _engine.dispose()
         _engine = None
-    snapshot_cache.clear()

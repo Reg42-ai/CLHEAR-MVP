@@ -88,6 +88,18 @@ def _write_batch(max_rows: int) -> int:
     return len(rows)
 
 
+def discard_pending() -> int:
+    """Test hook: drop queued records without writing them."""
+    dropped = 0
+    with _writing:
+        while True:
+            try:
+                _queue.get_nowait()
+            except queue.Empty:
+                return dropped
+            dropped += 1
+
+
 def _drain_forever() -> None:
     while True:
         time.sleep(2)

@@ -1,7 +1,7 @@
 """Build the compliance-program demo corpus in its own database, as a one-off ECS task.
 
     python scripts/demo_build.py register --image <repo@sha256:...> --sha <40-hex>
-    python scripts/demo_build.py run [--skip-import] [--layers L2,L3,...] [--profile s3://...]
+    python scripts/demo_build.py run [--skip-import] [--layers L2,L3,...] [--profile s3://...|--no-profile] [--no-publish]
 
 The task runs ``python -m app.clhear.scope_build`` with the production worker
 image and roles, against the demo database (/clhear/demo/DATABASE_URL). It
@@ -73,9 +73,14 @@ def register(clients, *, image: str, sha: str) -> dict:
     return {"task_definition": arn}
 
 
-def run(clients, *, skip_import: bool = False, layers: str = "", profile: str = PROFILE, wait: bool = True) -> dict:
+def run(clients, *, skip_import: bool = False, layers: str = "", profile: str | None = PROFILE, publish: bool = True,
+        wait: bool = True) -> dict:
     service = clients["ecs"].describe_services(cluster=CLUSTER, services=[BASE_SERVICE])["services"][0]
-    command = ["--scope", SCOPE, "--profile", profile, "--publish-release"]
+    command = ["--scope", SCOPE]
+    if profile:
+        command += ["--profile", profile]
+    if publish:
+        command.append("--publish-release")
     if skip_import:
         command.append("--skip-import")
     if layers:
@@ -102,13 +107,16 @@ def main(argv=None) -> int:
     b.add_argument("--skip-import", action="store_true")
     b.add_argument("--layers", default="")
     b.add_argument("--profile", default=PROFILE)
+    b.add_argument("--no-profile", action="store_true", help="build without a tenant profile")
+    b.add_argument("--no-publish", action="store_true", help="build layers without publishing a release")
     b.add_argument("--no-wait", action="store_true")
     args = parser.parse_args(argv)
     clients = _clients()
     if args.command == "register":
         result = register(clients, image=args.image, sha=args.sha)
     else:
-        result = run(clients, skip_import=args.skip_import, layers=args.layers, profile=args.profile,
+        result = run(clients, skip_import=args.skip_import, layers=args.layers,
+                     profile=None if args.no_profile else args.profile, publish=not args.no_publish,
                      wait=not args.no_wait)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result.get("exit_code", 0) == 0 else 1

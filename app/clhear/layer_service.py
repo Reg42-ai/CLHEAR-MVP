@@ -143,12 +143,12 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
 def layer_index(engine: Engine) -> list[dict]:
     from app.clhear.l1.inventory import inventory_summary
     from app.clhear.l1.workflow import workflow_summary
-    from app.clhear.l1.viewer_snapshot import read_viewer_state
+    from app.clhear.l1.viewer_snapshot import public_viewer_state
 
     counts = layer_counts(engine)
     inventory = inventory_summary(engine, scope="registered")
     workflow = workflow_summary(engine)
-    viewer = read_viewer_state(engine)
+    viewer = public_viewer_state(engine)
     items = []
     for code in LAYER_ORDER:
         entry = layer_public_meta(code)

@@ -465,3 +465,14 @@ def read_viewer_state(engine):
             "database_backend": engine.dialect.name,
             "source_environment": "direct_postgresql" if engine.dialect.name == "postgresql" else "local_sqlite",
             "accepted_release": False, "omitted_layers": []}
+
+
+def public_viewer_state(engine) -> dict:
+    """The viewer state for pages and APIs. The per-source authorization binding
+    (several MB) is publish-time evidence; readers get its size and digest."""
+    state = dict(read_viewer_state(engine))
+    binding = state.pop("authorization_binding", None)
+    if binding is not None:
+        encoded = json.dumps(binding, sort_keys=True, default=str).encode()
+        state["authorization_binding"] = {"sources": len(binding), "sha256": hashlib.sha256(encoded).hexdigest()}
+    return state

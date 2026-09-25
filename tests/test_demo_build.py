@@ -46,3 +46,19 @@ def test_the_demo_task_keeps_nothing_that_reaches_production_state():
 def test_only_a_pinned_image_and_commit_are_accepted(image, sha):
     with pytest.raises(ValueError):
         demo_build.task_definition(BASE, image=image, sha=sha)
+
+
+def test_a_first_pass_can_build_without_a_profile_or_a_release():
+    started = {}
+
+    class Ecs:
+        def describe_services(self, cluster, services):
+            return {"services": [{"networkConfiguration": {"awsvpcConfiguration": {"subnets": ["s"]}}}]}
+
+        def run_task(self, **kwargs):
+            started.update(kwargs)
+            return {"tasks": [{"taskArn": "arn:task/1"}]}
+
+    report = demo_build.run({"ecs": Ecs()}, layers="L1,L2,L3,L4", profile=None, publish=False, wait=False)
+    assert report["command"] == ["--scope", demo_build.SCOPE, "--layers", "L1,L2,L3,L4"]
+    assert started["overrides"]["containerOverrides"][0]["command"] == report["command"]

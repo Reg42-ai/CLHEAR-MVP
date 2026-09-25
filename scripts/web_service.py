@@ -31,6 +31,9 @@ SECRET_PREFIX = "/clhear/web/"
 # Lambda environment names whose values are credentials.
 SECRET_ENV = ("CLHEAR_APP_KEYS", "CLHEAR_SESSION_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET",
               "CLHEAR_BEEHIIV_API_KEY", "SENTRY_DSN")
+# Kept only in SSM: the Lambda hydrates them at cold start and the service
+# references them, so a rotation is an SSM write plus a roll.
+SSM_OWNED = ("CLHEAR_APP_KEYS",)
 IDENTITY_ENV = "CLHEAR_IDENTITY_DATABASE_URL"
 ORIGIN_ENV = "CLHEAR_ORIGIN_VERIFY_SECRET"
 # Settings the service owns (not copied from the Lambda); a roll keeps them.
@@ -75,7 +78,8 @@ def task_definition(base: dict, lambda_env: dict, *, image: str, sha: str, overr
     env.update({k: previous[k] for k in SERVICE_OWNED if k in previous})
     env.update({k: v for k, v in (overrides or {}).items() if k in SERVICE_OWNED})
     web["environment"] = [{"name": k, "value": v} for k, v in sorted(env.items())]
-    web["secrets"] = [{"name": name, "valueFrom": secret_arn(name)} for name in SECRET_ENV if lambda_env.get(name)]
+    web["secrets"] = [{"name": name, "valueFrom": secret_arn(name)} for name in SECRET_ENV
+                      if lambda_env.get(name) or name in SSM_OWNED]
     # The service, unlike the Lambda, writes accounts and keys to Aurora as clhear_web.
     web["secrets"].append({"name": IDENTITY_ENV, "valueFrom": secret_arn(IDENTITY_ENV)})
     if had_edge if require_edge is None else require_edge:
@@ -99,6 +103,9 @@ def sync_secrets(clients) -> dict:
     """Copy the Lambda's credential values into SSM without printing them."""
     env, report = lambda_environment(clients), {}
     for name in SECRET_ENV:
+        if name in SSM_OWNED:
+            report[name] = "ssm_owned"
+            continue
         value = env.get(name, "")
         if not value:
             report[name] = "unset"
@@ -115,7 +122,8 @@ def current_task_definition(clients) -> dict:
 
 
 def roll(clients, *, image: str, sha: str, desired: int | None = None, wait: bool = True,
-         overrides: dict | None = None, require_edge: bool | None = None) -> dict:
+         overrides: dict | None = None, require_edge: bool | None = None, poll_s: float = 20.0,
+         timeout_s: float = 25 * 60, sleep=time.sleep, clock=time.monotonic) -> dict:
     described = current_task_definition(clients)
     base = {**described["taskDefinition"], "tags": described.get("tags", [])}
     task = task_definition(base, lambda_environment(clients), image=image, sha=sha, overrides=overrides,
@@ -126,12 +134,18 @@ def roll(clients, *, image: str, sha: str, desired: int | None = None, wait: boo
     clients["ecs"].update_service(cluster=CLUSTER, service=SERVICE, taskDefinition=arn, desiredCount=count)
     evidence = {"task_definition": arn, "desired": count, "rollout": "requested"}
     if wait and count:
-        clients["ecs"].get_waiter("services_stable").wait(cluster=CLUSTER, services=[SERVICE],
-                                                          WaiterConfig={"Delay": 20, "MaxAttempts": 75})
-        service = clients["ecs"].describe_services(cluster=CLUSTER, services=[SERVICE])["services"][0]
-        primary = [d for d in service["deployments"] if d["status"] == "PRIMARY"]
-        healthy = (service["taskDefinition"] == arn and service["runningCount"] == count and len(primary) == 1
-                   and primary[0].get("rolloutState") == "COMPLETED")
+        # A stability check right after UpdateService can still see the previous
+        # deployment; follow the deployment of this revision until it settles.
+        deadline = clock() + timeout_s
+        while True:
+            service = clients["ecs"].describe_services(cluster=CLUSTER, services=[SERVICE])["services"][0]
+            mine = next((d for d in service["deployments"] if d["taskDefinition"] == arn), None)
+            state = (mine or {}).get("rolloutState")
+            if state == "FAILED" or (state == "COMPLETED" and mine["status"] == "PRIMARY") or clock() > deadline:
+                break
+            sleep(poll_s)
+        healthy = (state == "COMPLETED" and mine["status"] == "PRIMARY" and mine.get("runningCount") == count
+                   and len(service["deployments"]) == 1)
         evidence.update(rollout="completed" if healthy else "not_healthy", running=service["runningCount"])
         if not healthy:
             raise RuntimeError("Web service did not reach a healthy rollout on the new revision")
