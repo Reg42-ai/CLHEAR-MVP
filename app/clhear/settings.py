@@ -50,6 +50,20 @@ class Settings(BaseSettings):
     # not merely before rendering HTML. This never grants publisher text rights.
     clhear_restricted_access: bool = False
     clhear_reviewer_emails: str = ""
+    # "accounts": any verified, non-suspended account may use the web app, and
+    # /v1 with a key; the reviewer and maintainer allowlists guard only review,
+    # write and admin routes. Empty keeps reviewer-only mode under restricted access.
+    clhear_access_mode: str = ""
+    # Header value the CloudFront edge sends; requests without it are refused.
+    clhear_origin_verify_secret: str = ""
+    clhear_terms_version: str = "2026-09-25"
+    clhear_rate_v1_per_minute: int = 600
+    clhear_rate_account_per_minute: int = 1200
+    clhear_rate_signup_per_ip_15m: int = 10
+    clhear_rate_magic_link_per_email_15m: int = 3
+    clhear_max_page_size: int = 500
+    clhear_max_body_bytes: int = 1_000_000
+    clhear_cors_origins: str = ""  # comma-separated exact origins, e.g. https://galaxy.app.reg42.ai
     clhear_l1_only: bool = False  # enable on worker deployments while accepting L1
     # Live instance: ingest every current registry URL without operator review clicks.
     # The website sign-in gate remains the access control.

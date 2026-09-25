@@ -150,9 +150,15 @@ def _text_access(conn, source, request: Request) -> dict:
         return {"allowed": allowed, "internal": False,
                 "reason": "Public text" if allowed else "Text access requires recorded permission."}
     public = permissions.decision(conn, source.key, "display_public")
-    if public["allowed"]:
-        return {**public, "internal": False}
     user = reviewer(request)
+    from app.clhear.access import accounts_mode
+    if public["allowed"] and not (accounts_mode() and user is None):
+        return {**public, "internal": False}
+    if accounts_mode() and user is None:
+        # Open accounts see licensed text only through a publisher licence, never
+        # through an operator's private review grant.
+        return {"allowed": False, "internal": False,
+                "reason": "This source's licence limits verbatim text to approved reviewers."}
     internal = permissions.decision(conn, source.key, "display_internal")
     if user and not internal["allowed"]:
         candidate = permissions.candidate_decision(conn, source.key, "display_internal", canonical_url=source.canonical_url)
@@ -388,7 +394,9 @@ def source_document(key: str, request: Request, version_label: str | None = None
 
         access = _text_access(conn, source, request)
         from app.clhear.l1.poc_review import enabled
-        if enabled():
+        from app.clhear.access import accounts_mode
+        from app.clhear.review_access import reviewer as _reviewer
+        if enabled() and (not accounts_mode() or _reviewer(request) is not None):
             access = {**access, "allowed": True, "internal": True,
                       "reason": "Live demo: stored text is shown"}
         locked = not access["allowed"]

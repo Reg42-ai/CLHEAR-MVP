@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hmac
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
 
 from app.clhear.settings import get_settings
 
@@ -31,9 +31,26 @@ def parse_app_keys(raw: str) -> dict[str, dict]:
 
 
 def require_app(
+    request: Request,
     authorization: str | None = Header(default=None),
     x_app_id: str | None = Header(default=None, alias="X-App-Id"),
 ) -> dict:
+    app = _authenticate(authorization, x_app_id)
+    request.state.app = app
+    from app.clhear import ratelimit
+
+    settings = get_settings()
+    try:
+        # Only after the key is verified, so nobody can spend another app's allowance.
+        ratelimit.hit(f"key:{app['app_id']}", limit=settings.clhear_rate_v1_per_minute, window_s=60)
+        if app.get("user_id"):
+            ratelimit.hit(f"account:{app['user_id']}", limit=settings.clhear_rate_account_per_minute, window_s=60)
+    except ratelimit.RateLimited as exc:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded", headers={"Retry-After": str(exc.retry_after)}) from exc
+    return app
+
+
+def _authenticate(authorization: str | None, x_app_id: str | None) -> dict:
     settings = get_settings()
     keys = parse_app_keys(settings.clhear_app_keys)
     token = ""

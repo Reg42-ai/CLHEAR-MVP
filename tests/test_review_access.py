@@ -189,11 +189,13 @@ def test_signin_and_auth_discovery_remain_reachable(restricted_client):
     assert restricted_client.get("/auth/me").json()["user"] is None
 
 
-def test_magic_link_request_rejects_unapproved_recipient(restricted_client):
-    # Rejected before SES is imported or contacted; no mail is sent by this test.
-    response = restricted_client.post("/auth/email", json={"email": "outside@example.test"})
-    assert response.status_code == 403
-    assert "debug_link" not in response.json()
+def test_magic_link_request_does_not_reveal_or_mail_an_unapproved_recipient(restricted_client, monkeypatch):
+    import boto3
+
+    monkeypatch.setattr(boto3, "client", Mock(side_effect=AssertionError("no mail for an unapproved address")))
+    outside = restricted_client.post("/auth/email", json={"email": "outside@example.test"})
+    assert outside.status_code == 200 and outside.json()["sent"] is True
+    assert "debug_link" not in outside.json()
 
 
 @pytest.mark.parametrize("provider", ["google", "cognito"])

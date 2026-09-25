@@ -165,6 +165,26 @@ def _bind_database(local_path: str) -> None:
     db.dispose_engine()
 
 
+def _housekeeping(interval_s: float = 600.0) -> None:
+    """Daily usage rollups for today and yesterday; expired rate windows removed."""
+    from datetime import date, timedelta
+
+    from app.clhear import identity, ratelimit, usage
+
+    while True:
+        time.sleep(interval_s)
+        if not identity.configured():
+            continue
+        try:
+            today = date.today()
+            usage.flush()
+            for day in (today - timedelta(days=1), today):
+                usage.rollup(day)
+            ratelimit.prune()
+        except Exception as exc:  # noqa: BLE001 — retried on the next cycle
+            log.warning("usage housekeeping failed: %s", type(exc).__name__)
+
+
 def build(holder: SnapshotHolder):
     from app.clhear.settings import get_settings
     from app.main import create_app
@@ -200,6 +220,7 @@ def main() -> None:
             release.start()
         except Exception as exc:  # noqa: BLE001 — the viewer still serves; /v1 falls back to it
             log.warning("release snapshot unavailable: %s: %s", type(exc).__name__, str(exc)[:300])
+    threading.Thread(target=_housekeeping, name="usage-rollups", daemon=True).start()
     uvicorn.run(build(holder), host="0.0.0.0", port=int(os.environ.get("PORT", "8080")),
                 proxy_headers=True, forwarded_allow_ips="*", log_level="info", access_log=False)
 
