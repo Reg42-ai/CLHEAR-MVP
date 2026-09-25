@@ -1,22 +1,7 @@
-"""Influencer demo corpus: pinned public sources, one fixed import, a score that moves."""
+"""Influencer demo sources in the production registry: pinned readers, one fixed import request."""
 import sqlalchemy as sa
 
-from app.clhear.demo_corpus import (
-    CLAUSE_EXPERT,
-    CLAUSE_GUIDES,
-    CLAUSE_HONEST,
-    CLAUSE_MARKETING,
-    CLAUSE_ORGANISATION,
-    CLAUSE_STATUTE,
-    CLAUSE_TYPICAL,
-    DEMO_SOURCE_KEYS,
-    DERIVE_KIND,
-    GALAXY_ATTRIBUTES,
-    POST_A,
-    POST_B,
-    POST_B_SCOPE,
-    derive_demo,
-)
+from app.clhear.demo_corpus import DEMO_SOURCE_KEYS, DERIVE_KIND
 from app.clhear.l1.adapters.govinfo_us import GovInfoEcfrAdapter, GovInfoUscAdapter
 from app.clhear.l1.fleet import adapter_for, fleet_plan
 from app.clhear.l1.inventory import _declared_entries
@@ -27,10 +12,11 @@ from app.clhear.l6.explain import cited_ids
 from app.clhear.models import events
 
 AUTH = {"Authorization": "Bearer dev-os-key", "X-App-Id": "os-dev"}
+CLAUSE_STATUTE, CLAUSE_TYPICAL, CLAUSE_MARKETING = "sec45(a)", "255.2", "275.206(4)-1"
 
 DUTY_STATUTE = (
-    "The Commission shall prevent persons from using unfair or deceptive acts in commerce, "
-    "including a paid endorsement that retail customers cannot identify as advertising."
+    "(a) Declaration of unlawfulness (1) Unfair or deceptive acts or practices in or affecting commerce are hereby "
+    "declared unlawful, including a paid endorsement that retail customers cannot identify as advertising."
 )
 DUTY_GUIDES = (
     "An advertiser must disclose a material connection clearly and conspicuously when retail "
@@ -160,16 +146,17 @@ def test_gpo_editorial_notes_are_notes_not_clauses():
     assert report["verified"], report["findings"]
 
 
-def test_ftc_act_derives_only_the_subsection_that_binds_advertisers(engine):
-    from app.clhear.l1.source_registry import DUTY_CLAUSES, seed
-    from app.clhear.l2.extract import run_extraction
+def test_ftc_act_procedure_addressed_to_the_commission_is_not_a_duty(engine):
     from app.clhear.derived_models import obligations
+    from app.clhear.l1.source_registry import seed
+    from app.clhear.l2.extract import run_extraction
 
-    assert DUTY_CLAUSES["usc/15/ftc-act-45"] == frozenset({CLAUSE_STATUTE})
     seed(engine)
     _add_clauses(engine, "usc/15/ftc-act-45", {
         CLAUSE_STATUTE: DUTY_STATUTE,
-        "sec45(b)": "Whenever the Commission shall have reason to believe that any person has used such a method, it shall issue a complaint.",
+        "sec45(b)": "(b) Proceeding by Commission Whenever the Commission shall have reason to believe that any person "
+                    "has used such a method, it shall issue a complaint.",
+        "sec45(k)": "(k) Scope This subsection shall not apply to any bank, savings and loan institution, or air carrier.",
     })
     result = run_extraction(engine, source_key="usc/15/ftc-act-45")
     assert result["candidates"] == 1
@@ -229,195 +216,15 @@ def _add_clauses(engine, key, texts):
             ))
 
 
-def _seed_clauses(engine):
-    from app.clhear.l1.source_registry import seed
-
-    seed(engine)
-    _add_clauses(engine, "usc/15/ftc-act-45", {CLAUSE_STATUTE: DUTY_STATUTE})
-    _add_clauses(engine, "cfr/16/255", {
-        CLAUSE_HONEST: DUTY_HONEST, CLAUSE_TYPICAL: DUTY_TYPICAL, CLAUSE_EXPERT: DUTY_EXPERT,
-        CLAUSE_ORGANISATION: DUTY_ORGANISATION, CLAUSE_GUIDES: DUTY_GUIDES,
-    })
-    _add_clauses(engine, "cfr/17/ia-marketing", {CLAUSE_MARKETING: DUTY_MARKETING})
-
-
-CURATED_ITEMS = {"BLK-MKT-CLAIMS-REVIEW", "BLK-MKT-CONNECTION-DISCLOSURE",
-                 "BLK-MKT-PROMOTER-AGREEMENT", "BLK-MKT-EXPERT-ENDORSEMENT"}
-
-
-def test_posts_move_the_compliance_score_and_open_the_clause(client, engine):
-    _seed_clauses(engine)
-    derived = derive_demo(engine)
-    assert derived["extracted"]["cfr/16/255"]["candidates"] == 5
-    assert derived["extracted"]["nist/csf-2.0"]["skipped"] == "nist/csf-2.0"
-    assert set(derived["mapped"]) == {"usc/15/ftc-act-45", "cfr/16/255", "cfr/17/ia-marketing"}
-
-    failed = client.post("/v1/observations", json=POST_A, headers=AUTH)
-    assert failed.status_code == 200, failed.text
-    assert failed.json()["mapped"] is True
-    assert "cleared" in failed.json()["unmapped_labels"]
-
-    before = client.post("/v1/blueprint", json={"attributes": GALAXY_ATTRIBUTES}, headers=AUTH)
-    assert before.status_code == 200, before.text
-    assert {item["block_id"] for item in before.json()["items"]} == CURATED_ITEMS
-    first = before.json()["compliance_score"]
-    assert first["required"] == 4 and first["value"] == 0
-    guide = next(point for point in first["points"] if any(clause["clause_ref"] == CLAUSE_GUIDES for clause in point["clauses"]))
-    assert guide["result"] == "fail"
-    assert obligation_id("cfr/16/255", CLAUSE_GUIDES) in guide["reasoning"]
-    assert any(clause["source_key"] == "cfr/16/255" and clause["clause_ref"] == CLAUSE_GUIDES for clause in guide["clauses"])
-    item = next(row for row in before.json()["items"] if row["block_id"] == guide["block_id"])
-    assert item["performance"]["required"]
-    assert "cleared" in item["performance"]["unmapped_labels"]
-
-    passed = client.post("/v1/observations", json=POST_B, headers=AUTH)
-    assert passed.status_code == 200, passed.text
-    partial = client.post("/v1/blueprint", json={"attributes": GALAXY_ATTRIBUTES}, headers=AUTH).json()["compliance_score"]
-    assert (partial["passed"], partial["required"]) == (3, 4)
-    expert = next(point for point in partial["points"] if point["block_id"] == "BLK-MKT-EXPERT-ENDORSEMENT")
-    assert expert["result"] == "missing"
-
-    scoped = client.post("/v1/observations", json=POST_B_SCOPE, headers=AUTH)
-    assert scoped.status_code == 200, scoped.text
-    assert scoped.json()["mapped"] is True
-    after = client.post("/v1/blueprint", json={"attributes": GALAXY_ATTRIBUTES}, headers=AUTH)
-    second = after.json()["compliance_score"]
-    assert second["value"] == 1 and second["required"] == 3 and second["not_applicable"] == 1
-    assert second["value"] > first["value"]
-    excluded = next(point for point in second["points"] if point["block_id"] == "BLK-MKT-EXPERT-ENDORSEMENT")
-    assert excluded["result"] == "not_applicable"
-    assert obligation_id("cfr/16/255", CLAUSE_EXPERT) in excluded["reasoning"]
-    claims = next(point for point in second["points"] if point["block_id"] == "BLK-MKT-CLAIMS-REVIEW")
-    assert claims["result"] == "pass"
-    assert {clause["clause_ref"] for clause in claims["clauses"]} == {CLAUSE_STATUTE, CLAUSE_HONEST, CLAUSE_TYPICAL}
-    opened = next(point for point in second["points"] if any(clause["clause_ref"] == CLAUSE_MARKETING for clause in point["clauses"]))
-    assert opened["result"] == "pass"
-    assert obligation_id("cfr/17/ia-marketing", CLAUSE_MARKETING) in opened["reasoning"]
-
-    vendor = client.post("/v1/observations", json={
-        **POST_B,
-        "result": "approved",
-        "labels": ["ok"],
-        "observed_at": "2026-09-21T14:00:00+00:00",
-    }, headers=AUTH)
-    assert vendor.status_code == 200, vendor.text
-    assert vendor.json()["mapped"] is False
-    assert "approved" in vendor.json()["unmapped_labels"]
-    held = client.post("/v1/blueprint", json={"attributes": GALAXY_ATTRIBUTES}, headers=AUTH).json()["compliance_score"]
-    assert held["value"] == 1
-
-    layers = {}
-    for layer, resource in (
-        ("L2", "obligations"), ("L3", "building-blocks"), ("L4", "profiles"),
-        ("L5", "activities"), ("L6", "programs"), ("L7", "risk-scores"),
-    ):
-        response = client.get(f"/v1/releases/clhear-vLIVE/{layer}/{resource}", headers=AUTH)
-        assert response.status_code == 200, response.text
-        layers[layer] = response.json()
-        assert layers[layer]["layer_status"] in {"derived", "curated", "computed"}
-        assert "banner" in layers[layer]
-    assert CLAUSE_GUIDES in response_text(layers["L2"])
-    assert layers["L7"]["view"] == "enforcement exposure"
-    assert layers["L7"]["moves_with_observations"] is False
-    scored = {row["subject_ref"] for row in layers["L7"]["obligation_scores"]}
-    assert obligation_id("cfr/17/ia-marketing", CLAUSE_MARKETING) in scored
-    reference = client.get("/v1/releases/clhear-vLIVE/L8/benchmarks", headers=AUTH)
-    assert reference.status_code == 200 and reference.json()["layer_status"] == "reference"
-    assert reference.json()["peer_aggregates"]["status"] == "locked"
-
-
-def response_text(body) -> str:
-    import json
-    return json.dumps(body)
-
-
-def _demo_envelope(**overrides):
-    from app.clhear.platform.events import Envelope
-
-    values = dict(event_id="demo-import-1", layer="l1", kind="AdapterRunRequested", subject_ref="govinfo_us",
-                  payload={"adapter": "govinfo_us", "source_keys": list(DEMO_SOURCE_KEYS), "discover": False,
-                           "job_id": "job-l1-demo"},
-                  producer="l0.demo", ts="2026-09-24T12:00:00+00:00")
-    return Envelope(**(values | overrides))
-
-
-def _derive_events(engine):
-    with engine.connect() as conn:
-        return list(conn.execute(sa.select(events.c.layer, events.c.payload, events.c.producer)
-                                 .where(events.c.kind == DERIVE_KIND)).mappings())
-
-
-def test_finished_demo_import_queues_one_l0_derivation(engine, monkeypatch):
+def test_the_retired_derivation_is_acknowledged_not_run(engine):
     from app.clhear import workers
     from app.clhear.platform import routing
-
-    assert routing.classify(DERIVE_KIND) == ("command", "l0")
-    assert DERIVE_KIND in workers.HANDLERS and DERIVE_KIND not in routing.DOWNSTREAM_HELD_KINDS
-    monkeypatch.setattr(workers, "run_adapter_fleet", lambda *args, **kwargs: {"job_id": kwargs["job_id"], "status": "partial"})
-    first = workers.handle_adapter_run(engine, None, _demo_envelope())
-    workers.handle_adapter_run(engine, None, _demo_envelope(event_id="demo-import-redelivered"))
-    rows = _derive_events(engine)
-    assert len(rows) == 1 and first["demo_derive_event_id"]
-    assert rows[0]["layer"] == "l0" and rows[0]["payload"] == {"job_id": "job-l1-demo"}
-
-    workers.handle_adapter_run(engine, None, _demo_envelope(event_id="other", producer="l0", payload={
-        "adapter": "govinfo_us", "job_id": "job-l1-other"}))
-    assert len(_derive_events(engine)) == 1
-
-
-def test_incomplete_demo_import_still_derives_what_is_in_force(engine, monkeypatch):
-    """Production: the fixed-scope demo job raised AdapterRunIncomplete on
-    unresolved scope acceptance while its sources were in force."""
-    import pytest
-
-    from app.clhear import workers
-
-    def incomplete(*args, **kwargs):
-        raise workers.AdapterRunIncomplete(f"{kwargs['job_id']}: 3 unresolved source tasks; inspect workflow evidence")
-
-    monkeypatch.setattr(workers, "run_adapter_fleet", incomplete)
-    for attempt in ("first", "redelivered"):
-        with pytest.raises(workers.AdapterRunIncomplete):
-            workers.handle_adapter_run(engine, None, _demo_envelope(event_id=f"demo-import-{attempt}"))
-    assert [row["payload"] for row in _derive_events(engine)] == [{"job_id": "job-l1-demo"}]
-
-    def broken(*args, **kwargs):
-        raise RuntimeError("database unavailable")
-
-    monkeypatch.setattr(workers, "run_adapter_fleet", broken)
-    with pytest.raises(RuntimeError):
-        workers.handle_adapter_run(engine, None, _demo_envelope(payload={
-            "adapter": "govinfo_us", "source_keys": list(DEMO_SOURCE_KEYS), "discover": False, "job_id": "job-l1-broken"}))
-    assert len(_derive_events(engine)) == 1
-
-
-def test_demo_derive_handler_publishes_every_layer(engine, monkeypatch):
-    import json
-
-    from app.clhear import workers
-    from app.clhear.l1 import viewer_snapshot
     from app.clhear.platform.events import Envelope
 
-    _seed_clauses(engine)
-    written = {}
-
-    class FakeS3:
-        def put_object(self, **kwargs):
-            written.update(kwargs)
-
-    monkeypatch.setattr(viewer_snapshot, "configured_uri", lambda: "s3://clhear-test/webui/l1/candidate.db")
-    monkeypatch.setattr("boto3.client", lambda *args, **kwargs: FakeS3())
+    assert routing.classify(DERIVE_KIND) == ("command", "l0")
     result = workers.handle_demo_derive(engine, None, Envelope(
         event_id="derive-1", layer="l0", kind=DERIVE_KIND, subject_ref="demo", payload={"job_id": "job-l1-demo"},
         producer="l1.demo", ts="2026-09-24T12:05:00+00:00"))
-    assert result["status_uri"] == "s3://clhear-test/webui/l1/demo/status.json"
-    assert written["Key"] == "webui/l1/demo/status.json" and written["ServerSideEncryption"] == "AES256"
-    status = json.loads(written["Body"])
-    assert set(status) >= {"L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"}
-    assert status["L1"]["usc/15/ftc-act-45"]["in_force"] is True
-    assert status["L1"]["nist/csf-2.0"]["in_force"] is False
-    assert obligation_id("usc/15/ftc-act-45", CLAUSE_STATUTE) in status["L2"]["obligations"]
-    assert {block["id"] for block in status["L3"]["blocks"]} == CURATED_ITEMS
-    assert status["L4"]["applies_to"] >= 1
-    assert set(status["L6"]["items"]) == CURATED_ITEMS
-    assert status["L6"]["compliance_score"]["required"] == 4
+    assert result["status"] == "retired" and "scope_build" in result["reason"]
+    with engine.connect() as conn:
+        assert conn.execute(sa.select(sa.func.count()).select_from(events)).scalar_one() == 0

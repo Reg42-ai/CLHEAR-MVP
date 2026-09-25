@@ -28,10 +28,12 @@ READY_PATH = "/api/clhear/ready"
 class SnapshotHolder:
     """One process-wide copy of the configured snapshot on local disk."""
 
-    def __init__(self, uri: str, local_path: str, *, s3_client=None, poll_s: float = 60.0, clock=time.time):
+    def __init__(self, uri: str, local_path: str, *, s3_client=None, poll_s: float = 60.0, clock=time.time,
+                 on_swap=None):
         if not uri.startswith("s3://"):
             raise ValueError("CLHEAR_DB_S3_URI must be an s3:// URI")
         self.uri, self.local_path, self.poll_s, self.clock = uri, local_path, poll_s, clock
+        self.on_swap = on_swap
         self._s3 = s3_client
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -75,9 +77,12 @@ class SnapshotHolder:
             changed = force or head["ETag"] != self.state["etag"] or not os.path.exists(self.local_path)
             if changed:
                 self._download(head)
-                from app.clhear import db
+                if self.on_swap is not None:
+                    self.on_swap()
+                else:
+                    from app.clhear import db
 
-                db.dispose_engine()
+                    db.dispose_engine()
                 metadata = head.get("Metadata") or {}
                 self.state.update(etag=head["ETag"], revision=metadata.get("revision"), sha256=metadata.get("sha256"),
                                   loaded_at=datetime.now(timezone.utc).isoformat())
@@ -182,6 +187,19 @@ def main() -> None:
     holder.refresh(force=True)
     log.info("viewer snapshot ready in %.1fs", time.monotonic() - started)
     holder.start()
+    release_uri = os.environ.get("CLHEAR_RELEASE_DB_S3_URI", "")
+    if release_uri:
+        # /v1 reads the published release artifact, not the reviewers' viewer.
+        from app.clhear import release_db
+
+        release_path = os.environ.get(release_db.PATH_ENV, "/tmp/release.db")
+        release = SnapshotHolder(release_uri, release_path, poll_s=holder.poll_s, on_swap=release_db.dispose)
+        try:
+            release.refresh(force=True)
+            os.environ[release_db.PATH_ENV] = release_path
+            release.start()
+        except Exception as exc:  # noqa: BLE001 — the viewer still serves; /v1 falls back to it
+            log.warning("release snapshot unavailable: %s: %s", type(exc).__name__, str(exc)[:300])
     uvicorn.run(build(holder), host="0.0.0.0", port=int(os.environ.get("PORT", "8080")),
                 proxy_headers=True, forwarded_allow_ips="*", log_level="info", access_log=False)
 

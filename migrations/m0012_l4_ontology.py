@@ -46,6 +46,8 @@ def upgrade(conn: Connection) -> None:
 
     build_ontology_in(conn, check_registers=False, publish=False)
 
+    from app.clhear.l1.scopes import active
     from app.clhear.l4.validate import store_sample_profiles_in
 
-    store_sample_profiles_in(conn)
+    if not active():  # a scoped corpus stores only tenant-submitted profiles
+        store_sample_profiles_in(conn)

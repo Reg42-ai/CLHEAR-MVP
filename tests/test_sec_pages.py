@@ -127,7 +127,7 @@ RISK_ALERT = ("Initial Observations Regarding Advisers Act Marketing Rule Compli
               "statements of material fact; (2) omission of material facts or misleading inference.")
 
 
-def test_l8_reference_rows_quote_the_in_force_clause_and_are_not_peer_data(client, engine):
+def test_l8_reference_rows_quote_each_in_force_block_and_are_not_peer_data(client, engine):
     from app.clhear.l1.source_registry import seed
     from app.clhear.l8.cohorts import K
     from app.clhear.l8.reference import reference_rows
@@ -135,29 +135,15 @@ def test_l8_reference_rows_quote_the_in_force_clause_and_are_not_peer_data(clien
     seed(engine)
     assert reference_rows(engine) == []
     _in_force(engine, "sec/exams/risk-alert-041724", RISK_ALERT)
-    rows = {row["id"]: row for row in reference_rows(engine)}
-    assert set(rows) == {"REF-SEC-EXAMS-2024-01", "REF-SEC-EXAMS-2024-02", "REF-SEC-EXAMS-2024-06", "REF-SEC-EXAMS-2024-07"}
-    for row in rows.values():
-        assert row["quote"] in RISK_ALERT and row["peer_data"] is False
-        assert row["source"]["clause_ref"] == "sec/exams/risk-alert-041724/publication"
-    assert rows["REF-SEC-EXAMS-2024-01"]["block_id"] == "BLK-MKT-CLAIMS-REVIEW"
-    assert rows["REF-SEC-EXAMS-2024-07"]["block_id"] is None
+    [row] = reference_rows(engine)
+    assert row["quote"] == " ".join(RISK_ALERT.split()) and row["peer_data"] is False and row["kind"] == "finding"
+    assert row["source"]["clause_ref"] == "sec/exams/risk-alert-041724/publication"
+    assert row["block_id"] is None  # no L3 block shares enough words yet
 
     auth = {"Authorization": "Bearer dev-os-key", "X-App-Id": "os-dev"}
     body = client.get("/v1/releases/clhear-vLIVE/L8/benchmarks", headers=auth)
     assert body.status_code == 200, body.text
     body = body.json()
     assert body["layer_status"] == "reference" and body["banner"]["data_status"] == "reference"
-    assert "not peer data" in body["view"] and len(body["items"]) == 4
+    assert "not peer data" in body["view"] and len(body["items"]) == 1
     assert body["peer_aggregates"] == {"status": "locked", "k_threshold": K}
-
-
-def test_scores_can_be_limited_to_the_demo_obligations(engine):
-    from app.clhear.l7.score import score_obligations
-    from tests.test_influencer_demo import _seed_clauses
-    from app.clhear.demo_corpus import LEGAL_SOURCE_KEYS, derive_demo
-
-    _seed_clauses(engine)
-    derive_demo(engine)
-    assert score_obligations(engine, source_keys=("cfr/16/255",))["obligations"] == 5
-    assert score_obligations(engine, source_keys=LEGAL_SOURCE_KEYS)["obligations"] == 7

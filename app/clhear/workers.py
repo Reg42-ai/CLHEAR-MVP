@@ -372,7 +372,6 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
     if source_keys is not None and not (isinstance(source_keys, list) and source_keys
                                         and all(isinstance(k, str) and k for k in source_keys)):
         raise ValueError("AdapterRunRequested.source_keys must be a non-empty list of source keys")
-    demo_job = payload.get("job_id") if envelope.producer == "l0.demo" and not cycle_id else None
     try:
         result = run_adapter_fleet(
             engine, payload.get("adapter", envelope.subject_ref), gateway,
@@ -386,25 +385,17 @@ def handle_adapter_run(engine: Engine, gateway: Gateway, envelope: Envelope) -> 
     except Exception as exc:
         if context:
             cycles.unhandled_child_error(engine, context, envelope, exc)
-        # A fixed-scope job with unresolved acceptance still leaves its imported
-        # sources in force; derive what is there, once per job.
-        if demo_job and isinstance(exc, AdapterRunIncomplete):
-            from app.clhear.demo_corpus import request_demo_derive
-            request_demo_derive(engine, job_id=demo_job)
         raise
-    if demo_job:
-        from app.clhear.demo_corpus import request_demo_derive
-        result["demo_derive_event_id"] = request_demo_derive(engine, job_id=demo_job)
     return result
+
+
+RETIRED_DEMO_DERIVE = {"status": "retired",
+                       "reason": "The demo corpus is built from L1 up in its own database by app.clhear.scope_build."}
 
 
 def handle_demo_derive(engine: Engine, gateway: Gateway, envelope: Envelope) -> dict:
-    """L0: derive L2–L5 for the demo sources, then publish their per-layer status."""
-    from app.clhear.demo_corpus import derive_demo, publish_demo_status
-
-    result = derive_demo(engine)
-    result["status_uri"] = publish_demo_status(engine)
-    return result
+    """Retired: a queued request from before the scoped build is acknowledged, not run."""
+    return dict(RETIRED_DEMO_DERIVE)
 
 
 def handle_l1_cycle_requested(engine, gateway, envelope):
@@ -1272,11 +1263,7 @@ def cli(argv=None) -> int:
         print(json.dumps(request_demo_import(engine, args.verification_id)))
         return 0
     if args.derive_demo:
-        from app.clhear.db import get_engine, run_migrations
-        from app.clhear.demo_corpus import derive_demo
-        engine = get_engine()
-        run_migrations(engine)
-        print(json.dumps(derive_demo(engine), default=str))
+        print(json.dumps(RETIRED_DEMO_DERIVE))
         return 0
     if args.verify_deployment:
         if not args.verification_id:

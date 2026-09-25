@@ -192,9 +192,6 @@ _src("us-marketing", "usc/15/ftc-act-45", "FTC Act §5",
      "law", "US", "US Congress (GPO)", _FTC_ACT_45, "govinfo_us", "root", "binding",
      ["marketing", "consumer", "us"], ["US-MKT-001"], 2, rights_basis="public_domain",
      fetch={"usc_title": "15", "usc_sections": ["45"], "edition": "2023", "url_template": _USC_15_CH2_SUBCH_I})
-# Clauses of a source that bind regulated persons. §45(b)–(n) set out Commission
-# and court procedure; L1 keeps their text, L2 derives no obligation from them.
-DUTY_CLAUSES = {"usc/15/ftc-act-45": frozenset({"sec45(a)"})}
 # Evidence for the demo's upper layers, on the existing SEC lanes. L7 reads the
 # Marketing Rule sweep releases as enforcement outcomes; L8 reads the Division of
 # Examinations risk alert as its reference benchmark. Neither tier is binding, so

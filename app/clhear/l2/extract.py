@@ -25,7 +25,7 @@ from app.clhear.platform.ids import next_id
 
 log = logging.getLogger("clhear.l2")
 
-EXTRACTOR_VERSION = "deterministic-v1"
+EXTRACTOR_VERSION = "deterministic-v2"
 
 # Duty modality patterns, strongest first. Case-insensitive, matched against
 # the clause text. Deliberately conservative: high precision over recall.
@@ -34,6 +34,8 @@ MODALITY_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
     ("must", re.compile(r"\bmust\b", re.I)),
     ("shall", re.compile(r"\bshall\b", re.I)),
     ("required", re.compile(r"\b(?:is|are) (?:required|obliged|obligated) to\b", re.I)),
+    # Statutory prohibitions: "are hereby declared unlawful", "It shall be unlawful for any investment adviser".
+    ("prohibited", re.compile(r"\b(?:is|are) (?:hereby )?(?:declared )?(?:unlawful|prohibited)\b|\bshall be unlawful\b", re.I)),
     ("ensure", re.compile(r"\b(?:is|are) responsible for ensuring\b", re.I)),
 )
 
@@ -42,6 +44,33 @@ NON_DUTY_HEADINGS = re.compile(
     r"\b(?:interpretation|definitions?|citation|commencement|extent|title|scope|"
     r"subject[- ]matter|entry into force|transitional|amendments? to|repeals?|"
     r"short title|signature|annex|recital)\b",
+    re.I,
+)
+
+# A provision whose modal governs a public authority — the Commission's powers,
+# a court's review, an agency's procedure — states no duty of a regulated
+# person: "Whenever the Commission shall have reason to believe ...",
+# "The Commission, by order, shall censure ...". Read in the words just
+# before the first modal, so "it shall be unlawful for any investment adviser"
+# and "Member States shall ensure that investment firms" stay duties.
+AUTHORITY_SUBJECT = re.compile(
+    r"\b(?:the|such|any)\s+(?:Commission|Supreme Court|court of appeals|district court|courts?|"
+    r"Attorney General|Secretary|Director)\b[^.;]{0,40}$",
+    re.I,
+)
+
+# Scope, deeming, construction and penalty-schedule provisions use modals
+# without imposing conduct: "The provisions of subsection (a) shall not apply
+# to", "shall be deemed", "the maximum amount of penalty ... shall be $5,000".
+CONSTRUCTION_SUBJECT = re.compile(
+    r"(?:\b(?:the provisions? of|any provision of|nothing in|the (?:maximum )?amount of (?:the )?penalty|the notice)\b"
+    r"[^.;]{0,80}|\bthis (?:subsection|section|paragraph|subparagraph)\s*)$",
+    re.I,
+)
+NON_DUTY_PREDICATE = re.compile(
+    r"(?:must|shall|may)\s+(?:not\s+)?(?:apply\s+(?:to|only|in|with respect|where)|be deemed|be construed|be treated|"
+    r"be considered|be subject to|"
+    r"include|mean|become final|have no authority|have jurisdiction|in anywise)\b",
     re.I,
 )
 
@@ -83,13 +112,20 @@ def detect_duty(text: str, ref: str, heading: str = "") -> tuple[str, float] | N
     if not text or len(text.strip()) < 40:
         return None
     probe = f"{heading} {ref}"
-    if NON_DUTY_HEADINGS.search(probe) or NON_DUTY_HEADINGS.search(text[:120]):
+    # The heading line, not a cross-reference in the body ("section 80b-3a of this title").
+    if NON_DUTY_HEADINGS.search(probe) or NON_DUTY_HEADINGS.search(text.strip().split("\n", 1)[0][:120]):
         return None
+    first = min((m for _, pattern in MODALITY_PATTERNS if (m := pattern.search(text))), key=lambda m: m.start(), default=None)
+    if first is not None:
+        subject = text[max(0, first.start() - 160):first.start()]
+        if (AUTHORITY_SUBJECT.search(subject) or CONSTRUCTION_SUBJECT.search(subject)
+                or NON_DUTY_PREDICATE.match(text, first.start())):
+            return None
     for modality, pattern in MODALITY_PATTERNS:
         match = pattern.search(text)
         if not match:
             continue
-        confidence = 0.85 if modality in ("must", "must-not") else 0.75
+        confidence = 0.85 if modality in ("must", "must-not", "prohibited") else 0.75
         # Duty stated early in the clause is a stronger signal than one buried
         # in a proviso; definitions sneak modals into subordinate positions.
         if match.start() > len(text) * 0.6:
@@ -128,10 +164,7 @@ def container_clause_ids(conn, source_version_id: int) -> set[int]:
 def extract_source(engine: Engine, source_row, version_row) -> list[Candidate]:
     """Candidates for one in-force source version. Binding tier only; atomic
     (leaf) clauses only — see :func:`container_clause_ids`."""
-    from app.clhear.l1.source_registry import DUTY_CLAUSES
-
     open_source = source_row.license == "open"
-    scope = DUTY_CLAUSES.get(source_row.key)
     out: list[Candidate] = []
     with engine.connect() as conn:
         rows = conn.execute(
@@ -143,8 +176,6 @@ def extract_source(engine: Engine, source_row, version_row) -> list[Candidate]:
     for row in rows:
         text = row.text or ""
         if row.id in containers:
-            continue
-        if scope is not None and (row.ref or "") not in scope:
             continue
         if not open_source or not row.public_ok:
             # Restricted: we cannot inspect text; no machine derivation.

@@ -11,6 +11,27 @@ from app.clhear.l1.adapters.base import CLAUSE_TYPES, DocNode
 from app.clhear.l1.adapters.html_document import OMIT
 
 
+
+# "§80b–3." prints an en dash inside the section number; it is one number.
+USC_SECTION = r"\s*§\s*(\d+[A-Za-z0-9]*(?:\s*[-–—]\s*[A-Za-z0-9]+)*)"
+# GPO head classes, outermost first. Each nests under the level before it.
+_USC_LEVELS = {"subsection-head": 0, "paragraph-head": 1, "subparagraph-head": 2, "clause-head": 3, "subclause-head": 4}
+
+
+def _usc_number(printed: str) -> str:
+    return re.sub(r"\s*[–—-]\s*", "-", printed)
+
+
+def _usc_level_ref(section: str, levels: list[str], classes: list[str], number: str) -> str:
+    """sec45(b), sec80b-3(i)(1)(A): a head's reference is its enclosing heads plus its own number."""
+    depth = next((d for cls, d in _USC_LEVELS.items() if cls in classes), None)
+    if depth is None or depth > len(levels):
+        return ""
+    del levels[depth:]
+    levels.append(number)
+    return section + "".join(f"({n})" for n in levels)
+
+
 def _kind(tag, attrs):
     identity = attrs.get("id", "")
     number = r"(?:[IVXLC]+|\d+)"
@@ -108,6 +129,7 @@ def parse(content, source_key, part=1):
     soup = BeautifulSoup(content, "html.parser")
     seen = set()
     usc_section = None
+    usc_levels: list[str] = []
 
     def visit(el, path):
         nonlocal usc_section
@@ -120,12 +142,13 @@ def parse(content, source_key, part=1):
         ref = attrs.get("id", "")
         if source_key.startswith("usc/") and tag in {"h3", "h4"}:
             text = el.get_text()
-            section = re.match(r"\s*§\s*(\d+[A-Za-z0-9-]*)", text)
-            subsection = re.match(r"\s*\(([a-z0-9]+)\)", text)
+            section = re.match(USC_SECTION, text)
+            subsection = re.match(r"\s*\(([A-Za-z0-9]+)\)", text)
             if tag == "h3" and section:
-                ref = usc_section = "sec" + section[1]
-            elif tag == "h4" and subsection and usc_section and "subsection-head" in attrs.get("class", "").split():
-                ref = usc_section + "(" + subsection[1] + ")"
+                ref = usc_section = "sec" + _usc_number(section[1])
+                usc_levels.clear()
+            elif tag == "h4" and subsection and usc_section:
+                ref = _usc_level_ref(usc_section, usc_levels, attrs.get("class", "").split(), subsection[1]) or ref
         if ref and ref in seen:
             ref += "@dom:" + path
         if not ref and kind in CLAUSE_TYPES:
@@ -181,6 +204,7 @@ def original_records(content, source_key, part=1):
     reader.feed(_decode_html(content))
     records, seen = [], set()
     usc_section = None
+    usc_levels: list[str] = []
 
     def visit(el, path, parent):
         nonlocal usc_section
@@ -198,14 +222,15 @@ def original_records(content, source_key, part=1):
                 return "".join(c if isinstance(c, str) else visible(c) for c in n["children"])
             printed = visible(el).strip()
             if tag == "h3" and printed.startswith("§"):
-                number = re.match(r"§\s*([0-9]+[A-Za-z0-9-]*)", printed)
+                number = re.match(USC_SECTION, printed)
                 if number:
-                    usc_section = "sec" + number[1]
+                    usc_section = "sec" + _usc_number(number[1])
+                    usc_levels.clear()
                     ref = usc_section
-            elif tag == "h4" and usc_section and "subsection-head" in attrs.get("class", "").split():
-                number = re.match(r"\(([a-z0-9]+)\)", printed)
+            elif tag == "h4" and usc_section:
+                number = re.match(r"\(([A-Za-z0-9]+)\)", printed)
                 if number:
-                    ref = usc_section + "(" + number[1] + ")"
+                    ref = _usc_level_ref(usc_section, usc_levels, attrs.get("class", "").split(), number[1]) or ref
         if ref and ref in seen:
             ref += "@dom:" + path
         if not ref and kind in CLAUSE_TYPES:

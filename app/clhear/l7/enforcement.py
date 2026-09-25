@@ -101,11 +101,64 @@ STATIC_ALIASES: dict[str, tuple[str, ...]] = {
     "FINRA": ("finra/rule/", "finra/rulebook"), "FINRA Rule": ("finra/rule/", "finra/rulebook"),
     "31 CFR": ("cfr/31/chapter-x",), "Bank Secrecy Act": ("cfr/31/chapter-x",),
 }
-# Instruments a notice names without a provision number. Each is one rule whose
-# every live obligation the mention reaches, at instrument confidence.
-WHOLE_INSTRUMENT_ALIASES: dict[str, tuple[str, ...]] = {
-    "Marketing Rule": ("cfr/17/ia-marketing",),
-}
+class AliasIndex(list):
+    """(alias, source keys) pairs, longest first. ``whole`` maps the names a
+    notice uses for an entire instrument ("the Marketing Rule") to its source,
+    mined from the interpretation sources in L1 (:func:`mine_instrument_names`)."""
+
+    def __init__(self, items=(), whole=None):
+        super().__init__(items)
+        self.whole = dict(whole or {})
+
+
+_RULE_CITE = re.compile(r"\brule\s+(\d+[a-z]?(?:\(\d+\))*-\d+)", re.I)
+_NAMED_RULE = re.compile(r"\b([a-z]+)\s+rule\b", re.I)
+_NOT_A_NAME = frozenset({"the", "this", "that", "a", "an", "final", "amended", "proposed", "new", "same", "such",
+                         "each", "any", "our", "its", "their", "of", "under", "and", "or", "former", "current", "exchange",
+                         "commission", "sec", "general", "applicable"})
+MIN_NAME_EVIDENCE = 3
+
+
+def mine_instrument_names(conn: Connection) -> dict[str, dict]:
+    """Names for whole instruments, read from interpretation documents in L1.
+
+    A staff FAQ that says "marketing rule" 21 times and cites "rule 206(4)-1"
+    28 times, more than every other rule together, names that rule. The
+    rule number must resolve to exactly one in-force source clause."""
+    texts: dict[str, list[str]] = {}
+    for r in conn.execute(sa.select(sources.c.key, clauses.c.text)
+                          .join(source_versions, source_versions.c.source_id == sources.c.id)
+                          .join(clauses, clauses.c.source_version_id == source_versions.c.id)
+                          .where(sources.c.kind == "guidance", source_versions.c.status == "in_force")):
+        texts.setdefault(r.key, []).append(r.text or "")
+    refs = [(r.key, r.ref) for r in conn.execute(
+        sa.select(sources.c.key, clauses.c.ref)
+        .join(source_versions, source_versions.c.source_id == sources.c.id)
+        .join(clauses, clauses.c.source_version_id == source_versions.c.id)
+        .where(sources.c.kind != "enforcement", sources.c.kind != "guidance", source_versions.c.status == "in_force"))]
+    out: dict[str, dict] = {}
+    for key, parts in texts.items():
+        text = " ".join(parts)
+        cites: dict[str, int] = {}
+        for m in _RULE_CITE.finditer(text):
+            cites[m.group(1)] = cites.get(m.group(1), 0) + 1
+        names: dict[str, int] = {}
+        for m in _NAMED_RULE.finditer(text):
+            word = m.group(1).lower()
+            if word not in _NOT_A_NAME:
+                names[word] = names.get(word, 0) + 1
+        if not cites or not names:
+            continue
+        rule, rule_n = max(cites.items(), key=lambda kv: kv[1])
+        word, word_n = max(names.items(), key=lambda kv: kv[1])
+        if rule_n < MIN_NAME_EVIDENCE or word_n < MIN_NAME_EVIDENCE or rule_n * 2 < sum(cites.values()):
+            continue
+        targets = sorted({src for src, ref in refs if (ref or "").endswith(rule)})
+        if len(targets) != 1:
+            continue
+        out[f"{word.title()} Rule"] = {"source_keys": (targets[0],), "evidence": key,
+                                      "name_mentions": word_n, "rule": rule, "rule_mentions": rule_n}
+    return out
 _UNIT = r"(?:rule|rules|regulation|regulations|reg\.|article|articles|art\.|section|sections|s\.|§|paragraph|para\.|principle|principles)"
 _REF = r"(?P<ref>\d+[A-Za-z]?(?:[.\-]\d+[A-Za-z]?)*(?:\s*\([a-zA-Z0-9]+\))*\s?[RGED]?)"
 _REF_LIST = r"(?P<refs>" + _REF.replace("(?P<ref>", "(?:") + r"(?:\s*(?:,|and|&)\s*" + _REF.replace("(?P<ref>", "(?:") + r")*)"
@@ -122,7 +175,10 @@ def _norm_tokens(ref: str) -> tuple[str, ...]:
 
 
 def _alias_index(conn: Connection) -> list[tuple[str, tuple[str, ...]]]:
-    aliases: dict[str, set[str]] = {k: set(v) for k, v in STATIC_ALIASES.items()}
+    from app.clhear.l1.scopes import active
+
+    # A scoped corpus names instruments only by what its own L1 sources print.
+    aliases: dict[str, set[str]] = {} if active() else {k: set(v) for k, v in STATIC_ALIASES.items()}
     for r in conn.execute(sa.select(sources.c.key, sources.c.short_name, sources.c.instrument, sources.c.name, sources.c.kind)):
         if r.kind == "enforcement":
             continue
@@ -132,7 +188,7 @@ def _alias_index(conn: Connection) -> list[tuple[str, tuple[str, ...]]]:
                 aliases.setdefault(name, set()).add(r.key)
     out = [(a, tuple(sorted(keys))) for a, keys in aliases.items() if keys]
     out.sort(key=lambda x: -len(x[0]))
-    return out
+    return AliasIndex(out, whole=mine_instrument_names(conn))
 
 
 def _alias_regex(aliases: list[tuple[str, tuple[str, ...]]]) -> re.Pattern:
@@ -165,9 +221,10 @@ def extract_citations(text: str, aliases: list[tuple[str, tuple[str, ...]]]) -> 
                 continue
             seen.add(key)
             out.append({"text": m.group(0).strip(), "instrument": canon, "ref": ref, "source_keys": list(keys)})
-    for name, keys in WHOLE_INSTRUMENT_ALIASES.items():
-        if re.search(rf"\b{re.escape(name)}\b", text) and not any(c["instrument"].lower() == name.lower() for c in out):
-            out.append({"text": name, "instrument": name, "ref": "", "source_keys": list(keys), "whole_instrument": True})
+    for name, named in getattr(aliases, "whole", {}).items():
+        if re.search(rf"\b{re.escape(name)}\b", text, re.I) and not any(c["instrument"].lower() == name.lower() for c in out):
+            out.append({"text": name, "instrument": name, "ref": "", "source_keys": list(named["source_keys"]),
+                        "whole_instrument": True, "named_by": named["evidence"]})
     return out
 
 

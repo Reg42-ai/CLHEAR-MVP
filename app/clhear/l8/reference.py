@@ -1,64 +1,107 @@
-"""L8 reference benchmark: what regulators found across examined firms.
+"""L8 reference benchmark: what regulators found and what they advise, read from L1.
 
-Not peer data. Each row quotes an in-force L1 clause of a public examination
-report and names the L3 block the finding concerns. A curated row whose quote
-is not in the current clause text is not emitted. Aggregates over member data
-keep the k-anonymity gate (``l8.cohorts.K``); nothing here reads member data.
+Not peer data. Every row is one in-force block of a public examination report
+or guidance publication (the scope's ``reference`` sources), quoted exactly.
+Its L3 block is the one whose name, purpose and required obligations share the
+most words with the quote; a row that shares too little names no block.
+Aggregates over member data keep the k-anonymity gate (``l8.cohorts.K``);
+nothing here reads member data.
 """
 from __future__ import annotations
 
+import re
+
 import sqlalchemy as sa
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
-from app.clhear.curated import load
+LABEL = "reference benchmark: regulator examination findings and guidance; not peer data"
+MIN_QUOTE_CHARS = 20
+MIN_BLOCK_SIMILARITY = 0.08
+_STOP = frozenset("""the and for with that this from are was were been has have had not but any all its their which
+such other than into when where who whom what will shall may must can could should would about also each
+those these them they there here more most some only very over under upon between within without via per
+our your you his her him she he it is be as of to in on at by or an a if so do does did""".split())
 
-LABEL = "reference benchmark: regulator examination findings; not peer data"
+
+def _words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]{3,}", (text or "").lower()) if w not in _STOP}
 
 
-def _clause_texts(conn, source_keys: set[str]) -> dict[str, dict]:
+def reference_source_keys(conn: Connection) -> list[str]:
+    from app.clhear.l1.models import sources
+    from app.clhear.l1.scopes import active, role
+
+    if active():
+        return list(role("reference"))
+    rows = conn.execute(sa.select(sources.c.key, sources.c.topics).where(sources.c.kind == "guidance")).all()
+    return sorted(key for key, topics in rows if "examinations" in (topics or []))
+
+
+def _blocks(conn: Connection, source_keys: list[str]) -> list[dict]:
     from app.clhear.l1.models import clauses, source_versions, sources
 
-    out: dict[str, dict] = {}
     rows = conn.execute(
-        sa.select(sources.c.key, sources.c.canonical_url, source_versions.c.version_label, clauses.c.ref, clauses.c.text)
+        sa.select(sources.c.key, sources.c.canonical_url, sources.c.topics, source_versions.c.version_label,
+                  clauses.c.id, clauses.c.ref, clauses.c.text)
         .join(source_versions, source_versions.c.source_id == sources.c.id)
         .join(clauses, clauses.c.source_version_id == source_versions.c.id)
         .where(sources.c.key.in_(source_keys), source_versions.c.status == "in_force", clauses.c.valid_to.is_(None))
-        .order_by(source_versions.c.id)
+        .order_by(sources.c.key, clauses.c.ordering)
     ).mappings()
-    for row in rows:
-        out.setdefault(row["key"], {"url": row["canonical_url"], "version_label": row["version_label"], "clauses": []})
-        out[row["key"]]["clauses"].append((row["ref"], row["text"] or ""))
+    return [dict(r) for r in rows if len(" ".join((r["text"] or "").split())) >= MIN_QUOTE_CHARS]
+
+
+def _block_vocabulary(conn: Connection) -> list[tuple[str, str, set[str]]]:
+    from app.clhear.derived_models import blocks, obligations, requires
+
+    statements: dict[str, list[str]] = {}
+    for r in conn.execute(sa.select(requires.c.block_id, obligations.c.statement)
+                          .join(obligations, obligations.c.id == requires.c.obligation_id)
+                          .where(requires.c.valid_to.is_(None), obligations.c.status.in_(("derived", "validated")))):
+        statements.setdefault(r.block_id, []).append(r.statement or "")
+    out = []
+    for r in conn.execute(sa.select(blocks.c.id, blocks.c.name, blocks.c.purpose).where(blocks.c.valid_to.is_(None))):
+        vocabulary = _words(" ".join([r.name or "", r.purpose or "", *statements.get(r.id, [])]))
+        if vocabulary:
+            out.append((r.id, r.name or "", vocabulary))
+    return out
+
+
+def derived_reference_rows(conn: Connection) -> list[dict]:
+    blocks = _block_vocabulary(conn)
+    out = []
+    for row in _blocks(conn, reference_source_keys(conn)):
+        quote = " ".join((row["text"] or "").split())
+        words = _words(quote)
+        best, score = None, 0.0
+        for block_id, name, vocabulary in blocks:
+            overlap = len(words & vocabulary) / len(words | vocabulary) if words else 0.0
+            if overlap > score or (overlap == score and best is not None and block_id < best[0]):
+                best, score = (block_id, name), overlap
+        matched = best if best is not None and score >= MIN_BLOCK_SIMILARITY else None
+        examination = "examinations" in (row["topics"] or [])
+        out.append({
+            "id": f"REF:{row['key']}#{row['ref']}",
+            "label": LABEL,
+            "kind": "finding" if examination else "practice",
+            "finding": quote if examination else "",
+            "practice": "" if examination else quote,
+            "quote": quote,
+            "source": {"source_key": row["key"], "clause_ref": row["ref"], "clause_id": row["id"],
+                       "url": row["canonical_url"], "version_label": row["version_label"]},
+            "block_id": matched[0] if matched else None,
+            "block_name": matched[1] if matched else "",
+            "similarity": round(score, 4),
+            "peer_data": False,
+        })
     return out
 
 
 def reference_rows(engine: Engine, *, blueprint: dict | None = None) -> list[dict]:
-    from app.clhear.derived_models import blocks
-
-    curated = load("l8_reference")
     on_blueprint = {item.get("block_id") for item in (blueprint or {}).get("items") or []}
     with engine.connect() as conn:
-        texts = _clause_texts(conn, {row["source_key"] for row in curated})
-        names = dict(conn.execute(sa.select(blocks.c.id, blocks.c.name).where(
-            blocks.c.id.in_([row["block_id"] for row in curated if row.get("block_id")]))).all())
-    out = []
-    for row in curated:
-        source = texts.get(row["source_key"])
-        hit = next(((ref, text) for ref, text in (source or {}).get("clauses", []) if row["quote"] in text), None)
-        if hit is None:
-            continue
-        block_id = row.get("block_id")
-        out.append({
-            "id": row["id"],
-            "label": LABEL,
-            "finding": row["finding"],
-            "practice": row["practice"],
-            "quote": row["quote"],
-            "source": {"source_key": row["source_key"], "clause_ref": hit[0], "url": source["url"],
-                       "version_label": source["version_label"]},
-            "block_id": block_id,
-            "block_name": names.get(block_id, "") if block_id else "",
-            "on_blueprint": (block_id in on_blueprint) if blueprint is not None else None,
-            "peer_data": False,
-        })
-    return out
+        rows = derived_reference_rows(conn)
+    for row in rows:
+        row["on_blueprint"] = (row["block_id"] in on_blueprint) if blueprint is not None and row["block_id"] else (
+            False if blueprint is not None else None)
+    return rows
