@@ -6,6 +6,8 @@ app_id:secret:read:l1+read:l2 when later layers ship.
 """
 from __future__ import annotations
 
+import hmac
+
 from fastapi import Header, HTTPException
 
 from app.clhear.settings import get_settings
@@ -50,7 +52,7 @@ def require_app(
     if not x_app_id or x_app_id not in keys:
         raise HTTPException(status_code=401, detail="Unknown or missing X-App-Id")
     expected = keys[x_app_id]["secret"]
-    if not token or token != expected:
+    if not token or not hmac.compare_digest(token.encode(), expected.encode()):
         raise HTTPException(status_code=401, detail="Invalid bearer token")
     return {"app_id": x_app_id, "scopes": sorted(keys[x_app_id]["scopes"])}
 

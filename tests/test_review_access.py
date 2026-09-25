@@ -75,6 +75,60 @@ def test_identity_headers_do_not_grant_reviewer_access(restricted_client, header
     assert response.status_code == 401
 
 
+APP_KEY = "os-test-key-with-more-than-thirty-two-characters"
+
+
+@pytest.fixture()
+def app_keys(restricted_settings, monkeypatch):
+    monkeypatch.setenv("CLHEAR_APP_KEYS", f"os-dev:{APP_KEY}")
+    get_settings.cache_clear()
+
+
+def test_app_key_reads_v1_release_under_restricted_access(restricted_client, app_keys, monkeypatch):
+    from app.clhear import releases
+
+    monkeypatch.setattr(releases, "get_latest", lambda engine=None: {"id": "2026.09.13", "layers": ["L0", "L1"]})
+    response = restricted_client.get("/v1/releases/latest",
+                                     headers={"Authorization": f"Bearer {APP_KEY}", "X-App-Id": "os-dev"})
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == "2026.09.13"
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.parametrize("headers,detail", [
+    ({"Authorization": "Bearer wrong-key", "X-App-Id": "os-dev"}, "Invalid bearer token"),
+    ({"Authorization": f"Bearer {APP_KEY}", "X-App-Id": "unknown-app"}, "Unknown or missing X-App-Id"),
+])
+def test_app_key_bypass_still_requires_a_valid_key(restricted_client, app_keys, headers, detail):
+    response = restricted_client.get("/v1/releases/latest", headers=headers)
+    assert response.status_code == 401
+    assert response.json()["detail"] == detail
+
+
+def test_app_key_headers_do_not_open_non_v1_routes(restricted_client, app_keys):
+    headers = {"Authorization": f"Bearer {APP_KEY}", "X-App-Id": "os-dev"}
+    for path in ("/api/clhear/sources", "/l1/sources", "/v1x/releases", "/graphql?query=%7B__typename%7D"):
+        assert restricted_client.get(path, headers=headers).status_code == 401, path
+
+
+def test_every_v1_route_requires_an_app_key(restricted_settings):
+    from fastapi.routing import APIRoute
+
+    from app.clhear.app_api import router as v1_router
+    from app.clhear.app_auth import require_app
+    from app.main import create_app
+
+    def depends_on(dependant, target):
+        return any(d.call is target or depends_on(d, target) for d in dependant.dependencies)
+
+    guarded = {r.path for r in v1_router.routes if isinstance(r, APIRoute) and depends_on(r.dependant, require_app)}
+    declared = {r.path for r in v1_router.routes if isinstance(r, APIRoute)}
+    assert declared and guarded == declared
+    served = {p for p in create_app().openapi()["paths"] if p == "/v1" or p.startswith("/v1/")}
+    # Every /v1 path the app serves comes from the guarded router, never from another one.
+    assert served and served <= guarded
+
+
 def test_allowlisted_signed_session_reads_real_handlers_without_shared_caching(restricted_client):
     _session(restricted_client)
     for path in ("/", "/l1", "/api/clhear/sources", "/api/clhear/layers", "/graphql?query=%7B__typename%7D"):
