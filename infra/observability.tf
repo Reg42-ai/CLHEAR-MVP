@@ -99,6 +99,25 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx_ratio" {
   }
 }
 
+# Latency budget: API p95 above 1 s for 15 minutes. app/clhear/latency_probe.py
+# checks every page and route against its own budget from inside the VPC.
+resource "aws_cloudwatch_metric_alarm" "api_latency_p95" {
+  count               = local.deploy_webui ? 1 : 0
+  alarm_name          = "${var.name_prefix}-api-latency-p95"
+  alarm_description   = "Public API p95 latency above 1 s for 15 minutes."
+  namespace           = "AWS/ApiGateway"
+  metric_name         = "Latency"
+  dimensions          = { ApiId = aws_apigatewayv2_api.webui[0].id }
+  extended_statistic  = "p95"
+  period              = 300
+  evaluation_periods  = 3
+  threshold           = 1000
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
 # DR drill (item 17): the nightly restore must run and pass. No metric for two
 # days = the drill did not run = breaching (a drill that never ran proves nothing).
 resource "aws_cloudwatch_metric_alarm" "dr_drill_failed" {
