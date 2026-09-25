@@ -80,3 +80,27 @@ def test_answers_move_from_a_staged_engine_to_the_live_one(monkeypatch):
     assert answer(live, "sources") == "SOURCES" and calls == ["sources"]
     assert snapshot_cache.answers_for(staged) == {}
     snapshot_cache.clear()
+
+
+def test_a_full_cache_drops_the_least_recently_used_answer_not_all_of_them(monkeypatch):
+    calls = []
+
+    @snapshot_cache.cached("probe-lru")
+    def answer(engine, n):
+        calls.append(n)
+        return n
+
+    snapshot_cache.clear()
+    monkeypatch.setenv("CLHEAR_DB_S3_URI", "s3://private/webui/l1/candidate.db")
+    monkeypatch.setattr(snapshot_cache, "MAX_ENTRIES", 3)
+    engine = object()
+    for n in (1, 2, 3):
+        answer(engine, n)
+    answer(engine, 1)
+    answer(engine, 4)
+    calls.clear()
+    answer(engine, 1), answer(engine, 3), answer(engine, 4)
+    assert calls == []
+    answer(engine, 2)
+    assert calls == [2]
+    snapshot_cache.clear()

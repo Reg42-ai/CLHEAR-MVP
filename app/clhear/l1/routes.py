@@ -199,11 +199,19 @@ def _audit_text_read(conn, request, source, version, access, route, ids):
 @router.get("/api/clhear/sources")
 def list_sources(publisher: str | None = None) -> list[dict]:
     """Library view: families -> members -> latest-version summary."""
-    return _sources_for_engine(get_engine(), publisher)
+    families = _sources_for_engine(get_engine())
+    if not publisher:
+        return families
+    out = []
+    for family in families:
+        members = [m for m in family["members"] if publisher in m["publisher_ids"] or publisher == m["publisher"]]
+        if members:
+            out.append({**family, "members": members})
+    return out
 
 
 @snapshot_cache.cached("sources")
-def _sources_for_engine(engine, publisher: str | None) -> list[dict]:
+def _sources_for_engine(engine) -> list[dict]:
     from app.clhear.l1.origin import corpus_sources_predicate, production_worker
     from app.clhear.l1.source_registry import FAMILIES
     from app.clhear.l1.publishers import publisher_ids
@@ -344,10 +352,6 @@ def _sources_for_engine(engine, publisher: str | None) -> list[dict]:
                 "members": fam_members,
             }
         )
-    if publisher:
-        for family in out:
-            family["members"] = [m for m in family["members"] if publisher in m["publisher_ids"] or publisher == m["publisher"]]
-        out = [family for family in out if family["members"]]
     return out
 
 
