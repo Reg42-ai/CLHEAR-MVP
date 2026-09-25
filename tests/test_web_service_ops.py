@@ -39,6 +39,29 @@ def test_task_definition_moves_credentials_to_ssm_references_and_pins_the_image(
     assert {"key": "clhear:git-sha", "value": SHA} in task["tags"] and {"key": "owner", "value": "clhear"} in task["tags"]
 
 
+def test_app_keys_come_from_ssm_even_when_the_lambda_no_longer_carries_them():
+    lambda_env = {k: v for k, v in LAMBDA_ENV.items() if k != "CLHEAR_APP_KEYS"}
+    web = web_service.task_definition(BASE, lambda_env, image=IMAGE, sha=SHA)["containerDefinitions"][0]
+    assert {"name": "CLHEAR_APP_KEYS", "valueFrom": web_service.secret_arn("CLHEAR_APP_KEYS")} in web["secrets"]
+
+
+def test_secret_sync_never_overwrites_rotated_app_keys_with_the_lambda_copy():
+    written = {}
+
+    class Lambda:
+        def get_function_configuration(self, FunctionName):
+            return {"Environment": {"Variables": LAMBDA_ENV}}
+
+    class Ssm:
+        def put_parameter(self, Name, Value, **_):
+            written[Name] = Value
+
+    report = web_service.sync_secrets({"lambda": Lambda(), "ssm": Ssm()})
+    assert report["CLHEAR_APP_KEYS"] == "ssm_owned"
+    assert web_service.secret_parameter("CLHEAR_APP_KEYS") not in written
+    assert written[web_service.secret_parameter("CLHEAR_SESSION_SECRET")] == LAMBDA_ENV["CLHEAR_SESSION_SECRET"]
+
+
 @pytest.mark.parametrize("image,sha", [("legacy:latest", SHA), (IMAGE, "main"), ("", SHA)])
 def test_task_definition_rejects_unpinned_code(image, sha):
     with pytest.raises(ValueError):

@@ -1,8 +1,9 @@
-"""Resolve the Infer token from SSM at runtime (Lambda has no ECS valueFrom).
+"""Resolve runtime secrets from SSM (Lambda has no ECS valueFrom).
 
 Terraform ignores SSM value changes, so baking `aws_ssm_parameter.*.value`
 into Lambda env would leave CHANGEME forever. This is the runtime equivalent
-of ECS `secrets { valueFrom = ... }`.
+of ECS `secrets { valueFrom = ... }`. App keys live only in SSM, so rotating
+them never means editing the Lambda's plaintext environment.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ log = logging.getLogger("clhear.secrets")
 
 SSM_ENV = {
     "INFER_TOKEN": "/clhear/INFER_TOKEN",
+    "CLHEAR_APP_KEYS": "/clhear/web/CLHEAR_APP_KEYS",
 }
 
 
@@ -31,7 +33,7 @@ def hydrate_ssm_env(
     environ: dict | None = None,
     getter: Callable[[str], str] | None = None,
 ) -> dict[str, str]:
-    """Fill empty/CHANGEME inference env vars from SSM. No-op under CLHEAR_LLM_PROVIDER=fake."""
+    """Fill empty/CHANGEME secret env vars from SSM. No-op under CLHEAR_LLM_PROVIDER=fake."""
     env = environ if environ is not None else os.environ
     if str(env.get("CLHEAR_PREVIEW_MODE") or "").lower() in {"true", "1", "yes", "on"}:
         return {}  # A viewer preview never needs operational inference secrets.
@@ -52,5 +54,5 @@ def hydrate_ssm_env(
             env[env_name] = value
             filled[env_name] = param
     if filled:
-        log.info("hydrated inference secrets from SSM: %s", ",".join(sorted(filled)))
+        log.info("hydrated secrets from SSM: %s", ",".join(sorted(filled)))
     return filled

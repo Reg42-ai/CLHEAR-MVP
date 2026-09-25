@@ -31,6 +31,9 @@ SECRET_PREFIX = "/clhear/web/"
 # Lambda environment names whose values are credentials.
 SECRET_ENV = ("CLHEAR_APP_KEYS", "CLHEAR_SESSION_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET",
               "CLHEAR_BEEHIIV_API_KEY", "SENTRY_DSN")
+# Kept only in SSM: the Lambda hydrates them at cold start and the service
+# references them, so a rotation is an SSM write plus a roll.
+SSM_OWNED = ("CLHEAR_APP_KEYS",)
 IDENTITY_ENV = "CLHEAR_IDENTITY_DATABASE_URL"
 ORIGIN_ENV = "CLHEAR_ORIGIN_VERIFY_SECRET"
 # Settings the service owns (not copied from the Lambda); a roll keeps them.
@@ -75,7 +78,8 @@ def task_definition(base: dict, lambda_env: dict, *, image: str, sha: str, overr
     env.update({k: previous[k] for k in SERVICE_OWNED if k in previous})
     env.update({k: v for k, v in (overrides or {}).items() if k in SERVICE_OWNED})
     web["environment"] = [{"name": k, "value": v} for k, v in sorted(env.items())]
-    web["secrets"] = [{"name": name, "valueFrom": secret_arn(name)} for name in SECRET_ENV if lambda_env.get(name)]
+    web["secrets"] = [{"name": name, "valueFrom": secret_arn(name)} for name in SECRET_ENV
+                      if lambda_env.get(name) or name in SSM_OWNED]
     # The service, unlike the Lambda, writes accounts and keys to Aurora as clhear_web.
     web["secrets"].append({"name": IDENTITY_ENV, "valueFrom": secret_arn(IDENTITY_ENV)})
     if had_edge if require_edge is None else require_edge:
@@ -99,6 +103,9 @@ def sync_secrets(clients) -> dict:
     """Copy the Lambda's credential values into SSM without printing them."""
     env, report = lambda_environment(clients), {}
     for name in SECRET_ENV:
+        if name in SSM_OWNED:
+            report[name] = "ssm_owned"
+            continue
         value = env.get(name, "")
         if not value:
             report[name] = "unset"
