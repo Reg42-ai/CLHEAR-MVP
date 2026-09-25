@@ -340,3 +340,38 @@ def test_redaction_covers_annotations_changes_and_free_form_shared_context(engin
         assert conn.execute(sa.select(rights_records.c.basis_ref)).scalar_one() == ""
         assert conn.execute(sa.select(citations.c.reason)).scalar_one() == ""
     target.dispose()
+
+
+def test_snapshots_above_the_single_put_limit_go_up_in_conditional_parts(tmp_path, monkeypatch):
+    from app.clhear.l1 import viewer_snapshot as viewer
+
+    calls = []
+
+    class S3:
+        def put_object(self, **kw):
+            calls.append(("put", kw.get("IfMatch")))
+
+        def create_multipart_upload(self, **kw):
+            calls.append(("create", kw["Metadata"]["sha256"]))
+            return {"UploadId": "u1"}
+
+        def upload_part(self, **kw):
+            calls.append(("part", kw["PartNumber"], len(kw["Body"])))
+            return {"ETag": f"e{kw['PartNumber']}"}
+
+        def complete_multipart_upload(self, **kw):
+            calls.append(("complete", kw["IfMatch"], [p["PartNumber"] for p in kw["MultipartUpload"]["Parts"]]))
+
+        def abort_multipart_upload(self, **kw):
+            calls.append(("abort",))
+
+    path = tmp_path / "candidate.db"
+    path.write_bytes(b"x" * 25)
+    fields = {"Metadata": {"sha256": "d"}}
+    viewer.put_conditionally(S3(), "b", "k", path, condition={"IfMatch": '"old"'}, **fields)
+    assert calls == [("put", '"old"')]
+    calls.clear()
+    monkeypatch.setattr(viewer, "SINGLE_PUT_LIMIT", 10)
+    monkeypatch.setattr(viewer, "PART_SIZE", 10)
+    viewer.put_conditionally(S3(), "b", "k", path, condition={"IfMatch": '"old"'}, **fields)
+    assert calls == [("create", "d"), ("part", 1, 10), ("part", 2, 10), ("part", 3, 5), ("complete", '"old"', [1, 2, 3])]

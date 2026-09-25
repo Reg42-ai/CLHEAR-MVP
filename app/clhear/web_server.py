@@ -57,7 +57,9 @@ class SnapshotHolder:
                     os.remove(os.path.join(directory, name))
                 except OSError:
                     pass
-        self.s3().download_file(bucket, key, staging, ExtraArgs={"IfMatch": head["ETag"]})
+        # The version read by head_object, never a newer object written meanwhile.
+        extra = {"VersionId": head["VersionId"]} if head.get("VersionId") else {}
+        self.s3().download_file(bucket, key, staging, ExtraArgs=extra)
         expected = (head.get("Metadata") or {}).get("sha256")
         if expected:
             digest = hashlib.sha256()
