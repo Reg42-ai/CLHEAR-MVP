@@ -67,10 +67,10 @@ def _block_vocabulary(conn: Connection) -> list[tuple[str, str, set[str]]]:
     return out
 
 
-def derived_reference_rows(conn: Connection) -> list[dict]:
+def derived_reference_rows(conn: Connection, source_keys: list[str] | None = None) -> list[dict]:
     blocks = _block_vocabulary(conn)
     out = []
-    for row in _blocks(conn, reference_source_keys(conn)):
+    for row in _blocks(conn, reference_source_keys(conn) if source_keys is None else source_keys):
         quote = " ".join((row["text"] or "").split())
         words = _words(quote)
         best, score = None, 0.0
@@ -97,10 +97,10 @@ def derived_reference_rows(conn: Connection) -> list[dict]:
     return out
 
 
-def reference_rows(engine: Engine, *, blueprint: dict | None = None) -> list[dict]:
+def reference_rows(engine: Engine, *, blueprint: dict | None = None, source_keys: list[str] | None = None) -> list[dict]:
     on_blueprint = {item.get("block_id") for item in (blueprint or {}).get("items") or []}
     with engine.connect() as conn:
-        rows = derived_reference_rows(conn)
+        rows = derived_reference_rows(conn, source_keys)
     for row in rows:
         row["on_blueprint"] = (row["block_id"] in on_blueprint) if blueprint is not None and row["block_id"] else (
             False if blueprint is not None else None)
