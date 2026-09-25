@@ -50,9 +50,9 @@
 <a class="skip" href="#main">Skip to content</a>
 <div id="root"></div>
 <script type="module">
-import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
-import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
-import htm from "https://esm.sh/htm@3.1.1";
+import React, { useState, useEffect } from "/static/vendor/react-18.3.1.2f6da27083.mjs";
+import { createRoot } from "/static/vendor/react-dom-client-18.3.1.8a9d10e816.mjs";
+import htm from "/static/vendor/htm-3.1.1.81a9a8dee7.mjs";
 
 const html = htm.bind(React.createElement);
 const learner = (() => { let id = localStorage.getItem("clhear_learner"); if (!id) { id = crypto.randomUUID(); localStorage.setItem("clhear_learner", id); } return id; })();

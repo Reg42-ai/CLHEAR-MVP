@@ -71,9 +71,9 @@
 <div id="root"></div>
 <!-- no-build frontend: React 18 + htm, per repo convention -->
 <script type="module">
-import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
-import { createRoot } from "https://esm.sh/react-dom@18.3.1/client";
-import htm from "https://esm.sh/htm@3.1.1";
+import React, { useState, useEffect } from "/static/vendor/react-18.3.1.2f6da27083.mjs";
+import { createRoot } from "/static/vendor/react-dom-client-18.3.1.8a9d10e816.mjs";
+import htm from "/static/vendor/htm-3.1.1.81a9a8dee7.mjs";
 
 const html = htm.bind(React.createElement);
 const api = (p) => fetch(p).then(async (r) => {
