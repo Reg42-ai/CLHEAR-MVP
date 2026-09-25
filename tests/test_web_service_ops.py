@@ -107,3 +107,49 @@ def test_service_owned_settings_and_the_edge_requirement_survive_a_roll():
     assert "CLHEAR_ORIGIN_VERIFY_SECRET" in {s["name"] for s in second["containerDefinitions"][0]["secrets"]}
     third = web_service.task_definition(second, LAMBDA_ENV, image=IMAGE, sha=SHA, require_edge=False)
     assert "CLHEAR_ORIGIN_VERIFY_SECRET" not in {s["name"] for s in third["containerDefinitions"][0]["secrets"]}
+
+
+class _RollingEcs:
+    """Answers the way ECS does right after UpdateService: the old deployment first."""
+
+    def __init__(self, states):
+        self.states, self.calls = list(states), 0
+
+    def describe_services(self, cluster, services):
+        state = self.states[min(self.calls, len(self.states) - 1)]
+        self.calls += 1
+        return {"services": [{"taskDefinition": "arn:old", "desiredCount": 1, "runningCount": 1,
+                              "deployments": state}]}
+
+    def describe_task_definition(self, taskDefinition, include=None):
+        return {"taskDefinition": {**BASE, "taskDefinitionArn": "arn:old"}, "tags": BASE["tags"]}
+
+    def register_task_definition(self, **task):
+        return {"taskDefinition": {"taskDefinitionArn": "arn:new"}}
+
+    def update_service(self, **kwargs):
+        pass
+
+
+class _Lambda:
+    def get_function_configuration(self, FunctionName):
+        return {"Environment": {"Variables": LAMBDA_ENV}}
+
+
+OLD = {"taskDefinition": "arn:old", "status": "PRIMARY", "rolloutState": "COMPLETED", "runningCount": 1}
+
+
+@pytest.mark.parametrize("final,expected", [
+    ({"taskDefinition": "arn:new", "status": "PRIMARY", "rolloutState": "COMPLETED", "runningCount": 1}, "completed"),
+    ({"taskDefinition": "arn:new", "status": "ACTIVE", "rolloutState": "FAILED", "runningCount": 0}, None),
+])
+def test_a_roll_follows_its_own_deployment_not_the_one_before_it(final, expected):
+    rolling = {"taskDefinition": "arn:new", "status": "PRIMARY", "rolloutState": "IN_PROGRESS", "runningCount": 0}
+    ecs = _RollingEcs([[OLD], [rolling, {**OLD, "status": "ACTIVE"}], [final]])
+    clients = {"ecs": ecs, "lambda": _Lambda()}
+    if expected is None:
+        with pytest.raises(RuntimeError):
+            web_service.roll(clients, image=IMAGE, sha=SHA, desired=1, sleep=lambda s: None)
+    else:
+        assert web_service.roll(clients, image=IMAGE, sha=SHA, desired=1, sleep=lambda s: None)["rollout"] == expected
+    assert ecs.calls >= 3
