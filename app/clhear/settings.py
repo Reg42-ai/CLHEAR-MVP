@@ -61,7 +61,6 @@ class Settings(BaseSettings):
     clhear_rate_account_per_minute: int = 1200
     clhear_rate_signup_per_ip_15m: int = 10
     clhear_rate_magic_link_per_email_15m: int = 3
-    clhear_max_page_size: int = 500
     clhear_max_body_bytes: int = 1_000_000
     clhear_cors_origins: str = ""  # comma-separated exact origins, e.g. https://galaxy.app.reg42.ai
     clhear_l1_only: bool = False  # enable on worker deployments while accepting L1

@@ -2,7 +2,7 @@
 
 * Requests must carry the CloudFront origin header when one is configured, so
   the regional API endpoint cannot be used to bypass the WAF.
-* Request bodies and page sizes are capped.
+* Request bodies are capped here; every route declares its own page-size maximum.
 * A write authenticated only by the session cookie must come from our own origin.
 * Every response gets HSTS, CSP (with ``frame-ancestors``), nosniff,
   Referrer-Policy and Permissions-Policy.
@@ -65,9 +65,6 @@ class WebGuardMiddleware(BaseHTTPMiddleware):
         length = request.headers.get("content-length")
         if length and length.isdigit() and int(length) > settings.clhear_max_body_bytes:
             return _deny(413, "Request body is too large")
-        limit = request.query_params.get("limit")
-        if limit and limit.isdigit() and int(limit) > settings.clhear_max_page_size:
-            return _deny(400, f"limit may not exceed {settings.clhear_max_page_size}")
         cookie_write = (request.method.upper() not in SAFE and "clhear_session" in request.cookies
                         and not request.headers.get("authorization", "").lower().startswith("bearer "))
         if cookie_write and _cross_site(request):

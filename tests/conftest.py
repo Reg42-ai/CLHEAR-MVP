@@ -1,8 +1,17 @@
 import pytest
 
 from app.clhear import db as clhear_db
+from app.clhear import ratelimit
 from app.clhear.db import make_engine, run_migrations
 from app.clhear.settings import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_windows():
+    """Rate-limit counters are process-wide without an identity store; each test starts at zero."""
+    ratelimit.reset_local()
+    yield
+    ratelimit.reset_local()
 
 
 @pytest.fixture()

@@ -27,6 +27,7 @@ log = logging.getLogger("clhear.usage")
 _LAYER_IN_PATH = re.compile(r"(?:^|/)(l[1-8])(?:/|$)", re.I)
 _queue: "queue.Queue[dict]" = queue.Queue(maxsize=50_000)
 _worker: threading.Thread | None = None
+_writing = threading.Lock()
 BATCH = 500
 
 
@@ -59,6 +60,12 @@ def _ensure_worker() -> None:
 
 
 def flush(max_rows: int = BATCH) -> int:
+    """Write up to ``max_rows`` queued records; a batch the writer thread already took commits first."""
+    with _writing:
+        return _write_batch(max_rows)
+
+
+def _write_batch(max_rows: int) -> int:
     rows = []
     while len(rows) < max_rows:
         try:
@@ -101,13 +108,20 @@ def rollup(day: date, engine=None) -> int:
                                       sa.func.sum(api_usage.c.latency_ms).label("latency"),
                                       sa.func.max(api_usage.c.at).label("last"))
                             .where(api_usage.c.at >= start, api_usage.c.at < end).group_by(*keys)).mappings().all()
-        conn.execute(api_usage_daily.delete().where(api_usage_daily.c.day == day))
-        if rows:
-            conn.execute(api_usage_daily.insert(), [{
-                "day": day, "user_id": r["user_id"], "key_id": r["key_id"], "app_id": r["app_id"], "layer": r["layer"],
-                "route": r["route"], "requests": int(r["requests"]), "errors": int(r["errors"] or 0),
-                "response_bytes": int(r["bytes"] or 0), "latency_ms_total": int(r["latency"] or 0), "last_seen_at": r["last"],
-            } for r in rows])
+        if conn.dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert
+        values = [{
+            "day": day, "user_id": r["user_id"], "key_id": r["key_id"], "app_id": r["app_id"], "layer": r["layer"],
+            "route": r["route"], "requests": int(r["requests"]), "errors": int(r["errors"] or 0),
+            "response_bytes": int(r["bytes"] or 0), "latency_ms_total": int(r["latency"] or 0), "last_seen_at": r["last"],
+        } for r in rows]
+        totals = ("requests", "errors", "response_bytes", "latency_ms_total", "last_seen_at")
+        for offset in range(0, len(values), 1000):
+            stmt = insert(api_usage_daily).values(values[offset:offset + 1000])
+            conn.execute(stmt.on_conflict_do_update(index_elements=[c for c in api_usage_daily.primary_key.columns],
+                                                    set_={name: stmt.excluded[name] for name in totals}))
     return len(rows)
 
 

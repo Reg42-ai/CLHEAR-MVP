@@ -116,6 +116,30 @@ def test_every_request_is_counted_with_its_route_template_and_layer(accounts, en
     assert next(r for r in rows if r["route"] == "/api/clhear/sources")["user_id"] == USER["id"]
 
 
+def test_daily_rollups_recompute_in_place(accounts, engine):
+    from datetime import datetime, timezone
+
+    from app.clhear.identity_models import api_usage_daily
+
+    _sign_in(accounts)
+    accounts.get("/api/clhear/sources")
+    usage.flush()
+    today = datetime.now(timezone.utc).date()
+
+    def sources_requests():
+        with engine.connect() as conn:
+            return [r.requests for r in conn.execute(sa.select(api_usage_daily).where(
+                api_usage_daily.c.day == today, api_usage_daily.c.route == "/api/clhear/sources"))]
+
+    usage.rollup(today)
+    usage.rollup(today)
+    assert sources_requests() == [1]
+    accounts.get("/api/clhear/sources")
+    usage.flush()
+    usage.rollup(today)
+    assert sources_requests() == [2]
+
+
 def test_security_headers_and_cross_site_session_writes(accounts):
     response = accounts.get("/signin")
     for header in ("strict-transport-security", "content-security-policy", "x-content-type-options",
@@ -136,7 +160,17 @@ def test_the_edge_header_is_required_when_configured(accounts, monkeypatch):
 
 def test_page_and_body_sizes_are_capped(accounts):
     _sign_in(accounts)
-    assert accounts.get("/api/clhear/sources?limit=100000").status_code == 400
+    unbounded = []
+    for path, operations in accounts.app.openapi()["paths"].items():
+        for operation in operations.values():
+            for param in operation.get("parameters", []):
+                if param["in"] == "query" and param["name"] == "limit":
+                    schema = param.get("schema", {})
+                    maximum = schema.get("maximum", next((s.get("maximum") for s in schema.get("anyOf", []) if "maximum" in s), None))
+                    if maximum is None or maximum > 5000:
+                        unbounded.append(path)
+    assert unbounded == []
+    assert accounts.get("/api/clhear/community/submissions?limit=100000").status_code == 422
     big = accounts.post("/auth/email", content=b"x" * 2_000_001, headers={"Content-Type": "application/json"})
     assert big.status_code == 413
 
