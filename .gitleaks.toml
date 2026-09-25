@@ -1,0 +1,7 @@
+# Default gitleaks rules. Test fixtures carry deliberately fake credentials.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "test fixtures and recorded HTTP fixtures"
+paths = ['''^tests/''', '''^clhear-evals/''']

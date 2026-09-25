@@ -253,3 +253,14 @@ def test_restricted_startup_never_migrates_or_seeds(restricted_settings, monkeyp
         assert client.get("/signin").status_code == 200
     migrate.assert_not_called()
     seed.assert_not_called()
+
+
+def test_an_app_rotating_its_key_is_accepted_on_both_during_the_overlap(restricted_settings, monkeypatch):
+    from app.clhear.app_auth import _authenticate
+
+    monkeypatch.setenv("CLHEAR_APP_KEYS", "galaxy:new-secret-with-more-than-32-characters-xx,galaxy:old-short")
+    get_settings.cache_clear()
+    for secret in ("new-secret-with-more-than-32-characters-xx", "old-short"):
+        assert _authenticate(f"Bearer {secret}", "galaxy")["app_id"] == "galaxy"
+    with pytest.raises(Exception):
+        _authenticate("Bearer other", "galaxy")

@@ -14,6 +14,8 @@ from app.clhear.settings import get_settings
 
 
 def parse_app_keys(raw: str) -> dict[str, dict]:
+    """``app_id:secret[:scopes]`` entries. An app listed twice has two valid
+    secrets: the overlap window while its owner rotates to the new one."""
     out: dict[str, dict] = {}
     for part in (raw or "").split(","):
         part = part.strip()
@@ -26,7 +28,9 @@ def parse_app_keys(raw: str) -> dict[str, dict]:
             # Remainder is scope list (read:l1+read:l2). Do not split scopes on ':'.
             scope_raw = ":".join(bits[2:])
             scopes = {s.strip() for s in scope_raw.replace("+", ",").split(",") if s.strip()}
-        out[app_id] = {"secret": secret, "scopes": scopes}
+        entry = out.setdefault(app_id, {"secret": secret, "secrets": [], "scopes": set()})
+        entry["secrets"].append(secret)
+        entry["scopes"] |= scopes
     return out
 
 
@@ -68,8 +72,8 @@ def _authenticate(authorization: str | None, x_app_id: str | None) -> dict:
         raise HTTPException(status_code=503, detail="CLHEAR_APP_KEYS is not configured")
     if not x_app_id or x_app_id not in keys:
         raise HTTPException(status_code=401, detail="Unknown or missing X-App-Id")
-    expected = keys[x_app_id]["secret"]
-    if not token or not hmac.compare_digest(token.encode(), expected.encode()):
+    secrets = keys[x_app_id]["secrets"]
+    if not token or not any(hmac.compare_digest(token.encode(), secret.encode()) for secret in secrets):
         raise HTTPException(status_code=401, detail="Invalid bearer token")
     return {"app_id": x_app_id, "scopes": sorted(keys[x_app_id]["scopes"])}
 
