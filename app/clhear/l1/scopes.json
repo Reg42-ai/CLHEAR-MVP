@@ -1,0 +1,49 @@
+{
+  "compliance-program-demo": {
+    "label": "Influencer marketing compliance program for a US investment adviser",
+    "sources": [
+      "usc/15/80b-2",
+      "usc/15/80b-3",
+      "usc/15/80b-6",
+      "usc/15/ftc-act-45",
+      "cfr/17/ia-marketing",
+      "cfr/16/255",
+      "cfr/17/ia-compliance",
+      "cfr/17/ia-books-records",
+      "cfr/17/reg-sp-safeguards",
+      "nist/csf-2.0",
+      "sec/releases/ia-2204",
+      "sec/staff/marketing-faq",
+      "sec/enforcement/2023-173",
+      "sec/enforcement/2024-46",
+      "sec/enforcement/2024-121",
+      "sec/exams/risk-alert-041724",
+      "ftc/guidance/disclosures-101"
+    ],
+    "components": {
+      "applicability": ["usc/15/80b-2", "usc/15/80b-3"],
+      "conduct_standards": ["usc/15/ftc-act-45", "usc/15/80b-6", "cfr/17/ia-marketing"],
+      "endorsements_and_influencers": ["cfr/17/ia-marketing", "cfr/16/255"],
+      "disclosures": ["cfr/17/ia-marketing", "cfr/16/255"],
+      "policies_review_and_cco": ["cfr/17/ia-compliance", "sec/releases/ia-2204"],
+      "records": ["cfr/17/ia-books-records"],
+      "supervision": ["usc/15/80b-3"],
+      "security_and_privacy": ["cfr/17/reg-sp-safeguards", "nist/csf-2.0"],
+      "staff_interpretation": ["sec/staff/marketing-faq"],
+      "enforcement_outcomes": ["sec/enforcement/2023-173", "sec/enforcement/2024-46", "sec/enforcement/2024-121"],
+      "examination_findings_and_practice": ["sec/exams/risk-alert-041724", "ftc/guidance/disclosures-101"]
+    },
+    "roles": {
+      "enforcement": ["sec/enforcement/2023-173", "sec/enforcement/2024-46", "sec/enforcement/2024-121"],
+      "reference": ["sec/exams/risk-alert-041724", "ftc/guidance/disclosures-101"],
+      "interpretation": ["sec/staff/marketing-faq", "sec/releases/ia-2204"]
+    },
+    "imports": {
+      "govinfo_us": ["usc/15/80b-2", "usc/15/80b-3", "usc/15/80b-6", "usc/15/ftc-act-45", "cfr/17/ia-marketing",
+                     "cfr/16/255", "cfr/17/ia-compliance", "cfr/17/ia-books-records", "cfr/17/reg-sp-safeguards",
+                     "nist/csf-2.0", "ftc/guidance/disclosures-101"],
+      "sec_edgar": ["sec/releases/ia-2204", "sec/staff/marketing-faq", "sec/exams/risk-alert-041724"],
+      "sec_enforcement": ["sec/enforcement/2023-173", "sec/enforcement/2024-46", "sec/enforcement/2024-121"]
+    }
+  }
+}

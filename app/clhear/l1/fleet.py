@@ -255,11 +255,13 @@ def fleet_plan(adapter_key: str | None = None) -> list[tuple[dict | None, Adapte
     for key in starter_keys:
         if key not in ordered:
             ordered.append(key)
+    from app.clhear.l1.scopes import in_scope
+
     for key in ordered:
         if key in ADAPTER_KEYS:
             adapter = get_adapter(key)
             source_key = adapter.meta().source_key
-            if source_key not in seen:
+            if source_key not in seen and in_scope(source_key):
                 plan.append((None, adapter))
                 seen.add(source_key)
     for entry in S:
