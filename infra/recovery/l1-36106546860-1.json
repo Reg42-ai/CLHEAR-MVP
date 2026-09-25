@@ -14,7 +14,7 @@
         "DynamicScalingOutSuspended": false,
         "ScheduledScalingSuspended": false
       },
-      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l0:35"
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l0:40"
     },
     "l1": {
       "desired_count": 1,
@@ -28,7 +28,7 @@
         "DynamicScalingOutSuspended": false,
         "ScheduledScalingSuspended": false
       },
-      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l1:35"
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l1:40"
     },
     "l2": {
       "desired_count": 1,
@@ -42,7 +42,7 @@
         "DynamicScalingOutSuspended": false,
         "ScheduledScalingSuspended": false
       },
-      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l2:35"
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l2:40"
     },
     "l3": {
       "desired_count": 1,
@@ -56,7 +56,7 @@
         "DynamicScalingOutSuspended": false,
         "ScheduledScalingSuspended": false
       },
-      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l3:35"
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l3:40"
     },
     "l4": {
       "desired_count": 1,
@@ -70,7 +70,7 @@
         "DynamicScalingOutSuspended": false,
         "ScheduledScalingSuspended": false
       },
-      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l4:35"
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l4:40"
     },
     "l5": {
       "desired_count": 1,
@@ -84,7 +84,7 @@
         "DynamicScalingOutSuspended": false,
         "ScheduledScalingSuspended": false
       },
-      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l5:35"
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l5:40"
     },
     "l6": {
       "desired_count": 1,
@@ -98,7 +98,7 @@
         "DynamicScalingOutSuspended": false,
         "ScheduledScalingSuspended": false
       },
-      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l6:35"
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l6:40"
     },
     "l7": {
       "desired_count": 1,
@@ -112,7 +112,7 @@
         "DynamicScalingOutSuspended": false,
         "ScheduledScalingSuspended": false
       },
-      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l7:35"
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l7:40"
     },
     "l8": {
       "desired_count": 0,
@@ -126,7 +126,7 @@
         "DynamicScalingOutSuspended": false,
         "ScheduledScalingSuspended": false
       },
-      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l8:35"
+      "task_definition_arn": "arn:aws:ecs:us-east-1:730649732189:task-definition/clhear-fleet-l8:40"
     }
   },
   "plan_id": "l1-36106546860-1",
@@ -153,7 +153,7 @@
     "version_id": "N_610IrfMAPMBjxNynqEmj43Lnw3bHcJ"
   },
   "viewer": {
-    "code_sha256_base64": "xa0dg3qWrZsIBY/zu03/P/gmbkWHk1+g0SUur9uCdJQ=",
+    "code_sha256_base64": "V6URv1jJt7cMrwO3mZvhCfbS7gjCyfBPD+yuCxSTXMM=",
     "function_arn": "arn:aws:lambda:us-east-1:730649732189:function:clhear-webui",
     "reserved_concurrency": null
   }
