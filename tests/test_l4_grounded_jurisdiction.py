@@ -129,3 +129,19 @@ def test_the_duty_text_names_the_bearer_when_the_addressee_does_not():
     persons = {"jurisdiction": "US", "addressee": "", "statement": "Unfair methods of competition in or affecting "
                "commerce, and unfair or deceptive acts or practices in or affecting commerce, are hereby declared unlawful."}
     assert [e["predicate"] for e in deterministic_predicates(persons, onto)] == [{"jurisdictions": "US"}]
+
+
+def test_the_statement_names_the_bearer_when_the_structured_duty_sentence_does_not():
+    from app.clhear.l4.predicates import deterministic_predicates
+
+    onto = _Onto.__new__(_Onto)
+    onto.schema = {"authorisations": {}}
+    onto.view = SimpleNamespace(jurisdictions={"US"}, licences=SimpleNamespace(rows={
+        "LIC:US:investment-adviser-registration": {"id": "LIC:US:investment-adviser-registration", "jurisdiction": "US",
+                                                   "name": "Investment Adviser Registration"}}))
+    ob = {"jurisdiction": "US", "addressee": "",
+          "determination": "provide investment advice to clients unless you adopt and implement written policies",
+          "statement": "If you are an investment adviser registered or required to be registered under section 203 of "
+                       "the Act, it shall be unlawful for you to provide investment advice to clients unless you adopt "
+                       "and implement written policies and procedures."}
+    assert {"authorisations": "Investment Adviser Registration"} in [e["predicate"] for e in deterministic_predicates(ob, onto)]
