@@ -230,11 +230,14 @@ def build_ontology_in(conn: Connection, *, check_registers: bool = True, publish
         counts["validity_rules"][_upsert(conn, validity_rules, r["id"], values, live["validity_rules"], trail, today=today)] += 1
         seen["validity_rules"].add(r["id"])
 
-    # Snapshot entries that vanished: invalidate (I2).
+    # Snapshot entries that vanished: invalidate (I2). Licences grounded by the
+    # licence registry were never in the snapshot; they stay while their type does.
+    grounded = {f"LIC:{r.jurisdiction}:{slug(r.name)}" for r in conn.execute(
+        sa.select(license_types.c.jurisdiction, license_types.c.name).where(license_types.c.status != "retired"))}
     for c in COLLECTIONS:
         table = _TABLES[c]
         for key, row in live[c].items():
-            if key not in seen[c]:
+            if key not in seen[c] and not (c == "licences" and key in grounded):
                 record.invalidate(conn, table, table.c.id == row["id"], why=trail, reason="removed from register snapshot")
                 counts[c]["invalidated"] += 1
 

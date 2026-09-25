@@ -122,9 +122,18 @@ def anchor_is_live(engine: Engine, source_key: str, ref: str) -> bool:
     return hit is not None
 
 
+# Licences are created by law and regulation; guidance and standards describe them.
+BINDING_KINDS = frozenset({"law", "regulation"})
+
+
 def _jurisdictions(engine: Engine) -> dict[str, str]:
     with engine.connect() as conn:
         return {r.key: (r.jurisdiction or "").strip().upper() for r in conn.execute(sa.select(sources.c.key, sources.c.jurisdiction))}
+
+
+def _binding_keys(engine: Engine) -> set[str]:
+    with engine.connect() as conn:
+        return {r.key for r in conn.execute(sa.select(sources.c.key).where(sources.c.kind.in_(BINDING_KINDS)))}
 
 
 def retire_unsound(engine: Engine, jurisdiction_of: dict[str, str] | None = None) -> list[str]:
@@ -174,8 +183,10 @@ def extract_licenses(engine: Engine, llm) -> dict:
     ids: list[str] = []
     coverage_gaps: list[str] = []
     jurisdiction_of = _jurisdictions(engine)
+    binding = _binding_keys(engine)
     for query in LICENSE_QUERIES:
-        retrieved = [h for h in _retrieve(engine, query) if anchor_is_live(engine, h["source_key"], h["ref"])]
+        retrieved = [h for h in _retrieve(engine, query)
+                     if h["source_key"] in binding and anchor_is_live(engine, h["source_key"], h["ref"])]
         if not retrieved:
             coverage_gaps.append(query)
             continue
