@@ -115,14 +115,17 @@ def upsert_user(engine: Engine, email: str, display_name: str = "", provider: st
                 "display_name": display_name or email.split("@")[0]}
     if get_settings().clhear_preview_mode:
         return identity  # Stateless verified sign-in must not enqueue an account write.
+    from app.clhear import identity as identity_store
+
+    op = {"op": "upsert_user", "email": email, "display_name": display_name,
+          "provider": provider, "provider_sub": provider_sub}
     try:
-        community_writes.dispatch(
-            engine,
-            {"op": "upsert_user", "email": email, "display_name": display_name,
-             "provider": provider, "provider_sub": provider_sub},
-        )
+        if identity_store.configured():
+            community_writes.apply_op(identity_store.engine(), op)
+        else:
+            community_writes.dispatch(engine, op)
     except Exception:
-        log.exception("user upsert dispatch failed (login still proceeds)")
+        log.exception("user upsert failed (login still proceeds)")
     return identity
 
 
