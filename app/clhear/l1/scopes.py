@@ -55,3 +55,23 @@ def role(role_name: str, name: str | None = None) -> tuple[str, ...]:
 def in_scope(source_key: str) -> bool:
     scope = active()
     return scope is None or source_key in scope["sources"]
+
+
+def keys() -> frozenset[str] | None:
+    """Source keys of the active scope, or None when the full registry is in force."""
+    scope = active()
+    return frozenset(scope["sources"]) if scope else None
+
+
+def limiting(column, explicit: str | None = None):
+    """A WHERE clause for one source key, or for every key of the active scope.
+
+    None means the caller named no key and no scope is active, so the query
+    stays unfiltered. An explicit key wins over the scope.
+    """
+    if explicit:
+        return column == explicit
+    chosen = keys()
+    if not chosen:
+        return None
+    return column.in_(sorted(chosen))

@@ -375,3 +375,31 @@ def test_snapshots_above_the_single_put_limit_go_up_in_conditional_parts(tmp_pat
     monkeypatch.setattr(viewer, "PART_SIZE", 10)
     viewer.put_conditionally(S3(), "b", "k", path, condition={"IfMatch": '"old"'}, **fields)
     assert calls == [("create", "d"), ("part", 1, 10), ("part", 2, 10), ("part", 3, 5), ("complete", '"old"', [1, 2, 3])]
+
+
+def test_a_scope_derivation_is_copied_and_the_rest_of_the_corpus_is_not(engine, tmp_path):
+    from app.clhear.derived_models import obligations, profiles
+
+    with engine.begin() as conn:
+        conn.execute(obligations.insert().values(
+            id="OBL:usc/15/80b-6#s1", source_key="usc/15/80b-6", clause_ref="s1", title="In scope",
+            statement="An adviser must not do this.", text_hash="in-scope", status="derived"))
+        conn.execute(obligations.insert().values(
+            id="OBL:other/statute#s1", source_key="other/statute", clause_ref="s1", title="Out of scope",
+            statement="OUT-OF-SCOPE", text_hash="out-of-scope", status="derived"))
+        for profile_id, name in (("PRF-G", "Galaxy Securities"), ("PRF-O", "Other Bank")):
+            conn.execute(profiles.insert().values(
+                id=profile_id, name=name, attributes={"jurisdictions": ["US"]}, fingerprint=profile_id,
+                validity={"valid": True}, source="api", status="valid"))
+    path = tmp_path / "scoped-viewer.db"
+    state = viewer.compile_viewer_snapshot(engine, path)
+    target = open_snapshot(path)
+    with target.connect() as conn:
+        copied = set(conn.execute(sa.select(obligations.c.id)).scalars())
+        names = set(conn.execute(sa.select(profiles.c.name)).scalars())
+    assert "L2" not in state["omitted_layers"]
+    assert state["derived_scope"]["name"] == "compliance-program-demo"
+    assert "ftc/guidance/disclosures-101" in state["derived_scope"]["reference"]
+    assert copied == {"OBL:usc/15/80b-6#s1"}
+    assert "Galaxy Securities" in names and "Other Bank" not in names
+    target.dispose()

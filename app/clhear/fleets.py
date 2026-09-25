@@ -31,8 +31,13 @@ def _already_ran_today(engine: Engine) -> bool:
     return False
 
 
-def compose_stored_profiles(engine: Engine) -> dict:
-    """L6 composers: a current blueprint for every stored valid L4 profile (idempotent)."""
+def compose_stored_profiles(engine: Engine, profile_ids: list[str] | None = None) -> dict:
+    """L6 composers: a current blueprint for every stored valid L4 profile (idempotent).
+
+    ``profile_ids`` limits the pass to those profiles. None composes every
+    valid stored profile, which is the nightly fleet. A scoped build passes
+    the profiles it just stored and leaves every other profile's blueprint.
+    """
     import sqlalchemy as sa
 
     from app.clhear.derived_models import blueprints, profiles
@@ -44,6 +49,9 @@ def compose_stored_profiles(engine: Engine) -> dict:
             ids = [r[0] for r in conn.execute(sa.select(profiles.c.id).where(profiles.c.status == "valid").order_by(profiles.c.id))]
     except sa.exc.OperationalError:  # pre-m0012 database
         return {"composed": 0, "stored": 0}
+    if profile_ids is not None:
+        wanted = set(profile_ids)
+        ids = [i for i in ids if i in wanted]
     for pid in ids:
         with engine.connect() as conn:
             before = {r[0] for r in conn.execute(sa.select(blueprints.c.stable_id).where(blueprints.c.profile_id == pid))}

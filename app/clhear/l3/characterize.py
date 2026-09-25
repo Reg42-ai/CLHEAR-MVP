@@ -295,9 +295,14 @@ def characterize_block(engine: Engine, block: dict, llm=None) -> dict:
 
 
 def characterize(engine: Engine, llm=None, *, limit: int | None = None) -> dict:
+    from app.clhear.l3.harmonize import blocks_in_scope
+
     totals = {"blocks": 0, "backed": 0, "not_specified": 0, "unbacked": 0}
     with engine.connect() as conn:
         rows = [dict(r) for r in conn.execute(sa.select(blocks).where(blocks.c.canonical_id.is_(None)).order_by(blocks.c.id)).mappings()]
+        allowed = blocks_in_scope(conn)
+        if allowed is not None:
+            rows = [r for r in rows if r["id"] in allowed]
     if limit:
         rows = rows[:limit]
     for b in rows:

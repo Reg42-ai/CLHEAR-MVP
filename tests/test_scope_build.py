@@ -255,3 +255,45 @@ def test_a_tenant_profile_is_read_from_a_file_or_s3(tmp_path, monkeypatch):
     monkeypatch.setattr(boto3, "client", lambda name: S3())
     assert _read_profile("s3://demo-bucket/profiles/galaxy.json") == profile
     assert requested == [("demo-bucket", "profiles/galaxy.json")]
+
+
+def test_a_scoped_build_leaves_an_out_of_scope_obligation_and_licence(scoped):
+    from app.clhear.derived_models import license_types, licences, obligations
+    from app.clhear.l1.models import family_members
+    from app.clhear.scope_build import build
+
+    engine = scoped
+    _world(engine)
+    with engine.begin() as conn:
+        family_id = conn.execute(sa.select(sources.c.family_id).limit(1)).scalar_one()
+        source_id = conn.execute(sources.insert().values(
+            family_id=family_id, key="other/statute", name="Other Statute", kind="law", issuer="Other",
+            jurisdiction="UK", license="open", rights_basis="public_domain", adapter="manual",
+            canonical_url="https://example.test/other")).inserted_primary_key[0]
+        conn.execute(family_members.insert().values(
+            family_id=family_id, source_id=source_id, relation="supplements", tier="binding", status="active"))
+        version_id = conn.execute(source_versions.insert().values(
+            source_id=source_id, version_label="consolidated:2025-12-31", version_kind="consolidated",
+            content_hash="sha256:other/statute", s3_uri="s3://test/other/statute", status="in_force")).inserted_primary_key[0]
+        conn.execute(clauses.insert().values(
+            source_version_id=version_id, ref="s1", path="s1", ordering=1, text="Definitions.",
+            text_hash="h-other", public_ok=True))
+        conn.execute(obligations.insert().values(
+            id="OBL:other/statute#s1", source_key="other/statute", clause_ref="s1", title="Other duty",
+            statement="OUT-OF-SCOPE-OBLIGATION", text_hash="out-of-scope-hash", status="derived"))
+        conn.execute(license_types.insert().values(
+            id="LIC:UK:censure", jurisdiction="UK", name="Censure", issuing_regime="",
+            clause_anchors=[{"source_key": "other/statute", "ref": "s1", "text_hash": "h-other"}],
+            status="ai_generated", generated_by="test"))
+        conn.execute(licences.insert().values(
+            id="LIC:UK:out-of-scope-licence", jurisdiction="UK", name="Out of scope licence",
+            clause_anchors=[{"source_key": "other/statute", "ref": "s1"}], status="derived"))
+    build(engine, _llm(engine), skip_import=True, profiles=[{"name": "Galaxy", "attributes": {"jurisdictions": ["US"]}}])
+    with engine.connect() as conn:
+        obligation = conn.execute(sa.select(obligations).where(obligations.c.id == "OBL:other/statute#s1")).mappings().one()
+        licence_type = conn.execute(sa.select(license_types).where(license_types.c.id == "LIC:UK:censure")).mappings().one()
+        licence = conn.execute(sa.select(licences).where(licences.c.id == "LIC:UK:out-of-scope-licence")).mappings().one()
+    assert obligation["status"] == "derived" and obligation["statement"] == "OUT-OF-SCOPE-OBLIGATION"
+    assert obligation["text_hash"] == "out-of-scope-hash" and obligation["canonical_id"] is None
+    assert licence_type["status"] == "ai_generated"
+    assert licence["valid_to"] is None

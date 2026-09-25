@@ -42,15 +42,17 @@ def grounded(field_text: str, clause_text: str, minimum: float = GROUNDING_MIN) 
 
 
 def _candidates(conn, limit: int) -> list[dict]:
+    from app.clhear.l1.scopes import limiting
+
+    query = (sa.select(obligations)
+             .where(obligations.c.status.in_(("derived", "validated")))
+             .where(sa.or_(obligations.c.subject == "", obligations.c.action == ""))
+             .where(obligations.c.statement != ""))
+    limit_to = limiting(obligations.c.source_key)
+    if limit_to is not None:
+        query = query.where(limit_to)
     out = []
-    for ob in conn.execute(
-        sa.select(obligations)
-        .where(obligations.c.status.in_(("derived", "validated")))
-        .where(sa.or_(obligations.c.subject == "", obligations.c.action == ""))
-        .where(obligations.c.statement != "")
-        .order_by(obligations.c.id)
-        .limit(limit)
-    ).mappings():
+    for ob in conn.execute(query.order_by(obligations.c.id).limit(limit)).mappings():
         clause = conn.execute(
             sa.select(clauses.c.text)
             .join(asserts, asserts.c.clause_id == clauses.c.id)

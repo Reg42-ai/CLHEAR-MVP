@@ -118,9 +118,12 @@ def live_activities(conn: Connection) -> list[dict]:
 
 
 def _live_obligations(conn: Connection, source_key: str | None = None) -> list[dict]:
+    from app.clhear.l1.scopes import limiting
+
     q = sa.select(obligations).where(obligations.c.status.in_(LIVE))
-    if source_key:
-        q = q.where(obligations.c.source_key == source_key)
+    limit = limiting(obligations.c.source_key, source_key)
+    if limit is not None:
+        q = q.where(limit)
     return [dict(r) for r in conn.execute(q.order_by(obligations.c.stable_id, obligations.c.id)).mappings()]
 
 
@@ -308,14 +311,14 @@ def _curated() -> list[dict]:
 
 
 def _upsert_edge(conn: Connection, table: sa.Table, key_cols: tuple[str, ...], values: dict, live: dict, trail: str,
-                 prefix: str, *, today) -> str:
+                 prefix: str, *, today, preserve_existing: bool = False) -> str:
     key = tuple(values[c] for c in key_cols)
-    existing = live.pop(key, None)
+    existing = live.get(key) if preserve_existing else live.pop(key, None)
     if existing is None:
         rid = next_id(conn, prefix)
         record.write(conn, table, {"id": rid, **values}, why=trail, valid_from=today)
         return "added"
-    if all(existing.get(k) == v for k, v in values.items()):
+    if preserve_existing or all(existing.get(k) == v for k, v in values.items()):
         return "unchanged"
     review = list(_json(existing.get("review"), []) or []) + [
         {"event": "re-derived", "at": datetime.now(timezone.utc).isoformat(), "why_trail_id": trail}]
@@ -332,7 +335,15 @@ def build_junction(engine: Engine, *, publish: bool = True) -> dict:
 def build_junction_in(conn: Connection, *, publish: bool = True) -> dict:
     """Derive implies / operates / mitigates from the curated table and the
     live L2–L4 state. Idempotent: unchanged edges untouched, changed edges
-    re-versioned, vanished edges invalidated."""
+    re-versioned, vanished edges invalidated.
+
+    While a source scope is active, edges already in the database are left
+    as they are. The build only adds edges for the scope; it does not
+    rewrite or close edges that belong to the rest of the corpus.
+    """
+    from app.clhear.l1.scopes import keys as scope_keys
+
+    preserve = scope_keys() is not None
     today = datetime.now(timezone.utc).date()
     curated_rows = {c["id"]: c for c in _curated()}
     acts = live_activities(conn)
@@ -370,11 +381,12 @@ def build_junction_in(conn: Connection, *, publish: bool = True) -> dict:
                          else f"{products[pid]['name']} implies {a['name'].lower()}")
             tally(_upsert_edge(conn, implies, ("product_id", "activity_id"),
                                {"product_id": pid, "activity_id": a["id"], "rationale": rationale, "method": "curated"},
-                               live_imp, trail, "IMP", today=today))
-    for e in live_imp.values():
-        if e.get("method") != "llm":
-            record.invalidate(conn, implies, implies.c.id == e["id"], why=trail, reason="no longer produced by the junction build")
-            tally("invalidated")
+                               live_imp, trail, "IMP", today=today, preserve_existing=preserve))
+    if not preserve:
+        for e in live_imp.values():
+            if e.get("method") != "llm":
+                record.invalidate(conn, implies, implies.c.id == e["id"], why=trail, reason="no longer produced by the junction build")
+                tally("invalidated")
 
     # --- triggered obligations per activity (resolved through the live registry)
     triggered: dict[str, dict[str, dict]] = {}
@@ -403,11 +415,12 @@ def build_junction_in(conn: Connection, *, publish: bool = True) -> dict:
                          (f" for {len(refs)} obligation(s) it implements" if refs else " (curated anchor)"))
             tally(_upsert_edge(conn, operates, ("activity_id", "block_id"),
                                {"activity_id": a["id"], "block_id": bid, "obligation_refs": refs, "rationale": rationale,
-                                "method": method}, live_opr, trail, "OPR", today=today))
-    for e in live_opr.values():
-        if e.get("method") != "llm":
-            record.invalidate(conn, operates, operates.c.id == e["id"], why=trail, reason="no longer produced by the junction build")
-            tally("invalidated")
+                                "method": method}, live_opr, trail, "OPR", today=today, preserve_existing=preserve))
+    if not preserve:
+        for e in live_opr.values():
+            if e.get("method") != "llm":
+                record.invalidate(conn, operates, operates.c.id == e["id"], why=trail, reason="no longer produced by the junction build")
+                tally("invalidated")
 
     # --- mitigates: compliance activity -> business activity, lit by shared obligations
     business = [a for a in acts if a["side"] == "business"]
@@ -456,11 +469,12 @@ def build_junction_in(conn: Connection, *, publish: bool = True) -> dict:
         tally(_upsert_edge(conn, mitigates, ("compliance_activity_id", "business_activity_id"),
                            {"compliance_activity_id": c_id, "business_activity_id": b_id, "obligation_refs": refs,
                             "rationale": rationale, "method": "curated" if "curated" in slot["basis"] else "deterministic"},
-                           live_mit, trail, "MIT", today=today))
-    for e in live_mit.values():
-        if e.get("method") != "llm":
-            record.invalidate(conn, mitigates, mitigates.c.id == e["id"], why=trail, reason="no longer produced by the junction build")
-            tally("invalidated")
+                           live_mit, trail, "MIT", today=today, preserve_existing=preserve))
+    if not preserve:
+        for e in live_mit.values():
+            if e.get("method") != "llm":
+                record.invalidate(conn, mitigates, mitigates.c.id == e["id"], why=trail, reason="no longer produced by the junction build")
+                tally("invalidated")
 
     changed = counts["added"] + counts["changed"] + counts["invalidated"]
     if changed and publish:

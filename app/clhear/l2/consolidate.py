@@ -57,7 +57,9 @@ def find_candidates(engine: Engine, limit: int = MAX_CANDIDATES_PER_RUN) -> list
                 ).where(obligations.c.status.in_(("derived", "validated")))
             ).mappings()
         ]
-    rows = [r for r in rows if r["id"] not in done and r["jurisdiction"]]
+    from app.clhear.l1.scopes import in_scope
+
+    rows = [r for r in rows if r["id"] not in done and r["jurisdiction"] and in_scope(r["source_key"])]
     for r in rows:
         r["_tok"] = _tokens(f"{r['title']} {r['statement']}")
         r["_themes"] = set(r["themes"] if isinstance(r["themes"], list) else [])

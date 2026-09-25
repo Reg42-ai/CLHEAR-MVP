@@ -84,10 +84,13 @@ def _as_date(v) -> date | None:
 
 
 def _live_obligations(conn: Connection) -> dict[str, dict]:
+    from app.clhear.l1.scopes import keys as scope_keys
+
     rows = conn.execute(sa.select(obligations.c.id, obligations.c.stable_id, obligations.c.source_key, obligations.c.clause_ref,
                                   obligations.c.title, obligations.c.jurisdiction, obligations.c.regulator)
                         .where(obligations.c.status.in_(LIVE_OBLIGATION))).mappings()
-    return {r["id"]: dict(r) for r in rows}
+    chosen = scope_keys()
+    return {r["id"]: dict(r) for r in rows if chosen is None or r["source_key"] in chosen}
 
 
 def _linked_events(conn: Connection) -> dict[str, list[dict]]:
@@ -442,9 +445,16 @@ def score_items(engine: Engine, *, blueprint_id: str | None = None) -> dict:
             return stats
         previous = _current_scores(conn, "item")
         items = conn.execute(sa.select(blueprint_items).where(blueprint_items.c.blueprint_id.in_(current_bps))).mappings().all()
+        from app.clhear.l1.scopes import keys as scope_keys
+
+        chosen = scope_keys()
         for it in items:
+            refs = list(_json(it["obligations_satisfied"], []))
+            # An item that names an obligation outside the scope keeps its score.
+            if chosen is not None and any(r not in by_ref for r in refs):
+                continue
             stats["items"] += 1
-            oids = [by_ref[r] for r in _json(it["obligations_satisfied"], []) if r in by_ref]
+            oids = [by_ref[r] for r in refs if r in by_ref]
             scored = [ob_scores[o] for o in oids if o in ob_scores]
             dims = {d: 0.0 for d in DIMENSIONS}
             for s in scored:

@@ -3,7 +3,8 @@
     python -m app.clhear.scope_build --scope compliance-program-demo [--skip-import]
         [--profile profile.json] [--publish-release]
 
-Run against a database that holds only the scope (``CLHEAR_SOURCE_SCOPE``).
+Run with ``CLHEAR_SOURCE_SCOPE`` set. The build reads and writes only that
+scope's sources, so the database may also hold the rest of the corpus.
 L1 imports each scoped document through the same adapters, verification and
 acceptance as every other import. Each later layer runs the production
 derivation for that layer — no curated blocks, activities, profiles, concepts,
@@ -52,7 +53,11 @@ def derive_l2(engine: Engine, llm) -> dict:
     from app.clhear.l2.structured import refine_structured
     from app.clhear.l2.triage import triage_duties
 
-    return {"extraction": run_extraction(engine), "triage": triage_duties(engine, llm),
+    # One source at a time: an unscoped extraction stales every obligation it
+    # did not just derive, including rows that belong to other sources.
+    chosen = scopes.source_keys()
+    extraction = [run_extraction(engine, source_key=key) for key in chosen] if chosen else run_extraction(engine)
+    return {"extraction": extraction, "triage": triage_duties(engine, llm),
             "structured": refine_structured(engine, llm), "consolidation": draft_and_propose(engine, llm),
             "dedupe": consolidate(engine), "review": review_obligations(engine, llm)}
 
@@ -97,12 +102,14 @@ def derive_l5(engine: Engine, llm) -> dict:
             "orphans": len(junction["orphans"]), "dangling": len(junction["dangling"])}
 
 
-def derive_l6(engine: Engine, llm) -> dict:
+def derive_l6(engine: Engine, llm, profile_ids: list[str] | None = None) -> dict:
     from app.clhear.fleets import compose_stored_profiles
     from app.clhear.l6 import composer
     from app.clhear.l6.explain import refine_explanations
 
-    composed = compose_stored_profiles(engine)
+    # A scoped build composes the profiles it just stored. Profiles already in
+    # the database keep the blueprints they have.
+    composed = compose_stored_profiles(engine, profile_ids=profile_ids if scopes.active() else None)
     explained = []
     with engine.connect() as conn:
         current = [composer.get_blueprint(conn, r["blueprint_id"]) for r in composer.list_blueprints(conn, status="current", limit=20)]
@@ -148,11 +155,19 @@ def build(engine: Engine, llm, *, skip_import: bool = False, profiles: list[dict
     if scope is None:
         raise RuntimeError(f"Set {scopes.SCOPE_ENV}; a scope build never runs against the full registry")
     name = scopes.active_name()
+    held: dict = {"profiles": []}
+
+    def run_l4() -> dict:
+        detail = derive_l4(engine, llm, profiles or [])
+        held["profiles"] = [p["id"] for p in detail.get("profiles") or []]
+        return detail
+
     steps = {
         "L1": (lambda: {"skipped": "import"}) if skip_import else (lambda: import_sources(engine, llm, scope)),
         "L2": lambda: derive_l2(engine, llm), "L3": lambda: derive_l3(engine, llm),
-        "L4": lambda: derive_l4(engine, llm, profiles or []), "L5": lambda: derive_l5(engine, llm),
-        "L6": lambda: derive_l6(engine, llm), "L7": lambda: derive_l7(engine, llm), "L8": lambda: derive_l8(engine, llm),
+        "L4": run_l4, "L5": lambda: derive_l5(engine, llm),
+        "L6": lambda: derive_l6(engine, llm, held["profiles"]), "L7": lambda: derive_l7(engine, llm),
+        "L8": lambda: derive_l8(engine, llm),
     }
     report = {"scope": name, "layers": {}}
     for layer in layer_builds.ORDER:
@@ -201,6 +216,8 @@ def main(argv=None) -> int:
     parser.add_argument("--profile", action="append", default=[],
                         help="JSON file or s3:// object of a tenant-submitted L4 profile")
     parser.add_argument("--publish-release", action="store_true")
+    parser.add_argument("--refresh-viewer", action="store_true",
+                        help="Ask L0 to republish the viewer snapshot after the build")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     import os
 
@@ -218,6 +235,10 @@ def main(argv=None) -> int:
         from app.clhear.scope_release import publish
 
         report["release"] = publish(engine, args.scope)
+    if args.refresh_viewer:
+        from app.clhear.l1.viewer_snapshot import request_refresh
+
+        report["viewer"] = request_refresh(engine, reason="scope-build")
     print(json.dumps(report, indent=2, default=str))
     return 0
 

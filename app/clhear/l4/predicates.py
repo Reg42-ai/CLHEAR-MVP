@@ -272,10 +272,13 @@ def sync_obligation(conn: Connection, ob: dict, onto: _Onto, *, reason: str = "l
 
 
 def _live_obligations(conn: Connection, source_key: str | None = None, limit: int | None = None) -> list[dict]:
+    from app.clhear.l1.scopes import limiting
+
     q = (sa.select(obligations).where(obligations.c.status.in_(LIVE_STATUS)).where(obligations.c.canonical_id.is_(None))
          .order_by(obligations.c.id))
-    if source_key:
-        q = q.where(obligations.c.source_key == source_key)
+    limit_to = limiting(obligations.c.source_key, source_key)
+    if limit_to is not None:
+        q = q.where(limit_to)
     if limit:
         q = q.limit(limit)
     return [dict(r) for r in conn.execute(q).mappings()]

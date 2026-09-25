@@ -62,3 +62,30 @@ def test_a_first_pass_can_build_without_a_profile_or_a_release():
     report = demo_build.run({"ecs": Ecs()}, layers="L1,L2,L3,L4", profile=None, publish=False, wait=False)
     assert report["command"] == ["--scope", demo_build.SCOPE, "--layers", "L1,L2,L3,L4"]
     assert started["overrides"]["containerOverrides"][0]["command"] == report["command"]
+    assert started["taskDefinition"] == demo_build.FAMILY
+
+
+def test_the_production_task_uses_the_production_database_and_asks_for_a_viewer_refresh():
+    task = demo_build.task_definition(BASE, image=IMAGE, sha=SHA, target="production")
+    build = task["containerDefinitions"][0]
+    env = {e["name"]: e["value"] for e in build["environment"]}
+    secrets = {s["name"]: s["valueFrom"] for s in build["secrets"]}
+    assert "CLHEAR_EVENTS_QUEUE_URL" not in env and "CLHEAR_NEO4J_URI" not in env
+    assert "CLHEAR_SNAPSHOT_S3_URI" not in env
+    assert env["CLHEAR_VIEWER_SNAPSHOT_S3_URI"].endswith("webui/l1/candidate.db")
+    assert secrets["DATABASE_URL"] == demo_build.PRODUCTION_DATABASE
+    assert "--refresh-viewer" in build["command"]
+    assert task["family"] == demo_build.PRODUCTION_FAMILY
+    started = {}
+
+    class Ecs:
+        def describe_services(self, cluster, services):
+            return {"services": [{"networkConfiguration": {"awsvpcConfiguration": {"subnets": ["s"]}}}]}
+
+        def run_task(self, **kwargs):
+            started.update(kwargs)
+            return {"tasks": [{"taskArn": "arn:task/prod"}]}
+
+    report = demo_build.run({"ecs": Ecs()}, target="production", skip_import=True, wait=False)
+    assert started["taskDefinition"] == demo_build.PRODUCTION_FAMILY
+    assert report["command"][-1] == "--refresh-viewer"

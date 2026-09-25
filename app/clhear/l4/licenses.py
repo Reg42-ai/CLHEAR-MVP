@@ -143,11 +143,19 @@ def retire_unsound(engine: Engine, jurisdiction_of: dict[str, str] | None = None
     from app.clhear.derived_models import licences
     from app.clhear.platform import record
 
+    from app.clhear.l1.scopes import keys as scope_keys
+
     jurisdiction_of = jurisdiction_of if jurisdiction_of is not None else _jurisdictions(engine)
+    chosen = scope_keys()
     retired = []
     with engine.begin() as conn:
         for row in conn.execute(sa.select(license_types).where(license_types.c.status != RETIRED)).mappings():
-            anchored = {jurisdiction_of.get(a.get("source_key"), "") for a in (row["clause_anchors"] or [])}
+            anchors = row["clause_anchors"] or []
+            anchor_keys = {a.get("source_key") for a in anchors if isinstance(a, dict) and a.get("source_key")}
+            # A licence quoted from outside the active scope is not this build's to retire.
+            if chosen is not None and (not anchor_keys or not anchor_keys <= chosen):
+                continue
+            anchored = {jurisdiction_of.get(a.get("source_key"), "") for a in anchors}
             if not names_a_licence(row["name"]):
                 reason = f"'{row['name']}' does not name a licence: retired"
             elif anchored and row["jurisdiction"].upper() not in anchored:
@@ -185,8 +193,11 @@ def extract_licenses(engine: Engine, llm) -> dict:
     jurisdiction_of = _jurisdictions(engine)
     binding = _binding_keys(engine)
     for query in LICENSE_QUERIES:
+        from app.clhear.l1.scopes import in_scope
+
         retrieved = [h for h in _retrieve(engine, query)
-                     if h["source_key"] in binding and anchor_is_live(engine, h["source_key"], h["ref"])]
+                     if h["source_key"] in binding and in_scope(h["source_key"])
+                     and anchor_is_live(engine, h["source_key"], h["ref"])]
         if not retrieved:
             coverage_gaps.append(query)
             continue

@@ -232,14 +232,19 @@ def build_ontology_in(conn: Connection, *, check_registers: bool = True, publish
 
     # Snapshot entries that vanished: invalidate (I2). Licences grounded by the
     # licence registry were never in the snapshot; they stay while their type does.
+    # A scoped build does not invalidate rows it did not derive: the database
+    # may hold ontology from the rest of the corpus.
+    from app.clhear.l1.scopes import keys as scope_keys
+
     grounded = {f"LIC:{r.jurisdiction}:{slug(r.name)}" for r in conn.execute(
         sa.select(license_types.c.jurisdiction, license_types.c.name).where(license_types.c.status != "retired"))}
-    for c in COLLECTIONS:
-        table = _TABLES[c]
-        for key, row in live[c].items():
-            if key not in seen[c] and not (c == "licences" and key in grounded):
-                record.invalidate(conn, table, table.c.id == row["id"], why=trail, reason="removed from register snapshot")
-                counts[c]["invalidated"] += 1
+    if scope_keys() is None:
+        for c in COLLECTIONS:
+            table = _TABLES[c]
+            for key, row in live[c].items():
+                if key not in seen[c] and not (c == "licences" and key in grounded):
+                    record.invalidate(conn, table, table.c.id == row["id"], why=trail, reason="removed from register snapshot")
+                    counts[c]["invalidated"] += 1
 
     # Legacy grounded license registry (l4.license_extract) joins the ontology as clause-anchored licences.
     merged = _merge_license_types(conn, live["licences"], trail, today)

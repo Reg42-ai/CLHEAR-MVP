@@ -54,6 +54,8 @@ def similarity(a: str, b: str) -> float:
 
 
 def _live(conn) -> list[dict]:
+    from app.clhear.l1.scopes import in_scope
+
     return [
         dict(r)
         for r in conn.execute(
@@ -62,6 +64,7 @@ def _live(conn) -> list[dict]:
                 obligations.c.statement, obligations.c.canonical_id, obligations.c.source_key, obligations.c.text_hash,
             ).where(obligations.c.status.in_(("derived", "validated")))
         ).mappings()
+        if in_scope(r["source_key"])
     ]
 
 
