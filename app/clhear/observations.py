@@ -53,6 +53,14 @@ class ObservationRejected(ValueError):
     """The document is not the observation contract. Unmapped words are not this."""
 
 
+def _store(engine: Engine) -> Engine:
+    """Observations are tenant writes: on the web tier they go to the durable identity
+    store, never into the read-only snapshot a swap replaces."""
+    from app.clhear import identity
+
+    return identity.engine() if identity.configured() else engine
+
+
 def _lookups(conn) -> list[Lookup]:
     found = []
     for name in COLLECTIONS:
@@ -164,35 +172,34 @@ def accept_observation(engine: Engine, body: dict) -> dict:
     reasoning = body.get("reasoning") or ""
     if not isinstance(reasoning, str):
         raise ObservationRejected("reasoning must be text")
-    with engine.begin() as conn:
+    with engine.connect() as conn:
         lookups = _lookups(conn)
-        measured: dict = {}
-        for key, value in characteristics.items():
-            if not isinstance(key, str) or not key.strip():
-                unmapped.append("empty-characteristic-key")
-                continue
-            kept, rejected = _measured(value, lookups)
-            if rejected:
-                unmapped.append(rejected if rejected != "quantity-without-unit" else f"{key}:quantity-without-unit")
-                continue
-            measured[key.strip()] = kept
-        row_id = "obs-" + uuid.uuid4().hex
-        now = datetime.now(timezone.utc)
-        stored = {
-            "id": row_id,
-            "post_id": post_id,
-            "ontology_ids": ontology_ids,
-            "subject": body.get("subject"),
-            "result": result,
-            "mapped": mapped,
-            "unmapped_labels": unmapped,
-            "characteristics": measured,
-            "evidence": evidence,
-            "reasoning": reasoning,
-            "performer": performer,
-            "observed_at": observed_at,
-            "created_at": now,
-        }
+    measured: dict = {}
+    for key, value in characteristics.items():
+        if not isinstance(key, str) or not key.strip():
+            unmapped.append("empty-characteristic-key")
+            continue
+        kept, rejected = _measured(value, lookups)
+        if rejected:
+            unmapped.append(rejected if rejected != "quantity-without-unit" else f"{key}:quantity-without-unit")
+            continue
+        measured[key.strip()] = kept
+    stored = {
+        "id": "obs-" + uuid.uuid4().hex,
+        "post_id": post_id,
+        "ontology_ids": ontology_ids,
+        "subject": body.get("subject"),
+        "result": result,
+        "mapped": mapped,
+        "unmapped_labels": unmapped,
+        "characteristics": measured,
+        "evidence": evidence,
+        "reasoning": reasoning,
+        "performer": performer,
+        "observed_at": observed_at,
+        "created_at": datetime.now(timezone.utc),
+    }
+    with _store(engine).begin() as conn:
         conn.execute(observations.insert().values(**stored))
     return _public(stored)
 
@@ -215,7 +222,7 @@ def _public(row: dict) -> dict:
 
 
 def list_observations(engine: Engine) -> list[dict]:
-    with engine.connect() as conn:
+    with _store(engine).connect() as conn:
         rows = conn.execute(sa.select(observations).order_by(observations.c.observed_at, observations.c.created_at)).mappings()
         return [_public(dict(row)) for row in rows]
 
