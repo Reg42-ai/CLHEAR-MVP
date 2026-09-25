@@ -52,6 +52,9 @@ def create_app() -> FastAPI:
     from app.clhear.web_guard import WebGuardMiddleware
 
     app.add_middleware(WebGuardMiddleware)
+    from starlette.middleware.gzip import GZipMiddleware
+
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
     app.include_router(review_access_router)
     if get_settings().reg42_clhear_enabled:
         from app.clhear.platform import errors
