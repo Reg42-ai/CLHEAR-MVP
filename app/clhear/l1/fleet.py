@@ -203,6 +203,9 @@ def _govinfo_for(entry: dict, meta: SourceMeta, fetch: dict):
     from app.clhear.l1.adapters.govinfo_us import GovInfoEcfrAdapter, GovInfoUscAdapter
     from app.clhear.l1.adapters.official_html import OfficialHtmlAdapter
 
+    if fetch.get("document_type") == "ftc_page":
+        from app.clhear.l1.adapters.ftc_pages import FtcPageAdapter
+        return FtcPageAdapter(source_key=entry["key"], title=entry["name"], url=_url(entry), meta=meta)
     if fetch.get("kind") == "pdf":
         from app.clhear.l1.adapters.pdf_docling import PdfOfficialAdapter
         return PdfOfficialAdapter(source_key=entry["key"], title=entry["name"], url=_url(entry), adapter="govinfo_us", meta=meta)

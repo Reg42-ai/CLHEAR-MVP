@@ -24,6 +24,7 @@ Linker precision is gated (:func:`app.clhear.platform.evals.l7_linker`).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -272,11 +273,12 @@ def parse_notice(label: str, text: str, *, regulator: str, url: str = "",
 
 
 def _enforcement_clauses(conn: Connection, source_key: str | None) -> list[dict]:
-    """One row per published outcome: the provision-level clauses of the in-force
-    version of every enforcement source (container sections are not notices)."""
+    """The provision-level clauses of the in-force version of every enforcement
+    source, in document order, with each block's kind (``item`` / ``text``)."""
     q = (
         sa.select(clauses.c.id, clauses.c.ref, clauses.c.text, clauses.c.text_hash, sources.c.key.label("source_key"),
-                  sources.c.issuer, sources.c.jurisdiction, sources.c.canonical_url)
+                  sources.c.issuer, sources.c.jurisdiction, sources.c.canonical_url, sources.c.name.label("source_name"),
+                  source_versions.c.id.label("source_version_id"), doc_nodes.c.source_locator)
         .join(source_versions, source_versions.c.id == clauses.c.source_version_id)
         .join(sources, sources.c.id == source_versions.c.source_id)
         .join(doc_nodes, doc_nodes.c.id == clauses.c.doc_node_id)
@@ -286,7 +288,78 @@ def _enforcement_clauses(conn: Connection, source_key: str | None) -> list[dict]
     )
     if source_key:
         q = q.where(sources.c.key == source_key)
-    return [dict(r) for r in conn.execute(q).mappings()]
+    rows = [dict(r) for r in conn.execute(q).mappings()]
+    titles = _publication_titles(conn, {r["source_version_id"] for r in rows})
+    for row in rows:
+        locator = row.pop("source_locator") or {}
+        if isinstance(locator, str):
+            locator = json.loads(locator)
+        row["block"] = locator.get("block", "")
+        row["publication_title"] = titles.get(row["source_version_id"], "")
+    return rows
+
+
+def _publication_titles(conn: Connection, version_ids: set) -> dict:
+    if not version_ids:
+        return {}
+    out = {}
+    for r in conn.execute(sa.select(doc_nodes.c.source_version_id, doc_nodes.c.heading, doc_nodes.c.source_locator)
+                          .where(doc_nodes.c.source_version_id.in_(version_ids), doc_nodes.c.node_type == "group")):
+        locator = json.loads(r.source_locator) if isinstance(r.source_locator, str) else (r.source_locator or {})
+        if locator.get("block") == "title" and r.source_version_id not in out:
+            out[r.source_version_id] = r.heading
+    return out
+
+
+_RESPONDENT_LEAD = re.compile(r"^(?P<name>[A-Z0-9][\w&.,'’ /-]{2,120}?)\s+(?:agreed to pay|was ordered to pay|consented|"
+                              r"will pay|paid|agreed to settle)", re.I)
+
+
+def _respondent_item(text: str) -> str | None:
+    """A list item that names one charged party: 'Firm LLC' or 'Firm LLC agreed to pay ... $N'."""
+    text = " ".join(text.split()).rstrip(";,. ").removesuffix(" and").rstrip(";,. ")
+    lead = _RESPONDENT_LEAD.match(text)
+    if lead and _FIRM_SUFFIX.search(lead.group("name")):
+        return lead.group("name").strip(" ,")
+    if len(text) <= 120 and ":" not in text and _FIRM_SUFFIX.search(text) and not _parse_date(text):
+        return text
+    return None
+
+
+def _publication_outcomes(rows: list[dict], aliases) -> list[dict]:
+    """One outcome per charged party a publication lists; otherwise one for the publication.
+
+    A release that lists its respondents yields one event each. The release's
+    date, sanction and cited instruments frame every one of them; a party's
+    amount is the one printed next to its name, never the combined total."""
+    first = rows[0]
+    title = first["publication_title"] or first["source_name"] or first["source_key"]
+    whole = "\n".join(r["text"] for r in rows)
+    context = parse_notice(title, whole, regulator=first["issuer"] or "", url=first["canonical_url"] or "", aliases=aliases)
+    sentences = re.split(r"(?<=[.;])\s+", whole)
+    outcomes = []
+    for row in rows:
+        name = _respondent_item(row["text"]) if row["block"] == "item" else None
+        if not name:
+            continue
+        own = parse_notice("", row["text"], regulator=context["regulator"], url=context["url"], aliases=aliases)
+        amount, currency = own["amount"], own["currency"]
+        if amount is None:
+            stem = " ".join(name.split()[:2])
+            near = [s for s in sentences if stem in s and _AMOUNT.search(s)]
+            if len(near) == 1:
+                amount, currency = _parse_amount(near[0])
+        kind = own["kind"] if own["kind"] != "other" else context["kind"]
+        outcomes.append({"row": row, "text_hash": row["text_hash"], "parsed": {
+            **context, "respondent": name, "respondent_type": "firm", "amount": amount, "currency": currency,
+            "kind": "fine" if kind in ("undertaking", "restitution", "other") and amount else kind,
+            "decided_on": own["decided_on"] or context["decided_on"],
+            "cited_refs": own["cited_refs"] or context["cited_refs"],
+            "summary": " ".join(row["text"].split())[:1000]}})
+    if outcomes:
+        return outcomes
+    digest = hashlib.sha256("\0".join(r["text_hash"] for r in rows).encode()).hexdigest()
+    return [{"row": first, "text_hash": f"publication:{digest}", "parsed": {**context, "summary": " ".join(whole.split())[:1000]}}]
 
 
 def _live_event(event_id: str):
@@ -312,17 +385,30 @@ def ingest_events(engine: Engine, *, source_key: str | None = None) -> dict:
         live = {(r["source_key"], r["clause_ref"]): dict(r) for r in conn.execute(live_q).mappings()}
         seen: set[tuple[str, str]] = set()
         changed = False
+        by_source: dict[str, list[dict]] = {}
         for row in rows:
+            by_source.setdefault(row["source_key"], []).append(row)
+        outcomes = []
+        for group in by_source.values():
+            if all(r["block"] for r in group):
+                outcomes.extend(_publication_outcomes(group, aliases))
+                continue
+            for row in group:  # one outcome per provision (FCA final notices, SEC litigation listings)
+                label, _, text = row["text"].partition("\n") if "\n" in row["text"] else (row["ref"], "", row["text"])
+                # the clause text is "<label>\n<body>" when the adapter kept a title; a bare body keeps the ref as title
+                outcomes.append({"row": row, "text_hash": row["text_hash"], "parsed": parse_notice(
+                    label if text else row["ref"], text or row["text"], regulator=row["issuer"] or "",
+                    url=row["canonical_url"] or "", aliases=aliases)})
+        stats["outcomes"] = len(outcomes)
+        for outcome in outcomes:
+            row, parsed = outcome["row"], outcome["parsed"]
+            row = {**row, "text_hash": outcome["text_hash"]}
             key = (row["source_key"], row["ref"])
             seen.add(key)
             existing = live.get(key)
             if existing is not None and existing["text_hash"] == row["text_hash"]:
                 stats["unchanged"] += 1
                 continue
-            label, _, text = row["text"].partition("\n") if "\n" in row["text"] else (row["ref"], "", row["text"])
-            # the clause text is "<label>\n<body>" when the adapter kept a title; a bare body keeps the ref as title
-            parsed = parse_notice(label if text else row["ref"], text or row["text"], regulator=row["issuer"] or "",
-                                  url=row["canonical_url"] or "", aliases=aliases)
             why = _why(f"{row['source_key']}#{row['ref']}",
                        f"enforcement outcome read from {row['source_key']} {row['ref']}: {parsed['kind']}"
                        f"{' ' + parsed['currency'] + ' ' + format(parsed['amount'], ',.0f') if parsed['amount'] else ''}; "
