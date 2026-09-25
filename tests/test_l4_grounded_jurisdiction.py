@@ -129,3 +129,43 @@ def test_the_duty_text_names_the_bearer_when_the_addressee_does_not():
     persons = {"jurisdiction": "US", "addressee": "", "statement": "Unfair methods of competition in or affecting "
                "commerce, and unfair or deceptive acts or practices in or affecting commerce, are hereby declared unlawful."}
     assert [e["predicate"] for e in deterministic_predicates(persons, onto)] == [{"jurisdictions": "US"}]
+
+
+def test_the_statement_names_the_bearer_when_the_structured_duty_sentence_does_not():
+    from app.clhear.l4.predicates import deterministic_predicates
+
+    onto = _Onto.__new__(_Onto)
+    onto.schema = {"authorisations": {}}
+    onto.view = SimpleNamespace(jurisdictions={"US"}, licences=SimpleNamespace(rows={
+        "LIC:US:investment-adviser-registration": {"id": "LIC:US:investment-adviser-registration", "jurisdiction": "US",
+                                                   "name": "Investment Adviser Registration"}}))
+    ob = {"jurisdiction": "US", "addressee": "",
+          "determination": "provide investment advice to clients unless you adopt and implement written policies",
+          "statement": "If you are an investment adviser registered or required to be registered under section 203 of "
+                       "the Act, it shall be unlawful for you to provide investment advice to clients unless you adopt "
+                       "and implement written policies and procedures."}
+    assert {"authorisations": "Investment Adviser Registration"} in [e["predicate"] for e in deterministic_predicates(ob, onto)]
+
+
+def test_a_grounded_licence_stays_live_when_the_ontology_is_rebuilt(engine):
+    from app.clhear.l4.ontology import build_ontology
+
+    _seeded(engine)
+    with engine.begin() as conn:
+        conn.execute(license_types.insert().values(
+            id="LIC:US:investment-adviser-registration", jurisdiction="US", name="Investment Adviser Registration",
+            issuing_regime="", clause_anchors=[ANCHOR], status="ai_generated", generated_by="test"))
+    build_ontology(engine, check_registers=False)
+    build_ontology(engine, check_registers=False)
+    assert _live_licences(engine).get("LIC:US:investment-adviser-registration") == "US"
+
+
+def test_licence_types_are_anchored_only_in_law_or_regulation(engine):
+    _seeded(engine)
+    _add_clauses(engine, "sec/releases/ia-2204", {"b84": "An investment adviser registration is required; the adviser "
+                                                         "must be registered with the Commission."})
+    canned = json.dumps({"license_types": [{"name": "Adviser Registration From Guidance", "source_key": "sec/releases/ia-2204",
+                                            "ref": "b84"}]})
+    out = l4_licenses.extract_licenses(engine, Router(engine, providers={"fake": FakeProvider(canned_text=canned)}))
+    assert out["written"] == 0
+    assert all(t["name"] != "Adviser Registration From Guidance" for t in l4_licenses.list_license_types(engine))

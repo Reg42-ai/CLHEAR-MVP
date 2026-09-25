@@ -189,8 +189,12 @@ def deterministic_predicates(ob: dict, onto: _Onto) -> list[dict]:
         # The extracted addressee can be the wrong noun ("advertisement" for "any
         # investment adviser ... to disseminate any advertisement"); the duty's own
         # words then name who bears it.
-        text = (ob.get("determination") or ob.get("statement") or ob.get("title") or "")[:300]
-        subject = _scan(text, _SUBJECT_CUES, onto, jur, "subject")
+        # The structured duty sentence can drop the bearer ("unless you adopt ..."); the
+        # statement it came from keeps it ("If you are an investment adviser ...").
+        for text in (ob.get("determination"), ob.get("statement")):
+            subject = _scan((text or "")[:300], _SUBJECT_CUES, onto, jur, "subject") if text else []
+            if subject:
+                break
     out += subject
     # Structured `condition` when L2 has split the duty; otherwise the duty sentence itself.
     condition_text = ob.get("condition") or ob.get("determination") or ob.get("statement") or ""
