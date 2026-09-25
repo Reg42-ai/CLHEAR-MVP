@@ -8,8 +8,8 @@ from scripts.l1_recovery import load_active_plan_id
 
 
 def test_committed_default_references_the_reviewed_plan_of_the_failed_deployment():
-    """The pointer names the plan for the held :35 services after deploy 36106546860,
-    not the earlier :32 plan."""
+    """The pointer names the plan for the held services after deploy 36106546860.
+    Those services have since moved to task definition :40; the plan records that hold."""
     plan_id = load_active_plan_id()
     plan = load_plan(plan_id)
     assert plan_id == "l1-36106546860-1"
@@ -17,7 +17,7 @@ def test_committed_default_references_the_reviewed_plan_of_the_failed_deployment
     # restoration restores at least one L0 and one L1 worker and keeps the unreserved shared viewer capacity
     assert plan["fleets"]["l0"]["desired_count"] >= 1 and plan["fleets"]["l1"]["desired_count"] >= 1
     assert plan["fleets"]["l0"]["min_capacity"] >= 1 and plan["fleets"]["l1"]["min_capacity"] >= 1
-    assert all(row["task_definition_arn"].endswith(":35") for row in plan["fleets"].values())
+    assert all(row["task_definition_arn"].endswith(":40") for row in plan["fleets"].values())
 
 
 def test_recovery_requires_the_exact_maintenance_state_before_restoring():

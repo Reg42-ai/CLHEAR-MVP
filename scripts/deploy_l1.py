@@ -55,11 +55,12 @@ TASK_FIELDS = {
 }
 # L0 bootstrap builds the viewer snapshot in-process. Completeness-mode applies
 # OOM-killed at 1024 MiB (35341410131) and again at the 2048 MiB floor
-# (35351651353) with the same ~76s curve, so the snapshot spike exceeds 2 GiB.
-# 1024 CPU / 8192 MiB is a valid Fargate pair. Standing L0 also compiles
+# (35351651353). The 6 GiB candidate then OOM-killed publish at 8192 MiB
+# (task 87ca6a3c, exit 137) after bootstrap of the same image had succeeded.
+# 2048 CPU / 16384 MiB is a valid Fargate pair. Standing L0 also compiles
 # cycle snapshots, so the registered service must use the same size.
-L0_TASK_CPU = "1024"
-L0_TASK_MEMORY_MIB = 8192
+L0_TASK_CPU = "2048"
+L0_TASK_MEMORY_MIB = 16384
 # The deploy runner starts as `python scripts/deploy_l1.py`, so the repo root
 # is not on sys.path and `app` cannot be imported. These four keys must stay
 # equal to app.clhear.demo_corpus.DEMO_SOURCE_KEYS. The worker, not this
