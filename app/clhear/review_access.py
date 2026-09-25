@@ -23,6 +23,15 @@ def reviewer(request: Request) -> dict | None:
     return user
 
 
+def app_key_request(request: Request) -> bool:
+    """A /v1 call that presents app credentials; the route's require_app decides."""
+    path = request.url.path
+    if path != "/v1" and not path.startswith("/v1/"):
+        return False
+    authorization = request.headers.get("authorization", "")
+    return authorization.lower().startswith("bearer ") and bool(request.headers.get("x-app-id", "").strip())
+
+
 class RestrictedAccessMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         settings = get_settings()
@@ -35,7 +44,7 @@ class RestrictedAccessMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         public = path in {"/signin", "/api/clhear/health", "/terms", "/disclaimer"}
         public = public or path.startswith("/auth/") or path.startswith("/static/")
-        if not public:
+        if not public and not app_key_request(request):
             if len(settings.clhear_session_secret.strip()) < 32 or settings.clhear_auth_debug:
                 return JSONResponse({"detail": "Restricted access requires a private session secret of at least 32 characters and production authentication."},
                                     status_code=503, headers={"Cache-Control": "no-store"})
