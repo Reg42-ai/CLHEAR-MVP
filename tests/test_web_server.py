@@ -167,3 +167,15 @@ def test_a_failed_precompute_still_swaps_the_snapshot_in(tmp_path, monkeypatch):
     h = web_server.SnapshotHolder(URI, str(tmp_path / "clhear.db"), s3_client=FakeS3(b"snapshot-one"),
                                   clock=Clock(), precompute=broken)
     assert h.refresh(force=True) is True and open(h.local_path, "rb").read() == b"snapshot-one"
+
+
+def test_a_publisher_filter_never_changes_the_cached_sources_answer(engine, monkeypatch):
+    from app.clhear import snapshot_cache
+    from app.clhear.l1 import routes
+
+    families = [{"key": "fam", "members": [{"key": "a", "publisher": "sec", "publisher_ids": ["sec"]},
+                                           {"key": "b", "publisher": "ftc", "publisher_ids": ["ftc"]}]}]
+    monkeypatch.setattr(routes, "_sources_for_engine", lambda engine: families)
+    assert [m["key"] for f in routes.list_sources(publisher="sec") for m in f["members"]] == ["a"]
+    assert [m["key"] for f in routes.list_sources() for m in f["members"]] == ["a", "b"]
+    snapshot_cache.clear()
