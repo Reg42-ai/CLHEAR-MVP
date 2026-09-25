@@ -433,12 +433,19 @@ def ingest_events(engine: Engine, *, source_key: str | None = None) -> dict:
     """Derive enforcement events from the enforcement sources' clauses (idempotent)."""
     stats = {"clauses": 0, "inserted": 0, "re_derived": 0, "unchanged": 0, "invalidated": 0}
     with engine.begin() as conn:
+        from app.clhear.l1.scopes import keys as scope_keys
+
         aliases = _alias_index(conn)
         rows = _enforcement_clauses(conn, source_key)
+        chosen = None if source_key else scope_keys()
+        if chosen is not None:
+            rows = [r for r in rows if r["source_key"] in chosen]
         stats["clauses"] = len(rows)
         live_q = sa.select(enforcement_events).where(enforcement_events.c.valid_to.is_(None))
         if source_key:
             live_q = live_q.where(enforcement_events.c.source_key == source_key)
+        elif chosen is not None:
+            live_q = live_q.where(enforcement_events.c.source_key.in_(sorted(chosen)))
         live = {(r["source_key"], r["clause_ref"]): dict(r) for r in conn.execute(live_q).mappings()}
         seen: set[tuple[str, str]] = set()
         changed = False
@@ -629,10 +636,16 @@ def link_events(engine: Engine, llm=None, *, source_key: str | None = None) -> d
     """Resolve every live event's citations into enforcement_links (idempotent per pair)."""
     stats = {"events": 0, "linked_events": 0, "links": 0, "new_links": 0, "unresolved_citations": 0, "llm_links": 0}
     with engine.begin() as conn:
+        from app.clhear.l1.scopes import keys as scope_keys
+
         index = _registry_index(conn)
         q = sa.select(enforcement_events).where(enforcement_events.c.valid_to.is_(None))
+        chosen = None if source_key else scope_keys()
         if source_key:
             q = q.where(enforcement_events.c.source_key == source_key)
+        elif chosen is not None:
+            q = q.where(enforcement_events.c.source_key.in_(sorted(chosen)))
+            index = {key: rows for key, rows in index.items() if key in chosen}
         events = [dict(r) for r in conn.execute(q).mappings()]
         existing: dict[str, dict[str, dict]] = {}
         for r in conn.execute(sa.select(enforcement_links).where(enforcement_links.c.valid_to.is_(None))).mappings():
@@ -642,7 +655,8 @@ def link_events(engine: Engine, llm=None, *, source_key: str | None = None) -> d
             all_candidates = [dict(r) for r in conn.execute(
                 sa.select(obligations.c.id, obligations.c.source_key, obligations.c.clause_ref, obligations.c.title,
                           obligations.c.jurisdiction, obligations.c.regulator)
-                .where(obligations.c.status.in_(("derived", "validated")))).mappings()]
+                .where(obligations.c.status.in_(("derived", "validated")))).mappings()
+                              if chosen is None or r["source_key"] in chosen]
 
         def _menu(ev: dict) -> list[dict]:
             """The regulator's live obligations: same jurisdiction or same regulator; all when neither is recorded."""

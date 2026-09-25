@@ -135,6 +135,13 @@ def layer_counts(engine: Engine) -> dict[str, dict]:
             "cohorts": _count(conn, cohorts_t),
             "aggregates_published": _count(conn, cohorts_t, cohorts_t.c.published.is_(True), cohorts_t.c.synthetic.is_(False)),
         }
+        from app.clhear.l1.viewer_snapshot import derived_reference_keys
+
+        reference_keys = derived_reference_keys(engine)
+        if reference_keys:
+            from app.clhear.l8.reference import derived_reference_rows
+
+            out["L8"]["reference_rows"] = len(derived_reference_rows(conn, reference_keys))
     try:
         from app.clhear.governance import audit_coverage as _cov
 
@@ -161,8 +168,10 @@ def layer_index(engine: Engine) -> list[dict]:
         entry = layer_public_meta(code)
         entry["counts"] = counts.get(code, {})
         output_keys = {"L0": "runs", "L1": "current_clauses", "L2": "obligations", "L3": "building_blocks",
-                       "L4": "profile_attributes", "L5": "activities", "L6": "blueprints_current",
-                       "L7": "risk_scores", "L8": "aggregates_published"}
+                       "L4": "profiles" if "profiles" in entry["counts"] else "profile_attributes",
+                       "L5": "activities", "L6": "blueprints_current",
+                       "L7": "risk_scores",
+                       "L8": "reference_rows" if "reference_rows" in entry["counts"] else "aggregates_published"}
         unit = output_keys[code]
         count = entry["counts"].get(unit, 0)
         entry["overview"] = {
@@ -443,8 +452,16 @@ def layer_items(engine: Engine, layer: str, **filters) -> list[dict] | dict:
         from app.clhear.l8.cohorts import list_cohorts
         from app.clhear.l8.reference import reference_rows
 
+        from app.clhear.l1.viewer_snapshot import read_viewer_state
+
+        state = read_viewer_state(engine)
+        if state.get("viewer_snapshot"):
+            keys = list((state.get("derived_scope") or {}).get("reference") or [])
+            reference = reference_rows(engine, source_keys=keys) if keys else []
+        else:
+            reference = reference_rows(engine)
         return {"definitions": load_curated("l8_benchmarks"), "cohorts": list_cohorts(engine),
-                "reference": reference_rows(engine)}
+                "reference": reference}
     raise KeyError(layer)
 
 

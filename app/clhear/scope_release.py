@@ -44,11 +44,21 @@ def _copy_derived(engine: Engine, destination: Path) -> dict:
 
     target = make_engine(f"sqlite:///{destination}")
     counts = {}
+    projected = None
+    if scopes.active():
+        from app.clhear.scope_projection import project
+
+        with engine.connect() as conn:
+            projected = project(conn, scopes.active_name())
+        by_name = {table.name: rows for table, rows in (projected or {"tables": []})["tables"]}
     try:
         with engine.connect() as source, target.begin() as out:
             for table in derived_tables():
                 table.create(out, checkfirst=True)
-                rows = [dict(r) for r in source.execute(sa.select(table)).mappings()]
+                if scopes.active():
+                    rows = by_name.get(table.name, [])
+                else:
+                    rows = [dict(r) for r in source.execute(sa.select(table)).mappings()]
                 for start in range(0, len(rows), 500):
                     out.execute(table.insert(), rows[start:start + 500])
                 counts[table.name] = len(rows)
@@ -94,7 +104,7 @@ def publish(engine: Engine, scope_name: str, *, release_id: str | None = None) -
     gate = gates(engine, scope_name)
     with tempfile.TemporaryDirectory(prefix="clhear-scope-release-") as directory:
         path = Path(directory) / "snapshot.db"
-        projection = release_snapshot.compile_snapshot(engine, path)
+        projection = release_snapshot.compile_snapshot(engine, path, source_keys=scopes.source_keys(scope_name))
         derived = _copy_derived(engine, path)
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         parts = releases._s3_parts()
@@ -104,7 +114,9 @@ def publish(engine: Engine, scope_name: str, *, release_id: str | None = None) -
             uri = f"s3://{bucket}/{prefix}/{rid}/l1/snapshot.db"
             _s3_put(path, bucket, f"{prefix}/{rid}/l1/snapshot.db".lstrip("/"), digest)
             _s3_put(path, bucket, f"{prefix}/{CURRENT_KEY}".lstrip("/"), digest)
-        counts = releases.corpus_counts(engine)
+        snap_counts = projection["counts"]
+        counts = {"families": snap_counts.get("source_families", 0), "sources": snap_counts.get("sources", 0),
+                  "clauses": snap_counts.get("clauses", 0), "change_events": snap_counts.get("change_events", 0)}
         manifest = releases.build_manifest(release_id=rid, snapshot_uri=uri, content_hash=digest, counts=counts,
                                            engine=engine, previous=releases.get_latest(engine=None), contributions=[])
     layers = ["L0", *[layer for layer, g in gate["layers"].items() if g["passed"]]]

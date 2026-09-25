@@ -302,9 +302,10 @@ const COUNT_LABELS = {
   clauses: "clauses", clauses_public: "public clauses", change_events: "changes",
   obligations: "obligations", validated: "validated", derived_unreviewed: "unreviewed",
   stale: "stale", building_blocks: "blocks", profile_attributes: "attributes",
-  sample_profiles: "sample profiles", activities: "activities",
+  profiles: "profiles", licences: "licences", sample_profiles: "sample profiles", activities: "activities",
   sample_programs: "sample programs", blueprints_requested: "blueprints requested",
   risk_areas: "risk areas", benchmark_definitions: "definitions", aggregates_published: "published",
+  reference_rows: "reference rows",
 };
 function countline(counts = {}, pick) {
   return (pick || Object.keys(counts)).filter((k) => counts[k] !== undefined)
@@ -312,8 +313,8 @@ function countline(counts = {}, pick) {
 }
 const HOME_COUNTS = {
   L0: ["events", "runs", "proposals"], L1: ["sources_ingested", "clauses", "change_events"],
-  L2: ["obligations", "validated"], L4: ["profile_attributes", "sample_profiles"],
-  L6: ["sample_programs", "blueprints_requested"],
+  L2: ["obligations", "validated"], L4: ["profiles", "licences", "profile_attributes"],
+  L6: ["sample_programs", "blueprints_requested"], L8: ["reference_rows", "aggregates_published"],
 };
 
 const OVERVIEW_STATES = ["published", "candidate", "unknown"];
@@ -686,6 +687,20 @@ function L4Panel({ items, onOpen }) {
             <span class="sum" style=${{ flex: 2, fontSize: "12.5px" }}>${a.description}</span>
           </div>`)}
       </div>
+      ${(items.profiles || []).length > 0 && html`
+        <h4 style=${{ color: "var(--faint)", letterSpacing: "0.2em", fontSize: "11.5px" }}>STORED PROFILES</h4>`}
+      ${(items.profiles || []).map((p) => {
+        const attributes = p.attributes && typeof p.attributes === "object" ? p.attributes : {};
+        return html`
+        <div class="card" key=${p.id}>
+          <div class="id">${p.id} <span class="chip">${p.status || "profile"}</span></div>
+          <h5>${p.name}</h5>
+          <div class="tags">
+            ${Object.entries(attributes).slice(0, 8).map(([k, v]) => html`
+              <span class="chip" key=${k}>${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}</span>`)}
+          </div>
+        </div>`;
+      })}
       <h4 style=${{ color: "var(--faint)", letterSpacing: "0.2em", fontSize: "11.5px" }}>SAMPLE PROFILES</h4>
       ${(items.sample_profiles || []).map((p) => html`
         <div class="card" key=${p.id} onClick=${() => onOpen(p)}>
@@ -957,6 +972,14 @@ function LayerPage({ slug, auth }) {
                 <div class="id">${c.id} <span class="chip">k=${c.k_threshold}</span></div>
                 <h5>${c.label}</h5>
                 <div class="sum">n=${c.n} · published=${String(c.published)} · ${JSON.stringify(c.aggregates)}</div>
+              </div>`)}
+            ${(detail.items && detail.items.reference || []).map((row) => html`
+              <div class="card" key=${row.id}>
+                <div class="id">${row.source.source_key} · ${row.source.clause_ref}
+                  <span class="chip">${row.kind}</span>
+                  ${row.block_name && html`<span class="chip">${row.block_name}</span>`}
+                </div>
+                <div class="verbatim">${row.quote}</div>
               </div>`)}`}
           ${!["L0", "L1", "L2", "L4", "L8"].includes(code) && Array.isArray(detail.items) && detail.items.map((item) => html`
             <${ItemCard} layer=${code} item=${item} key=${item.id} onOpen=${(it) => setOpenItem(it)} />`)}

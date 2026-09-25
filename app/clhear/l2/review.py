@@ -30,6 +30,8 @@ VERDICTS = ("correct", "incorrect", "unsure")
 
 
 def _unreviewed(conn, limit: int) -> list[dict]:
+    from app.clhear.l1.scopes import in_scope
+
     reviewed = {
         (r.obligation_id, r.text_hash)
         for r in conn.execute(sa.select(obligation_reviews.c.obligation_id, obligation_reviews.c.text_hash))
@@ -38,7 +40,7 @@ def _unreviewed(conn, limit: int) -> list[dict]:
     for ob in conn.execute(
         sa.select(obligations).where(obligations.c.status.in_(("derived", "validated"))).order_by(obligations.c.id)
     ).mappings():
-        if (ob["id"], ob["text_hash"]) in reviewed:
+        if not in_scope(ob["source_key"]) or (ob["id"], ob["text_hash"]) in reviewed:
             continue
         clause = conn.execute(
             sa.select(clauses.c.id, clauses.c.text)

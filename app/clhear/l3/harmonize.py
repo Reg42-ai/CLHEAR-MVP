@@ -33,10 +33,42 @@ def _rank(block: dict) -> tuple:
     return (0 if block["status"] == "curated" else 1, block["id"])
 
 
+def blocks_in_scope(conn) -> set[str] | None:
+    """Block ids a scoped build may rewrite, or None when no scope is active.
+
+    A block is in scope only when every live requires edge and every satisfies
+    selector names a source in the scope. A block shared with another source
+    is left untouched.
+    """
+    from app.clhear.l1.scopes import keys
+
+    chosen = keys()
+    if chosen is None:
+        return None
+    linked: dict[str, set[str]] = {}
+    for bid, source_key in conn.execute(
+            sa.select(requires.c.block_id, obligations.c.source_key)
+            .join(obligations, obligations.c.id == requires.c.obligation_id)
+            .where(requires.c.valid_to.is_(None))):
+        linked.setdefault(bid, set()).add(source_key)
+    allowed = {bid for bid, srcs in linked.items() if srcs and srcs <= chosen}
+    for row in conn.execute(sa.select(blocks.c.id, blocks.c.satisfies).where(blocks.c.canonical_id.is_(None))):
+        if row.id in linked:
+            continue
+        selectors = row.satisfies or []
+        srcs = {s.get("source_key") for s in selectors if isinstance(s, dict) and s.get("source_key")}
+        if srcs and srcs <= chosen:
+            allowed.add(row.id)
+    return allowed
+
+
 def harmonize(engine: Engine, threshold: float = MERGE_THRESHOLD) -> dict:
     merged = edges_moved = 0
     with engine.begin() as conn:
         rows = [dict(r) for r in conn.execute(sa.select(blocks).where(blocks.c.canonical_id.is_(None))).mappings()]
+        allowed = blocks_in_scope(conn)
+        if allowed is not None:
+            rows = [r for r in rows if r["id"] in allowed]
         by_kind: dict[str, list[dict]] = {}
         for r in rows:
             by_kind.setdefault(r["kind"], []).append(r)

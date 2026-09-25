@@ -28,11 +28,14 @@ DEDUP_SIM = 0.55
 
 def _clusters(engine: Engine) -> list[list[dict]]:
     with engine.connect() as conn:
+        from app.clhear.l1.scopes import in_scope
+
         rows = [
             dict(r)
             for r in conn.execute(
                 sa.select(obligations).where(obligations.c.status.in_(("derived", "validated")))
             ).mappings()
+            if in_scope(r["source_key"])
         ]
     by_theme: dict[str, list[dict]] = defaultdict(list)
     for r in rows:

@@ -276,9 +276,12 @@ def run_extraction(engine: Engine, source_key: str | None = None) -> dict:
     themes_by_source: dict[str, list] = {}
     inserted = updated = unchanged = staled = 0
     with engine.connect() as conn:
+        from app.clhear.l1.scopes import limiting
+
         src_q = sa.select(sources)
-        if source_key:
-            src_q = src_q.where(sources.c.key == source_key)
+        limit = limiting(sources.c.key, source_key)
+        if limit is not None:
+            src_q = src_q.where(limit)
         source_rows = conn.execute(src_q).all()
         binding = {
             row.source_id

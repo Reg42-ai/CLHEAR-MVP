@@ -216,9 +216,12 @@ def curated_anchor_blocks(conn: Connection, ob: dict) -> list[dict]:
 
 
 def _live_obligations(conn: Connection, source_key: str | None = None) -> list[dict]:
+    from app.clhear.l1.scopes import limiting
+
     q = sa.select(obligations).where(obligations.c.status.in_(LIVE))
-    if source_key:
-        q = q.where(obligations.c.source_key == source_key)
+    limit = limiting(obligations.c.source_key, source_key)
+    if limit is not None:
+        q = q.where(limit)
     return [dict(r) for r in conn.execute(q.order_by(obligations.c.stable_id, obligations.c.id)).mappings()]
 
 

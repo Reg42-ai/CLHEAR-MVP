@@ -28,8 +28,12 @@ def current_bindings(conn, *, corpus_only=False) -> list[dict]:
     return [dict(r) for r in conn.execute(query.order_by(models.sources.c.key, models.source_versions.c.id)).mappings()]
 
 
-def compile_snapshot(engine, destination: Path) -> dict:
-    """Read one repeatable database view and publish no unapproved text."""
+def compile_snapshot(engine, destination: Path, *, source_keys=None) -> dict:
+    """Read one repeatable database view and publish no unapproved text.
+
+    ``source_keys`` limits the corpus to one scope. Unset copies every corpus
+    source, which is what an accepted L1 release does.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(descriptor)
@@ -44,9 +48,14 @@ def compile_snapshot(engine, destination: Path) -> dict:
                 elif engine.dialect.name == "sqlite":
                     connection.exec_driver_sql("BEGIN")
                 bindings = current_bindings(connection, corpus_only=True)
-                version_ids = [b["source_version_id"] for b in bindings]
                 source_rows = list(connection.execute(sa.select(models.sources).where(corpus_sources_predicate())).mappings())
-                source_ids = [s["id"] for s in source_rows]
+                if source_keys is not None:
+                    chosen = set(source_keys)
+                    bindings = [row for row in bindings if row["source_key"] in chosen]
+                    source_rows = [row for row in source_rows if row["key"] in chosen]
+                version_ids = [b["source_version_id"] for b in bindings] or ([-1] if source_keys is not None else [])
+                source_ids = [s["id"] for s in source_rows] or ([-1] if source_keys is not None else [])
+                family_ids = [s["family_id"] for s in source_rows] or ([-1] if source_keys is not None else [])
                 for source in source_rows:
                     if permissions.required_for(source):
                         decisions = [permissions.decision(connection, source["key"], op)
@@ -73,7 +82,7 @@ def compile_snapshot(engine, destination: Path) -> dict:
                             query = query.where(table.c.id.in_(source_ids))
                         elif name == "source_families":
                             query = query.where(sa.or_(
-                                table.c.id.in_([s["family_id"] for s in source_rows]),
+                                table.c.id.in_(family_ids),
                                 table.c.id.in_(sa.select(models.family_members.c.family_id).where(models.family_members.c.source_id.in_(source_ids))),
                             ))
                         elif name == "source_versions":

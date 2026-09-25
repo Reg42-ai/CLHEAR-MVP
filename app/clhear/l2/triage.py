@@ -44,8 +44,10 @@ def _weak_candidates(engine: Engine, limit: int = MAX_PER_RUN) -> list[dict]:
         }
         srcs = {s.id: s for s in conn.execute(sa.select(sources).where(sources.c.license == "open"))}
         out = []
+        from app.clhear.l1.scopes import in_scope
+
         for sid, src in srcs.items():
-            if sid not in binding or sid not in versions:
+            if sid not in binding or sid not in versions or not in_scope(src.key):
                 continue
             for row in conn.execute(
                 sa.select(clauses).where(clauses.c.source_version_id == versions[sid].id)

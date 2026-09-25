@@ -2,9 +2,11 @@
 
 The viewer is a separately generated SQLite projection, never a copy of the
 operational database or an accepted release. Its full empty schema preserves
-read-route compatibility; only explicitly allowed L1/evidence tables receive
-rows. Sessions, accounts, API credentials, model prompts and lease tokens do
-not cross this boundary. No CLI or request-time export path is provided.
+read-route compatibility. L1 and its evidence are copied for the corpus.
+When the database holds the compliance-program-demo derivation, that scope's
+L2–L8 rows are copied with it; otherwise those layers stay empty. Sessions,
+accounts, API credentials, model prompts and lease tokens do not cross this
+boundary. No CLI or request-time export path is provided.
 """
 from __future__ import annotations
 
@@ -323,6 +325,21 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None, control_p
                         counts[table.name] = count
                     if record.fts_available(out, "search_units_fts"):  # the SQLite candidate only
                         out.exec_driver_sql("INSERT INTO search_units_fts(rowid, text) SELECT id, text FROM search_units WHERE text <> ''")
+                    from app.clhear.scope_projection import project as project_scope
+
+                    projected = project_scope(conn)
+                    omitted_layers = [f"L{n}" for n in range(2, 9)]
+                    derived_scope = None
+                    allowlist = [t.name for t in (*CORPUS_TABLES, *EVIDENCE_TABLES, *ENGLISH_TABLES)]
+                    if projected:
+                        for table, rows in projected["tables"]:
+                            for start in range(0, len(rows), 200):
+                                out.execute(table.insert(), rows[start:start + 200])
+                            counts[table.name] = len(rows)
+                            if table.name not in allowlist:
+                                allowlist.append(table.name)
+                        omitted_layers = projected["omitted_layers"]
+                        derived_scope = projected["derived_scope"]
                     completed_cycle = conn.execute(cycles.read_query(conn).where(
                         cycles.cycles.c.cycle_id == job_id,
                         cycles.cycles.c.status.in_(cycles.TERMINAL_CYCLE))).mappings().first() if job_id else None
@@ -341,9 +358,10 @@ def compile_viewer_snapshot(engine, destination: Path, *, job_id=None, control_p
                                        if control_provenance else {})},
                                 "counts": counts, "redacted_source_keys": sorted(redacted),
                                 "excluded_test_sources": excluded_test_count,
-                                "omitted_layers": [f"L{n}" for n in range(2, 9)],
+                                "omitted_layers": omitted_layers,
+                                **({"derived_scope": derived_scope} if derived_scope else {}),
                                 "omitted_operational_data": ["accounts", "sessions", "API credentials", "model prompts", "lease tokens", "private runtime error details"],
-                                "table_allowlist": [t.name for t in (*CORPUS_TABLES, *EVIDENCE_TABLES, *ENGLISH_TABLES)]}
+                                "table_allowlist": allowlist}
                     out.execute(STATE.insert().values(id=1, manifest=manifest))
         with target.connect() as check:
             if check.exec_driver_sql("PRAGMA integrity_check").scalar_one() != "ok":
@@ -453,6 +471,12 @@ def put_conditionally(s3_client, bucket: str, key: str, path: Path, *, condition
     except Exception:
         s3_client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload)
         raise
+
+
+def derived_reference_keys(engine) -> list[str]:
+    """Reference source keys recorded when a scope's derived rows were copied."""
+    scope = read_viewer_state(engine).get("derived_scope") or {}
+    return list(scope.get("reference") or [])
 
 
 def read_viewer_state(engine):
