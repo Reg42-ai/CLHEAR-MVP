@@ -72,9 +72,9 @@ def dispose_engine() -> None:
 
     global _engine
     if _engine is not None:
+        snapshot_cache.forget(_engine)
         _engine.dispose()
     _engine = None
-    snapshot_cache.clear()
 
 
 def run_migrations(engine: Engine) -> list[int]:

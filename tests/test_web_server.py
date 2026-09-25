@@ -124,3 +124,46 @@ def test_unrestricted_public_explorer_keeps_serving_a_stale_snapshot(holder):
     clock.now += REFRESH_TTL_S * 10
     response = _client(h, restricted=False).get("/api/clhear/sources")
     assert response.status_code == 200 and "x-clhear-snapshot-checked-at" not in response.headers
+
+
+def test_answers_are_computed_on_the_staged_snapshot_and_served_by_the_new_engine(tmp_path, monkeypatch):
+    from app.clhear import db, snapshot_cache
+
+    monkeypatch.setenv("CLHEAR_DB_S3_URI", URI)
+    snapshot_cache.clear()
+    seen = []
+
+    @snapshot_cache.cached("probe-swap")
+    def answer(engine):
+        seen.append(engine)
+        return "precomputed"
+
+    def precompute(path):
+        assert open(path, "rb").read() == b"snapshot-one" and not (tmp_path / "clhear.db").exists()
+        staged = object()
+        answer(staged)
+        answers = snapshot_cache.answers_for(staged)
+        snapshot_cache.forget(staged)
+        return answers
+
+    live = object()
+    monkeypatch.setattr(db, "dispose_engine", lambda: None)
+    monkeypatch.setattr(db, "get_engine", lambda: live)
+    h = web_server.SnapshotHolder(URI, str(tmp_path / "clhear.db"), s3_client=FakeS3(b"snapshot-one"),
+                                  clock=Clock(), precompute=precompute)
+    assert h.refresh(force=True) is True
+    assert answer(live) == "precomputed" and len(seen) == 1
+    snapshot_cache.clear()
+
+
+def test_a_failed_precompute_still_swaps_the_snapshot_in(tmp_path, monkeypatch):
+    from app.clhear import db
+
+    monkeypatch.setattr(db, "dispose_engine", lambda: None)
+
+    def broken(path):
+        raise RuntimeError("cold answers are slow, not wrong")
+
+    h = web_server.SnapshotHolder(URI, str(tmp_path / "clhear.db"), s3_client=FakeS3(b"snapshot-one"),
+                                  clock=Clock(), precompute=broken)
+    assert h.refresh(force=True) is True and open(h.local_path, "rb").read() == b"snapshot-one"

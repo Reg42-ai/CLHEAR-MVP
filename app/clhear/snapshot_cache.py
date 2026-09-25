@@ -2,8 +2,10 @@
 
 A published snapshot never changes; a new one replaces the engine (the web
 service disposes it on swap). So an expensive, viewer-independent answer —
-the layer index, the sources list, sample programs, risk items — can be
-computed once per engine and reused. On a writable database nothing is cached.
+the layer index, the sources list, status facts, risk scores — can be
+computed once per engine and reused. The web service computes them against a
+new snapshot before it goes live and hands them to the new engine
+(``answers_for`` / ``adopt``). On a writable database nothing is cached.
 """
 from __future__ import annotations
 
@@ -45,6 +47,25 @@ def cached(name: str):
         inner.uncached = fn
         return inner
     return wrap
+
+
+def answers_for(engine) -> dict:
+    """The answers cached for ``engine``, keyed without it."""
+    with _lock:
+        return {(k[0], *k[2:]): v for k, v in _cache.items() if k[1] == id(engine)}
+
+
+def adopt(engine, answers: dict) -> None:
+    """Serve ``answers`` (from ``answers_for`` on the same snapshot content) for ``engine``."""
+    with _lock:
+        for (name, args, kwargs), value in answers.items():
+            _cache[(name, id(engine), args, kwargs)] = value
+
+
+def forget(engine) -> None:
+    with _lock:
+        for key in [k for k in _cache if k[1] == id(engine)]:
+            del _cache[key]
 
 
 def clear() -> None:
